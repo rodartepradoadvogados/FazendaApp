@@ -10,6 +10,7 @@ import { RESPONSAVEIS } from "@/lib/constants";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { SeletorContaGerencial } from "./SeletorContaGerencial";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
+import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -169,6 +170,7 @@ export default function CompraSemenForm() {
     if (!q) return base;
     return base.filter((e) => `${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`.toLowerCase().includes(q));
   }, [estoque, buscaTouro]);
+  const ordEstoque = useOrdenacao(estoqueFiltrado);
 
   const naabFiltrado = useMemo(() => {
     const q = buscaTouro.trim().toLowerCase();
@@ -328,9 +330,19 @@ export default function CompraSemenForm() {
                 {!estoque && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
                 {estoque && (
                   <table className="fazenda-table" style={{ margin: 0 }}>
-                    <thead><tr><th></th><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th>Tipo</th><th style={{ textAlign: "right" }}>Doses atuais</th></tr></thead>
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <ThOrdenavel label="Touro" campo="touro_nome" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                        <ThOrdenavel label="Código" campo="codigo" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                        <ThOrdenavel label="NAAB" campo="naab" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                        <ThOrdenavel label="Central" campo="central" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                        <ThOrdenavel label="Tipo" campo="tipo" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                        <ThOrdenavel label="Doses atuais" campo="doses" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} alinhar="right" />
+                      </tr>
+                    </thead>
                     <tbody>
-                      {estoqueFiltrado.map((e) => {
+                      {ordEstoque.linhasOrdenadas.map((e) => {
                         const sel = touroSel?.estoqueSemenId === e.id;
                         return (
                           <tr key={e.id} style={{ cursor: "pointer" }} className="row-clickable"

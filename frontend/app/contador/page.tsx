@@ -18,6 +18,7 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { CORES_CONTADOR } from "./layout";
 import { PainelDocumentos } from "@/components/contador/PainelDocumentos";
 import { PainelExtraordinario } from "@/components/contador/PainelExtraordinario";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Lancamento = {
   id: number; numero_lancamento: string; tipo: string; valor: number; centro_custo: string; codigo_conta: string;
@@ -78,6 +79,23 @@ const estiloTh: React.CSSProperties = {
 const estiloTd: React.CSSProperties = {
   fontSize: "0.82rem", padding: "0.5rem 0.6rem", borderBottom: `1px solid ${CORES_CONTADOR.borda}`, fontVariantNumeric: "tabular-nums",
 };
+// Cabeçalhos ordenáveis (ThOrdenavel, ver components/Ordenavel.tsx) renderizam
+// um <th> sem estilo próprio de cor/borda — como o Painel do Contador não usa
+// a classe .fazenda-table (paleta deliberadamente distinta, ver layout.tsx),
+// aplicamos o mesmo visual de estiloTh via CSS de classe (propriedades como
+// padding/border não herdam do <thead>, então precisam de uma regra própria).
+const ESTILO_TH_ORDENAVEL = `
+  .contador-th thead th {
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid ${CORES_CONTADOR.bordaClara};
+    text-align: left;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: ${CORES_CONTADOR.mudo};
+    font-weight: 700;
+  }
+`;
 
 function Kpi({ titulo, valor, cor }: { titulo: string; valor: string; cor?: string }) {
   return (
@@ -193,6 +211,19 @@ export default function PainelContadorPage() {
     [animais, inicio, fim],
   );
 
+  const folhaNoPeriodo = useMemo(
+    () => folha.filter((f) => dentroPeriodo(f.data_vencimento, inicio, fim)),
+    [folha, inicio, fim],
+  );
+
+  const ordReceitas = useOrdenacao(dre.receitas);
+  const ordDespesas = useOrdenacao(dre.despesas);
+  const ordPlano = useOrdenacao(planoContas);
+  const ordExtrato = useOrdenacao(extratoFiltrado);
+  const ordPatrimonio = useOrdenacao(patrimonio?.itens || []);
+  const ordFolha = useOrdenacao(folhaNoPeriodo);
+  const ordAnimais = useOrdenacao(animaisNoPeriodo);
+
   const exportarFechamentoMensal = async () => {
     setExportando(true);
     try {
@@ -242,6 +273,7 @@ export default function PainelContadorPage() {
 
   return (
     <div>
+      <style>{ESTILO_TH_ORDENAVEL}</style>
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end", gap: "0.8rem", marginBottom: "1.2rem" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.7rem", alignItems: "flex-end" }}>
           <div>
@@ -295,10 +327,13 @@ export default function PainelContadorPage() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }} className="contador-grid-2">
             <div style={estiloCard}>
               <p style={{ margin: "0 0 0.7rem", fontFamily: "inherit", fontWeight: 700, fontSize: "0.85rem" }}>Receitas por conta</p>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><th style={estiloTh}>Conta</th><th style={{ ...estiloTh, textAlign: "right" }}>Valor</th></tr></thead>
+              <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  <ThOrdenavel label="Conta" campo="nome" coluna={ordReceitas.coluna} dir={ordReceitas.dir} ordenar={ordReceitas.ordenar} />
+                  <ThOrdenavel label="Valor" campo="receita" coluna={ordReceitas.coluna} dir={ordReceitas.dir} ordenar={ordReceitas.ordenar} alinhar="right" />
+                </tr></thead>
                 <tbody>
-                  {dre.receitas.map((l) => (
+                  {ordReceitas.linhasOrdenadas.map((l) => (
                     <tr key={l.codigo}><td style={estiloTd}>{l.nome}</td><td style={{ ...estiloTd, textAlign: "right", color: CORES_CONTADOR.positivo }}>{formatBRL(l.receita)}</td></tr>
                   ))}
                   {dre.receitas.length === 0 && <tr><td style={estiloTd} colSpan={2}>Sem receitas no período.</td></tr>}
@@ -307,10 +342,13 @@ export default function PainelContadorPage() {
             </div>
             <div style={estiloCard}>
               <p style={{ margin: "0 0 0.7rem", fontWeight: 700, fontSize: "0.85rem" }}>Despesas por conta</p>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr><th style={estiloTh}>Conta</th><th style={{ ...estiloTh, textAlign: "right" }}>Valor</th></tr></thead>
+              <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  <ThOrdenavel label="Conta" campo="nome" coluna={ordDespesas.coluna} dir={ordDespesas.dir} ordenar={ordDespesas.ordenar} />
+                  <ThOrdenavel label="Valor" campo="despesa" coluna={ordDespesas.coluna} dir={ordDespesas.dir} ordenar={ordDespesas.ordenar} alinhar="right" />
+                </tr></thead>
                 <tbody>
-                  {dre.despesas.map((l) => (
+                  {ordDespesas.linhasOrdenadas.map((l) => (
                     <tr key={l.codigo}><td style={estiloTd}>{l.nome}</td><td style={{ ...estiloTd, textAlign: "right", color: CORES_CONTADOR.negativo }}>{formatBRL(l.despesa)}</td></tr>
                   ))}
                   {dre.despesas.length === 0 && <tr><td style={estiloTd} colSpan={2}>Sem despesas no período.</td></tr>}
@@ -358,10 +396,16 @@ export default function PainelContadorPage() {
 
       {aba === "plano" && (
         <div style={estiloCard}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><th style={estiloTh}>Código</th><th style={estiloTh}>Nome</th><th style={estiloTh}>Natureza</th><th style={estiloTh}>Fixo/Variável</th><th style={estiloTh}>Ativa</th></tr></thead>
+          <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <ThOrdenavel label="Código" campo="codigo" coluna={ordPlano.coluna} dir={ordPlano.dir} ordenar={ordPlano.ordenar} />
+              <ThOrdenavel label="Nome" campo="nome" coluna={ordPlano.coluna} dir={ordPlano.dir} ordenar={ordPlano.ordenar} />
+              <ThOrdenavel label="Natureza" campo="natureza" coluna={ordPlano.coluna} dir={ordPlano.dir} ordenar={ordPlano.ordenar} />
+              <ThOrdenavel label="Fixo/Variável" campo="tipo_fixo_variavel" coluna={ordPlano.coluna} dir={ordPlano.dir} ordenar={ordPlano.ordenar} />
+              <ThOrdenavel label="Ativa" campo="ativa" coluna={ordPlano.coluna} dir={ordPlano.dir} ordenar={ordPlano.ordenar} />
+            </tr></thead>
             <tbody>
-              {planoContas.map((c) => (
+              {ordPlano.linhasOrdenadas.map((c) => (
                 <tr key={c.codigo}>
                   <td style={estiloTd}>{c.codigo}</td><td style={estiloTd}>{c.nome}</td>
                   <td style={estiloTd}>{c.natureza || "—"}</td><td style={estiloTd}>{c.tipo_fixo_variavel || "—"}</td>
@@ -383,16 +427,21 @@ export default function PainelContadorPage() {
             </select>
           </div>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={estiloTh}>Data</th><th style={estiloTh}>Fornecedor/Cliente</th><th style={estiloTh}>Descrição</th>
-                  <th style={estiloTh}>Conta</th><th style={estiloTh}>Centro de custo</th>
-                  <th style={{ ...estiloTh, textAlign: "right" }}>Valor</th><th style={estiloTh}>Pagamento</th><th style={estiloTh}></th>
+                  <ThOrdenavel label="Data" campo="data_competencia" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} />
+                  <ThOrdenavel label="Fornecedor/Cliente" campo="fornecedor" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} />
+                  <ThOrdenavel label="Descrição" campo="descricao" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} />
+                  <ThOrdenavel label="Conta" campo="codigo_conta" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} />
+                  <ThOrdenavel label="Centro de custo" campo="centro_custo" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} />
+                  <ThOrdenavel label="Valor" campo="valor" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Pagamento" campo="data_pagamento" coluna={ordExtrato.coluna} dir={ordExtrato.dir} ordenar={ordExtrato.ordenar} />
+                  <th style={estiloTh}></th>
                 </tr>
               </thead>
               <tbody>
-                {extratoFiltrado.map((l) => (
+                {ordExtrato.linhasOrdenadas.map((l) => (
                   <tr key={l.id}>
                     <td style={estiloTd}>{formatDate(l.data_competencia || "")}</td>
                     <td style={estiloTd}>{l.fornecedor}</td>
@@ -418,16 +467,19 @@ export default function PainelContadorPage() {
             <Kpi titulo="Valor atual (após depreciação)" valor={formatBRL(patrimonio?.valor_atual_total || 0)} cor={CORES_CONTADOR.cobreClaro} />
           </div>
           <div style={{ ...estiloCard, overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={estiloTh}>Nome</th><th style={estiloTh}>Tipo</th><th style={estiloTh}>Imobilização</th>
-                  <th style={{ ...estiloTh, textAlign: "right" }}>Valor total</th><th style={{ ...estiloTh, textAlign: "right" }}>Depreciação acum.</th>
-                  <th style={{ ...estiloTh, textAlign: "right" }}>Valor atual</th>
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ordPatrimonio.coluna} dir={ordPatrimonio.dir} ordenar={ordPatrimonio.ordenar} />
+                  <ThOrdenavel label="Tipo" campo="tipo" coluna={ordPatrimonio.coluna} dir={ordPatrimonio.dir} ordenar={ordPatrimonio.ordenar} />
+                  <ThOrdenavel label="Imobilização" campo="data_imobilizacao" coluna={ordPatrimonio.coluna} dir={ordPatrimonio.dir} ordenar={ordPatrimonio.ordenar} />
+                  <ThOrdenavel label="Valor total" campo="valor_total" coluna={ordPatrimonio.coluna} dir={ordPatrimonio.dir} ordenar={ordPatrimonio.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Depreciação acum." campo="depreciacao_acumulada" coluna={ordPatrimonio.coluna} dir={ordPatrimonio.dir} ordenar={ordPatrimonio.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Valor atual" campo="valor_atual" coluna={ordPatrimonio.coluna} dir={ordPatrimonio.dir} ordenar={ordPatrimonio.ordenar} alinhar="right" />
                 </tr>
               </thead>
               <tbody>
-                {(patrimonio?.itens || []).map((i) => (
+                {ordPatrimonio.linhasOrdenadas.map((i) => (
                   <tr key={i.id}>
                     <td style={estiloTd}>{i.nome}</td><td style={estiloTd}>{i.tipo || "—"}</td>
                     <td style={estiloTd}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
@@ -445,15 +497,19 @@ export default function PainelContadorPage() {
 
       {aba === "folha" && (
         <div style={{ ...estiloCard, overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={estiloTh}>Pessoa</th><th style={estiloTh}>Descrição</th><th style={{ ...estiloTh, textAlign: "right" }}>Valor</th>
-                <th style={estiloTh}>Vencimento</th><th style={estiloTh}>Pagamento</th><th style={estiloTh}>Status</th>
+                <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={ordFolha.coluna} dir={ordFolha.dir} ordenar={ordFolha.ordenar} />
+                <ThOrdenavel label="Descrição" campo="descricao" coluna={ordFolha.coluna} dir={ordFolha.dir} ordenar={ordFolha.ordenar} />
+                <ThOrdenavel label="Valor" campo="valor" coluna={ordFolha.coluna} dir={ordFolha.dir} ordenar={ordFolha.ordenar} alinhar="right" />
+                <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={ordFolha.coluna} dir={ordFolha.dir} ordenar={ordFolha.ordenar} />
+                <ThOrdenavel label="Pagamento" campo="data_pagamento" coluna={ordFolha.coluna} dir={ordFolha.dir} ordenar={ordFolha.ordenar} />
+                <ThOrdenavel label="Status" campo="status" coluna={ordFolha.coluna} dir={ordFolha.dir} ordenar={ordFolha.ordenar} />
               </tr>
             </thead>
             <tbody>
-              {folha.filter((f) => dentroPeriodo(f.data_vencimento, inicio, fim)).map((f) => (
+              {ordFolha.linhasOrdenadas.map((f) => (
                 <tr key={`${f.tipo}-${f.origem_id}`}>
                   <td style={estiloTd}>{f.pessoa_nome}</td><td style={estiloTd}>{f.descricao}</td>
                   <td style={{ ...estiloTd, textAlign: "right" }}>{formatBRL(f.valor)}</td>
@@ -462,7 +518,7 @@ export default function PainelContadorPage() {
                   <td style={{ ...estiloTd, color: f.status === "pago" ? CORES_CONTADOR.positivo : CORES_CONTADOR.cobreClaro }}>{f.status === "pago" ? "Pago" : "Pendente"}</td>
                 </tr>
               ))}
-              {folha.filter((f) => dentroPeriodo(f.data_vencimento, inicio, fim)).length === 0 && <tr><td style={estiloTd} colSpan={6}>Sem lançamentos de folha no período.</td></tr>}
+              {folhaNoPeriodo.length === 0 && <tr><td style={estiloTd} colSpan={6}>Sem lançamentos de folha no período.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -470,15 +526,20 @@ export default function PainelContadorPage() {
 
       {aba === "animais" && (
         <div style={{ ...estiloCard, overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={estiloTh}>Data</th><th style={estiloTh}>Tipo</th><th style={estiloTh}>Animal</th><th style={estiloTh}>Contraparte</th>
-                <th style={{ ...estiloTh, textAlign: "right" }}>Valor</th><th style={estiloTh}>GTA</th><th style={estiloTh}>Documento</th>
+                <ThOrdenavel label="Data" campo="data" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} />
+                <ThOrdenavel label="Tipo" campo="tipo" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} />
+                <ThOrdenavel label="Animal" campo="numero_animal" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} />
+                <ThOrdenavel label="Contraparte" campo="contraparte" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} />
+                <ThOrdenavel label="Valor" campo="valor" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} alinhar="right" />
+                <ThOrdenavel label="GTA" campo="gta" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} />
+                <ThOrdenavel label="Documento" campo="numero_documento" coluna={ordAnimais.coluna} dir={ordAnimais.dir} ordenar={ordAnimais.ordenar} />
               </tr>
             </thead>
             <tbody>
-              {animaisNoPeriodo.map((a, i) => (
+              {ordAnimais.linhasOrdenadas.map((a, i) => (
                 <tr key={i}>
                   <td style={estiloTd}>{formatDate(a.data)}</td>
                   <td style={{ ...estiloTd, color: a.tipo === "compra" ? CORES_CONTADOR.negativo : CORES_CONTADOR.positivo }}>{a.tipo === "compra" ? "Compra" : "Venda"}</td>

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
@@ -29,6 +30,7 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
     return animais.filter((a) =>
       `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`.toLowerCase().includes(q));
   }, [animais, busca, rotuloDe]);
+  const ord = useOrdenacao(filtrados);
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: sel ? "var(--text)" : "var(--text-muted)",
@@ -59,9 +61,15 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
             </div>
             <div style={{ overflowY: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+                <thead><tr>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Grupo" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <th>Sit. Rep.</th>
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                </tr></thead>
                 <tbody>
-                  {filtrados.map((a) => (
+                  {ord.linhasOrdenadas.map((a) => (
                     <tr key={a.numero} onClick={() => { onChange(a.numero); setAberto(false); }} style={{ cursor: "pointer", background: a.numero === value ? "rgba(94,26,46,0.35)" : undefined }} className="row-clickable">
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>

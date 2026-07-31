@@ -9,6 +9,7 @@ import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
@@ -24,6 +25,7 @@ export function IndicadoresGerais() {
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
   const [ultimoControle, setUltimoControle] = useState<{ data: string; linhas: any[] } | null | undefined>(undefined);
   const [controleAberto, setControleAberto] = useState(false);
+  const ordControle = useOrdenacao(ultimoControle?.linhas ?? []);
 
   // Último controle leiteiro do rebanho — busca só quando o card é clicado
   // pela 1ª vez (undefined = ainda não buscado, null = buscado e sem dados).
@@ -196,9 +198,16 @@ export function IndicadoresGerais() {
                 {new Date(ultimoControle.data + "T00:00:00").toLocaleDateString("pt-BR")} — {ultimoControle.linhas.length} {ultimoControle.linhas.length !== 1 ? "animais" : "animal"}
               </p>
               <table className="fazenda-table">
-                <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>Produção (kg)</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+                <thead>
+                  <tr>
+                    <ThOrdenavel label="Nº" campo="numero" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} />
+                    <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} />
+                    <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} alinhar="right" />
+                    <ThOrdenavel label="DEL" campo="del" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} alinhar="right" />
+                  </tr>
+                </thead>
                 <tbody>
-                  {ultimoControle.linhas.map((c: any) => (
+                  {ordControle.linhasOrdenadas.map((c: any) => (
                     <tr key={c.numero}>
                       <td style={{ fontWeight: 700 }}>{c.numero}</td>
                       <td style={{ fontSize: "0.75rem" }}>{c.grupo_primario || "—"}</td>

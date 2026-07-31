@@ -7,6 +7,7 @@ import { SecaoRecolhivel } from "@/components/ui";
 import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
 import { UNIDADES } from "@/components/lancamentos/_shared";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 const CadastrarNovaDieta = dynamic(() => import("@/components/CadastroAlimentacao").then((m) => m.CadastrarNovaDieta), { ssr: false });
 
 type ItemDieta = { alimento: string; quantidade: string; unidade: string };
@@ -34,6 +35,8 @@ export function FormAlimentacaoDieta() {
   const [itensReal, setItensReal] = useState<ItemDieta[]>([itemDietaVazio()]);
   const [comparandoId, setComparandoId] = useState<number | null>(null);
   const [comparativo, setComparativo] = useState<ItemComparativo[] | null>(null);
+
+  const ordDietas = useOrdenacao(dietas ?? []);
 
   const carregar = () => fetchDietas().then(setDietas).catch((e) => setErro(e.message));
   useEffect(() => {
@@ -111,9 +114,18 @@ export function FormAlimentacaoDieta() {
           >
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Lote</th><th>Responsável</th><th>Abertura</th><th>Prev. encerramento</th><th>Situação</th><th></th></tr></thead>
+              <thead>
+                <tr>
+                  <ThOrdenavel label="Lote" campo="lote" coluna={ordDietas.coluna} dir={ordDietas.dir} ordenar={ordDietas.ordenar} />
+                  <ThOrdenavel label="Responsável" campo="responsavel" coluna={ordDietas.coluna} dir={ordDietas.dir} ordenar={ordDietas.ordenar} />
+                  <ThOrdenavel label="Abertura" campo="data_abertura" coluna={ordDietas.coluna} dir={ordDietas.dir} ordenar={ordDietas.ordenar} />
+                  <ThOrdenavel label="Prev. encerramento" campo="data_prevista_encerramento" coluna={ordDietas.coluna} dir={ordDietas.dir} ordenar={ordDietas.ordenar} />
+                  <ThOrdenavel label="Situação" campo="ativa" coluna={ordDietas.coluna} dir={ordDietas.dir} ordenar={ordDietas.ordenar} />
+                  <th></th>
+                </tr>
+              </thead>
               <tbody>
-                {dietas.map((d) => (
+                {ordDietas.linhasOrdenadas.map((d) => (
                   <Fragment key={d.id}>
                     <tr>
                       <td style={{ fontWeight: 700 }}>{d.lote}</td>

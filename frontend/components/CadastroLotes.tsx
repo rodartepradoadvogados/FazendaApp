@@ -7,6 +7,7 @@ import {
   type CategoriaManejo,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const DIAS_SEMANA = [
   { v: 0, l: "Segunda" }, { v: 1, l: "Terça" }, { v: 2, l: "Quarta" }, { v: 3, l: "Quinta" },
@@ -121,6 +122,7 @@ export default function CadastroLotes() {
   const [salvandoAgendamento, setSalvandoAgendamento] = useState(false);
   const [animaisQueAtendem, setAnimaisQueAtendem] = useState<string[] | null>(null); // popup da seta
   const [inativandoLote, setInativandoLote] = useState<Lote | null>(null); // assistente de transferência
+  const ord = useOrdenacao(lotes || []);
 
   const carregar = () => fetchLotes({ incluirInativos: true }).then(setLotes).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -274,17 +276,25 @@ export default function CadastroLotes() {
                       ficava escondido atrás da rolagem e parecia que não
                       dava pra editar. */}
                   <th></th>
-                  <th>Código</th><th>Nome</th><th style={{ textAlign: "right" }}>Animais</th>
-                  <th style={{ textAlign: "right" }}>Dias pós-parto mín.</th><th style={{ textAlign: "right" }}>Dias pós-parto máx.</th>
-                  <th style={{ textAlign: "right" }}>Produção mín. (L)</th><th style={{ textAlign: "right" }}>Produção máx. (L)</th>
-                  <th>Situação produtiva</th><th>Situação reprodutiva</th><th>Categoria</th>
-                  <th style={{ textAlign: "right" }}>Falt. parto de</th><th style={{ textAlign: "right" }}>Falt. parto até</th>
-                  <th style={{ textAlign: "right" }}>Peso de (kg)</th><th style={{ textAlign: "right" }}>Peso até (kg)</th>
-                  <th>Status</th>
+                  <ThOrdenavel label="Código" campo="codigo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Animais" campo="qtd_animais" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Dias pós-parto mín." campo="del_min" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Dias pós-parto máx." campo="del_max" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Produção mín. (L)" campo="producao_min" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Produção máx. (L)" campo="producao_max" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Situação produtiva" campo="status_lactacao" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Situação reprodutiva" campo="situacao_reprodutiva" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categorias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Falt. parto de" campo="dias_para_parto_min" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Falt. parto até" campo="dias_para_parto_max" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Peso de (kg)" campo="peso_min" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Peso até (kg)" campo="peso_max" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Status" campo="ativo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                 </tr>
               </thead>
               <tbody>
-                {lotes.map((l) => (
+                {ord.linhasOrdenadas.map((l) => (
                   <Fragment key={l.id}>
                     <tr style={!l.ativo ? { opacity: 0.55 } : undefined}>
                       <td style={{ whiteSpace: "nowrap" }}>

@@ -6,6 +6,7 @@ import {
   fetchResumoFinanceiroCowData, fetchLivroCaixaCowData, fetchFluxoCaixaCowData, fetchDreCowData,
   type LancamentoCowData, type ResumoFinanceiroCowData, type MovimentoCowData, type FluxoCaixaCowDataMes, type DreCowData,
 } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
 const inputStyle: React.CSSProperties = {
@@ -139,6 +140,8 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
     try { await excluirLancamentoCowData(id); carregar(); onMudou(); } catch (e: any) { setErro(e.message); }
   }
 
+  const ord = useOrdenacao(lancamentos ?? []);
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.8rem" }}>
@@ -202,17 +205,17 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
-              <th style={{ padding: "0.6rem 1rem" }}>Data</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Descrição</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Categoria</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Valor</th>
+              <ThOrdenavel label="Data" campo="data" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Descrição" campo="descricao" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Valor" campo="valor" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
               <th style={{ padding: "0.6rem 1rem" }}></th>
             </tr>
           </thead>
           <tbody>
             {lancamentos === null && <tr><td colSpan={5} style={{ padding: "1rem", color: COR.mudo }}>Carregando…</td></tr>}
             {lancamentos?.length === 0 && <tr><td colSpan={5} style={{ padding: "1rem", color: COR.mudo }}>Nenhum lançamento manual neste mês.</td></tr>}
-            {lancamentos?.map((l) => (
+            {lancamentos && ord.linhasOrdenadas.map((l) => (
               <tr key={l.id} style={{ borderBottom: `1px solid ${COR.borda}` }}>
                 <td style={{ padding: "0.6rem 1rem" }}>{new Date(l.data + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                 <td style={{ padding: "0.6rem 1rem" }}>{l.descricao}{l.contraparte ? ` — ${l.contraparte}` : ""}</td>

@@ -6,12 +6,13 @@
 // tela da fazenda" — reforça visualmente a separação de dados/negócio.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { ehApp } from "@/lib/nativo";
 
 const COR = {
   bg: "#0a0e1a", painel: "#0d1220", borda: "#1c2438", texto: "#e8ecf5",
@@ -47,11 +48,16 @@ const GRUPOS = [
 export default function PainelCowDataLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const [aberto, setAberto] = useState(false);
+  // Chegou aqui pelo item "Painel CowData" do Menu do app (ver
+  // app/app/menu/page.tsx) — "voltar à fazenda" precisa cair no /app, nunca
+  // no site desktop completo (mesma regra do AuthShell::destinoRaiz).
+  const [voltarHref, setVoltarHref] = useState("/");
+  useEffect(() => { ehApp().then((app) => { if (app) setVoltarHref("/app"); }); }, []);
 
   const navConteudo = (
     <>
       <div style={{ padding: "1.1rem 1.1rem 0.9rem" }}>
-        <Link href="/" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
+        <Link href={voltarHref} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
           <ArrowLeft size={13} /> Voltar à fazenda
         </Link>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>

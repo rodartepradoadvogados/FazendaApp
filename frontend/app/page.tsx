@@ -10,6 +10,7 @@ import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { Gauge } from "@/components/Gauge";
 import { Indicador, EstadoVazio } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -39,6 +40,7 @@ export default function Home() {
   const [baixas, setBaixas] = useState<any[]>([]);
   const [desdeDescarte, setDesdeDescarte] = useState(() => `${new Date().getFullYear()}-01-01`);
   const [modalDescartados, setModalDescartados] = useState<{ title: string; list: any[] } | null>(null);
+  const ordDescartados = useOrdenacao(modalDescartados?.list ?? []);
   // Nota informativa simples (distinta de matéria de blog) — atualizável só
   // pelo dono da plataforma; some quando não há nenhuma ativa.
   const [nota, setNota] = useState<NotaCapa | null>(null);
@@ -364,9 +366,18 @@ export default function Home() {
             </div>
             <div style={{ overflowY: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Nº</th><th>Tipo</th><th>Motivo</th><th>Data</th><th style={{ textAlign: "right" }}>Valor</th><th>Cliente</th></tr></thead>
+                <thead>
+                  <tr>
+                    <ThOrdenavel label="Nº" campo="numero_animal" coluna={ordDescartados.coluna} dir={ordDescartados.dir} ordenar={ordDescartados.ordenar} />
+                    <ThOrdenavel label="Tipo" campo="tipo_baixa" coluna={ordDescartados.coluna} dir={ordDescartados.dir} ordenar={ordDescartados.ordenar} />
+                    <ThOrdenavel label="Motivo" campo="motivo" coluna={ordDescartados.coluna} dir={ordDescartados.dir} ordenar={ordDescartados.ordenar} />
+                    <ThOrdenavel label="Data" campo="data_baixa" coluna={ordDescartados.coluna} dir={ordDescartados.dir} ordenar={ordDescartados.ordenar} />
+                    <ThOrdenavel label="Valor" campo="valor" coluna={ordDescartados.coluna} dir={ordDescartados.dir} ordenar={ordDescartados.ordenar} alinhar="right" />
+                    <ThOrdenavel label="Cliente" campo="cliente" coluna={ordDescartados.coluna} dir={ordDescartados.dir} ordenar={ordDescartados.ordenar} />
+                  </tr>
+                </thead>
                 <tbody>
-                  {modalDescartados.list.map((b: any) => (
+                  {ordDescartados.linhasOrdenadas.map((b: any) => (
                     <tr key={b.id}>
                       <td style={{ fontWeight: 700 }}>{b.numero_animal}</td>
                       <td style={{ fontSize: "0.8rem" }}>{LABEL_TIPO_BAIXA[b.tipo_baixa] || b.tipo_baixa}</td>

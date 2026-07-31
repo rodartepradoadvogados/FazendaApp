@@ -9,6 +9,17 @@ export function getUsuario(): any | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; }
 }
+// "Manter conectado neste aparelho" (checkbox no login) — gravado à parte do
+// token pra outras partes do app saberem que esta é uma sessão de validade
+// longa (90 dias, ver backend/fazenda/auth.py::TOKEN_VALIDADE_LONGA_S) sem
+// precisar decodificar o token. Usado por lib/idle.ts (não desloga por
+// inatividade numa sessão "manter conectado" — senão a promessa da checkbox
+// vira letra morta) e por lib/nativo.ts (só espelha no armazenamento nativo
+// as sessões marcadas assim).
+export function manterConectadoAtivo(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem("manter_conectado") === "1";
+}
 // Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
 // — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
 // que nunca teve mais de uma fazenda vinculada (o caso de hoje).
@@ -21,11 +32,17 @@ export function logout() {
   if (typeof window !== "undefined") {
     // Best-effort, sem aguardar — dentro do app nativo, remove o token FCM
     // deste aparelho (senão o próximo funcionário a usar o mesmo celular
-    // continuaria recebendo as notificações do usuário que saiu). Fora do
-    // app, removerPushNativo() não faz nada. Dispara antes do redirect pra
-    // dar a maior chance possível da requisição sair antes da navegação.
-    import("@/lib/nativo").then(({ removerPushNativo }) => removerPushNativo()).catch(() => {});
+    // continuaria recebendo as notificações do usuário que saiu) e apaga a
+    // cópia nativa da sessão (senão um próximo login com "Manter conectado"
+    // neste mesmo aparelho a restauraria). Fora do app, ambas não fazem nada.
+    // Dispara antes do redirect pra dar a maior chance possível da requisição
+    // sair antes da navegação.
+    import("@/lib/nativo").then(({ removerPushNativo, limparSessaoNativa }) => {
+      removerPushNativo();
+      limparSessaoNativa();
+    }).catch(() => {});
     localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
+    localStorage.removeItem("manter_conectado");
     location.href = "/login";
   }
 }
@@ -131,6 +148,18 @@ export async function login(username: string, senha: string, manterConectado = f
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
   if (data.fazenda_atual) localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
   else localStorage.removeItem("fazenda_atual");
+  // Sessão de validade longa (90 dias) — ver TOKEN_VALIDADE_LONGA_S no backend.
+  if (manterConectado) localStorage.setItem("manter_conectado", "1");
+  else localStorage.removeItem("manter_conectado");
+  // Espelha a sessão no armazenamento nativo (@capacitor/preferences), mais
+  // durável que o localStorage da WebView — só quando "Manter conectado" está
+  // marcado (ver lib/nativo.ts::salvarSessaoNativa). Fora do app nativo não
+  // faz nada. Best-effort, sem aguardar: não pode atrasar o login.
+  if (manterConectado) {
+    import("@/lib/nativo")
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, data.usuario, data.fazenda_atual || null))
+      .catch(() => {});
+  }
   // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
   if (data.usuario?.paleta === "vinho" || data.usuario?.paleta === "verde" || data.usuario?.paleta === "azul") {
     document.documentElement.setAttribute("data-paleta", data.usuario.paleta);
@@ -152,6 +181,13 @@ export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  // Mantém a cópia nativa sincronizada com o token novo (o backend reemite o
+  // token ao trocar de fazenda) — mesma lógica de login(), ver lib/nativo.ts.
+  if (manterConectadoAtivo()) {
+    import("@/lib/nativo")
+      .then(({ salvarSessaoNativa }) => salvarSessaoNativa(data.token, getUsuario(), data.fazenda_atual))
+      .catch(() => {});
+  }
   return data.fazenda_atual;
 }
 
@@ -1306,7 +1342,10 @@ export async function fetchVales() {
 }
 export async function criarVale(dados: {
   pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
-  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string; confirmar?: boolean;
+  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string;
+  // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
+  // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale.
+  conta_corrente_id?: number; confirmar?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1322,7 +1361,8 @@ export async function criarVale(dados: {
 }
 export async function atualizarVale(valeId: number, dados: {
   pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
-  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string; confirmar?: boolean;
+  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string;
+  conta_corrente_id?: number; confirmar?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1592,6 +1632,9 @@ export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
+  // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
+  // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale_avulso.
+  conta_corrente_id?: number;
 }) {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1612,6 +1655,7 @@ export async function fetchValesAvulsos() {
 export async function atualizarValeAvulso(valeId: number, dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
+  conta_corrente_id?: number;
   acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
   valores_itens?: Record<number, number>; confirmar?: boolean;
 }) {
@@ -3361,7 +3405,14 @@ export async function fetchCustoSafra(safraId: number) {
 }
 
 // ── Contas correntes (Configurações > Parâmetros financeiros) ──
-export async function fetchContasCorrentes() {
+// Traz id + rótulo legível de cada conta — usado sempre que o formulário
+// precisa gravar o vínculo com a conta (conta_corrente_id), e não só exibir
+// o texto (diferente de `fetchOpcoesFinanceiro().contas_bancarias`, que só
+// devolve rótulos em texto, sem id).
+export type ContaCorrenteCadastro = {
+  id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string;
+};
+export async function fetchContasCorrentes(): Promise<ContaCorrenteCadastro[]> {
   const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Contas correntes error: ${res.status}`);
   return res.json();

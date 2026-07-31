@@ -7,6 +7,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SecaoRecolhivel } from "@/components/ui";
 import { estiloSexado } from "@/lib/constants";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Ficha = {
   animal: Record<string, unknown>;
@@ -135,6 +136,56 @@ const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text
 const inpStyle: React.CSSProperties = { width: "100%", padding: "0.35rem 0.5rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" };
 const btnEdit: React.CSSProperties = { fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" };
 
+// Seção genérica de histórico (partos, serviços, sanidade etc.) — colunas
+// dinâmicas por seção. Cada seção ganha sua própria ordenação (hook próprio,
+// por isso é um componente e não um `.map()` direto). Colunas formatadas
+// (chave terminando em "Fmt") ordenam pelo campo bruto correspondente —
+// `formatarLinhas` mantém os dois no mesmo objeto — igual à regra usada no
+// Relatório Personalizado (prefere campo bruto ao formatado).
+function SecaoHistoricoTabela({ chave, titulo, colunas, linhas, onAbrirCria }: {
+  chave: string; titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[]; onAbrirCria: (numero: string) => void;
+}) {
+  const ord = useOrdenacao(linhas);
+  return (
+    <SecaoRecolhivel titulo={titulo} badge={String(linhas.length)}>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table">
+          <thead>
+            <tr>
+              {colunas.map((c) => {
+                const campo = c.key.endsWith("Fmt") ? c.key.slice(0, -3) : c.key;
+                return <ThOrdenavel key={c.key} label={c.header} campo={campo} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />;
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {ord.linhasOrdenadas.map((l, i) => (
+              <tr key={i} style={chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}
+                title={chave === "servicos" && l.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
+                {colunas.map((c) => {
+                  const val = l[c.key];
+                  // Número da cria: link para abrir a ficha da própria cria.
+                  if ((c.key === "numero_cria_1" || c.key === "numero_cria_2") && val) {
+                    return (
+                      <td key={c.key} style={{ fontSize: "0.78rem" }}>
+                        <button onClick={() => onAbrirCria(String(val))} title={`Abrir a ficha da cria ${val}`}
+                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dourado-light)", textDecoration: "underline", fontWeight: 600, fontSize: "0.78rem" }}>
+                          {String(val)}
+                        </button>
+                      </td>
+                    );
+                  }
+                  return <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(val ?? "—")}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SecaoRecolhivel>
+  );
+}
+
 // Um campo editável (label + input/select) para os formulários da ficha.
 // `destaque` marca em vermelho o campo que motivou uma pendência da Agenda
 // (colostragem/IgG não lançados no parto) — sinaliza exatamente o que falta,
@@ -165,6 +216,8 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
   // /reproducao/verificar-mae) antes de salvar, mostrando data/parto e
   // eventuais inconsistências.
   const [confirmMae, setConfirmMae] = useState<{ verificacao: VerificacaoMaeParto; payload: Record<string, any> } | null>(null);
+
+  const ordLinhaTempo = useOrdenacao(ficha?.linha_tempo_sanitaria ?? []);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
 
@@ -472,9 +525,17 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             <SecaoRecolhivel titulo="Rastreabilidade sanitária — linha do tempo" badge={String(ficha.linha_tempo_sanitaria.length)}>
               <div className="overflow-x-auto">
                 <table className="fazenda-table">
-                  <thead><tr><th>Data</th><th>Evento</th><th>Descrição</th><th>GTA</th><th>Responsável</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <ThOrdenavel label="Data" campo="data" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                      <ThOrdenavel label="Evento" campo="tipo_evento" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                      <ThOrdenavel label="Descrição" campo="descricao" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                      <ThOrdenavel label="GTA" campo="gta" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                      <ThOrdenavel label="Responsável" campo="responsavel" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                    </tr>
+                  </thead>
                   <tbody>
-                    {ficha.linha_tempo_sanitaria.map((e, i) => (
+                    {ordLinhaTempo.linhasOrdenadas.map((e, i) => (
                       <tr key={i}>
                         <td style={{ fontSize: "0.78rem" }}>{e.data ? formatDate(e.data) : "—"}</td>
                         <td style={{ fontSize: "0.78rem", fontWeight: 600 }}>{e.tipo_evento}</td>
@@ -494,34 +555,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             if (!linhasBrutas.length) return null;
             const linhas = formatarLinhas(s.chave, linhasBrutas);
             return (
-              <SecaoRecolhivel key={s.chave} titulo={s.titulo} badge={String(linhas.length)}>
-                <div className="overflow-x-auto">
-                  <table className="fazenda-table">
-                    <thead><tr>{s.colunas.map((c) => <th key={c.key}>{c.header}</th>)}</tr></thead>
-                    <tbody>
-                      {linhas.map((l, i) => (
-                        <tr key={i} style={s.chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}
-                          title={s.chave === "servicos" && l.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
-                          {s.colunas.map((c) => {
-                          const val = l[c.key];
-                          // Número da cria: link para abrir a ficha da própria cria.
-                          if ((c.key === "numero_cria_1" || c.key === "numero_cria_2") && val) {
-                            return (
-                              <td key={c.key} style={{ fontSize: "0.78rem" }}>
-                                <button onClick={() => buscar(String(val))} title={`Abrir a ficha da cria ${val}`}
-                                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dourado-light)", textDecoration: "underline", fontWeight: 600, fontSize: "0.78rem" }}>
-                                  {String(val)}
-                                </button>
-                              </td>
-                            );
-                          }
-                          return <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(val ?? "—")}</td>;
-                        })}</tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </SecaoRecolhivel>
+              <SecaoHistoricoTabela key={s.chave} chave={s.chave} titulo={s.titulo} colunas={s.colunas} linhas={linhas} onAbrirCria={buscar} />
             );
           })}
 

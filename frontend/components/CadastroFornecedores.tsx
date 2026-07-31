@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Truck, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchFornecedores, criarFornecedor, atualizarFornecedor } from "@/lib/api";
 import { maskTelefone, maskCpfCnpj } from "@/lib/masks";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Fornecedor = {
   id: number; nome: string; tipo: string; categoria: string | null; cnpj_cpf: string | null; telefone: string | null;
@@ -82,6 +83,7 @@ export default function CadastroFornecedores() {
   const filtrados = (itens ?? []).filter((f) =>
     !termoBusca || normalizar(`${f.nome} ${f.tipo} ${f.categoria ?? ""} ${f.cnpj_cpf ?? ""} ${f.email ?? ""} ${f.telefone ?? ""}`).includes(termoBusca)
   );
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
     <div className="card">
@@ -105,9 +107,17 @@ export default function CadastroFornecedores() {
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th>Tipo</th><th>Categoria</th><th>CNPJ/CPF</th><th>Telefone</th><th>Email</th><th></th></tr></thead>
+            <thead><tr>
+              <ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Tipo" campo="tipo" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="CNPJ/CPF" campo="cnpj_cpf" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Telefone" campo="telefone" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Email" campo="email" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <th></th>
+            </tr></thead>
             <tbody>
-              {filtrados.map((f) => (
+              {linhasOrdenadas.map((f) => (
                 <Fragment key={f.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{f.nome}{!f.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

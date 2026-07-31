@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 export type LoteOpcao = { codigo: string; total: number; categoria: string; del_medio: number | null };
 
@@ -38,6 +39,7 @@ export function LotePicker({ opcoes, selecionados, onChange, placeholder = "Sele
     if (!q) return opcoes;
     return opcoes.filter((o) => `${o.codigo} ${o.categoria}`.toLowerCase().includes(q));
   }, [opcoes, busca]);
+  const ord = useOrdenacao(filtrados);
 
   const toggle = (codigo: string) => {
     const novo = new Set(sel);
@@ -77,10 +79,13 @@ export function LotePicker({ opcoes, selecionados, onChange, placeholder = "Sele
               <table className="fazenda-table">
                 <thead><tr>
                   <th style={{ width: 32 }}><button onClick={todos} className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.1rem 0.3rem" }}>{sel.size === opcoes.length && opcoes.length ? "Limpar" : "Todos"}</button></th>
-                  <th>Lote</th><th style={{ textAlign: "right" }}>Animais</th><th>Categoria</th><th style={{ textAlign: "right" }}>DEL médio</th>
+                  <ThOrdenavel label="Lote" campo="codigo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Animais" campo="total" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="DEL médio" campo="del_medio" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 </tr></thead>
                 <tbody>
-                  {filtrados.map((o) => (
+                  {ord.linhasOrdenadas.map((o) => (
                     <tr key={o.codigo} onClick={() => toggle(o.codigo)} style={{ cursor: "pointer", background: sel.has(o.codigo) ? "rgba(94,26,46,0.35)" : undefined }} className="row-clickable">
                       <td style={{ textAlign: "center" }}>{sel.has(o.codigo) ? <Check size={14} style={{ color: "var(--dourado-light)" }} /> : null}</td>
                       <td style={{ fontWeight: 700 }}>{o.codigo}</td>

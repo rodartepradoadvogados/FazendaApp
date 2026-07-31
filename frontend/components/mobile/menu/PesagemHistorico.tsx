@@ -6,6 +6,16 @@ import { useMemo, useState } from "react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchRelatorioPesagemCorporal, formatDate, firstDayOfMonth, today } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, FiltroPeriodo } from "@/components/mobile/menu/comum";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+
+const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
+  { chave: "numero_matriz", rotulo: "Animal" },
+  { chave: "gmd_kg_dia", rotulo: "GMD (kg/dia)" },
+  { chave: "gpd_kg_dia", rotulo: "GPD (kg/dia)" },
+  { chave: "ultima_data", rotulo: "Última pesagem" },
+  { chave: "ultima_peso", rotulo: "Último peso" },
+];
 
 type LinhaPesagem = {
   numero_matriz: string; grupo_primario: string | null;
@@ -22,6 +32,7 @@ export default function PesagemHistorico({ onVoltar }: { onVoltar: () => void })
   );
 
   const linhas = useMemo(() => dados?.linhas ?? [], [dados]);
+  const ord = useOrdenacao(linhas);
 
   return (
     <div>
@@ -38,8 +49,9 @@ export default function PesagemHistorico({ onVoltar }: { onVoltar: () => void })
         <Vazio>Nenhuma pesagem no período.</Vazio>
       ) : (
         <>
+          <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
           <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>{linhas.length} {linhas.length !== 1 ? "animais" : "animal"}</p>
-          {linhas.map((l, i) => (
+          {ord.linhasOrdenadas.map((l, i) => (
             <MobCard key={l.numero_matriz} alt={(i % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.6rem" }}>
                 <span style={{ fontWeight: 800, fontSize: "1.02rem" }}>Nº {l.numero_matriz}</span>

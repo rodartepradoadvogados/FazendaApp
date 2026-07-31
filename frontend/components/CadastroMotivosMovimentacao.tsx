@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { ArrowRightLeft, Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
 import { fetchMotivosMovimentacaoCadastro, criarMotivoMovimentacao, atualizarMotivoMovimentacao } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Motivo = { id: number; nome: string; ativo: boolean };
 type Form = { nome: string; ativo: boolean };
@@ -20,6 +21,7 @@ export default function CadastroMotivosMovimentacao() {
 
   const carregar = () => fetchMotivosMovimentacaoCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (m: Motivo) => { setForm({ nome: m.nome, ativo: m.ativo }); setEditando(m.id); setMsg(null); };
@@ -62,9 +64,9 @@ export default function CadastroMotivosMovimentacao() {
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th></th></tr></thead>
+            <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
             <tbody>
-              {itens.map((m) => (
+              {linhasOrdenadas.map((m) => (
                 <Fragment key={m.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

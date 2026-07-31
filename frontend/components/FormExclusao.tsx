@@ -6,6 +6,7 @@ import {
   fetchPendentesExclusao, aprovarExclusao, rejeitarExclusao, ehAdmin, formatDate,
 } from "@/lib/api";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 // Para onde mandar o usuário ao clicar "Editar" num registro filtrado — cada
 // tipo já tem um lugar próprio no site que permite editar (ou pelo menos
@@ -80,7 +81,8 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
   const [pendentes, setPendentes] = useState<Pendente[] | null>(null);
   const [decidindo, setDecidindo] = useState<number | null>(null);
 
-  const pagResultados = usePaginacao(resultados);
+  const ordResultados = useOrdenacao(resultados);
+  const pagResultados = usePaginacao(ordResultados.linhasOrdenadas);
 
   const carregarPendentes = () => {
     if (!ehAdmin()) return;
@@ -232,7 +234,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
         <div className="card" style={{ padding: 0 }}>
           <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
             <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Registro</th><th></th></tr></thead>
+              <thead><tr><ThOrdenavel label="Registro" campo="titulo" coluna={ordResultados.coluna} dir={ordResultados.dir} ordenar={ordResultados.ordenar} /><th></th></tr></thead>
               <tbody>
                 {pagResultados.linhasPagina.map((c) => (
                   <tr key={`${c.tipo_real || tipo}-${c.id}`}>

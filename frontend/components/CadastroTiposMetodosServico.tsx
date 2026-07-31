@@ -5,6 +5,7 @@ import {
   fetchTiposServico, criarTipoServico, atualizarTipoServico,
   fetchMetodosServico, criarMetodoServico, atualizarMetodoServico, type MetodoServico,
 } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Tipo = { id: number; nome: string; ativo: boolean };
 
@@ -46,6 +47,7 @@ function CardTipos({ tipos, onSalvo }: { tipos: Tipo[] | null; onSalvo: () => vo
   const abrirNovo = () => { setForm({ nome: "", ativo: true }); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (t: Tipo) => { setForm({ nome: t.nome, ativo: t.ativo }); setEditando(t.id); setMsg(null); };
   const cancelar = () => { setEditando(null); setMsg(null); };
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(tipos ?? []);
 
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
@@ -76,9 +78,9 @@ function CardTipos({ tipos, onSalvo }: { tipos: Tipo[] | null; onSalvo: () => vo
       {tipos && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th></th></tr></thead>
+            <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
             <tbody>
-              {tipos.map((t) => (
+              {linhasOrdenadas.map((t) => (
                 <Fragment key={t.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{t.nome}{!t.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
@@ -139,6 +141,7 @@ function CardMetodos({ metodos, tipos, onSalvo }: { metodos: MetodoServico[] | n
   const abrirNovo = () => { setForm({ nome: "", tipo_servico_id: tipos?.[0] ? String(tipos[0].id) : "", ativo: true }); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (m: MetodoServico) => { setForm({ nome: m.nome, tipo_servico_id: String(m.tipo_servico_id), ativo: m.ativo }); setEditando(m.id); setMsg(null); };
   const cancelar = () => { setEditando(null); setMsg(null); };
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(metodos ?? []);
 
   // Cobertura só faz sentido com Monta Natural — pré-preenche o nome quando o
   // usuário escolhe esse tipo num método novo, para não digitar à toa.
@@ -206,9 +209,9 @@ function CardMetodos({ metodos, tipos, onSalvo }: { metodos: MetodoServico[] | n
       {metodos && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th>Tipo de serviço</th><th></th></tr></thead>
+            <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Tipo de serviço" campo="tipo_servico_nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
             <tbody>
-              {metodos.map((m) => (
+              {linhasOrdenadas.map((m) => (
                 <Fragment key={m.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

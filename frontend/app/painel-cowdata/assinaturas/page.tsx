@@ -5,6 +5,7 @@ import {
   fetchFazendas, fetchContratoFazenda, aprovarContratoFazenda, suspenderContratoFazenda,
   type Fazenda, type ContratoFazenda,
 } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c" };
 
@@ -42,6 +43,13 @@ export default function AssinaturasCowData() {
     catch (e: any) { setErro(e.message); } finally { setProcessando(null); }
   }
 
+  // Achata fazenda+contrato para o useOrdenacao poder ler `linha[campo]` direto.
+  const linhasOrd = (linhas ?? []).map((l) => ({
+    ...l, fazenda_nome: l.fazenda.nome, plano: l.contrato.plano, ciclo_pagamento: l.contrato.ciclo_pagamento,
+    preco_mensal: l.contrato.preco_mensal, status: l.contrato.status || "aguardando_aprovacao",
+  }));
+  const ord = useOrdenacao(linhasOrd);
+
   return (
     <div className="animate-in">
       <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: "0.2rem" }}>Assinaturas</h1>
@@ -54,11 +62,11 @@ export default function AssinaturasCowData() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
-              <th style={{ padding: "0.6rem 1rem" }}>Fazenda</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Plano</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Ciclo</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Valor/mês</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Status</th>
+              <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Plano" campo="plano" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Ciclo" campo="ciclo_pagamento" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Valor/mês" campo="preco_mensal" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Status" campo="status" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
               <th style={{ padding: "0.6rem 1rem" }}></th>
             </tr>
           </thead>
@@ -69,7 +77,7 @@ export default function AssinaturasCowData() {
             {linhas?.length === 0 && (
               <tr><td colSpan={6} style={{ padding: "1rem", color: COR.mudo }}>Nenhuma fazenda cadastrada ainda.</td></tr>
             )}
-            {linhas?.map(({ fazenda, contrato }) => {
+            {linhas && ord.linhasOrdenadas.map(({ fazenda, contrato }) => {
               const st = STATUS_LABEL[contrato.status || "aguardando_aprovacao"] || { label: "Sem contrato", cor: COR.mudo };
               return (
                 <tr key={fazenda.id} style={{ borderBottom: `1px solid ${COR.borda}` }}>

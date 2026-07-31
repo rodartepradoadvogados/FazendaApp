@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    ContaGerencial, FolhaPagamento, LancamentoItem, Pessoa, ValeFuncionario, ValeParcela,
+    ContaCorrente, ContaGerencial, FolhaPagamento, LancamentoItem, Pessoa, ValeFuncionario, ValeParcela,
 )
 
 
@@ -53,6 +53,15 @@ def _criar_pessoa(engine, salario_base: float = 3000.0) -> int:
         s.commit()
         s.refresh(p)
         return p.id
+
+
+def _criar_conta_corrente(engine) -> int:
+    with Session(engine) as s:
+        conta = ContaCorrente(banco="Banco do Brasil", agencia="0001-2", numero_conta="12345-6")
+        s.add(conta)
+        s.commit()
+        s.refresh(conta)
+        return conta.id
 
 
 def test_vale_apos_folha_reduz_no_get_self_heal(client):
@@ -101,10 +110,12 @@ def test_vale_apos_folha_reduz_no_get_self_heal(client):
 def test_vale_duas_parcelas_cai_em_competencias_consecutivas(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
+    conta_id = _criar_conta_corrente(engine)
 
     r = c.post("/cadastro/vales", json={
         "pessoa_id": pessoa_id, "valor_total": 1000.0, "forma_pagamento": "pix",
         "data_pagamento": "2026-03-01", "parcelas": 2, "competencia_inicio": "2026-03",
+        "conta_corrente_id": conta_id,
     })
     assert r.status_code == 201 or r.status_code == 200, r.text
     detalhe = {d["competencia"]: d["valor"] for d in r.json()["parcelas_detalhe"]}
@@ -150,10 +161,12 @@ def test_editar_conta_inexistente_404(client):
 # Edição de UMA parcela de vale de funcionário (PUT /vales/{id}/parcelas/{id})
 # ---------------------------------------------------------------------------
 
-def _criar_vale_3_parcelas(c, pessoa_id: int) -> dict:
+def _criar_vale_3_parcelas(c, engine, pessoa_id: int) -> dict:
+    conta_id = _criar_conta_corrente(engine)
     r = c.post("/cadastro/vales", json={
         "pessoa_id": pessoa_id, "valor_total": 900.0, "forma_pagamento": "pix",
         "data_pagamento": "2026-05-01", "parcelas": 3, "competencia_inicio": "2026-05",
+        "conta_corrente_id": conta_id,
     })
     assert r.status_code == 200, r.text
     return r.json()
@@ -170,7 +183,7 @@ def _parcelas_do_vale(engine, vale_id: int) -> list[ValeParcela]:
 def test_editar_parcela_sem_divergencia_nao_exige_acao(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json={"valor": 300.0})
@@ -181,7 +194,7 @@ def test_editar_parcela_sem_divergencia_nao_exige_acao(client):
 def test_editar_parcela_com_divergencia_sem_confirmar_da_409(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json={"valor": 200.0})
@@ -195,7 +208,7 @@ def test_editar_parcela_com_divergencia_sem_confirmar_da_409(client):
 def test_editar_parcela_conceder_so_muda_essa_parcela(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json={
@@ -214,7 +227,7 @@ def test_editar_parcela_conceder_so_muda_essa_parcela(client):
 def test_editar_parcela_redistribuir_igual_mantem_soma_total(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json={
@@ -234,7 +247,7 @@ def test_editar_parcela_redistribuir_igual_mantem_soma_total(client):
 def test_editar_parcela_redistribuir_livre_aplica_valores_informados(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json={
@@ -252,7 +265,7 @@ def test_editar_parcela_redistribuir_igual_nao_mexe_em_parcelas_anteriores(clien
     intocada."""
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[1].id}", json={
@@ -268,7 +281,7 @@ def test_editar_parcela_redistribuir_igual_nao_mexe_em_parcelas_anteriores(clien
 def test_editar_parcela_redistribuir_livre_divergencia_total_exige_confirmacao(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     # 400 + 400 + 200 = 1000, diferente dos 900 pagos no vale.
@@ -295,7 +308,7 @@ def test_editar_parcela_redistribuir_livre_divergencia_total_exige_confirmacao(c
 def test_editar_parcela_ja_paga_e_bloqueada(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
-    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    vale = _criar_vale_3_parcelas(c, engine, pessoa_id)
     parcelas = _parcelas_do_vale(engine, vale["id"])
 
     with Session(engine) as s:
@@ -332,17 +345,18 @@ def test_vale_avulso_editar_com_divergencia_sem_confirmar_da_409(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
     empreitada = _criar_empreitada_3_parcelas(c, pessoa_id)
+    conta_id = _criar_conta_corrente(engine)
 
     r = c.post("/cadastro/vale-avulso", json={
         "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 300.0,
-        "forma_pagamento": "pix", "data_pagamento": "2026-06-01",
+        "forma_pagamento": "pix", "data_pagamento": "2026-06-01", "conta_corrente_id": conta_id,
     })
     assert r.status_code == 200, r.text
     vale_id = r.json()["vale"]["id"]
 
     r = c.put(f"/cadastro/vale-avulso/{vale_id}", json={
         "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 500.0,
-        "forma_pagamento": "pix", "data_pagamento": "2026-06-01",
+        "forma_pagamento": "pix", "data_pagamento": "2026-06-01", "conta_corrente_id": conta_id,
     })
     assert r.status_code == 409, r.text
     assert r.json()["detail"]["diferenca"] == 200.0
@@ -352,10 +366,11 @@ def test_vale_avulso_redistribuir_igual_reequilibra_parcelas_pendentes(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
     empreitada = _criar_empreitada_3_parcelas(c, pessoa_id)
+    conta_id = _criar_conta_corrente(engine)
 
     r = c.post("/cadastro/vale-avulso", json={
         "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 300.0,
-        "forma_pagamento": "pix", "data_pagamento": "2026-06-01",
+        "forma_pagamento": "pix", "data_pagamento": "2026-06-01", "conta_corrente_id": conta_id,
     })
     vale_id = r.json()["vale"]["id"]
     # abateu 300 da 1ª parcela: 700/1000/1000
@@ -363,7 +378,7 @@ def test_vale_avulso_redistribuir_igual_reequilibra_parcelas_pendentes(client):
     r = c.put(f"/cadastro/vale-avulso/{vale_id}", json={
         "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 900.0,
         "forma_pagamento": "pix", "data_pagamento": "2026-06-01",
-        "acao": "redistribuir_igual", "confirmar": True,
+        "acao": "redistribuir_igual", "confirmar": True, "conta_corrente_id": conta_id,
     })
     assert r.status_code == 200, r.text
     parcelas = sorted(r.json()["origem"]["parcelas"], key=lambda p: p["data_vencimento"])
@@ -375,10 +390,11 @@ def test_vale_avulso_relatorio_mostra_parcela_referenciada(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
     empreitada = _criar_empreitada_3_parcelas(c, pessoa_id)
+    conta_id = _criar_conta_corrente(engine)
 
     c.post("/cadastro/vale-avulso", json={
         "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 300.0,
-        "forma_pagamento": "pix", "data_pagamento": "2026-06-01",
+        "forma_pagamento": "pix", "data_pagamento": "2026-06-01", "conta_corrente_id": conta_id,
     })
 
     r = c.get("/cadastro/vale-avulso/todos")

@@ -13,6 +13,18 @@ import { useCarregar, AvisoCopia, Carregando, Vazio, NumAnimal } from "@/compone
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao } from "@/components/Ordenavel";
+import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+
+// Campos ordenáveis das listas da Agenda — nem toda lista preenche todos
+// (ex.: só as "inseminadas" têm dias_inseminada), mas useOrdenacao já joga os
+// valores nulos para o fim, então não há problema em oferecer o conjunto todo.
+const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
+  { chave: "numero_matriz", rotulo: "Matriz" },
+  { chave: "dias_inseminada", rotulo: "Dias inseminada" },
+  { chave: "dias_para_parto", rotulo: "Dias p/ parto" },
+  { chave: "peso", rotulo: "Peso" },
+  { chave: "data_servico", rotulo: "Data do serviço" },
+];
 
 type Animal = {
   numero_matriz: string;
@@ -110,10 +122,11 @@ function ListaSecao({ chave, rotulo, animais, enviandoDg, setEnviandoDg, onFicha
         </span>
       </summary>
       <div style={{ borderTop: "1px solid var(--mob-border)", paddingTop: "0.4rem" }}>
+        <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
         <div className="flex items-center justify-end mb-2">
           <ExportarBotoes titulo={`Agenda Reprodutiva — ${rotulo}`} colunas={colunasExport} linhas={linhasExport} nomeArquivoBase={`agenda_veterinario_${chave}`} />
         </div>
-        {animais.map((a) => (
+        {ord.linhasOrdenadas.map((a) => (
           <div key={a.numero_matriz}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", width: "100%", padding: "0.5rem 0", borderBottom: enviandoDg === a.numero_matriz ? "none" : "1px solid var(--mob-border)" }}>
               <button onClick={() => onFichaAberta(a.numero_matriz)}

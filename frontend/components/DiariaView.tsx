@@ -9,6 +9,7 @@ import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
@@ -182,6 +183,13 @@ export default function DiariaView() {
     }
   }
 
+  const auditoriasPendentes = useMemo(
+    () => (itens ?? []).flatMap((d) => (d.auditorias_pendentes ?? []).map((a) => ({ ...a, pessoa_nome: d.pessoa_nome }))),
+    [itens],
+  );
+  const ordAuditorias = useOrdenacao(auditoriasPendentes);
+  const ordDiarias = useOrdenacao(itens ?? []);
+
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
 
   return (
@@ -325,12 +333,16 @@ export default function DiariaView() {
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
-                <tr><th>Diarista</th><th>Período</th><th>Dias trabalhados</th><th></th></tr>
+                <tr>
+                  <ThOrdenavel label="Diarista" campo="pessoa_nome" coluna={ordAuditorias.coluna} dir={ordAuditorias.dir} ordenar={ordAuditorias.ordenar} />
+                  <ThOrdenavel label="Período" campo="periodo_inicio" coluna={ordAuditorias.coluna} dir={ordAuditorias.dir} ordenar={ordAuditorias.ordenar} />
+                  <th>Dias trabalhados</th><th></th>
+                </tr>
               </thead>
               <tbody>
-                {itens.flatMap((d) => (d.auditorias_pendentes ?? []).map((a) => (
+                {ordAuditorias.linhasOrdenadas.map((a) => (
                   <tr key={a.id}>
-                    <td style={{ fontWeight: 700 }}>{d.pessoa_nome}</td>
+                    <td style={{ fontWeight: 700 }}>{a.pessoa_nome}</td>
                     <td>{a.periodo_inicio} a {a.periodo_fim}</td>
                     <td>
                       <input type="number" min={0} style={{ ...inputSm, width: "5rem" }}
@@ -343,7 +355,7 @@ export default function DiariaView() {
                       </button>
                     </td>
                   </tr>
-                )))}
+                ))}
               </tbody>
             </table>
           </div>
@@ -359,12 +371,20 @@ export default function DiariaView() {
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
                 <tr>
-                  <th>Nome</th><th>Início</th><th>Fim</th><th>Nº diárias</th><th>Valor diária</th>
-                  <th>Total até hoje</th><th>Pago</th><th>Vale</th><th>Saldo devedor</th><th></th>
+                  <ThOrdenavel label="Nome" campo="pessoa_nome" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Início" campo="data_inicio" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Fim" campo="data_fim" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Nº diárias" campo="numero_diarias" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Valor diária" campo="valor_diaria" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Total até hoje" campo="total_ate_hoje" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Pago" campo="valor_pago" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Vale" campo="valor_vale" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Saldo devedor" campo="saldo_devedor" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {itens.map((d) => (
+                {ordDiarias.linhasOrdenadas.map((d) => (
                   <Fragment key={d.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{d.pessoa_nome}</td>

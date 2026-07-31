@@ -6,6 +6,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type LinhaBezerra = {
   numero: string; nome: string | null; sexo: string | null; categoria_abrev: string | null;
@@ -84,6 +85,7 @@ export default function RelatorioBezerras() {
   }));
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const ord = useOrdenacao(dados || []);
 
   return (
     <div className="p-6 animate-in">
@@ -124,8 +126,8 @@ export default function RelatorioBezerras() {
           <SelecaoAnimaisTabela
             animais={animais} selecionados={selecionados} toggle={toggleSelecionado} toggleTodos={toggleTodos}
             colunas={[
-              { header: "Grupo", render: (a) => a.grupo_primario || "—" },
-              { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+              { header: "Grupo", campo: "grupo_primario", render: (a) => a.grupo_primario || "—" },
+              { header: "Categoria", campo: "categoria_abrev", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
             ]}
           />
         )}
@@ -144,15 +146,23 @@ export default function RelatorioBezerras() {
             <table className="fazenda-table">
               <thead>
                 <tr>
-                  <th>Nº</th><th>Nome</th><th>Categoria</th><th>Lote</th><th style={{ textAlign: "right" }}>Idade (m)</th>
-                  <th>Colostro?</th><th style={{ textAlign: "right" }}>Litros</th><th style={{ textAlign: "right" }}>Brix colostro</th>
-                  <th>Classe colostro</th><th style={{ textAlign: "right" }}>Brix soro</th>
-                  <th style={{ textAlign: "right" }}>Prot. sérica</th><th>Eficiência (IgG)</th>
-                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Idade (m)" campo="idade_meses" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Colostro?" campo="tomou_colostro" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Litros" campo="litros_colostro" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Brix colostro" campo="brix_colostro" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Classe colostro" campo="classe_colostro" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Brix soro" campo="brix_soro" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Prot. sérica" campo="proteina_serica" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Eficiência (IgG)" campo="classe_colostragem" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  {admin && <ThOrdenavel label="Usuário" campo="usuario_nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="left" />}
                 </tr>
               </thead>
               <tbody>
-                {dados.map((l) => {
+                {ord.linhasOrdenadas.map((l) => {
                   const grave = l.classe_soro === "falha" || l.classe_colostragem === "ruim" || l.classe_colostro === "bronze";
                   const trStyle: React.CSSProperties = grave
                     ? { background: "rgba(192,57,43,0.12)", borderLeft: "3px solid var(--red)" }

@@ -238,6 +238,15 @@ class ValeFuncionario(SQLModel, table=True):
     competencia_inicio: str = Field(index=True)  # "AAAA-MM" — primeira competência com desconto
     observacao: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None  # nº do documento do pagamento, p/ controle de extrato
+    # Conta corrente da fazenda de onde saiu o dinheiro do vale — vínculo
+    # RELACIONAL (não string), para sobreviver a renomear/editar a conta
+    # depois. Nullable só para não quebrar vales lançados antes desta coluna
+    # existir; todo vale novo passa a exigi-lo (ver POST/PUT /vales).
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+    # Número do lançamento (ContaGerencial) gerado automaticamente para este
+    # vale — mesmo padrão de FolhaPagamento.numero_lancamento_gerado — para
+    # o extrato mostrar a saída de caixa que hoje falta (ver criar_vale).
+    numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -275,6 +284,12 @@ class ValeAvulso(SQLModel, table=True):
     forma_pagamento: str  # dinheiro | pix | transferencia | desconto_proximo_pagamento
     data_pagamento: date
     observacao: Optional[str] = None
+    # Mesmo furo do vale de funcionário, e mesma correção: o dinheiro sai na
+    # hora (adiantamento ao empreiteiro/contratado/diarista), mas isso nunca
+    # aparecia no extrato — só o abatimento futuro na parcela/etapa final. Ver
+    # `conta_corrente_id`/`numero_lancamento_gerado` em ValeFuncionario acima.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+    numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

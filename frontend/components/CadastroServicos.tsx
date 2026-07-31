@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Wrench, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchServicosCadastro, criarServicoCadastro, atualizarServicoCadastro } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Servico = { id: number; nome: string; ativo: boolean };
 type Form = { nome: string; ativo: boolean };
@@ -48,6 +49,7 @@ export default function CadastroServicos() {
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((s) => !termoBusca || normalizar(s.nome).includes(termoBusca));
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
     <div className="card">
@@ -76,9 +78,9 @@ export default function CadastroServicos() {
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th></th></tr></thead>
+            <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
             <tbody>
-              {filtrados.map((s) => (
+              {linhasOrdenadas.map((s) => (
                 <Fragment key={s.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{s.nome}{!s.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

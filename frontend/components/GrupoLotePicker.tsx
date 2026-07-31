@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown, Check } from "lucide-react";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 /**
  * Seletor de grupo/lote em tela cheia, no mesmo estilo visual do AnimalPicker
@@ -38,6 +39,11 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
     if (!q) return opcoes;
     return opcoes.filter((o) => o.toLowerCase().includes(q));
   }, [opcoes, busca]);
+  // `useOrdenacao` exige objetos (linhas com chaves) — como `opcoes` é uma
+  // lista de strings soltas, embrulha cada uma em { valor } só pra reaproveitar
+  // o mesmo padrão de ordenação por clique no cabeçalho.
+  const linhasOrdenaveis = useMemo(() => filtrados.map((o) => ({ valor: o })), [filtrados]);
+  const ord = useOrdenacao(linhasOrdenaveis);
 
   const todosMarcados = opcoes.length > 0 && opcoes.every((o) => marcados.has(o));
   const alternarTodos = () => setRascunho(todosMarcados ? [] : [...opcoes]);
@@ -82,7 +88,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
                 <thead>
                   <tr>
                     <th style={{ width: 36 }}></th>
-                    <th>Grupo / lote</th>
+                    <ThOrdenavel label="Grupo / lote" campo="valor" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
                   </tr>
                 </thead>
                 <tbody>
@@ -98,7 +104,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
                     </td>
                     <td style={{ fontStyle: "italic", color: "var(--text-muted)" }}>{todosMarcados ? "Desmarcar todos" : "Marcar todos"}</td>
                   </tr>
-                  {filtrados.map((o) => {
+                  {ord.linhasOrdenadas.map(({ valor: o }) => {
                     const on = marcados.has(o);
                     return (
                       <tr key={o} onClick={() => toggle(o)} style={{ cursor: "pointer", background: on ? "rgba(94,26,46,0.35)" : undefined }} className="row-clickable">

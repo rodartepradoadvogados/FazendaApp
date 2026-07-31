@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
 import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao, fetchAnimais } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type LoteSugerido = { codigo: string; nome: string; rotulo: string; motivo: string | null };
 type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeridos: LoteSugerido[]; motivo: string | null };
@@ -89,6 +90,7 @@ export default function SugestoesMovimentacao() {
     (!fLote || s.lote_atual === fLote) &&
     (!fCategoria || categoriaPorAnimal[s.numero_matriz] === fCategoria)
   );
+  const ord = useOrdenacao(sugestoesFiltradas);
 
   return (
     <div className="card">
@@ -122,9 +124,15 @@ export default function SugestoesMovimentacao() {
           )}
           {sugestoesFiltradas.length > 0 && (
         <table className="fazenda-table">
-          <thead><tr><th>Matriz</th><th>Lote atual</th><th>Lote(s) sugerido(s)</th><th>Motivo</th><th></th></tr></thead>
+          <thead><tr>
+            <ThOrdenavel label="Matriz" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <ThOrdenavel label="Lote atual" campo="lote_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <th>Lote(s) sugerido(s)</th>
+            <ThOrdenavel label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <th></th>
+          </tr></thead>
           <tbody>
-            {sugestoesFiltradas.map((s) => (
+            {ord.linhasOrdenadas.map((s) => (
               <tr key={s.numero_matriz}>
                 <td style={{ fontWeight: 700 }}>{s.numero_matriz}</td>
                 <td style={{ fontSize: "0.8rem" }}>{s.lote_atual || "—"}</td>

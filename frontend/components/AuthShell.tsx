@@ -26,9 +26,27 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const [estado, setEstado] = useState<"checando" | "logado" | "deslogado">("checando");
+  // Espelho nativo da sessão (ver lib/nativo.ts) restaurado antes de checar
+  // login — só um "trinco" pra não checar duas vezes (localStorage já
+  // populado na 1ª passada não precisa de nova tentativa nas seguintes).
+  const [hidratado, setHidratado] = useState(false);
 
   // O app móvel (/app) tem casca própria (barra inferior, sem sidebar).
   const ehApp = path.startsWith("/app");
+  // Dentro do app nativo, qualquer navegação "para a raiz" (sessão expirada,
+  // página sem permissão etc.) deve cair no /app (casca mobile), nunca no
+  // site desktop completo — só o botão proposital "Site completo" do Menu
+  // (app/app/menu/page.tsx) deve levar ao "/" de verdade.
+  const destinoRaiz = ehApp ? "/app" : "/";
+
+  // Se o localStorage está vazio dentro do app nativo, tenta restaurar a
+  // sessão da cópia nativa (@capacitor/preferences) antes de decidir "checando"
+  // → "deslogado" — o localStorage da WebView pode ter sido limpo pelo
+  // sistema sem o app ser desinstalado (ver lib/nativo.ts::restaurarSessaoNativa).
+  useEffect(() => {
+    if (getToken()) { setHidratado(true); return; }
+    import("@/lib/nativo").then(({ restaurarSessaoNativa }) => restaurarSessaoNativa()).catch(() => {}).finally(() => setHidratado(true));
+  }, []);
   // Painel CowData (/painel-cowdata): administração da EMPRESA de software,
   // deliberadamente separada da navegação da FAZENDA (ver fazenda/models/
   // multitenant.py::EmpresaOperadora e a proposta de separação fazenda/
@@ -41,6 +59,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   const ehPainelContador = path.startsWith("/contador");
 
   useEffect(() => {
+    if (!hidratado) return; // aguarda a tentativa de restaurar a sessão nativa (ver acima)
     if (path === "/login") { setEstado("deslogado"); return; }
     if (!getToken()) {
       setEstado("deslogado");
@@ -55,19 +74,19 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // acessível pela Sidebar > Administração), mas não fica preso lá — só
     // quem tem o vínculo de contador é redirecionado automaticamente.
     if (ehContador() && !ehPainelContador) { router.replace("/contador"); return; }
-    if (ehPainelContador && !ehContador() && !ehDono()) { router.replace("/"); return; }
+    if (ehPainelContador && !ehContador() && !ehDono()) { router.replace(destinoRaiz); return; }
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
-    if (path === "/usuarios" && !ehDono()) { router.replace("/"); return; }
-    if (ehPainelCowData && !ehDono()) { router.replace("/"); return; }
+    if (path === "/usuarios" && !ehDono()) { router.replace(destinoRaiz); return; }
+    if (ehPainelCowData && !ehDono()) { router.replace(destinoRaiz); return; }
     // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
     // duas (a página em si esconde a sub-aba sem permissão).
-    if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace("/"); return; }
+    if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace(destinoRaiz); return; }
     // Configurações tem a aba "Aparência" (tema/paleta) liberada para todo mundo,
     // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
-    if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }
+    if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace(destinoRaiz); return; }
     setEstado("logado");
-  }, [path, router, ehApp, ehPainelCowData, ehPainelContador]);
+  }, [path, router, ehApp, ehPainelCowData, ehPainelContador, hidratado, destinoRaiz]);
 
   // Desloga sozinho após 15 min sem interação (mouse/teclado/toque/rolagem) —
   // segurança dos dados da fazenda e controle de acessos do proprietário.

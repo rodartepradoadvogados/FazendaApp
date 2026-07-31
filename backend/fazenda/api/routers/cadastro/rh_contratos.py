@@ -19,10 +19,11 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaAuditoria, DiariaPagamento, Empreitada,
-    EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
+    AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaAuditoria, DiariaPagamento,
+    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso,
+    ValeAvulsoAbatimento,
 )
-from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro
 
 from .rh_folha import _competencia_seguinte, listar_folha_pagamento
@@ -971,6 +972,11 @@ class ValeAvulsoIn(BaseModel):
     forma_pagamento: str  # dinheiro | pix | transferencia | desconto_proximo_pagamento
     data_pagamento: date
     observacao: str | None = None
+    # Conta bancária da fazenda de onde sai o vale — obrigatória quando o
+    # dinheiro sai AGORA (dinheiro/pix/transferência); irrelevante para
+    # "desconto_proximo_pagamento" (não há saída de caixa nenhuma agora — ver
+    # `_validar_conta_vale_avulso`).
+    conta_corrente_id: int | None = None
     # Só usados em PUT (edição) quando `valor` diverge do valor atual do vale
     # — mesma semântica de ValeParcelaEditIn.acao em rh_folha.py: "conceder"
     # (o vale muda de valor, o alvo absorve a diferença naturalmente ao
@@ -1184,6 +1190,92 @@ def _origem_vale_avulso(session: Session, origem_tipo: str, origem_id: int, faze
     return origem
 
 
+def _validar_conta_vale_avulso(
+    session: Session, forma_pagamento: str, conta_corrente_id: int | None, fazenda_id: int | None,
+) -> ContaCorrente | None:
+    """Análogo a `_validar_conta_vale` (rh_folha.py) para o vale avulso —
+    obrigatória só quando o dinheiro sai AGORA (dinheiro/pix/transferência);
+    "desconto_proximo_pagamento" não movimenta banco nenhum na hora do vale
+    (o efeito é só reduzir a próxima parcela/etapa/saldo devedor)."""
+    if forma_pagamento == "desconto_proximo_pagamento":
+        return None
+    if not conta_corrente_id:
+        raise HTTPException(status_code=400, detail="Selecione a conta bancária de onde sai o vale.")
+    conta = session.get(ContaCorrente, conta_corrente_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
+    return conta
+
+
+def _sincronizar_conta_vale_avulso(
+    session: Session, vale: ValeAvulso, pessoa_nome: str, conta: ContaCorrente | None, fazenda_id: int | None,
+) -> None:
+    """
+    Cria (ou, numa edição, atualiza) o lançamento (ContaGerencial) que
+    representa a SAÍDA de caixa do vale avulso — análogo a
+    `_sincronizar_conta_vale` (rh_folha.py) e a `registrar_pagamento_diaria`
+    acima: já nasce PAGO, porque o vale é entregue no ato.
+
+    NÃO duplica valor no extrato: `_aplicar_vale_avulso` só reduz a
+    PRÓXIMA parcela/etapa (ou o saldo da diária) que ainda vai ser paga —
+    exatamente como a folha de funcionário lança o líquido já descontado do
+    vale. Antes desta função existir, o dinheiro do vale avulso saía do
+    caixa/banco no ato e não aparecia em lugar nenhum do Financeiro; este
+    lançamento é o que fecha esse furo. NÃO remova achando que é bug de
+    duplicidade.
+
+    Quando `conta` é None (forma_pagamento == "desconto_proximo_pagamento"),
+    não há saída de caixa nenhuma a registrar — nenhum ContaGerencial é
+    criado/mantido (removendo um lançamento de edição anterior, se houver).
+    """
+    conta_existente = None
+    if vale.numero_lancamento_gerado:
+        conta_existente = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+        ).first()
+
+    if conta is None:
+        if conta_existente:
+            session.delete(conta_existente)
+        vale.numero_lancamento_gerado = None
+        session.add(vale)
+        return
+
+    descricao = f"Vale — {pessoa_nome} ({vale.origem_tipo})"
+    if conta_existente:
+        conta_existente.descricao = descricao
+        conta_existente.fornecedor_cliente = pessoa_nome
+        conta_existente.data_vencimento = vale.data_pagamento
+        conta_existente.data_competencia = vale.data_pagamento.replace(day=1)
+        conta_existente.valor_total = vale.valor
+        conta_existente.data_pagamento = vale.data_pagamento
+        conta_existente.valor_pago = vale.valor
+        conta_existente.conta_bancaria = rotulo_conta_corrente(conta)
+        conta_existente.forma_pagamento = vale.forma_pagamento
+        session.add(conta_existente)
+    else:
+        numero_lancamento = _proximo_numero_lancamento(session, vale.data_pagamento.year)
+        vale.numero_lancamento_gerado = numero_lancamento
+        session.add(vale)
+        session.add(ContaGerencial(
+            numero_lancamento=numero_lancamento,
+            descricao=descricao,
+            data_vencimento=vale.data_pagamento,
+            data_competencia=vale.data_pagamento.replace(day=1),
+            fornecedor_cliente=pessoa_nome,
+            tipo_documento="Vale avulso",
+            centro_custo="Pecuária Leiteira",
+            valor_total=vale.valor,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            data_pagamento=vale.data_pagamento,
+            valor_pago=vale.valor,
+            conta_bancaria=rotulo_conta_corrente(conta),
+            forma_pagamento=vale.forma_pagamento,
+            fazenda_id=fazenda_id,
+        ))
+
+
 @router.post("/vale-avulso")
 def criar_vale_avulso(
     dados: ValeAvulsoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
@@ -1201,19 +1293,24 @@ def criar_vale_avulso(
         raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
     if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
-
     origem = _origem_vale_avulso(session, dados.origem_tipo, dados.origem_id, fazenda_id)
+    conta = _validar_conta_vale_avulso(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
+    pessoa = session.get(Pessoa, origem.pessoa_id)
 
     vale = ValeAvulso(
         origem_tipo=dados.origem_tipo, origem_id=dados.origem_id, pessoa_id=origem.pessoa_id,
         valor=dados.valor, forma_pagamento=dados.forma_pagamento, data_pagamento=dados.data_pagamento,
-        observacao=dados.observacao, usuario_id=user.id, fazenda_id=fazenda_id,
+        observacao=dados.observacao, conta_corrente_id=conta.id if conta else None,
+        usuario_id=user.id, fazenda_id=fazenda_id,
     )
     session.add(vale)
     session.commit()
     session.refresh(vale)
 
     _aplicar_vale_avulso(session, vale.id, dados.origem_tipo, dados.origem_id, dados.valor)
+    # Gera (quando aplicável) o lançamento que faltava no extrato para a
+    # saída de caixa do vale — ver `_sincronizar_conta_vale_avulso`.
+    _sincronizar_conta_vale_avulso(session, vale, pessoa.nome if pessoa else "—", conta, fazenda_id)
     session.commit()
 
     if dados.origem_tipo == "empreitada":
@@ -1221,7 +1318,6 @@ def criar_vale_avulso(
     elif dados.origem_tipo == "contrato":
         resultado = _serializar_contrato(session, origem)
     else:
-        pessoa = session.get(Pessoa, origem.pessoa_id)
         resultado = _resumo_diaria(session, origem, pessoa.nome if pessoa else "—")
     return {"vale": vale.model_dump(), "origem": resultado}
 
@@ -1272,6 +1368,7 @@ def atualizar_vale_avulso(
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
     if dados.origem_tipo != vale.origem_tipo or dados.origem_id != vale.origem_id:
         raise HTTPException(status_code=400, detail="Não é possível trocar a origem (Empreitada/Contrato/Diária) de um vale já lançado")
+    conta = _validar_conta_vale_avulso(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
     diferenca = round(dados.valor - vale.valor, 2)
     if diferenca != 0 and not dados.confirmar:
@@ -1289,10 +1386,15 @@ def atualizar_vale_avulso(
     vale.forma_pagamento = dados.forma_pagamento
     vale.data_pagamento = dados.data_pagamento
     vale.observacao = dados.observacao
+    vale.conta_corrente_id = conta.id if conta else None
     session.add(vale)
     session.commit()
 
     _aplicar_vale_avulso(session, vale_id, dados.origem_tipo, dados.origem_id, dados.valor)
+    pessoa = session.get(Pessoa, vale.pessoa_id)
+    # Mantém o lançamento gerado (ContaGerencial) da saída de caixa do vale
+    # em sincronia com a edição — cria/atualiza/remove conforme a mudança.
+    _sincronizar_conta_vale_avulso(session, vale, pessoa.nome if pessoa else "—", conta, fazenda_id)
     session.commit()
 
     # "conceder" (ou diferenca == 0) não precisa de mais nada: o alvo já
@@ -1333,6 +1435,15 @@ def excluir_vale_avulso(
     if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     _reverter_vale_avulso(session, vale_id)
+    # Remove também o lançamento (ContaGerencial) gerado para a saída de
+    # caixa do vale — sem isso, excluir o vale deixaria um lançamento órfão
+    # no extrato, sem vale nenhum por trás dele.
+    if vale.numero_lancamento_gerado:
+        conta_gerada = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+        ).first()
+        if conta_gerada:
+            session.delete(conta_gerada)
     session.delete(vale)
     session.commit()
     return {"ok": True}

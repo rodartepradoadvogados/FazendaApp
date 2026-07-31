@@ -4,6 +4,7 @@ import { Dna, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "luci
 import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEstoqueSemen, fetchTouros, type Touro } from "@/lib/api";
 import { NAAB_CENTRAIS, centralPorCodigoNaab } from "@/lib/constants";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Semen = {
   id: number; touro_nome: string; codigo: string | null; naab: string | null; central: string | null;
@@ -133,6 +134,7 @@ export default function CadastroEstoqueSemen() {
     if (filtroSaldo === "negativo" && !(s.doses <= 0)) return false;
     return true;
   });
+  const ord = useOrdenacao(filtrados);
 
   return (
     <div className="card">
@@ -217,9 +219,19 @@ export default function CadastroEstoqueSemen() {
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th>Tipo</th><th>Doses</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <ThOrdenavel label="Touro" campo="touro_nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Código" campo="codigo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="NAAB" campo="naab" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Central" campo="central" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Tipo" campo="tipo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Doses" campo="doses" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
-              {filtrados.map((s) => {
+              {ord.linhasOrdenadas.map((s) => {
                 const emEdicao = editId === s.id;
                 const nivel = nivelDoses(s.tipo, s.doses);
                 return (

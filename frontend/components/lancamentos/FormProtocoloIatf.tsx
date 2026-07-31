@@ -9,6 +9,7 @@ import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal, addDias, IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 function nomeAutoIatf(d0: string): string {
   if (!d0) return "";
@@ -28,6 +29,53 @@ type ProtocoloIatfAtivo = {
   lancamento_id: number; nome_protocolo: string; data_d0: string;
   animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean }[];
 };
+
+function TabelaAnimaisProtocolo({ p, removendo, remover }: {
+  p: ProtocoloIatfAtivo; removendo: string | null; remover: (lancamentoId: number, numero: string) => void;
+}) {
+  const ord = useOrdenacao(p.animais);
+  return (
+    <table className="fazenda-table" style={{ margin: 0 }}>
+      <thead><tr>
+        <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+        <ThOrdenavel label="Etapa atual" campo="etapa_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+        <ThOrdenavel label="Data" campo="data_etapa_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+        <ThOrdenavel label="D0" campo="d0_confirmado" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+        <th></th>
+      </tr></thead>
+      <tbody>
+        {ord.linhasOrdenadas.map((a) => (
+          <tr key={a.numero_matriz}>
+            <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+            <td>{a.etapa_atual}</td>
+            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{a.data_etapa_atual ? formatDate(a.data_etapa_atual) : "—"}</td>
+            <td>
+              {a.d0_confirmado ? (
+                <span title="D0 confirmado na Agenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--green-light)" }}>
+                  <Check size={13} /> confirmado
+                </span>
+              ) : (
+                <span title="D0 ainda não confirmado na Agenda — pode ter entrado no protocolo sem ter sido implantada" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--amber)" }}>
+                  <AlertTriangle size={13} /> não confirmado
+                </span>
+              )}
+            </td>
+            <td style={{ textAlign: "right" }}>
+              <button
+                type="button" className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
+                disabled={removendo === `${p.lancamento_id}-${a.numero_matriz}`}
+                onClick={() => remover(p.lancamento_id, a.numero_matriz)}
+                title="Remover este animal do protocolo (corrige inclusão por engano)"
+              >
+                <X size={12} /> Remover
+              </button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableRefObject<() => void> }) {
   const [ativos, setAtivos] = useState<ProtocoloIatfAtivo[] | null>(null);
@@ -67,41 +115,7 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
                 <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{p.nome_protocolo}</span>
                 <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>D0 {formatDate(p.data_d0)} — {p.animais.length} animal(is)</span>
               </button>
-              {aberto && (
-                <table className="fazenda-table" style={{ margin: 0 }}>
-                  <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th><th>D0</th><th></th></tr></thead>
-                  <tbody>
-                    {p.animais.map((a) => (
-                      <tr key={a.numero_matriz}>
-                        <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
-                        <td>{a.etapa_atual}</td>
-                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{a.data_etapa_atual ? formatDate(a.data_etapa_atual) : "—"}</td>
-                        <td>
-                          {a.d0_confirmado ? (
-                            <span title="D0 confirmado na Agenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--green-light)" }}>
-                              <Check size={13} /> confirmado
-                            </span>
-                          ) : (
-                            <span title="D0 ainda não confirmado na Agenda — pode ter entrado no protocolo sem ter sido implantada" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--amber)" }}>
-                              <AlertTriangle size={13} /> não confirmado
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          <button
-                            type="button" className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
-                            disabled={removendo === `${p.lancamento_id}-${a.numero_matriz}`}
-                            onClick={() => remover(p.lancamento_id, a.numero_matriz)}
-                            title="Remover este animal do protocolo (corrige inclusão por engano)"
-                          >
-                            <X size={12} /> Remover
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+              {aberto && <TabelaAnimaisProtocolo p={p} removendo={removendo} remover={remover} />}
             </div>
           );
         })}

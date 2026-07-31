@@ -12,6 +12,7 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { CORES_CONTADOR } from "@/app/contador/layout";
 import { useCadeado } from "@/lib/useCadeado";
 import { CadeadoWidget } from "./CadeadoWidget";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const C = CORES_CONTADOR;
 const estiloCard: React.CSSProperties = { background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "4px", padding: "1.3rem" };
@@ -188,6 +189,8 @@ function AbrirChamado({ token }: { token: string }) {
   const recarregar = () => fetchChamados().then(setChamados).catch(() => setChamados([]));
   useEffect(() => { recarregar(); }, []);
 
+  const ord = useOrdenacao(chamados);
+
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
     setEnviando(true); setErro(null);
@@ -223,10 +226,14 @@ function AbrirChamado({ token }: { token: string }) {
       {erro && <p style={{ color: C.negativo, fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
 
       {chamados.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "1.2rem" }}>
-          <thead><tr><th style={estiloTh}>Assunto</th><th style={estiloTh}>Status</th><th style={estiloTh}>Aberto em</th></tr></thead>
+        <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse", marginTop: "1.2rem" }}>
+          <thead><tr>
+            <ThOrdenavel label="Assunto" campo="assunto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <ThOrdenavel label="Status" campo="status" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <ThOrdenavel label="Aberto em" campo="criado_em" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          </tr></thead>
           <tbody>
-            {chamados.map((ch) => (
+            {ord.linhasOrdenadas.map((ch) => (
               <tr key={ch.id}>
                 <td style={estiloTd}>{ch.assunto}</td>
                 <td style={{ ...estiloTd, color: ch.status === "resolvido" ? C.positivo : C.cobreClaro }}>

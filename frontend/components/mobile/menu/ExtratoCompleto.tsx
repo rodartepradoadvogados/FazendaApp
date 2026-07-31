@@ -9,6 +9,15 @@ import { LinhaPills, MobPill } from "@/components/mobile/lancar/comum";
 import { fetchLancamentos, fetchOpcoesFinanceiro, formatDate, firstDayOfMonth, today } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, FiltroPeriodo, brl } from "@/components/mobile/menu/comum";
 import { dentroPeriodo, TIPOS_FILTRO, type Lancamento, type Opcoes, type TipoFiltro } from "@/components/mobile/menu/Financeiro";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+
+const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
+  { chave: "data_vencimento", rotulo: "Vencimento" },
+  { chave: "valor", rotulo: "Valor" },
+  { chave: "descricao", rotulo: "Descrição" },
+  { chave: "centro_custo", rotulo: "Centro de custo" },
+];
 
 const STATUS_PAGAMENTO = [
   { chave: "todos", rotulo: "Todos" },
@@ -37,6 +46,9 @@ export default function ExtratoCompleto({ onVoltar }: { onVoltar: () => void }) 
       .filter((r) => status === "todos" || (status === "pagas" ? !!r.data_pagamento : !r.data_pagamento))
       .sort((a, b) => (a.data_vencimento || "") < (b.data_vencimento || "") ? 1 : -1);
   }, [regs, inicio, fim, centro, tipo, status]);
+  // useOrdenacao assume o controle só depois que o usuário escolhe um campo em
+  // SeletorOrdenacao; até lá, `filtrados` já vem em ordem (vencimento desc).
+  const ord = useOrdenacao(filtrados);
 
   const total = filtrados.reduce((a, r) => a + (r.tipo === "receita" ? r.valor : -r.valor), 0);
 
@@ -71,15 +83,17 @@ export default function ExtratoCompleto({ onVoltar }: { onVoltar: () => void }) 
         <Vazio>Sem dados salvos ainda. Conecte-se uma vez para baixar.</Vazio>
       ) : (
         <>
+          <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+
           <MobCard style={{ marginBottom: "0.8rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: "0.85rem", color: "var(--mob-muted)", fontWeight: 700 }}>{filtrados.length} lançamento{filtrados.length !== 1 ? "s" : ""}</span>
             <strong style={{ fontSize: "1.05rem", color: total >= 0 ? "var(--mob-verde)" : "var(--mob-vermelho)" }}>{brl(total)}</strong>
           </MobCard>
 
-          {filtrados.length === 0 ? (
+          {ord.linhasOrdenadas.length === 0 ? (
             <Vazio>Nenhum lançamento encontrado nesse filtro.</Vazio>
           ) : (
-            filtrados.map((r, i) => (
+            ord.linhasOrdenadas.map((r, i) => (
               <MobCard key={r.id} alt={(i % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem" }}>
                   <span style={{ fontWeight: 700, fontSize: "0.92rem", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

@@ -7,6 +7,7 @@ import {
   type ProtocoloCustomizado, type EtapaProtocoloCustomizado,
 } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -85,6 +86,7 @@ export default function CadastroProtocolosCustomizados() {
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((p) => !termoBusca || normalizar(`${p.nome} ${p.categoria}`).includes(termoBusca));
   const categoriaLabel = (v: string) => CATEGORIAS_PROTOCOLO_CUSTOM.find(([val]) => val === v)?.[1] || v;
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
     <div className="card">
@@ -120,9 +122,9 @@ export default function CadastroProtocolosCustomizados() {
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Nome</th><th>Categoria</th><th>Etapas</th><th></th></tr></thead>
+              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Etapas</th><th></th></tr></thead>
               <tbody>
-                {filtrados.map((p) => (
+                {linhasOrdenadas.map((p) => (
                   <Fragment key={p.id}>
                     <tr>
                       <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

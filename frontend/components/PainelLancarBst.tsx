@@ -5,6 +5,7 @@ import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas } from "@/l
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
 import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -20,14 +21,23 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
   const nuncaAplicadas: any[] = agenda?.bst_nunca_aplicados ?? [];
   const inaptas: any[] = agenda?.bst_excluidos ?? [];
 
-  const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
+  const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => {
+    const ord = useOrdenacao(lista);
+    return (
     <div className="card">
       <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={14} /> {titulo} ({lista.length})</div>
       {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhum animal nesta condição.</p> : (
         <div style={{ overflowX: "auto", maxHeight: "280px" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead><tr>{onToggle && <th style={th}></th>}<th style={th}></th><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th><th style={th}>Obs.</th></tr></thead>
-            <tbody>{lista.map((b: any) => (
+            <thead><tr>
+              {onToggle && <th style={th}></th>}
+              <th style={th}></th>
+              <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Lote" campo="grupo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+              <th style={th}>Obs.</th>
+            </tr></thead>
+            <tbody>{ord.linhasOrdenadas.map((b: any) => (
               <tr key={b.numero_matriz}>
                 {onToggle && <td style={td}><input type="checkbox" checked={!!selecionados?.has(b.numero_matriz)} onChange={() => onToggle(b.numero_matriz)} /></td>}
                 <td style={td}>
@@ -47,7 +57,8 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

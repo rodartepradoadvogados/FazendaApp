@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CalendarClock, Check, CheckCircle2, History, Syringe } from "lucide-react";
 import { fetchProtocolosIatfAtivos, fetchCandidatasIatfProjetadas, type CandidataIatfProjetada } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type GrupoIatf = {
   lancamento_id: number;
@@ -20,11 +21,49 @@ type GrupoIatf = {
 
 const fmtDia = (iso: string | null | undefined) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 
+function GrupoAtualCard({ g }: { g: GrupoIatf }) {
+  const ord = useOrdenacao(g.animais);
+  return (
+    <div className="mb-3" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "0.6rem" }}>
+      <p style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.4rem" }}>
+        {g.nome_protocolo} — D0 {fmtDia(g.data_d0)} <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>({g.animais.length} animal(is))</span>
+      </p>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead><tr>
+            <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <ThOrdenavel label="Etapa atual" campo="etapa_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <ThOrdenavel label="Data" campo="data_etapa_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+            <ThOrdenavel label="D0" campo="d0_confirmado" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          </tr></thead>
+          <tbody>
+            {ord.linhasOrdenadas.map((a) => (
+              <tr key={a.numero_matriz}>
+                <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                <td style={{ fontSize: "0.8rem" }}>{a.etapa_atual}</td>
+                <td style={{ fontSize: "0.8rem" }}>{fmtDia(a.data_etapa_atual)}</td>
+                <td style={{ fontSize: "0.78rem" }}>
+                  {a.d0_confirmado ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--green-light)" }}><Check size={13} /> confirmado</span>
+                  ) : (
+                    <span title="Pode ter entrado no protocolo sem ter sido implantada de fato — ver Lançamentos › Reprodutivo › Protocolo IATF" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--amber)" }}><AlertTriangle size={13} /> não confirmado</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function HistoricoCiclosIatf() {
   const [grupos, setGrupos] = useState<GrupoIatf[] | null>(null);
   const [candidatas, setCandidatas] = useState<{ candidatas: CandidataIatfProjetada[]; proxima_visita_iatf: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { rotuloDe } = useEstadosReprodutivos();
+  const ordCandidatas = useOrdenacao(candidatas?.candidatas ?? []);
 
   useEffect(() => {
     fetchProtocolosIatfAtivos().then(setGrupos).catch((e) => setError(e.message));
@@ -42,34 +81,7 @@ export default function HistoricoCiclosIatf() {
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Syringe size={16} style={{ color: "var(--dourado-light)" }} /> IATF atual</div>
         {!atuais.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>}
-        {atuais.map((g) => (
-          <div key={g.lancamento_id} className="mb-3" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "0.6rem" }}>
-            <p style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.4rem" }}>
-              {g.nome_protocolo} — D0 {fmtDia(g.data_d0)} <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>({g.animais.length} animal(is))</span>
-            </p>
-            <div className="overflow-x-auto">
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th><th>D0</th></tr></thead>
-                <tbody>
-                  {g.animais.map((a) => (
-                    <tr key={a.numero_matriz}>
-                      <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{a.etapa_atual}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{fmtDia(a.data_etapa_atual)}</td>
-                      <td style={{ fontSize: "0.78rem" }}>
-                        {a.d0_confirmado ? (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--green-light)" }}><Check size={13} /> confirmado</span>
-                        ) : (
-                          <span title="Pode ter entrado no protocolo sem ter sido implantada de fato — ver Lançamentos › Reprodutivo › Protocolo IATF" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--amber)" }}><AlertTriangle size={13} /> não confirmado</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))}
+        {atuais.map((g) => <GrupoAtualCard key={g.lancamento_id} g={g} />)}
       </div>
 
       <div className="card mb-4">
@@ -99,11 +111,15 @@ export default function HistoricoCiclosIatf() {
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead><tr>
-                <th>Nº</th><th>Sit. Rep.</th><th>Motivo</th>
-                <th style={{ textAlign: "right" }}>DEL hoje</th><th style={{ textAlign: "right" }}>DEL projetado</th><th>Apta na visita</th>
+                <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
+                <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
+                <ThOrdenavel label="Motivo" campo="motivo" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
+                <ThOrdenavel label="DEL hoje" campo="del_dias" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} alinhar="right" />
+                <ThOrdenavel label="DEL projetado" campo="del_dias_projetado" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} alinhar="right" />
+                <ThOrdenavel label="Apta na visita" campo="apta_na_proxima_visita" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
               </tr></thead>
               <tbody>
-                {candidatas.candidatas.map((c) => (
+                {ordCandidatas.linhasOrdenadas.map((c) => (
                   <tr key={c.numero_matriz}>
                     <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
                     <td style={{ fontSize: "0.8rem" }}>{rotuloDe(c.numero_matriz)}</td>

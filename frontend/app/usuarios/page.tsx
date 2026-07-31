@@ -4,6 +4,7 @@ import { Users, AlertTriangle, UserPlus, Check, Pencil, X, Newspaper, UserSquare
 import Link from "next/link";
 import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
@@ -68,6 +69,14 @@ export default function UsuariosPage() {
   };
 
   const meuId = getUsuario()?.id;
+
+  // Coluna "Acesso" é um texto computado (papel/qtd. de módulos) — vira
+  // campo derivado só para permitir ordenar por clique no cabeçalho.
+  const usuariosOrdenaveis = useMemo(() => (usuarios ?? []).map((u) => ({
+    ...u,
+    acessoOrdenacao: u.papel === "admin" ? "Administrador (tudo)" : `${(u.permissoes || []).length} módulos${(u.permissoes || []).includes("financeiro") ? "" : " · sem financeiro"}`,
+  })), [usuarios]);
+  const { linhasOrdenadas: usuariosOrdenados, coluna, dir, ordenar } = useOrdenacao(usuariosOrdenaveis);
 
   return (
     <div className="p-6 animate-in">
@@ -151,9 +160,15 @@ export default function UsuariosPage() {
           <div className="card-header mb-3">Usuários cadastrados</div>
           {!usuarios ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
             <table className="fazenda-table">
-              <thead><tr><th>Login</th><th>Nome</th><th>Acesso</th><th>Ativo</th><th></th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Login" campo="username" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Acesso" campo="acessoOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Ativo" campo="ativo" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <th></th>
+              </tr></thead>
               <tbody>
-                {usuarios.map((u) => (
+                {usuariosOrdenados.map((u) => (
                   <tr key={u.id}>
                     <td style={{ fontWeight: 700 }}>{u.username}</td>
                     <td style={{ fontSize: "0.8rem" }}>{u.nome || "—"}</td>

@@ -6,7 +6,7 @@
 // app móvel instalado o navegador pode suspender os timers em JS quando a
 // aba/app vai para segundo plano — ao voltar (`visibilitychange`), checamos
 // na hora se já passou do limite, em vez de confiar só no setInterval.
-import { getToken, logout } from "./api";
+import { getToken, logout, manterConectadoAtivo } from "./api";
 
 const CHAVE_ULTIMA_ATIVIDADE = "ultima_atividade_ts";
 export const LIMITE_INATIVIDADE_MS = 15 * 60 * 1000; // 15 minutos
@@ -27,6 +27,12 @@ function inativoDemais(): boolean {
 /** Liga o monitor de inatividade; retorna a função de limpeza (chamar no cleanup do useEffect). */
 export function iniciarMonitorInatividade(): () => void {
   if (typeof window === "undefined" || !getToken()) return () => {};
+  // "Manter conectado neste aparelho" promete só pedir login de novo se a
+  // pessoa sair, desinstalar o app ou desmarcar a opção (ver comentário em
+  // backend/fazenda/auth.py::TOKEN_VALIDADE_LONGA_S) — deslogar por
+  // inatividade quebraria essa promessa toda vez que o celular ficasse mais
+  // de 15 min no bolso entre uma tarefa e outra da fazenda.
+  if (manterConectadoAtivo()) return () => {};
   marcarAtividade();
 
   // Throttle simples: não regrava a cada pixel de mousemove.

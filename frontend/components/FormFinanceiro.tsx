@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
@@ -28,7 +28,17 @@ function Campo({ label, children, full }: { label: string; children: React.React
   return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label style={lbl}>{label}</label>{children}</div>;
 }
 
-type Parcela = { data_vencimento: string; valor: string; numero_boleto?: string };
+type Parcela = {
+  data_vencimento: string; valor: string; numero_boleto?: string;
+  // Baixa da parcela já dentro do lançamento parcelado (item 3) — opcional,
+  // uma parcela sem `pago` nasce em aberto, como sempre.
+  pago?: boolean;
+  data_pagamento?: string;
+  valor_pago?: string;
+  conta_bancaria?: string;
+  forma_pagamento?: string;
+  numero_documento_pagamento?: string;
+};
 type TipoItem = "produto" | "servico";
 type ModoValor = "unitario" | "total";
 type Item = {
@@ -172,6 +182,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [dataPrevistaEntrada, setDataPrevistaEntrada] = useState("");
   const [dataPedido, setDataPedido] = useState("");
   const [entregue, setEntregue] = useState(false);
+  // Uma vez que o usuário mexe manualmente no checkbox "entregue", o
+  // auto-preenchimento (ao mudar a data de emissão) para de marcá-lo sozinho —
+  // nunca reverte uma edição manual (ver handleDataEmissaoChange abaixo).
+  const entregueTocadoRef = useRef(false);
   // Vínculo opcional a um Pedido (módulo Pedidos) — só a partir deste vínculo o
   // pedido passa a refletir em Financeiro; ele mesmo nunca lança nada sozinho.
   const [pedidoId, setPedidoId] = useState("");
@@ -265,6 +279,22 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   function acrescentarItem() { setItens((arr) => [...arr, itemVazio()]); }
   function removerItem(idx: number) { setItens((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr)); }
 
+  // Auto-preenchimento de datas a partir da Data de emissão — só preenche
+  // campo que estiver VAZIO (nunca sobrescreve edição manual, nunca reverte
+  // depois se a emissão mudar de novo). "Data prevista de entrada", "Data do
+  // pedido" e o checkbox "entregue" só entram quando algum item da nota é do
+  // tipo produto (para serviço não faz sentido "entrada"/"entregue").
+  function handleDataEmissaoChange(valor: string) {
+    setDataEmissao(valor);
+    if (!valor) return;
+    setDataVencimento((atual) => atual || valor);
+    if (itens.some((i) => i.tipo_item === "produto")) {
+      setDataPrevistaEntrada((atual) => atual || valor);
+      setDataPedido((atual) => atual || valor);
+      if (!entregueTocadoRef.current) setEntregue(true);
+    }
+  }
+
   const valorBruto = useMemo(() => itens.reduce((a, i) => a + (Number(i.valor_total) || 0), 0), [itens]);
   const valorLiquido = useMemo(() => Math.round((valorBruto - (Number(desconto) || 0) + (Number(acrescimo) || 0)) * 100) / 100, [valorBruto, desconto, acrescimo]);
 
@@ -287,11 +317,29 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const somaParcelas = useMemo(() => parcelas.reduce((a, p) => a + (Number(p.valor) || 0), 0), [parcelas]);
   const diferencaPagamento = useMemo(() => (valorPago ? Math.round((Number(valorPago) - valorLiquido) * 100) / 100 : 0), [valorPago, valorLiquido]);
 
+  // Baixa de UMA parcela dentro do lançamento parcelado (item 3) — marcar o
+  // checkbox "Pago" pré-preenche valor pago (com o valor da própria parcela)
+  // e data de pagamento (hoje), ambos editáveis; desmarcar limpa a baixa.
+  function marcarParcelaPaga(idx: number, pago: boolean) {
+    setParcelas((arr) => arr.map((p, i) => {
+      if (i !== idx) return p;
+      if (!pago) {
+        return { ...p, pago: false, data_pagamento: undefined, valor_pago: undefined, conta_bancaria: undefined, forma_pagamento: undefined, numero_documento_pagamento: undefined };
+      }
+      const hoje = new Date().toISOString().slice(0, 10);
+      return { ...p, pago: true, data_pagamento: p.data_pagamento || hoje, valor_pago: p.valor_pago || p.valor };
+    }));
+  }
+  function atualizarBaixaParcela(idx: number, patch: Partial<Parcela>) {
+    setParcelas((arr) => arr.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  }
+
   function limpar() {
     setItens([itemVazio()]);
     setCentroCusto("Pecuária Leiteira"); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
     setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
+    entregueTocadoRef.current = false;
     setPedidoId("");
     setDesconto(""); setAcrescimo("");
     setParcelado(false); setQtdParcelas("2"); setParcelas([]); setBoletoFiles([]);
@@ -524,8 +572,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       tipo_documento: tipoDocumento || null,
       numero_documento: numeroDocumento || null,
       numero_os_orcamento: numeroOsOrcamento || null,
-      // Só vale para lançamento não-parcelado; com parcelamento, cada parcela
-      // carrega o seu próprio nº de boleto (ver `parcelas` abaixo).
+      // Só vale para lançamento não-parcelado; com parcelamento, o boleto
+      // informado aqui (se houver) já foi migrado para parcelas[0] abaixo —
+      // nunca duplicado nas demais (regra do item 4; o backend reforça isso
+      // de novo, defensivamente).
       numero_boleto: !parcelado ? (numeroBoleto || null) : null,
       data_emissao: dataEmissao || null,
       // Só vale para lançamento não-parcelado; nas parcelas cada uma tem seu vencimento.
@@ -537,7 +587,20 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       desconto: Number(desconto) || 0,
       acrescimo: Number(acrescimo) || 0,
       parcelas: parcelado
-        ? parcelas.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0, numero_boleto: p.numero_boleto || null }))
+        ? parcelas.map((p, i) => ({
+            data_vencimento: p.data_vencimento,
+            valor: Number(p.valor) || 0,
+            // Nº do boleto do lançamento (campo acima), quando preenchido e a
+            // própria parcela não tiver o seu, vira o boleto da 1ª parcela.
+            numero_boleto: p.numero_boleto || (i === 0 && numeroBoleto ? numeroBoleto : null),
+            // Baixa desta parcela dentro do lançamento parcelado (item 3) —
+            // só entra quando o usuário marcou "Pago" naquela linha.
+            data_pagamento: p.pago ? (p.data_pagamento || null) : null,
+            valor_pago: p.pago ? (Number(p.valor_pago) || 0) : null,
+            conta_bancaria: p.pago ? (p.conta_bancaria || null) : null,
+            forma_pagamento: p.pago ? (p.forma_pagamento || null) : null,
+            numero_documento_pagamento: p.pago ? (p.numero_documento_pagamento || null) : null,
+          }))
         : [],
       data_pagamento: !parcelado && jaPago ? dataPagamento || null : null,
       valor_pago: !parcelado && jaPago ? Number(valorPago) || 0 : null,
@@ -790,12 +853,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             Item de consulta à parte do número do documento — nº da ordem de serviço ou do orçamento, se houver.
           </span>
         </Campo>
-        {!parcelado && (
-          <Campo label="Número do boleto">
-            <input style={inputStyle} value={numeroBoleto} onChange={(e) => setNumeroBoleto(e.target.value)} placeholder="linha digitável (opcional)" />
-          </Campo>
-        )}
-        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} /></Campo>
+        <Campo label="Número do boleto">
+          <input style={inputStyle} value={numeroBoleto} onChange={(e) => setNumeroBoleto(e.target.value)} placeholder="linha digitável (opcional)" />
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+            {parcelado
+              ? "Ao parcelar, vale como o boleto da 1ª parcela — as demais são informadas na tabela de parcelas abaixo."
+              : "Linha digitável do boleto único deste lançamento (opcional)."}
+          </span>
+        </Campo>
+        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>
         {!parcelado && (
           <Campo label="Data de vencimento">
             <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
@@ -820,7 +886,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
         <Campo label="Entregue?">
           <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", marginTop: "0.4rem" }}>
-            <input type="checkbox" checked={entregue} onChange={(e) => setEntregue(e.target.checked)} /> Já entregue / recebido
+            <input type="checkbox" checked={entregue} onChange={(e) => { entregueTocadoRef.current = true; setEntregue(e.target.checked); }} /> Já entregue / recebido
           </label>
         </Campo>
         <Campo label="Desconto (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={desconto} onChange={(e) => setDesconto(e.target.value)} placeholder="0,00" /></Campo>
@@ -849,22 +915,69 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <Campo label="Quantidade de parcelas">
               <input type="number" min={1} style={{ ...inputStyle, maxWidth: "8rem" }} value={qtdParcelas} onChange={(e) => setQtdParcelas(e.target.value)} />
             </Campo>
+            <div style={{ overflowX: "auto" }}>
             <table className="fazenda-table mt-2">
-              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor (R$)</th><th>Nº do boleto</th></tr></thead>
+              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor (R$)</th><th>Nº do boleto</th><th style={{ textAlign: "center" }}>Pago</th></tr></thead>
               <tbody>
                 {parcelas.map((p, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}/{parcelas.length}</td>
-                    <td><input type="date" style={inputStyle} value={p.data_vencimento}
-                      onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }} value={p.valor}
-                      onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
-                    <td><input style={inputStyle} value={p.numero_boleto || ""} placeholder="opcional" title="Linha digitável desta parcela, se houver"
-                      onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, numero_boleto: e.target.value } : x))} /></td>
-                  </tr>
+                  <Fragment key={i}>
+                    <tr>
+                      <td>{i + 1}/{parcelas.length}</td>
+                      <td><input type="date" style={inputStyle} value={p.data_vencimento}
+                        onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
+                      <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }} value={p.valor}
+                        onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                      <td><input style={inputStyle} value={p.numero_boleto || ""} placeholder="opcional" title="Linha digitável desta parcela, se houver"
+                        onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, numero_boleto: e.target.value } : x))} /></td>
+                      <td style={{ textAlign: "center" }}>
+                        <input type="checkbox" checked={!!p.pago} title={`Marcar esta parcela como já ${tipo === "despesa" ? "paga" : "recebida"}`}
+                          onChange={(e) => marcarParcelaPaga(i, e.target.checked)} />
+                      </td>
+                    </tr>
+                    {p.pago && (
+                      <tr>
+                        <td colSpan={5} style={{ padding: 0, border: 0 }}>
+                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "6px", margin: "0.2rem 0 0.5rem" }}>
+                            <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                              <Campo label="Data de pagamento">
+                                <input type="date" style={inputStyle} value={p.data_pagamento || ""}
+                                  onChange={(e) => atualizarBaixaParcela(i, { data_pagamento: e.target.value })} />
+                              </Campo>
+                              <Campo label="Valor pago (R$)">
+                                <input type="number" inputMode="decimal" style={inputStyle} value={p.valor_pago || ""}
+                                  onChange={(e) => atualizarBaixaParcela(i, { valor_pago: e.target.value })} />
+                              </Campo>
+                              <Campo label="Conta bancária">
+                                <select style={inputStyle} value={p.conta_bancaria || ""} onChange={(e) => atualizarBaixaParcela(i, { conta_bancaria: e.target.value })}>
+                                  <option value="">Selecione…</option>
+                                  {opcoes.contas_bancarias.map((c) => <option key={c}>{c}</option>)}
+                                </select>
+                              </Campo>
+                              <Campo label="Nº do documento">
+                                <input style={inputStyle} value={p.numero_documento_pagamento || ""}
+                                  onChange={(e) => atualizarBaixaParcela(i, { numero_documento_pagamento: e.target.value })} />
+                              </Campo>
+                              <Campo label="Forma de pagamento">
+                                <select style={inputStyle} value={p.forma_pagamento || ""} onChange={(e) => atualizarBaixaParcela(i, { forma_pagamento: e.target.value })}>
+                                  <option value="">Selecione…</option>
+                                  {opcoes.formas_pagamento.map((f) => <option key={f} value={f}>{f}</option>)}
+                                </select>
+                              </Campo>
+                            </div>
+                            {p.valor_pago && Math.abs((Number(p.valor_pago) || 0) - (Number(p.valor) || 0)) > 0.01 && (
+                              <p style={{ fontSize: "0.72rem", marginTop: "0.35rem", color: (Number(p.valor_pago) - Number(p.valor)) < 0 ? "var(--green-light)" : "var(--amber)" }}>
+                                {(Number(p.valor_pago) - Number(p.valor)) < 0 ? "Desconto" : "Acréscimo"} de {formatBRL(Math.abs((Number(p.valor_pago) || 0) - (Number(p.valor) || 0)))} em relação ao valor desta parcela.
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
+            </div>
             {Math.abs(somaParcelas - valorLiquido) > 0.01 && (
               <p style={{ color: "var(--amber)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
                 <AlertTriangle size={12} style={{ display: "inline", marginRight: "0.2rem" }} />
@@ -872,7 +985,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               </p>
             )}
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-              Cada parcela nasce em aberto (conta a {tipo === "despesa" ? "pagar" : "receber"}) — dê baixa individualmente quando for paga/recebida.
+              Cada parcela nasce em aberto (conta a {tipo === "despesa" ? "pagar" : "receber"}) — marque &ldquo;Pago&rdquo; na própria
+              linha para dar baixa já ao salvar, ou dê baixa individualmente depois.
             </p>
           </div>
         )}
@@ -944,7 +1058,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       {!parcelado && (
         <div className="card mt-3" style={{ background: "var(--fin-pagamento-bg)" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", fontWeight: 600 }}>
-            <input type="checkbox" checked={jaPago} onChange={(e) => setJaPago(e.target.checked)} /> Já foi {tipo === "despesa" ? "pago" : "recebido"}
+            <input type="checkbox" checked={jaPago} onChange={(e) => {
+              const marcado = e.target.checked;
+              setJaPago(marcado);
+              // Ao marcar, pré-preenche com o valor líquido da nota (já
+              // derivado acima) — só se ainda estiver vazio, e continua editável.
+              if (marcado) setValorPago((atual) => atual || (valorLiquido > 0 ? valorLiquido.toFixed(2) : atual));
+            }} /> Já foi {tipo === "despesa" ? "pago" : "recebido"}
           </label>
           {jaPago && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">

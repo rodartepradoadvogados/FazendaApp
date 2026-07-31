@@ -9,6 +9,7 @@ import {
   fetchFormasPagamentoCadastro, criarFormaPagamentoCadastro, atualizarFormaPagamentoCadastro,
 } from "@/lib/api";
 import { nivelDaConta, estiloNivel, filhosDiretos } from "@/lib/contaGerencial";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const ABAS = [
   ["contas", "Conta corrente", Landmark],
@@ -69,6 +70,7 @@ function ContasCorrentes() {
 
   const carregar = () => fetchContasCorrentes().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(formContaVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (c: ContaCorrente) => { setForm({ banco: c.banco, agencia: c.agencia, numero_conta: c.numero_conta, ativo: c.ativo }); setEditando(c.id); setMsg(null); };
@@ -121,9 +123,14 @@ function ContasCorrentes() {
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Banco</th><th>Agência</th><th>Nº da conta</th><th></th></tr></thead>
+            <thead><tr>
+              <ThOrdenavel label="Banco" campo="banco" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Agência" campo="agencia" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Nº da conta" campo="numero_conta" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <th></th>
+            </tr></thead>
             <tbody>
-              {itens.map((c) => (
+              {linhasOrdenadas.map((c) => (
                 <Fragment key={c.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{c.banco}{!c.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
@@ -175,6 +182,7 @@ function CentrosCusto() {
 
   const carregar = () => fetchCentrosCusto().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm({ nome: "", ativo: true }); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (c: CentroCusto) => { setForm({ nome: c.nome, ativo: c.ativo }); setEditando(c.id); setMsg(null); };
@@ -222,9 +230,9 @@ function CentrosCusto() {
 
       {itens && (
         <table className="fazenda-table">
-          <thead><tr><th>Nome</th><th></th></tr></thead>
+          <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
           <tbody>
-            {itens.map((c) => (
+            {linhasOrdenadas.map((c) => (
               <Fragment key={c.id}>
                 <tr>
                   <td style={{ fontWeight: 700 }}>{c.nome}{!c.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
@@ -278,6 +286,7 @@ function NomeAtivoTab({ icon: Icon, titulo, semNenhum, fetchFn, criarFn, atualiz
 
   const carregar = () => fetchFn().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm({ nome: "", ativo: true }); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (c: NomeAtivo) => { setForm({ nome: c.nome, ativo: c.ativo }); setEditando(c.id); setMsg(null); };
@@ -327,9 +336,9 @@ function NomeAtivoTab({ icon: Icon, titulo, semNenhum, fetchFn, criarFn, atualiz
 
       {itens && (
         <table className="fazenda-table">
-          <thead><tr><th>Nome</th><th></th></tr></thead>
+          <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
           <tbody>
-            {itens.map((c) => (
+            {linhasOrdenadas.map((c) => (
               <Fragment key={c.id}>
                 <tr>
                   <td style={{ fontWeight: 700 }}>{c.nome}{!c.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

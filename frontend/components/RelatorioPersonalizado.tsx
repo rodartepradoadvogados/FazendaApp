@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const MAX_PARAMETROS_GRAFICO = 8;
 const MAX_ANIMAIS_GRAFICO = 80;
@@ -98,6 +99,8 @@ export default function RelatorioPersonalizado() {
     if (!resultado) return [];
     return resultado.linhas.slice(0, MAX_ANIMAIS_GRAFICO);
   }, [resultado]);
+
+  const ord = useOrdenacao(resultado?.linhas ?? []);
 
   const colunasExport = useMemo(
     () => resultado ? [{ header: "Nº animal", key: "numero" }, ...resultado.colunas.filter((c) => c.id !== "numero").map((c) => ({ header: c.label, key: c.id }))] : [],
@@ -240,12 +243,14 @@ export default function RelatorioPersonalizado() {
               <table className="fazenda-table">
                 <thead>
                   <tr>
-                    <th>Nº animal</th>
-                    {resultado.colunas.filter((c) => c.id !== "numero").map((c) => <th key={c.id}>{c.label}</th>)}
+                    <ThOrdenavel label="Nº animal" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                    {resultado.colunas.filter((c) => c.id !== "numero").map((c) => (
+                      <ThOrdenavel key={c.id} label={c.label} campo={c.id} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar={c.tipo === "numero" ? "right" : undefined} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {resultado.linhas.map((l) => (
+                  {ord.linhasOrdenadas.map((l) => (
                     <tr key={l.numero}>
                       <td style={{ fontWeight: 700 }}>{l.numero}</td>
                       {resultado.colunas.filter((c) => c.id !== "numero").map((c) => (
