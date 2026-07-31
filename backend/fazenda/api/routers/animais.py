@@ -24,6 +24,40 @@ from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RE
 router = APIRouter(prefix="/animais", tags=["animais"])
 
 
+def _del_dias_ao_vivo(del_dias_congelado: int | None, ult_parto: date | None, ult_secagem: date | None, hoje: date) -> int | None:
+    """DEL (dias em lactação) AO VIVO a partir do parto mais recente lançado no
+    app — `Animal.del_dias` é zerado no instante do parto (ver registrar_parto)
+    mas fica congelado dali em diante, só voltando a bater com a realidade no
+    próximo upload do GERAL.csv (Ideagri). Sem isso, uma vaca que pariu há dias
+    aparece com DEL 0 até o próximo import. Mesmo racional AO VIVO já usado em
+    `fazenda.api.routers.producao.info_secagem` — aqui também considera a
+    Secagem mais recente: vaca já seca não conta dias de lactação."""
+    if ult_parto is None:
+        return del_dias_congelado
+    if ult_secagem and ult_secagem >= ult_parto:
+        return None
+    return (hoje - ult_parto).days
+
+
+def _categoria_ao_vivo(categoria_completa: str | None, categoria_abrev: str | None, ult_parto: date | None, ult_secagem: date | None) -> tuple[str | None, str | None]:
+    """Corrige "Novilha ..." para "Vaca ..." quando o app já tem um parto
+    lançado para o animal — uma novilha que pariu vira vaca imediatamente, não
+    só no próximo upload do GERAL.csv. Só mexe em categorias que ainda dizem
+    "novilha" (texto do CSV congelado); categorias que já dizem "vaca" ficam
+    intocadas para não perder nuances do texto original do Ideagri que não
+    temos como reconstruir aqui (ex.: número da lactação)."""
+    if ult_parto is None:
+        return categoria_completa, categoria_abrev
+
+    def _corrige(texto: str | None) -> str | None:
+        if not texto or "novilha" not in texto.lower():
+            return texto
+        seca = bool(ult_secagem and ult_secagem >= ult_parto)
+        return "Vaca seca" if seca else "Vaca em lactação"
+
+    return _corrige(categoria_completa), _corrige(categoria_abrev)
+
+
 @router.get("/")
 def listar_animais(
     grupo: str | None = Query(None, description="Filtrar por grupo primário"),
@@ -51,13 +85,17 @@ def listar_animais(
         # antigos (sem o campo) permanecem até o próximo upload do GERAL.
         animais = [a for a in animais if not a.eh_semen and a.sexo != "M"]
 
-    # Datas reprodutivas por matriz: último serviço POSITIVO (concepção) e último
-    # parto. Usadas no front para dias de gestação, dias para o parto e PEV.
+    # Datas reprodutivas por matriz: último serviço POSITIVO (concepção), último
+    # parto e última secagem. Usadas no front para dias de gestação, dias para
+    # o parto, PEV e para corrigir DEL/categoria congelados (ver funções AO
+    # VIVO acima).
     query_servico = select(Servico)
     query_parto = select(Parto)
+    query_secagem = select(Secagem)
     if fazenda_id is not None:
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
+        query_secagem = query_secagem.where(Secagem.fazenda_id == fazenda_id)
     ult_pos: dict[str, object] = {}
     for s in session.exec(query_servico).all():
         d = s.data_servico
@@ -69,14 +107,23 @@ def listar_animais(
         d = p.data_parto
         if d and (p.numero_matriz not in ult_parto or d > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = d
+    ult_secagem: dict[str, object] = {}
+    for s in session.exec(query_secagem).all():
+        d = s.data_secagem
+        if d and (s.numero_matriz not in ult_secagem or d > ult_secagem[s.numero_matriz]):
+            ult_secagem[s.numero_matriz] = d
 
+    hoje = date.today()
     saida = []
     for a in animais:
         d = a.model_dump()
         sp = ult_pos.get(a.numero)
         pp = ult_parto.get(a.numero)
+        sec = ult_secagem.get(a.numero)
         d["data_ult_servico_pos"] = sp.isoformat() if sp else None
         d["data_ult_parto"] = pp.isoformat() if pp else None
+        d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp, sec, hoje)
+        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp, sec)
         saida.append(d)
     saida.sort(key=lambda d: chave_numero(d["numero"]))
     return saida
@@ -530,8 +577,18 @@ def ficha_animal(
             if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_data:
                 previsao_secagem = ultimo_parto_data - timedelta(days=seco)
 
+    # DEL e categoria AO VIVO (ver funções no topo do arquivo) — corrige o
+    # texto/número congelados do GERAL.csv quando há parto (e secagem) já
+    # lançados no app mais recentes do que o último import.
+    ultima_secagem_data = secagens[-1].data_secagem if secagens else None
+    animal_dump = animal.model_dump()
+    animal_dump["del_dias"] = _del_dias_ao_vivo(animal_dump["del_dias"], ultimo_parto_data, ultima_secagem_data, date.today())
+    animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
+        animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
+    )
+
     return {
-        "animal": animal.model_dump(),
+        "animal": animal_dump,
         "pai": pai,
         "previsao_parto": previsao_parto,
         "previsao_secagem": previsao_secagem,
