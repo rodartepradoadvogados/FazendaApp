@@ -10,6 +10,7 @@ import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets }
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
+import { EstoquePicker } from "@/components/EstoquePicker";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
@@ -147,9 +148,10 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
     return Array.from(set).sort();
   }, [animais]);
 
-  const produtos = useMemo(() => {
-    const base = medicamentosFiltrados ?? estoque.map((e) => e.nome);
-    return [...base].sort();
+  const itensProduto = useMemo(() => {
+    if (!medicamentosFiltrados) return estoque;
+    const nomes = new Set(medicamentosFiltrados);
+    return estoque.filter((e) => nomes.has(e.nome));
   }, [estoque, medicamentosFiltrados]);
   const compativeis = useMemo(() => unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade), [estoque, produto]);
   const protoSel = protocolos.dados.find((p) => String(p.id) === protocoloId);
@@ -262,13 +264,8 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
             </MobCampo>
           )}
           <MobCampo label="Produto / medicamento">
-            <select className="mob-input" value={produto} onChange={(e) => escolherProduto(e.target.value)} disabled={filtrarPor !== "todos" && !criterio}>
-              <option value="">Selecione o produto…</option>
-              {produtos.map((nome) => {
-                const est = estoque.find((e) => e.nome === nome);
-                return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
-              })}
-            </select>
+            <EstoquePicker itens={itensProduto} value={produto} onChange={escolherProduto} placeholder="Selecione o produto…"
+              disabled={filtrarPor !== "todos" && !criterio} incluirNaoEstocaveis />
           </MobCampo>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <MobCampo label="Quantidade (dose)">
@@ -525,10 +522,7 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
       ) : (
         <>
           <MobCampo label="Produto">
-            <select className="mob-input" value={produto} onChange={(e) => setProduto(e.target.value)}>
-              <option value="">Selecione...</option>
-              {estoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome}</option>)}
-            </select>
+            <EstoquePicker itens={estoque} value={produto} onChange={setProduto} incluirNaoEstocaveis />
           </MobCampo>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <MobCampo label="Dosagem">

@@ -8,8 +8,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dna } from "lucide-react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
-import { fetchEstoque, fetchPlanoContas } from "@/lib/api";
+import { fetchEstoque, fetchPlanoContas, FINALIDADES_ESTOQUE } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
+import { EstoquePicker } from "@/components/EstoquePicker";
 import { type EstoqueItem, useCache, useEnvio, hoje, MobPill, LinhaPills } from "./comum";
 import { fetchComCache } from "@/lib/offline";
 
@@ -22,7 +23,6 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
 
-  const [busca, setBusca] = useState("");
   const [somenteEstocaveis, setSomenteEstocaveis] = useState(true);
   const [fCategoria, setFCategoria] = useState("");
   const [fFinalidade, setFFinalidade] = useState("");
@@ -60,8 +60,8 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
   const contasUsadas = useMemo(() => opcoesPara("conta_gerencial_despesa_padrao"), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo]);
 
   const itens = useMemo(() => itensBase
-    .filter((e) => passaFiltros(e) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase())))
-    .sort((a, b) => a.nome.localeCompare(b.nome)), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
+    .filter((e) => passaFiltros(e))
+    .sort((a, b) => a.nome.localeCompare(b.nome)), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial]);
 
   const item = estoque.dados.find((e) => e.nome === nome);
   const unidade = item?.unidade || "";
@@ -102,9 +102,6 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
 
   return (
     <>
-      <MobCampo label="Buscar item">
-        <input className="mob-input" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do item…" />
-      </MobCampo>
       {categorias.length > 0 && (
         <MobCampo label="Categoria">
           <select className="mob-input" value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}>
@@ -148,10 +145,8 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
       </LinhaPills>
 
       <MobCampo label="Item do estoque">
-        <select className="mob-input" value={nome} onChange={(e) => setNome(e.target.value)}>
-          <option value="">Selecione o item…</option>
-          {itens.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
-        </select>
+        <EstoquePicker itens={itens} value={nome} onChange={setNome} placeholder="Selecione o item…"
+          finalidades={FINALIDADES_ESTOQUE} incluirNaoEstocaveis />
         {item?.estoque_semen_id != null && (
           <span style={{ fontSize: "0.72rem", color: "var(--mob-dourado-2)", display: "flex", alignItems: "center", gap: "0.25rem", marginTop: "0.3rem" }}>
             <Dna size={12} /> Vinculado ao Estoque de sêmen — este movimento também ajusta as doses do touro.

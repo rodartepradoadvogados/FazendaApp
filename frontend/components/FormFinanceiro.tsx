@@ -5,6 +5,7 @@ import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
+  FINALIDADES_ESTOQUE,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -12,6 +13,7 @@ import NovaContaGerencial from "@/components/NovaContaGerencial";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { onPedidoLancamentoFinanceiroDeEvento, type OrigemVinculoSanitarioReprodutivo } from "@/lib/vinculoSanitarioFinanceiroBridge";
@@ -85,12 +87,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const carregarOpcoes = () => { fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {}); carregarPlano(); };
   useEffect(() => { carregarOpcoes(); }, []);
 
-  const [produtosEstoque, setProdutosEstoque] = useState<{
-    nome: string; fornecedor_nome: string | null;
+  const [produtosEstoque, setProdutosEstoque] = useState<(EstoqueItemPicker & {
+    fornecedor_nome: string | null;
     conta_gerencial_despesa_padrao: string | null; conta_gerencial_receita_padrao: string | null;
-  }[]>([]);
+  })[]>([]);
   const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
-    nome: i.nome,
+    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
     fornecedor_nome: i.fornecedor_nome ?? null,
     conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
     conta_gerencial_receita_padrao: i.conta_gerencial_receita_padrao ?? null,
@@ -681,18 +684,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 </Campo>
               ) : (
                 <Campo label="Produto">
-                  <select style={inputStyle} value={it.produto} onChange={(e) => {
-                    const nomeProduto = e.target.value;
+                  <EstoquePicker itens={produtosEstoque} value={it.produto} finalidades={FINALIDADES_ESTOQUE} onChange={(nomeProduto) => {
                     const match = produtosEstoque.find((p) => p.nome === nomeProduto);
                     const patch: Partial<Item> = { produto: nomeProduto };
                     const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
                     if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
                     atualizarItem(idx, patch);
                     if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
-                  }}>
-                    <option value="">Selecione…</option>
-                    {produtosEstoque.slice().sort((a, b) => a.nome.localeCompare(b.nome)).map((p) => <option key={p.nome} value={p.nome}>{p.nome}</option>)}
-                  </select>
+                  }} />
                 </Campo>
               )}
               <Campo label="Conta gerencial">
