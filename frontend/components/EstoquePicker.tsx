@@ -12,7 +12,7 @@ export type EstoqueItemPicker = { nome: string; categoria?: string | null; quant
  * não lançamento) — por isso restringe a itens com finalidade "Medicamento"
  * (ração/material/equipamento não fazem sentido aqui), sem exigir saldo.
  */
-export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], somenteVinculadosAlimento = false, incluirNaoEstocaveis = false }:
+export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], somenteVinculadosAlimento = false, incluirNaoEstocaveis = false, disabled = false }:
   { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string; finalidades?: string[];
     // Restringe aos itens vinculados a um Alimento cadastrado (Configurações >
     // Cadastro > Alimentação > Alimentos) — ou seja, só volumosos, concentrados
@@ -25,6 +25,9 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
     // usa true para deixar visível também o item cadastrado só para
     // lançamento financeiro, quando o usuário desmarcar "somente itens em estoque".
     incluirNaoEstocaveis?: boolean;
+    // Ex.: esperar o usuário escolher um critério de filtro antes de liberar a
+    // escolha do produto (ver Sanidade > Aplicação avulsa no app).
+    disabled?: boolean;
   }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
@@ -50,7 +53,8 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
 
   return (
     <>
-      <button type="button" style={btn} onClick={() => { setAberto(true); setBusca(""); }}>
+      <button type="button" style={{ ...btn, opacity: disabled ? 0.6 : 1, cursor: disabled ? "not-allowed" : "pointer" }} disabled={disabled}
+        onClick={() => { setAberto(true); setBusca(""); }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {sel ? sel.nome : (value || placeholder)}
         </span>

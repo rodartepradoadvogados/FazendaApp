@@ -9,6 +9,7 @@ import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import {
   fetchSanidade, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate, fetchMedicamentos,
 } from "@/lib/api";
+import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 
@@ -37,10 +38,10 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
   const [vals, setVals] = useState({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [produtosCatalogo, setProdutosCatalogo] = useState<string[]>([]);
+  const [produtosCatalogo, setProdutosCatalogo] = useState<EstoqueItemPicker[]>([]);
 
   useEffect(() => {
-    fetchMedicamentos({ incluir_sem_estoque: true }).then((m: any[]) => setProdutosCatalogo(m.map((x) => x.nome))).catch(() => setProdutosCatalogo([]));
+    fetchMedicamentos({ incluir_sem_estoque: true }).then((m: EstoqueItemPicker[]) => setProdutosCatalogo(m)).catch(() => setProdutosCatalogo([]));
   }, []);
 
   const lista = useMemo(() => {
@@ -151,11 +152,8 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                       <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Data</label>
                         <input type="date" style={inp} value={vals.data} onChange={(e) => setVals((s) => ({ ...s, data: e.target.value }))} /></div>
                       <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Produto</label>
-                        <select style={inp} value={vals.produto} onChange={(e) => setVals((s) => ({ ...s, produto: e.target.value }))}>
-                          <option value="">Selecione...</option>
-                          {!produtosCatalogo.includes(vals.produto) && vals.produto && <option value={vals.produto}>{vals.produto}</option>}
-                          {produtosCatalogo.map((p) => <option key={p} value={p}>{p}</option>)}
-                        </select></div>
+                        <EstoquePicker itens={produtosCatalogo} value={vals.produto} onChange={(v) => setVals((s) => ({ ...s, produto: v }))}
+                          placeholder="Selecione…" incluirNaoEstocaveis /></div>
                       <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.6rem" }}>
                         <div style={{ flex: 1 }}><label style={rotulo}>Dose</label>
                           <input type="number" inputMode="decimal" style={inp} value={vals.dose} onChange={(e) => setVals((s) => ({ ...s, dose: e.target.value }))} /></div>
