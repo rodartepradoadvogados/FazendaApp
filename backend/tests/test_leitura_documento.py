@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import ContaGerencial
+from fazenda.models import ContaGerencial, Fornecedor
 from fazenda.rules.leitura_documento import MIME_ACEITOS, MODEL, ler_documento
 
 
@@ -237,3 +237,33 @@ class TestLerDocumentoUnitario:
             with pytest.raises(ValueError):
                 ler_documento(b"fake-heic-bytes", "image/heic")
             MockAnthropic.return_value.messages.create.assert_not_called()
+
+
+class TestSugestoesCadastroNoEndpoint:
+    """O endpoint /financeiro/ler-documento já devolve, junto dos campos
+    extraídos, as sugestões de casamento com o cadastro (fornecedor/produto/
+    serviço parecidos) — ver fazenda.rules.sugestao_documento."""
+
+    def test_fornecedor_parecido_aparece_em_sugestoes_cadastro(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        with Session(engine) as s:
+            s.add(Fornecedor(nome="Agropecuária São José", tipo="fornecedor"))
+            s.commit()
+        payload = {**_PAYLOAD_MINIMO, "fornecedor_cliente": "Agropecuaria Sao Jose Norte"}
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(payload)
+            r = c.post("/financeiro/ler-documento", files={"file": ("nota.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        sug = r.json()["sugestoes_cadastro"]
+        assert sug["fornecedor"]["candidato"] == "Agropecuária São José"
+        assert sug["fornecedor"]["confianca"] == "provavel"
+
+    def test_sem_nenhum_cadastro_parecido_sugestoes_ficam_vazias(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(_PAYLOAD_MINIMO)
+            r = c.post("/financeiro/ler-documento", files={"file": ("nota.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        assert r.json()["sugestoes_cadastro"] == {"fornecedor": None, "itens": []}

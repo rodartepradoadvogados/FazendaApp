@@ -7,7 +7,12 @@ Testes do motor de leitura de nota fiscal (backend/fazenda/rules/nfe_xml.py):
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
 
+import fazenda.database as database
+from fazenda.models import Fornecedor
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_COM_DESCONTO_E_ACRESCIMO = """<?xml version="1.0" encoding="UTF-8"?>
@@ -177,3 +182,55 @@ class TestErrosDeEntrada:
     def test_xml_valido_mas_nao_e_nota_fiscal_da_erro_claro(self):
         with pytest.raises(ValueError, match="NF-e"):
             parse_nfe_xml("<mensagem><texto>oi</texto></mensagem>")
+
+
+@pytest.fixture
+def client():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 1
+        papel = "admin"
+        ativo = True
+        username = "teste"
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
+class TestSugestoesCadastroNoImportarXml:
+    """/financeiro/importar-xml devolve, junto dos campos extraídos, as
+    sugestões de casamento com o cadastro — ver fazenda.rules.sugestao_documento."""
+
+    def test_fornecedor_parecido_aparece_em_sugestoes_cadastro(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Fornecedor(nome="Agropecuária São José", tipo="fornecedor"))
+            s.commit()
+        xml = NFE_COM_DESCONTO_E_ACRESCIMO.replace(
+            "Insumos Agropecuários LTDA", "Agropecuaria Sao Jose Norte",
+        )
+        r = c.post("/financeiro/importar-xml", json={"xml": xml})
+        assert r.status_code == 200
+        sug = r.json()["sugestoes_cadastro"]
+        assert sug["fornecedor"]["candidato"] == "Agropecuária São José"
+        assert sug["fornecedor"]["confianca"] == "provavel"
+
+    def test_sem_cadastro_parecido_sugestoes_ficam_vazias(self, client):
+        c, engine = client
+        r = c.post("/financeiro/importar-xml", json={"xml": NFE_COM_DESCONTO_E_ACRESCIMO})
+        assert r.status_code == 200
+        assert r.json()["sugestoes_cadastro"] == {"fornecedor": None, "itens": []}

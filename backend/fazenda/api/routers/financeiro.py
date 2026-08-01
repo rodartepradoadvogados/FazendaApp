@@ -25,6 +25,7 @@ from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
+from fazenda.rules.sugestao_documento import sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
 from fazenda.rules.patrimonio import calcular_depreciacao, somar_meses, status_manutencao
@@ -1677,27 +1678,39 @@ def editar_lancamento(
 
 
 @router.post("/importar-xml")
-def importar_xml(dados: XmlIn) -> dict:
-    """Extrai os campos de um XML de NF-e para pré-preencher o lançamento."""
+def importar_xml(
+    dados: XmlIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Extrai os campos de um XML de NF-e/NFS-e para pré-preencher o
+    lançamento, e já sugere (em `sugestoes_cadastro`) o fornecedor/produto/
+    serviço do cadastro mais parecido com o texto da nota, quando houver
+    semelhança mas não certeza — ver fazenda.rules.sugestao_documento."""
     try:
-        return parse_nfe_xml(dados.xml)
+        extraido = parse_nfe_xml(dados.xml)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler o XML: {e}")
+    extraido["sugestoes_cadastro"] = sugestoes_cadastro(session, fazenda_id, extraido)
+    return extraido
 
 
 @router.post("/ler-documento")
-async def ler_documento_anexado(file: UploadFile) -> dict:
+async def ler_documento_anexado(
+    file: UploadFile, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Lê um PDF/JPEG/PNG anexado (nota fiscal ou recibo) via IA e devolve os
-    campos extraídos para pré-preencher o lançamento — tudo editável no front."""
+    campos extraídos para pré-preencher o lançamento — tudo editável no front
+    — junto das mesmas sugestões de cadastro de `importar_xml` acima."""
     if file.content_type not in MIME_ACEITOS:
         raise HTTPException(status_code=400, detail=f"Tipo de arquivo não suportado: {file.content_type} (aceitos: PDF, JPEG, PNG)")
     conteudo = await file.read()
     try:
-        return ler_documento(conteudo, file.content_type)
+        extraido = ler_documento(conteudo, file.content_type)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler o documento: {e}")
+    extraido["sugestoes_cadastro"] = sugestoes_cadastro(session, fazenda_id, extraido)
+    return extraido
 
 
 # Tamanho máximo por anexo (boleto, contrato etc.) — o conteúdo fica no banco,
