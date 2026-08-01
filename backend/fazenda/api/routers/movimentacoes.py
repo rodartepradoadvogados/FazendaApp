@@ -19,6 +19,18 @@ from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoe
 
 router = APIRouter(prefix="/movimentacoes", tags=["movimentacoes"])
 
+# De onde uma movimentação pode vir — ver o comentário completo em
+# fazenda.models.animais.MovimentoLote.origem. "importacao" está aqui pra já
+# validar o valor caso o upload do GERAL.csv passe a mandar isso um dia, mas
+# nenhum chamador usa ainda (o upload não gera MovimentoLote hoje).
+ORIGENS_MOVIMENTACAO_VALIDAS = {
+    "manual",
+    "sugestao_confirmada",
+    "sugestao_automatica",
+    "sugestao_passiva",
+    "importacao",
+}
+
 # Seed inicial — usado só na primeira subida do banco (ver seed_motivos_movimentacao).
 # "Outro motivo" é tratado à parte pelo front: ao ser escolhido, abre um campo de
 # texto livre e o que for digitado ali vira o próprio valor de `motivo`.
@@ -65,6 +77,11 @@ class MoverIn(BaseModel):
     responsavel: str | None = None
     lote_destino_codigo: str
     animais: list[str]
+    # Rastreabilidade da origem (ver ORIGENS_MOVIMENTACAO_VALIDAS acima e o
+    # comentário em MovimentoLote.origem). Quando não vier no corpo (chamador
+    # antigo/externo que ainda não manda esse campo), assume "manual" — era o
+    # único jeito de mover animais antes das sugestões automáticas existirem.
+    origem: str | None = None
 
 
 class MotivoIn(BaseModel):
@@ -251,6 +268,9 @@ def mover_animais(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+    if dados.origem is not None and dados.origem not in ORIGENS_MOVIMENTACAO_VALIDAS:
+        raise HTTPException(status_code=400, detail=f"Origem inválida: {dados.origem!r}")
+    origem = dados.origem or "manual"
 
     query_destino = select(Lote).where(Lote.codigo == dados.lote_destino_codigo)
     if fazenda_id is not None:
@@ -276,7 +296,7 @@ def mover_animais(
             nao_encontrados.append(numero)
             continue
 
-        origem = animal.grupo_primario
+        lote_origem_atual = animal.grupo_primario
         animal.grupo_primario = rotulo_destino
         animal.grupo_raw = rotulo_destino
         animal.grupo_manual = True
@@ -285,7 +305,7 @@ def mover_animais(
 
         session.add(MovimentoLote(
             numero_matriz=numero,
-            lote_origem=origem,
+            lote_origem=lote_origem_atual,
             lote_destino=rotulo_destino,
             data_movimento=dados.data_movimento,
             hora_movimento=dados.hora_movimento,
@@ -294,6 +314,7 @@ def mover_animais(
             responsavel=dados.responsavel,
             usuario_id=usuario_id_seguro(user),
             fazenda_id=fazenda_id,
+            origem=origem,
         ))
         movidos += 1
 

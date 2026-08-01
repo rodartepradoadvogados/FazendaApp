@@ -1905,9 +1905,17 @@ export async function fetchSugestoesMovimentacao() {
 // errado etc.) — usado para não reportar "movido com sucesso" quando na
 // verdade ninguém foi movido.
 export type ResultadoMovimentacao = { movidos: number; nao_encontrados: string[] };
+// De onde veio a movimentação — não confundir com `motivo` (texto livre, pode
+// repetir o mesmo valor tanto numa troca manual quanto numa automática). Ver
+// o comentário completo em fazenda.models.animais.MovimentoLote.origem.
+// - "manual": Rebanho > Movimentar animais, ou inativação de lote (Configurações).
+// - "sugestao_confirmada": pop-up de sugestão pós-evento (parto/secagem/pré-parto) confirmado pelo usuário.
+// - "sugestao_automatica": mesma sugestão do motor de critérios, aplicada sem pop-up (ex.: cria no parto em lote).
+// - "sugestao_passiva": card da Agenda ou tela Rebanho > Sugestões de movimentação.
+export type OrigemMovimentacao = "manual" | "sugestao_confirmada" | "sugestao_automatica" | "sugestao_passiva" | "importacao";
 export async function criarMovimentacao(dados: {
   data_movimento: string; hora_movimento?: string; motivo?: string; observacao?: string;
-  responsavel?: string; lote_destino_codigo: string; animais: string[];
+  responsavel?: string; lote_destino_codigo: string; animais: string[]; origem?: OrigemMovimentacao;
 }): Promise<ResultadoMovimentacao> {
   const res = await authFetch(`${API}/movimentacoes/mover`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -3507,6 +3515,81 @@ export async function criarLancamentoFinanceiro(dados: any) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  return res.json();
+}
+
+// ── Lançamentos recorrentes (Financeiro > Ações > Lançamentos recorrentes) ──
+// Modelo com os dados FIXOS de uma conta que se repete todo período (energia,
+// internet, telefone, assinatura, aluguel) — "gerar" cria um LancamentoFinanceiro
+// de verdade, só com os dados variáveis daquele período (ver FormFinanceiro para
+// o lançamento manual completo; aqui é o atalho a partir do modelo cadastrado).
+export type LancamentoRecorrente = {
+  id: number;
+  descricao: string;
+  tipo: "receita" | "despesa";
+  fornecedor_cliente: string | null;
+  centro_custo: string | null;
+  codigo_conta_gerencial: string | null;
+  nome_conta_gerencial: string | null;
+  tipo_item: "produto" | "servico" | null;
+  responsavel_padrao: string | null;
+  tipo_documento_padrao: string | null;
+  forma_pagamento_padrao: string | null;
+  conta_bancaria_padrao: string | null;
+  dia_vencimento: number | null;
+  periodicidade: string;
+  observacao: string | null;
+  ativo: boolean;
+  ultimo_numero_lancamento: string | null;
+  ultima_geracao_em: string | null;
+};
+export type LancamentoRecorrentePayload = {
+  descricao: string; tipo: "receita" | "despesa";
+  fornecedor_cliente?: string | null; centro_custo?: string | null;
+  codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null;
+  tipo_item?: "produto" | "servico" | null;
+  responsavel_padrao?: string | null; tipo_documento_padrao?: string | null;
+  forma_pagamento_padrao?: string | null; conta_bancaria_padrao?: string | null;
+  dia_vencimento?: number | null; periodicidade?: string; observacao?: string | null; ativo?: boolean;
+};
+export async function fetchLancamentosRecorrentes(): Promise<LancamentoRecorrente[]> {
+  const res = await authFetch(`${API}/financeiro/recorrentes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lançamentos recorrentes error: ${res.status}`);
+  return res.json();
+}
+export async function criarLancamentoRecorrente(dados: LancamentoRecorrentePayload) {
+  const res = await authFetch(`${API}/financeiro/recorrentes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento recorrente"); }
+  return res.json();
+}
+export async function atualizarLancamentoRecorrente(id: number, dados: LancamentoRecorrentePayload) {
+  const res = await authFetch(`${API}/financeiro/recorrentes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lançamento recorrente"); }
+  return res.json();
+}
+export type GerarLancamentoRecorrentePayload = {
+  valor: number;
+  data_emissao?: string | null;
+  data_vencimento?: string | null;
+  numero_boleto?: string | null;
+  numero_documento?: string | null;
+  observacao?: string | null;
+  ja_pago?: boolean;
+  data_pagamento?: string | null;
+  valor_pago?: number | null;
+  conta_bancaria?: string | null;
+  forma_pagamento?: string | null;
+  numero_documento_pagamento?: string | null;
+};
+export async function gerarLancamentoRecorrente(modeloId: number, dados: GerarLancamentoRecorrentePayload) {
+  const res = await authFetch(`${API}/financeiro/recorrentes/${modeloId}/gerar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar o lançamento"); }
   return res.json();
 }
 

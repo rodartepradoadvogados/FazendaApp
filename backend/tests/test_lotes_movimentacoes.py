@@ -208,6 +208,53 @@ class TestMovimentacoes:
         assert registro["lote_destino"] == "02 - Baixa"
         assert registro["motivo"] == "Parto"
 
+    def test_origem_padrao_e_manual_quando_nao_informada(self, client):
+        # Compatibilidade: chamador que ainda não manda `origem` (ou um
+        # cliente externo antigo) grava "manual" — era o único jeito de mover
+        # animais antes das sugestões automáticas existirem.
+        r = client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08", "motivo": "Crescimento",
+            "lote_destino_codigo": "02", "animais": ["201"],
+        })
+        assert r.status_code == 200
+        registro = client.get("/movimentacoes/").json()[0]
+        assert registro["origem"] == "manual"
+
+    @pytest.mark.parametrize("origem", [
+        "manual", "sugestao_confirmada", "sugestao_automatica", "sugestao_passiva", "importacao",
+    ])
+    def test_aceita_e_grava_cada_origem_valida(self, client, origem):
+        r = client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08", "motivo": "Secagem",
+            "lote_destino_codigo": "02", "animais": ["201"], "origem": origem,
+        })
+        assert r.status_code == 200
+        registro = client.get("/movimentacoes/").json()[0]
+        assert registro["origem"] == origem
+
+    def test_rejeita_origem_invalida(self, client):
+        r = client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08", "motivo": "Crescimento",
+            "lote_destino_codigo": "02", "animais": ["201"], "origem": "chutando_um_valor",
+        })
+        assert r.status_code == 400
+
+    def test_mesmo_motivo_texto_distingue_origem_manual_de_sugestao_confirmada(self, client):
+        # O cenário central da rastreabilidade: duas movimentações com o
+        # MESMO texto de motivo ("Secagem") só se diferenciam pela origem.
+        client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08", "motivo": "Secagem",
+            "lote_destino_codigo": "02", "animais": ["201"], "origem": "manual",
+        })
+        client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08", "motivo": "Secagem",
+            "lote_destino_codigo": "02", "animais": ["202"], "origem": "sugestao_confirmada",
+        })
+        registros = {r["numero_matriz"]: r for r in client.get("/movimentacoes/").json()}
+        assert registros["201"]["motivo"] == registros["202"]["motivo"] == "Secagem"
+        assert registros["201"]["origem"] == "manual"
+        assert registros["202"]["origem"] == "sugestao_confirmada"
+
     def test_upload_geral_nao_sobrescreve_lote_movido_manualmente(self, client, monkeypatch):
         client.post("/movimentacoes/mover", json={
             "data_movimento": "2026-07-08", "motivo": "Crescimento",

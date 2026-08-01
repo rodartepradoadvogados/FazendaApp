@@ -67,6 +67,7 @@ from .financeiro import (
     Patrimonio,
     ManutencaoPatrimonio,
     CurvaABC,
+    LancamentoRecorrente,
 )
 from .estoque import (
     Estoque,
@@ -292,6 +293,7 @@ __all__ = [
     "ManutencaoPatrimonio",
     "Safra",
     "CurvaABC",
+    "LancamentoRecorrente",
     "Estoque",
     "Fornecedor",
     "MovimentoEstoque",

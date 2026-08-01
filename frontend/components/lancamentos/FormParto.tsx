@@ -210,7 +210,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     if (!pend) return;
     setMovendoLote(true);
     try {
-      const r = await criarMovimentacao({ data_movimento: dataParto, motivo: pend.motivo, lote_destino_codigo: pend.loteSugerido.codigo, animais: [pend.numero] });
+      const r = await criarMovimentacao({ data_movimento: dataParto, motivo: pend.motivo, lote_destino_codigo: pend.loteSugerido.codigo, animais: [pend.numero], origem: "sugestao_confirmada" });
       const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(pend.numero);
       if (moveuDeFato) {
         setSucesso((s) => `${s ? `${s} ` : ""}${pend.numero} movido(a) para o lote ${pend.loteSugerido.rotulo}.`);
@@ -237,7 +237,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
       if (!lote_sugerido) return null;
-      const r = await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
+      const r = await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero], origem: "sugestao_automatica" });
       const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
       if (!moveuDeFato) {
         falhas.push(`${numero} não foi movido para o lote ${lote_sugerido.rotulo} (a movimentação não foi confirmada pelo servidor)`);

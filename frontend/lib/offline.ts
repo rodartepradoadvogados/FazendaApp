@@ -214,8 +214,14 @@ function proximaTentativa(tentativas: number): string {
  * sincronizar depois. Erro do servidor (4xx/5xx) com internet É repassado —
  * significa dado inválido, e o usuário deve corrigir na hora.
  * Retorna { enviado } para a tela dizer "salvo" ou "guardado para enviar".
+ * `resposta` traz o corpo JSON só quando `enviado` for true (enviou de
+ * verdade, na hora) — permite a quem chamou conferir o resultado real antes
+ * de comemorar (ex.: `/movimentacoes/mover` devolve `{ movidos, nao_encontrados }`
+ * e um 200 não significa necessariamente que o animal foi movido — mesma
+ * checagem feita em criarMovimentacao/FormParto). Quando cai na fila
+ * (offline), não tem como saber o resultado ainda, então vem undefined.
  */
-export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descricao: string, metodo: "POST" | "PUT" | "DELETE" = "POST"): Promise<{ enviado: boolean }> {
+export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descricao: string, metodo: "POST" | "PUT" | "DELETE" = "POST"): Promise<{ enviado: boolean; resposta?: any }> {
   await iniciar();
   // Gerado ANTES da tentativa (não só ao enfileirar) — vira o header
   // Idempotency-Key tanto na 1ª tentativa quanto em qualquer reenvio pela
@@ -241,7 +247,8 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
       const detalhe = await res.json().catch(() => ({}));
       throw new Error(detalhe.detail || `Erro ${res.status} ao salvar`);
     }
-    return { enviado: true };
+    const resposta = await res.json().catch(() => undefined);
+    return { enviado: true, resposta };
   } catch (e) {
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
     // aborta como erro de rede, não de validação → nos dois casos, enfileira.

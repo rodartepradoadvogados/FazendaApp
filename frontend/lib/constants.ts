@@ -6,6 +6,23 @@ export const RESPONSAVEIS = [
   "Jorbeson Nunes (funcionário)", "Leomir Bonfim (funcionário)", "Valéria Bonfim (funcionária)",
 ];
 
+// Rótulo amigável da origem de um MovimentoLote (Rebanho > Movimentação de
+// lote, na Ficha do animal) — ver os valores possíveis e o porquê de cada um
+// em fazenda.models.animais.MovimentoLote.origem (backend). `null`/valor
+// desconhecido cai no fallback "Desconhecida" (histórico anterior ao campo).
+export const ORIGEM_MOVIMENTO_LOTE_LABEL: Record<string, string> = {
+  manual: "Manual",
+  sugestao_confirmada: "Sugestão confirmada",
+  sugestao_automatica: "Sugestão automática",
+  sugestao_passiva: "Sugestão passiva",
+  importacao: "Importação",
+  desconhecida: "Desconhecida",
+};
+export function rotuloOrigemMovimentoLote(origem: unknown): string {
+  if (typeof origem === "string" && ORIGEM_MOVIMENTO_LOTE_LABEL[origem]) return ORIGEM_MOVIMENTO_LOTE_LABEL[origem];
+  return "Desconhecida";
+}
+
 // Vias de aplicação de medicamento/vacina (lista fixa para evitar erro de
 // digitação) — usada no lançamento e na edição de aplicações de sanidade.
 export const VIAS_APLICACAO = [

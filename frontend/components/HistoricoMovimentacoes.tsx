@@ -2,11 +2,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { History, AlertTriangle, Search } from "lucide-react";
 import { fetchMovimentacoes, formatDate, ehAdmin } from "@/lib/api";
+import { rotuloOrigemMovimentoLote } from "@/lib/constants";
 
 type Movimento = {
   id: number; numero_matriz: string; lote_origem: string | null; lote_destino: string;
   data_movimento: string; hora_movimento: string | null; motivo: string;
   observacao: string | null; responsavel: string | null; usuario_nome?: string | null;
+  origem: string | null;
 };
 
 const selStyle: React.CSSProperties = {
@@ -52,7 +54,8 @@ export default function HistoricoMovimentacoes() {
               <thead>
                 <tr>
                   <th>Data</th><th>Hora</th><th>Matriz</th><th>Origem</th><th>Destino</th>
-                  <th>Motivo</th><th>Responsável</th><th>Observação</th>
+                  <th>Motivo</th><th title="Como a movimentação foi lançada: manual, sugestão confirmada num pop-up, aplicada automaticamente ou sugestão passiva da Agenda">Tipo</th>
+                  <th>Responsável</th><th>Observação</th>
                   {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 </tr>
               </thead>
@@ -65,12 +68,21 @@ export default function HistoricoMovimentacoes() {
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.lote_origem || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{m.lote_destino}</td>
                     <td style={{ fontSize: "0.78rem" }}>{m.motivo}</td>
+                    <td style={{ fontSize: "0.72rem" }}>
+                      <span style={{
+                        padding: "0.1rem 0.45rem", borderRadius: "999px", fontSize: "0.68rem", fontWeight: 600,
+                        background: m.origem === "manual" ? "var(--surface-3, var(--surface-2))" : "var(--dourado-dim, var(--surface-2))",
+                        color: m.origem === "manual" ? "var(--text-muted)" : "var(--dourado-light, var(--text))",
+                      }}>
+                        {rotuloOrigemMovimentoLote(m.origem)}
+                      </span>
+                    </td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.responsavel || "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
                     {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
                   </tr>
                 ))}
-                {!filtrados.length && <tr><td colSpan={admin ? 9 : 8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma movimentação registrada.</td></tr>}
+                {!filtrados.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma movimentação registrada.</td></tr>}
               </tbody>
             </table>
           </div>

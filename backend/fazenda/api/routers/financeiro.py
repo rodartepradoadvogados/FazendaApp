@@ -4,6 +4,7 @@ Router financeiro — DRE, fluxo de caixa, KPIs e lançamentos financeiros
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime
 from typing import Optional
 
@@ -16,8 +17,8 @@ from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
-    LancamentoAnexo, LancamentoItem, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade, SeedFlag, Servico,
-    TipoDocumento, Usuario,
+    LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
+    SeedFlag, Servico, TipoDocumento, Usuario,
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -1456,6 +1457,196 @@ def criar_lancamento(
         "valor_liquido": valor_liquido,
         "avisos_estoque": avisos_estoque,
     }
+
+
+# ---------------------------------------------------------------------------
+# Lançamentos recorrentes (Financeiro > Ações > Lançamentos recorrentes) —
+# "modelo" com os dados FIXOS de uma conta que se repete todo período (ex.:
+# energia, internet, telefone, assinatura, aluguel): fornecedor, conta
+# gerencial, centro de custo, forma de pagamento/conta bancária padrão e dia
+# de vencimento típico (ver LancamentoRecorrente em models/financeiro.py).
+#
+# A cada período, o usuário só entra com os dados VARIÁVEIS (valor da fatura,
+# data de emissão real, boleto daquele mês) em POST .../gerar, que MONTA um
+# LancamentoIn a partir do modelo + desses dados variáveis e chama
+# `criar_lancamento` de novo — a mesma função usada pelo formulário manual,
+# pelo XML e pelo Telegram — para não duplicar nada da regra de criação
+# (numeração, item, entrada de estoque etc.). O lançamento gerado nasce em
+# aberto (contas a pagar/receber), a menos que o usuário marque `ja_pago`.
+#
+# FORA de escopo desta feature (proposital — ver tarefa original): nenhuma
+# geração automática por agendador/cron todo mês, nem lembrete "hora de
+# gerar" — o usuário sempre aciona "Gerar lançamento deste período" na tela.
+# ---------------------------------------------------------------------------
+PERIODICIDADES_ACEITAS = ["mensal"]
+
+
+class LancamentoRecorrenteIn(BaseModel):
+    descricao: str
+    tipo: str  # "receita" | "despesa"
+    fornecedor_cliente: Optional[str] = None
+    centro_custo: Optional[str] = None
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    tipo_item: Optional[str] = None  # "produto" | "servico"
+    responsavel_padrao: Optional[str] = None
+    tipo_documento_padrao: Optional[str] = None
+    forma_pagamento_padrao: Optional[str] = None
+    conta_bancaria_padrao: Optional[str] = None
+    dia_vencimento: Optional[int] = None
+    periodicidade: str = "mensal"
+    observacao: Optional[str] = None
+    ativo: bool = True
+
+
+def _validar_lancamento_recorrente(dados: LancamentoRecorrenteIn) -> None:
+    if not dados.descricao.strip():
+        raise HTTPException(status_code=400, detail="Descrição é obrigatória")
+    if dados.tipo not in ("receita", "despesa"):
+        raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
+    if dados.periodicidade not in PERIODICIDADES_ACEITAS:
+        raise HTTPException(status_code=400, detail=f"periodicidade deve ser uma de: {', '.join(PERIODICIDADES_ACEITAS)}")
+    if dados.dia_vencimento is not None and not (1 <= dados.dia_vencimento <= 31):
+        raise HTTPException(status_code=400, detail="dia_vencimento deve estar entre 1 e 31")
+    if dados.tipo_item is not None and dados.tipo_item not in ("produto", "servico"):
+        raise HTTPException(status_code=400, detail="tipo_item deve ser 'produto' ou 'servico'")
+
+
+@router.get("/recorrentes")
+def listar_lancamentos_recorrentes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(LancamentoRecorrente)
+    if fazenda_id is not None:
+        query = query.where(LancamentoRecorrente.fazenda_id == fazenda_id)
+    itens = session.exec(query.order_by(LancamentoRecorrente.descricao)).all()
+    return [i.model_dump() for i in itens]
+
+
+@router.post("/recorrentes", status_code=201)
+def criar_lancamento_recorrente(
+    dados: LancamentoRecorrenteIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _validar_lancamento_recorrente(dados)
+    modelo = LancamentoRecorrente(
+        **dados.model_dump(),
+        fazenda_id=fazenda_id,
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+    )
+    session.add(modelo)
+    session.commit()
+    session.refresh(modelo)
+    return modelo.model_dump()
+
+
+@router.put("/recorrentes/{modelo_id}")
+def atualizar_lancamento_recorrente(
+    modelo_id: int, dados: LancamentoRecorrenteIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    modelo = session.get(LancamentoRecorrente, modelo_id)
+    if not modelo or (fazenda_id is not None and modelo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento recorrente não encontrado")
+    _validar_lancamento_recorrente(dados)
+    for campo, valor in dados.model_dump().items():
+        setattr(modelo, campo, valor)
+    modelo.atualizado_em = datetime.utcnow()
+    session.add(modelo)
+    session.commit()
+    session.refresh(modelo)
+    return modelo.model_dump()
+
+
+def _vencimento_do_periodo(dia_vencimento: int | None, referencia: date) -> date | None:
+    """Vencimento típico do modelo no mês/ano de `referencia` — dia além do
+    fim do mês é ajustado para o último dia (ex.: 31 em fevereiro vira 28/29)."""
+    if not dia_vencimento:
+        return None
+    ultimo_dia = calendar.monthrange(referencia.year, referencia.month)[1]
+    return date(referencia.year, referencia.month, min(dia_vencimento, ultimo_dia))
+
+
+class GerarLancamentoRecorrenteIn(BaseModel):
+    """Só os dados VARIÁVEIS de um período — todo o resto (fornecedor, conta
+    gerencial, centro de custo, forma de pagamento/conta bancária padrão)
+    vem do modelo (LancamentoRecorrente) indicado na URL."""
+    valor: float
+    data_emissao: Optional[date] = None
+    # Se não vier, calculado a partir de dia_vencimento do modelo + o mês de
+    # data_emissao (ou de hoje, sem data_emissao).
+    data_vencimento: Optional[date] = None
+    numero_boleto: Optional[str] = None
+    numero_documento: Optional[str] = None
+    # Observação específica deste período (ex.: "leitura 1234 kWh").
+    observacao: Optional[str] = None
+    # Nasce já pago/recebido (ex.: assinatura debitada automaticamente no
+    # cartão) — usa forma/conta padrão do modelo quando não vier override.
+    ja_pago: bool = False
+    data_pagamento: Optional[date] = None
+    valor_pago: Optional[float] = None
+    conta_bancaria: Optional[str] = None
+    forma_pagamento: Optional[str] = None
+    numero_documento_pagamento: Optional[str] = None
+
+
+@router.post("/recorrentes/{modelo_id}/gerar", status_code=201)
+def gerar_lancamento_recorrente(
+    modelo_id: int, dados: GerarLancamentoRecorrenteIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Gera um lançamento financeiro de verdade (ContaGerencial + LancamentoItem,
+    igual a qualquer outro) a partir de um modelo recorrente + os dados
+    variáveis deste período — reaproveita `criar_lancamento`, sem duplicar
+    nenhuma regra de criação (numeração, estoque, etc.)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    modelo = session.get(LancamentoRecorrente, modelo_id)
+    if not modelo or (fazenda_id is not None and modelo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento recorrente não encontrado")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="O valor deve ser positivo")
+
+    data_emissao = dados.data_emissao or date.today()
+    data_vencimento = dados.data_vencimento or _vencimento_do_periodo(modelo.dia_vencimento, data_emissao)
+
+    item = ItemIn(
+        codigo_conta_gerencial=modelo.codigo_conta_gerencial,
+        nome_conta_gerencial=modelo.nome_conta_gerencial,
+        produto=modelo.descricao,
+        tipo_item=modelo.tipo_item,
+        descricao=dados.observacao,
+        valor_total=dados.valor,
+    )
+    ja_pago = dados.ja_pago or dados.data_pagamento is not None
+    lanc = LancamentoIn(
+        tipo=modelo.tipo,
+        itens=[item],
+        centro_custo=modelo.centro_custo,
+        fornecedor_cliente=modelo.fornecedor_cliente,
+        responsavel=modelo.responsavel_padrao,
+        tipo_documento=modelo.tipo_documento_padrao,
+        numero_documento=dados.numero_documento,
+        data_emissao=data_emissao,
+        data_vencimento=data_vencimento,
+        numero_boleto=dados.numero_boleto,
+        data_pagamento=dados.data_pagamento if ja_pago else None,
+        valor_pago=(dados.valor_pago if dados.valor_pago is not None else dados.valor) if ja_pago else None,
+        conta_bancaria=(dados.conta_bancaria or modelo.conta_bancaria_padrao) if ja_pago else None,
+        forma_pagamento=(dados.forma_pagamento or modelo.forma_pagamento_padrao) if ja_pago else None,
+        numero_documento_pagamento=dados.numero_documento_pagamento if ja_pago else None,
+    )
+    resultado = criar_lancamento(dados=lanc, session=session, user=user, fazenda_id=fazenda_id)
+
+    modelo.ultimo_numero_lancamento = resultado["numero_lancamento"]
+    modelo.ultima_geracao_em = date.today()
+    modelo.atualizado_em = datetime.utcnow()
+    session.add(modelo)
+    session.commit()
+
+    return resultado
 
 
 class LancamentoEditIn(BaseModel):
