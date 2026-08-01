@@ -26,6 +26,8 @@ export function ExportarBotoes({
     try {
       if (formato === "excel") await exportarExcel(titulo, colunas, linhas, nomeArquivoBase);
       else await exportarPDF(titulo, colunas, linhas, nomeArquivoBase);
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarExcel/exportarPDF (lib/export.ts)
     } finally {
       setGerando(null);
     }

@@ -356,12 +356,16 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
     if (!ficha) return;
     const secoes: SecaoFicha[] = SECOES
       .map((s) => ({ titulo: s.titulo, colunas: s.colunas, linhas: formatarLinhas(s.chave, (ficha[s.chave] as Record<string, unknown>[]) || []) }));
-    await exportarFichaPDF(
-      `Ficha do animal ${numero}`,
-      `${ficha.animal.nome ? `${ficha.animal.nome} — ` : ""}${ficha.animal.categoria_abrev || ""} · Lote ${ficha.animal.grupo_primario || "—"}`,
-      secoes,
-      `ficha_animal_${numero}`,
-    );
+    try {
+      await exportarFichaPDF(
+        `Ficha do animal ${numero}`,
+        `${ficha.animal.nome ? `${ficha.animal.nome} — ` : ""}${ficha.animal.categoria_abrev || ""} · Lote ${ficha.animal.grupo_primario || "—"}`,
+        secoes,
+        `ficha_animal_${numero}`,
+      );
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarFichaPDF (lib/export.ts)
+    }
   }
 
   const a = ficha?.animal;

@@ -391,6 +391,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
                 onClick={async () => {
                   setExportando(true);
                   try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`); }
+                  catch { /* erro já mostrado ao usuário dentro de exportarPDF (lib/export.ts) */ }
                   finally { setExportando(false); }
                 }}
                 style={{

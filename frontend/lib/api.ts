@@ -1774,11 +1774,8 @@ export async function baixarPdfManualFazenda() {
   const res = await authFetch(`${API}/manual-fazenda/pdf`);
   if (!res.ok) throw new Error(`Erro ao gerar PDF do Manual da Fazenda: ${res.status}`);
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = "manual_da_fazenda.pdf";
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const { baixarArquivo } = await import("./nativo");
+  await baixarArquivo(blob, "manual_da_fazenda.pdf");
 }
 export async function fetchParametrosManualFazenda() {
   const res = await authFetch(`${API}/manual-fazenda/parametros`, { cache: "no-store" });

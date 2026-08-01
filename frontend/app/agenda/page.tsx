@@ -1313,6 +1313,8 @@ export default function AgendaPage() {
         if (aberto === "excel") await exportarExcel("Agenda", COLUNAS_AGENDA, filtrados, "agenda");
         else await exportarPDF("Agenda", COLUNAS_AGENDA, filtrados, "agenda");
         setAberto(null);
+      } catch {
+        // erro já mostrado ao usuário dentro de exportarExcel/exportarPDF (lib/export.ts)
       } finally { setGerando(false); }
     };
     return (
