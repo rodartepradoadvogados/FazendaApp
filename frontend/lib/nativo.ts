@@ -140,6 +140,43 @@ export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) =>
   }
 }
 
+/** Entrega ao usuário um arquivo gerado no cliente (Blob) — Excel/PDF de
+ *  relatórios, recibos etc. No navegador/PWA usa o mecanismo padrão (<a
+ *  download> + blob: URL, clicado programaticamente). Dentro do app nativo
+ *  (Capacitor Android) esse mesmo clique não dispara nada: a WebView do
+ *  Bridge padrão do Capacitor (ver android/.../MainActivity.java — só
+ *  `BridgeActivity`, sem `setDownloadListener`/`WebChromeClient` customizado)
+ *  não tem um handler de download registrado, então o "clique" no <a> não
+ *  produz erro nenhum nem download nenhum — some em silêncio. Por isso, só
+ *  dentro do app, gravamos o arquivo no cache do app (@capacitor/filesystem)
+ *  e abrimos a folha de compartilhar nativa (@capacitor/share), de onde o
+ *  usuário salva/abre/envia o arquivo — caminho confiável dentro da WebView. */
+export async function baixarArquivo(blob: Blob, nomeArquivo: string): Promise<void> {
+  if (await ehApp()) {
+    const [{ Filesystem, Directory }, { Share }] = await Promise.all([
+      import("@capacitor/filesystem"),
+      import("@capacitor/share"),
+    ]);
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    const gravado = await Filesystem.writeFile({ path: nomeArquivo, data: base64, directory: Directory.Cache });
+    await Share.share({ url: gravado.uri, title: nomeArquivo });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /** Remove o token FCM deste aparelho do backend — chamado no logout do app
  *  nativo, senão o próximo funcionário a usar o mesmo celular continuaria
  *  recebendo as notificações do usuário anterior. Best-effort: não bloqueia

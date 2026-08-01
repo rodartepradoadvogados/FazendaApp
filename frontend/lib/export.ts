@@ -2,6 +2,7 @@
 // no padrão visual CowData (ver public/brand/cowdata-mark.svg e o mockup de
 // relatório aprovado), usado em todas as exportações do sistema.
 import { getUsuario } from "./api";
+import { baixarArquivo } from "./nativo";
 
 const NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra";
 
@@ -47,15 +48,20 @@ function dataHoje(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function baixarBlob(blob: Blob, nomeArquivo: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = nomeArquivo;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+/** Roda a geração/entrega de um arquivo mostrando um alerta visível se algo
+ *  falhar (import dinâmico de lib pesada, geração do PDF/Excel, entrega via
+ *  Filesystem/Share dentro do app) — nenhuma tela deve ficar com um botão de
+ *  exportar que "não faz nada" e não mostra erro nenhum. O erro original é
+ *  relançado para quem chamou (algumas telas já têm feedback próprio, ex.
+ *  mensagem inline) continuar funcionando normalmente. */
+async function comAlertaDeErro<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "erro desconhecido";
+    alert(`Não foi possível gerar/baixar o arquivo: ${msg}`);
+    throw e;
+  }
 }
 
 // Marca CowData rasterizada (public/brand/cowdata-mark.svg), carregada uma
@@ -139,6 +145,7 @@ export async function exportarExcel(
   linhas: Record<string, unknown>[],
   nomeArquivoBase: string,
 ) {
+  return comAlertaDeErro(async () => {
   const ExcelJS = (await import("exceljs")).default;
   const usuario = getUsuario();
   const wb = new ExcelJS.Workbook();
@@ -182,7 +189,8 @@ export async function exportarExcel(
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  baixarBlob(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+  await baixarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+  });
 }
 
 export async function exportarPDF(
@@ -191,6 +199,7 @@ export async function exportarPDF(
   linhas: Record<string, unknown>[],
   nomeArquivoBase: string,
 ) {
+  return comAlertaDeErro(async () => {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const usuario = getUsuario();
@@ -209,7 +218,8 @@ export async function exportarPDF(
     didDrawPage: cabecalho,
   });
 
-  doc.save(`${nomeArquivoBase}_${dataHoje()}.pdf`);
+  await baixarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`);
+  });
 }
 
 export type SecaoFicha = { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[] };
@@ -226,6 +236,7 @@ export async function exportarMultiExcel(
   secoes: SecaoFicha[],
   nomeArquivoBase: string,
 ) {
+  return comAlertaDeErro(async () => {
   const ExcelJS = (await import("exceljs")).default;
   const usuario = getUsuario();
   const wb = new ExcelJS.Workbook();
@@ -285,7 +296,8 @@ export async function exportarMultiExcel(
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  baixarBlob(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+  await baixarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+  });
 }
 
 /**
@@ -303,6 +315,7 @@ export async function exportarFichaPDF(
   secoes: SecaoFicha[],
   nomeArquivoBase: string,
 ) {
+  return comAlertaDeErro(async () => {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const usuario = getUsuario();
@@ -350,7 +363,8 @@ export async function exportarFichaPDF(
     doc.text("Nenhum lançamento encontrado para este animal.", 14, 40);
   }
 
-  doc.save(`${nomeArquivoBase}_${dataHoje()}.pdf`);
+  await baixarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`);
+  });
 }
 
 export type LancamentoRecibo = {

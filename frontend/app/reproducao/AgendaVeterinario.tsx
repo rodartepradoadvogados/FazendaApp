@@ -214,6 +214,8 @@ export default function AgendaVeterinarioPage() {
       } else {
         await exportarFichaPDF("Agenda Reprodutiva", subtituloExport, secoes, "agenda_reprodutiva_combinado");
       }
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarMultiExcel/exportarFichaPDF (lib/export.ts)
     } finally {
       setExportando(null);
     }

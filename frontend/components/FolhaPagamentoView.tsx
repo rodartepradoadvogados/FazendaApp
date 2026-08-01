@@ -708,6 +708,8 @@ export default function FolhaPagamentoView() {
       } else {
         await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
       }
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
       setHoleriteExportando(false);
       setImprimindoHoleriteChave(null);

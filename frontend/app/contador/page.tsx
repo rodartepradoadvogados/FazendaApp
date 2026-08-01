@@ -263,6 +263,8 @@ export default function PainelContadorPage() {
         },
       ].filter((s) => s.linhas.length > 0);
       await exportarMultiExcel(`Fechamento mensal (${formatDate(inicio)} a ${formatDate(fim)})`, secoes, "fechamento_mensal");
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarMultiExcel (lib/export.ts)
     } finally {
       setExportando(false);
     }

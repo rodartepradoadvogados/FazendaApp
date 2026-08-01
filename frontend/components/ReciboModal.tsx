@@ -4,6 +4,7 @@ import { Mail, Save, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
 import { fetchDestinatarioRecibo, enviarReciboEmail } from "@/lib/api";
 import { gerarReciboPDF, type LancamentoRecibo } from "@/lib/export";
+import { baixarArquivo } from "@/lib/nativo";
 
 const inputStyle: React.CSSProperties = {
   padding: "0.5rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)",
@@ -31,8 +32,13 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
   }, [lanc.numero_lancamento]);
 
   async function salvar() {
-    const doc = await gerarReciboPDF(lanc);
-    doc.save(`recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
+    setErro(null);
+    try {
+      const doc = await gerarReciboPDF(lanc);
+      await baixarArquivo(doc.output("blob"), `recibo_${lanc.numero_lancamento || "lancamento"}.pdf`);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar o recibo");
+    }
   }
 
   async function enviar() {
