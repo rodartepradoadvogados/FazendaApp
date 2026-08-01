@@ -56,7 +56,7 @@ type RespManejo = {
 
 // ── Helpers ──
 // Formata uma data ISO ("2026-07-10") em DD/MM/YYYY sem sofrer com fuso horário.
-function fmtData(iso: string | null | undefined): string {
+export function fmtData(iso: string | null | undefined): string {
   if (!iso) return "—";
   const [y, m, d] = iso.slice(0, 10).split("-");
   if (!y || !m || !d) return "—";
@@ -124,17 +124,20 @@ function BadgeCores({ linhas }: { linhas: { cor?: Cor }[] }) {
 // `campo` (opcional): chave do objeto de linha pela qual ordenar ao clicar no
 // cabeçalho. Colunas sem `campo` (semáforo, colunas puramente derivadas) ficam
 // como <th> comum, não clicável.
-type Col = { header: string; campo?: string; render: (row: any) => React.ReactNode; style?: React.CSSProperties };
+export type Col = { header: string; campo?: string; render: (row: any) => React.ReactNode; style?: React.CSSProperties };
 
 // Tabela padrão de manejo: 1ª coluna é o semáforo (bolinha por `cor`), demais são as colunas passadas.
-function TabelaManejo({
-  colunas, linhas, corKey = "cor", renderDot, rowStyle,
+// `semaforo=false` omite essa 1ª coluna inteira — para listas sem noção de urgência (ver
+// SituacaoReprodutivaAoVivo.tsx, que não tem cor/prazo como PEV ou Secagem têm).
+export function TabelaManejo({
+  colunas, linhas, corKey = "cor", renderDot, rowStyle, semaforo = true,
 }: {
   colunas: Col[];
   linhas: any[];
   corKey?: string;
   renderDot?: (row: any) => React.ReactNode;
   rowStyle?: (row: any) => React.CSSProperties | undefined;
+  semaforo?: boolean;
 }) {
   const dotDe = renderDot || ((row: any) => <Dot cor={row[corKey]} />);
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(linhas);
@@ -143,7 +146,7 @@ function TabelaManejo({
       <table className="fazenda-table" style={{ margin: 0 }}>
         <thead>
           <tr>
-            <th style={{ width: "1.6rem", textAlign: "center" }} title="Semáforo de manejo"></th>
+            {semaforo && <th style={{ width: "1.6rem", textAlign: "center" }} title="Semáforo de manejo"></th>}
             {colunas.map((c) =>
               c.campo ? (
                 <ThOrdenavel key={c.header} label={c.header} campo={c.campo} coluna={coluna} dir={dir} ordenar={ordenar} />
@@ -156,13 +159,13 @@ function TabelaManejo({
         <tbody>
           {linhasOrdenadas.map((row, i) => (
             <tr key={`${row.numero ?? row.touro_nome ?? "l"}-${i}`} style={rowStyle?.(row)}>
-              <td style={{ textAlign: "center" }}>{dotDe(row)}</td>
+              {semaforo && <td style={{ textAlign: "center" }}>{dotDe(row)}</td>}
               {colunas.map((c) => <td key={c.header} style={c.style}>{c.render(row)}</td>)}
             </tr>
           ))}
           {linhasOrdenadas.length === 0 && (
             <tr>
-              <td colSpan={colunas.length + 1} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
+              <td colSpan={colunas.length + (semaforo ? 1 : 0)} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
                 Nenhum animal nesta lista.
               </td>
             </tr>
@@ -183,7 +186,7 @@ function DescParagrafo({ texto }: { texto: string }) {
 }
 
 // Barra superior do corpo com os botões de exportação alinhados à direita.
-function BarraExport(props: { titulo: string; nomeArquivoBase: string; colunas: { header: string; key: string }[]; linhas: Record<string, unknown>[] }) {
+export function BarraExport(props: { titulo: string; nomeArquivoBase: string; colunas: { header: string; key: string }[]; linhas: Record<string, unknown>[] }) {
   return (
     <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.6rem" }}>
       <ExportarBotoes {...props} />
@@ -191,8 +194,8 @@ function BarraExport(props: { titulo: string; nomeArquivoBase: string; colunas: 
   );
 }
 
-const estiloNum: React.CSSProperties = { fontWeight: 700 };
-const estiloMudo: React.CSSProperties = { color: "var(--text-muted)", fontSize: "0.8rem" };
+export const estiloNum: React.CSSProperties = { fontWeight: 700 };
+export const estiloMudo: React.CSSProperties = { color: "var(--text-muted)", fontSize: "0.8rem" };
 
 // ── Descrições (verbatim) de cada seção ──
 const DESC = {
