@@ -9,9 +9,18 @@ import { SecaoRecolhivel } from "@/components/ui";
 import { estiloSexado } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
+type PrecisaoParto = {
+  data_ultima_ia_positiva: string | null;
+  data_confirmacao_prenhez: string | null;
+  dias_gestacao: number | null;
+  data_parto_provavel: string | null;
+  dias_para_parto: number | null;
+};
+
 type Ficha = {
   animal: Record<string, unknown>;
   pai: { nome: string | null; naab: string | null; central: string | null; tpi: number | null; nm_dolar: number | null } | null;
+  precisao_parto: PrecisaoParto | null;
   partos: Record<string, unknown>[];
   servicos: Record<string, unknown>[];
   protocolos_iatf: Record<string, unknown>[];
@@ -548,6 +557,19 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                 </table>
               </div>
             </SecaoRecolhivel>
+          )}
+
+          {ficha.precisao_parto && (
+            <div className="card" style={cardStyle}>
+              <div className="card-header mb-3">Precisão de parto</div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Última IA com diagnóstico positivo</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
+                <div><span style={labelStyle}>Confirmação da prenhez</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
+                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
+                <div><span style={labelStyle}>Parto provável</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
+              </div>
+            </div>
           )}
 
           {SECOES.map((s) => {

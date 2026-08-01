@@ -4,7 +4,7 @@ absolutamente todos os lançamentos já registrados para um animal.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -159,6 +159,58 @@ class TestFichaAnimal:
         assert tipos_em_ordem == ["Compra", "Exame", "Doença (ocorrência clínica)", "Venda"]
         assert corpo["linha_tempo_sanitaria"][0]["gta"] == "GTA-0001"
         assert corpo["linha_tempo_sanitaria"][-1]["gta"] == "GTA-0002"
+
+    def test_precisao_parto_com_gestacao_em_aberto(self, client):
+        """Serviço com diagnóstico positivo, sem perda e sem parto posterior:
+        card "Precisão de parto" preenchido — data da IA e data da confirmação
+        do diagnóstico são campos DISTINTOS (a confirmação normalmente vem
+        semanas depois da inseminação, num exame separado)."""
+        c, engine = client
+        hoje = date.today()
+        data_ia = hoje - timedelta(days=100)
+        data_confirmacao = data_ia + timedelta(days=35)
+        with Session(engine) as s:
+            animal = Animal(numero="700", sexo="F", data_nasc=date(2022, 1, 1))
+            s.add(animal)
+            s.commit()
+            s.refresh(animal)
+            s.add(Servico(
+                animal_id=animal.id, numero_matriz="700", data_servico=data_ia, tipo_servico="IA",
+                diagnostico="POSITIVO", data_diagnostico=data_confirmacao,
+            ))
+            s.commit()
+
+        r = c.get("/animais/700/ficha")
+        assert r.status_code == 200
+        pp = r.json()["precisao_parto"]
+        assert pp is not None
+        assert pp["data_ultima_ia_positiva"] == data_ia.isoformat()
+        assert pp["data_confirmacao_prenhez"] == data_confirmacao.isoformat()
+        assert pp["dias_gestacao"] == 100
+        assert pp["data_parto_provavel"] == (data_ia + timedelta(days=280)).isoformat()
+        assert pp["dias_para_parto"] == 180
+
+    def test_precisao_parto_ausente_sem_gestacao_em_aberto(self, client):
+        """Sem serviço positivo em aberto (nenhum serviço, ou já pariu depois
+        dele) — o card não deve aparecer (None), não um card vazio."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="701", sexo="F", data_nasc=date(2022, 1, 1)))
+            s.commit()
+        assert c.get("/animais/701/ficha").json()["precisao_parto"] is None
+
+        hoje = date.today()
+        with Session(engine) as s:
+            animal = Animal(numero="702", sexo="F", data_nasc=date(2021, 1, 1))
+            s.add(animal)
+            s.commit()
+            s.refresh(animal)
+            data_ia = hoje - timedelta(days=300)
+            s.add(Servico(animal_id=animal.id, numero_matriz="702", data_servico=data_ia, diagnostico="POSITIVO"))
+            # Parto já registrado depois da IA — gestação encerrada, não "em aberto".
+            s.add(Parto(animal_id=animal.id, numero_matriz="702", data_parto=data_ia + timedelta(days=280), ordem_parto=1))
+            s.commit()
+        assert c.get("/animais/702/ficha").json()["precisao_parto"] is None
 
 
 def test_estratificacao_rebanho():
