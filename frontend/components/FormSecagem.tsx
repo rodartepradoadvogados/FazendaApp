@@ -63,9 +63,12 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  // Após secar 1 vaca só, oferece mover pro lote sugerido (das secas) numa
-  // janela suspensa em vez do window.confirm nativo.
-  const [transferenciaPendente, setTransferenciaPendente] = useState<{ numero: string; lote: { codigo: string; rotulo: string } } | null>(null);
+  // Após secar, oferece mover pra(s) o(s) lote(s) sugerido(s) numa janela
+  // suspensa em vez do window.confirm nativo — uma fila (não só a última
+  // secada), já que secar várias de uma vez pode sugerir lotes diferentes
+  // por vaca (ex.: alguma já estava lá, critério bate diferente por animal).
+  const [filaTransferencia, setFilaTransferencia] = useState<{ numero: string; lote: { codigo: string; rotulo: string } }[]>([]);
+  const transferenciaPendente = filaTransferencia[0] || null;
   const [transferindo, setTransferindo] = useState(false);
 
   useEffect(() => {
@@ -106,7 +109,7 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
     // matriz, sem perder a seleção de quem falhou.
     const salvos: string[] = [];
     const falhados: string[] = [];
-    let loteSugerido: { codigo: string; rotulo: string } | null = null;
+    const pendentes: { numero: string; lote: { codigo: string; rotulo: string } }[] = [];
     try {
       for (const numero of numerosAlvo) {
         try {
@@ -118,7 +121,11 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
             vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
             vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
           });
-          if (r.lote_sugerido) loteSugerido = r.lote_sugerido;
+          // Cada vaca pode ter uma sugestão diferente (ex.: alguma já está no
+          // lote das secas) — só entra na fila quem realmente precisa mudar.
+          if (r.lote_sugerido && codigoGrupo(animais.find((a) => a.numero === numero)?.grupo_primario) !== r.lote_sugerido.codigo) {
+            pendentes.push({ numero, lote: r.lote_sugerido });
+          }
           salvos.push(numero);
         } catch {
           falhados.push(numero);
@@ -134,11 +141,10 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         }
       } else {
         setSucesso(`Secagem lançada com sucesso para ${salvos.length} animal(is).`);
-        // Só oferece mover para o lote sugerido no caso de 1 animal — com vários,
-        // cada um pode precisar de um lote diferente; mova manualmente se preciso.
-        if (salvos.length === 1 && loteSugerido) {
-          setTransferenciaPendente({ numero: salvos[0], lote: loteSugerido });
-        }
+        // Fila de confirmação, uma de cada vez — inclusive quando várias
+        // vacas foram secadas juntas, cada uma pode precisar de um lote
+        // diferente (ou nenhum, se já estiver no lote certo).
+        if (pendentes.length) setFilaTransferencia(pendentes);
         setSelecionados(new Set()); setLotesSelecionados([]);
         setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
         setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
@@ -155,14 +161,20 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
     const { numero, lote } = transferenciaPendente;
     setTransferindo(true);
     try {
-      await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero] });
-      setSucesso((s) => `${s || ""} Movida para o lote ${lote.rotulo}.`);
-      setTransferenciaPendente(null);
+      const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero] });
+      const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
+      if (!moveuDeFato) throw new Error(`Não foi possível mover ${numero} para o lote ${lote.rotulo}.`);
+      setSucesso((s) => `${s || ""} ${numero} movida para o lote ${lote.rotulo}.`);
+      setFilaTransferencia((f) => f.slice(1));
     } catch (e: any) {
       setErro(e.message || "Erro ao mover para o lote.");
     } finally {
       setTransferindo(false);
     }
+  }
+
+  function pularTransferenciaLote() {
+    setFilaTransferencia((f) => f.slice(1));
   }
 
   return (
@@ -354,13 +366,16 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
       </div>
 
       {transferenciaPendente && (
-        <Modal title="Mover para o lote das secas" onClose={() => setTransferenciaPendente(null)} width="420px" zIndex={95}>
+        <Modal title="Mover para o lote das secas" onClose={pularTransferenciaLote} width="420px" zIndex={95}>
           <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
             Deseja transferir a vaca <strong>{transferenciaPendente.numero}</strong> para o lote{" "}
             <strong>{transferenciaPendente.lote.rotulo}</strong>?
+            {filaTransferencia.length > 1 && (
+              <><br /><span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Mais {filaTransferencia.length - 1} vaca(s) na fila depois desta.</span></>
+            )}
           </p>
           <div className="flex items-center justify-end gap-2">
-            <button className="btn-ghost" onClick={() => setTransferenciaPendente(null)} disabled={transferindo}>Não</button>
+            <button className="btn-ghost" onClick={pularTransferenciaLote} disabled={transferindo}>Não</button>
             <button className="btn-primary" onClick={confirmarTransferenciaLote} disabled={transferindo}>
               {transferindo ? "Movendo…" : "Sim, transferir"}
             </button>
