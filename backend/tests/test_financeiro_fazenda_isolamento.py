@@ -143,3 +143,56 @@ class TestIsolamentoFinanceiroFazenda:
         descricoes = {item["descricao"] for item in r.json()["lancamentos"]}
         assert "Lançamento fazenda 1 (legado)" in descricoes
         assert "Lançamento fazenda 2 (legado)" in descricoes
+
+
+def _criar_recorrente(c, descricao: str):
+    payload = {"descricao": descricao, "tipo": "despesa", "centro_custo": "Pecuária Leiteira"}
+    r = c.post("/financeiro/recorrentes", json=payload)
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+class TestIsolamentoLancamentoRecorrenteFazenda:
+    """Mesmo piloto conservador de multi-fazenda dos demais cadastros do
+    módulo Financeiro — o modelo recorrente de uma fazenda nunca aparece,
+    nem é editável/gerável, por outra fazenda."""
+
+    def test_modelo_criado_por_fazenda_1_nao_aparece_para_fazenda_2(self, client):
+        c, _ = client
+        _como_fazenda(1)
+        _criar_recorrente(c, "Energia fazenda 1")
+
+        _como_fazenda(2)
+        r = c.get("/financeiro/recorrentes")
+        assert r.status_code == 200
+        assert "Energia fazenda 1" not in {m["descricao"] for m in r.json()}
+
+    def test_atualizar_modelo_de_outra_fazenda_devolve_404(self, client):
+        c, _ = client
+        _como_fazenda(1)
+        modelo_id = _criar_recorrente(c, "Internet fazenda 1")["id"]
+
+        _como_fazenda(2)
+        r = c.put(f"/financeiro/recorrentes/{modelo_id}", json={"descricao": "Invasão", "tipo": "despesa"})
+        assert r.status_code == 404
+
+    def test_gerar_a_partir_de_modelo_de_outra_fazenda_devolve_404(self, client):
+        c, _ = client
+        _como_fazenda(1)
+        modelo_id = _criar_recorrente(c, "Telefone fazenda 1")["id"]
+
+        _como_fazenda(2)
+        r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={"valor": 100.0})
+        assert r.status_code == 404
+
+    def test_lancamento_gerado_pela_fazenda_1_nao_aparece_para_fazenda_2(self, client):
+        c, _ = client
+        _como_fazenda(1)
+        modelo_id = _criar_recorrente(c, "Aluguel fazenda 1")["id"]
+        gerado = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={"valor": 500.0})
+        assert gerado.status_code == 201
+
+        _como_fazenda(2)
+        r = c.get("/financeiro/lancamentos")
+        numeros = {item["numero_lancamento"] for item in r.json()["lancamentos"]}
+        assert gerado.json()["numero_lancamento"] not in numeros

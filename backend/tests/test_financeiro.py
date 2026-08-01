@@ -816,3 +816,145 @@ class TestReciboLancamento:
         )
         assert resp.status_code == 200 and resp.json() == {"enviado": True}
         assert chamadas == ["alguem@exemplo.com"]
+
+
+class TestLancamentoRecorrente:
+    """Modelo de conta recorrente (energia/internet/telefone/assinatura/
+    aluguel) — cadastra os dados fixos uma vez, gera um LancamentoFinanceiro
+    de verdade a cada período só com os dados variáveis (valor, emissão,
+    boleto)."""
+
+    def _criar_modelo(self, c, **overrides):
+        payload = {
+            "descricao": "Energia CPFL",
+            "tipo": "despesa",
+            "fornecedor_cliente": "CPFL Energia",
+            "centro_custo": "Pecuária Leiteira",
+            "codigo_conta_gerencial": "3.03.02.11",
+            "nome_conta_gerencial": "Energia elétrica",
+            "tipo_item": "servico",
+            "forma_pagamento_padrao": "boleto",
+            "conta_bancaria_padrao": "Banco do Brasil · Agência 3775-3 · Conta corrente 3.615-3",
+            "dia_vencimento": 10,
+            "periodicidade": "mensal",
+        }
+        payload.update(overrides)
+        return c.post("/financeiro/recorrentes", json=payload)
+
+    def test_cria_modelo_recorrente(self, client):
+        c, _ = client
+        r = self._criar_modelo(c)
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["descricao"] == "Energia CPFL"
+        assert corpo["dia_vencimento"] == 10
+        assert corpo["ativo"] is True
+        assert corpo["ultimo_numero_lancamento"] is None
+
+    def test_rejeita_tipo_invalido(self, client):
+        c, _ = client
+        r = self._criar_modelo(c, tipo="outro")
+        assert r.status_code == 400
+
+    def test_rejeita_periodicidade_nao_suportada(self, client):
+        c, _ = client
+        r = self._criar_modelo(c, periodicidade="anual")
+        assert r.status_code == 400
+
+    def test_rejeita_dia_vencimento_fora_do_intervalo(self, client):
+        c, _ = client
+        r = self._criar_modelo(c, dia_vencimento=32)
+        assert r.status_code == 400
+
+    def test_listar_recorrentes(self, client):
+        c, _ = client
+        self._criar_modelo(c)
+        self._criar_modelo(c, descricao="Internet Vivo Fibra")
+        r = c.get("/financeiro/recorrentes")
+        assert r.status_code == 200
+        nomes = {m["descricao"] for m in r.json()}
+        assert nomes == {"Energia CPFL", "Internet Vivo Fibra"}
+
+    def test_atualizar_modelo_recorrente(self, client):
+        c, _ = client
+        modelo_id = self._criar_modelo(c).json()["id"]
+        r = c.put(f"/financeiro/recorrentes/{modelo_id}", json={
+            "descricao": "Energia CPFL", "tipo": "despesa", "dia_vencimento": 15, "ativo": False,
+        })
+        assert r.status_code == 200
+        assert r.json()["dia_vencimento"] == 15
+        assert r.json()["ativo"] is False
+
+    def test_atualizar_modelo_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.put("/financeiro/recorrentes/9999", json={"descricao": "X", "tipo": "despesa"})
+        assert r.status_code == 404
+
+    def test_gerar_lancamento_a_partir_do_modelo(self, client):
+        c, engine = client
+        modelo_id = self._criar_modelo(c).json()["id"]
+        r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={
+            "valor": 842.37, "data_emissao": "2026-08-05", "numero_boleto": "34191.12345 67890.123456",
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["valor_liquido"] == 842.37
+        numero = corpo["numero_lancamento"]
+
+        # É um LancamentoFinanceiro normal — aparece no extrato como qualquer outro.
+        listagem = c.get("/financeiro/lancamentos").json()["lancamentos"]
+        registro = next(l for l in listagem if l["numero_lancamento"] == numero)
+        assert registro["tipo"] == "despesa"
+        assert registro["valor"] == 842.37
+        assert registro["fornecedor"] == "CPFL Energia"
+        assert registro["centro_custo"] == "Pecuária Leiteira"
+        assert registro["numero_boleto"] == "34191.12345 67890.123456"
+        assert registro["data_emissao"] == "2026-08-05"
+        # Vencimento calculado a partir do dia_vencimento do modelo (10) — mês
+        # da emissão informada (agosto/2026), não o mês corrente do teste.
+        assert registro["data_vencimento"] == "2026-08-10"
+        assert registro["data_pagamento"] is None  # nasce em aberto, sem ja_pago
+        assert len(registro["itens"]) == 1
+        assert registro["itens"][0]["produto"] == "Energia CPFL"
+        assert registro["itens"][0]["codigo_conta_gerencial"] == "3.03.02.11"
+
+        # O modelo guarda o rastro do último lançamento gerado.
+        modelo = c.get("/financeiro/recorrentes").json()[0]
+        assert modelo["ultimo_numero_lancamento"] == numero
+        assert modelo["ultima_geracao_em"] is not None
+
+    def test_gerar_vencimento_ajustado_no_fim_do_mes(self, client):
+        c, _ = client
+        modelo_id = self._criar_modelo(c, dia_vencimento=31).json()["id"]
+        r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={
+            "valor": 100.0, "data_emissao": "2026-02-03",
+        })
+        assert r.status_code == 201
+        numero = r.json()["numero_lancamento"]
+        registro = next(l for l in c.get("/financeiro/lancamentos").json()["lancamentos"] if l["numero_lancamento"] == numero)
+        assert registro["data_vencimento"] == "2026-02-28"  # fevereiro/2026 não é bissexto
+
+    def test_gerar_ja_pago_usa_forma_e_conta_padrao_do_modelo(self, client):
+        c, _ = client
+        modelo_id = self._criar_modelo(c).json()["id"]
+        r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={
+            "valor": 300.0, "data_emissao": "2026-08-05", "ja_pago": True, "data_pagamento": "2026-08-06",
+        })
+        assert r.status_code == 201
+        numero = r.json()["numero_lancamento"]
+        registro = next(l for l in c.get("/financeiro/lancamentos").json()["lancamentos"] if l["numero_lancamento"] == numero)
+        assert registro["data_pagamento"] == "2026-08-06"
+        assert registro["valor_pago"] == 300.0
+        assert registro["forma_pagamento"] == "boleto"
+        assert registro["conta_bancaria"] == "Banco do Brasil · Agência 3775-3 · Conta corrente 3.615-3"
+
+    def test_gerar_a_partir_de_modelo_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/financeiro/recorrentes/9999/gerar", json={"valor": 100.0})
+        assert r.status_code == 404
+
+    def test_gerar_com_valor_zero_ou_negativo_da_erro(self, client):
+        c, _ = client
+        modelo_id = self._criar_modelo(c).json()["id"]
+        r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={"valor": 0})
+        assert r.status_code == 400

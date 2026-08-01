@@ -416,6 +416,55 @@ class ManutencaoPatrimonio(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Lançamento recorrente (Financeiro > Ações > Lançamentos recorrentes) —
+# "modelo" com os dados FIXOS de uma conta que se repete todo período (ex.:
+# energia, internet, telefone, assinatura, aluguel): fornecedor, conta
+# gerencial, centro de custo, forma de pagamento e conta bancária padrão, dia
+# de vencimento típico. Todo período, o usuário só entra com os dados
+# VARIÁVEIS (valor da fatura, data de emissão real, boleto daquele mês) em
+# POST /financeiro/recorrentes/{id}/gerar — que gera um ContaGerencial/
+# LancamentoItem de verdade reaproveitando `criar_lancamento`, nunca uma
+# tabela paralela. Sem geração automática por cron nem lembrete — isso é
+# trabalho de outra sessão (ver ADR no router).
+# ---------------------------------------------------------------------------
+class LancamentoRecorrente(SQLModel, table=True):
+    __tablename__ = "lancamento_recorrente"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    descricao: str  # nome do modelo, ex.: "Energia CPFL"
+    tipo: str  # "receita" | "despesa"
+    fornecedor_cliente: Optional[str] = None
+    centro_custo: Optional[str] = None
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    tipo_item: Optional[str] = None  # "produto" | "servico" — do item gerado
+    responsavel_padrao: Optional[str] = None
+    tipo_documento_padrao: Optional[str] = None
+    forma_pagamento_padrao: Optional[str] = None
+    conta_bancaria_padrao: Optional[str] = None
+    # Dia do mês em que esta conta costuma vencer (1-31); usado para calcular
+    # o vencimento do período ao gerar, se o usuário não informar um diferente
+    # (dias além do fim do mês são ajustados para o último dia, ex.: 31 em
+    # fevereiro vira 28/29).
+    dia_vencimento: Optional[int] = None
+    # Nomeado de forma genérica (não "mensal" fixo no código) para não fechar
+    # a porta a outras periodicidades no futuro — hoje só "mensal" é aceito
+    # (ver PERIODICIDADES_ACEITAS no router), que é o único caso de uso pedido.
+    periodicidade: str = "mensal"
+    observacao: Optional[str] = None
+    ativo: bool = True
+    # Rastro só informativo do último lançamento gerado a partir deste modelo
+    # (mostrado na lista, não usado por nenhuma regra) — ajuda o usuário a ver
+    # se já gerou a conta deste mês antes de gerar de novo.
+    ultimo_numero_lancamento: Optional[str] = None
+    ultima_geracao_em: Optional[date] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Curva ABC (análise de compras / Pareto)
 # ---------------------------------------------------------------------------
 class CurvaABC(SQLModel, table=True):
