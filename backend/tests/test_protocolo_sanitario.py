@@ -121,6 +121,41 @@ class TestCadastroProtocolo:
         assert r.json()["etapas"][0]["produto"] == "Novo produto"
 
 
+class TestExcluirProtocolo:
+    def test_exclui_protocolo_nunca_usado(self, client):
+        c, engine = client
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Nunca usado", "etapas": [_etapa(1)],
+        }).json()["id"]
+        r = c.delete(f"/cadastro/protocolos-sanitarios/{pid}")
+        assert r.status_code == 200
+        assert r.json() == {"excluido": True}
+        nomes = [p["nome"] for p in c.get("/cadastro/protocolos-sanitarios").json()]
+        assert "Nunca usado" not in nomes
+
+    def test_nao_exclui_protocolo_ja_lancado(self, client):
+        c, engine = client
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Já lançado", "etapas": [_etapa(1, produto="Ivermectina")],
+        }).json()["id"]
+        r_lanc = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
+        })
+        assert r_lanc.status_code == 201
+
+        r = c.delete(f"/cadastro/protocolos-sanitarios/{pid}")
+        assert r.status_code == 409
+        assert "desative" in r.json()["detail"].lower()
+        # Continua existindo — a exclusão não pode ter apagado nada por engano.
+        nomes = [p["nome"] for p in c.get("/cadastro/protocolos-sanitarios").json()]
+        assert "Já lançado" in nomes
+
+    def test_exclui_protocolo_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.delete("/cadastro/protocolos-sanitarios/999999")
+        assert r.status_code == 404
+
+
 class TestImportarProtocolo:
     def test_importa_csv_agrupando_por_nome(self, client):
         c, engine = client

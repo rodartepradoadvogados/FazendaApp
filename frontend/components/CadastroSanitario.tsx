@@ -8,7 +8,7 @@ import {
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
   fetchExames, criarExame, atualizarExame, excluirExame,
-  fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, importarProtocoloSanitarioExcel,
+  fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, excluirProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchEstoque, fetchLotes,
   type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload, type PrincipioFarmacia, type MarcaComercial,
 } from "@/lib/api";
@@ -113,6 +113,8 @@ export function CadastroProtocolosSanitarios() {
   const [importando, setImportando] = useState(false);
   const [msgImport, setMsgImport] = useState<{ erro: boolean; texto: string } | null>(null);
   const inputImportRef = useRef<HTMLInputElement>(null);
+  const [excluindo, setExcluindo] = useState<number | null>(null);
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
 
   const carregar = () => fetchProtocolosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -132,6 +134,22 @@ export function CadastroProtocolosSanitarios() {
     setEditando(p.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
+
+  // Bloqueado no backend se o protocolo já foi lançado alguma vez (mantém o
+  // histórico íntegro) — nesse caso o usuário desativa em vez de excluir
+  // (checkbox "Ativo" no form de edição).
+  const excluir = async (p: Protocolo) => {
+    if (!window.confirm(`Excluir o protocolo "${p.nome}"? Isso não pode ser desfeito.`)) return;
+    setExcluindo(p.id); setErroExclusao(null);
+    try {
+      await excluirProtocoloSanitario(p.id);
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir protocolo");
+    } finally {
+      setExcluindo(null);
+    }
+  };
 
   const acrescentarEtapa = () => setForm((f) => ({ ...f, etapas: [...f.etapas, etapaVazia(f.etapas.length)] }));
   const removerEtapa = (idx: number) => setForm((f) => (f.etapas.length > 1 ? { ...f, etapas: f.etapas.filter((_, i) => i !== idx) } : f));
@@ -240,6 +258,7 @@ export function CadastroProtocolosSanitarios() {
           {msgImport.texto}
         </p>
       )}
+      {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -272,9 +291,13 @@ export function CadastroProtocolosSanitarios() {
                     <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
                         <Pencil size={13} /> Editar
+                      </button>
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                        onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
+                        <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
                       </button>
                     </td>
                   </tr>

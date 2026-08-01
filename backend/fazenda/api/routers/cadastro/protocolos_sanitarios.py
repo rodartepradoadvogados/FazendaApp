@@ -166,6 +166,32 @@ def atualizar_protocolo_sanitario(
     return _serializar_protocolo(session, protocolo, doencas)
 
 
+@router.delete("/protocolos-sanitarios/{protocolo_id}")
+def excluir_protocolo_sanitario(
+    protocolo_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    protocolo = session.get(ProtocoloSanitario, protocolo_id)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    ja_lancado = session.exec(
+        select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo_id)
+    ).first()
+    if ja_lancado:
+        raise HTTPException(
+            status_code=409,
+            detail="Este protocolo já foi lançado ao menos uma vez e não pode ser excluído — desative-o em vez disso.",
+        )
+    etapas = session.exec(
+        select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == protocolo_id)
+    ).all()
+    for e in etapas:
+        session.delete(e)
+    session.delete(protocolo)
+    session.commit()
+    return {"excluido": True}
+
+
 def _upsert_protocolo_sanitario(
     session: Session, nome: str, etapas: list[dict], *, doenca_id: int | None = None, eh_mastite: bool | None = None,
     fazenda_id: int | None = None,
