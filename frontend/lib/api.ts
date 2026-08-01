@@ -2594,6 +2594,10 @@ export async function atualizarProtocoloSanitario(id: number, dados: { nome: str
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo sanitário"); }
   return res.json();
 }
+export async function excluirProtocoloSanitario(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo sanitário"); }
+}
 export async function fetchLancamentosProtocolo() {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Lançamentos de protocolo error: ${res.status}`);
