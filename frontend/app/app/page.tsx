@@ -259,10 +259,32 @@ export default function AgendaMovel() {
       const r = await enviarOuEnfileirar("/movimentacoes/mover", {
         data_movimento: today(), motivo: motivosMov.includes("Aptidão") ? "Aptidão" : (motivosMov[0] || "Aptidão"),
         lote_destino_codigo: destino, animais: [e.numero_animal],
+        // Mesma origem usada pelo card equivalente no site (app/agenda/page.tsx)
+        // — aceitar a sugestão que aparece sozinha na Agenda, sem editar o
+        // lote sugerido nem vir de outro lançamento (parto etc.).
+        origem: "sugestao_passiva",
       }, `Mover ${e.numero_animal} para o lote ${destino}`, "POST");
-      setFeitos((p) => new Set(p).add(e.id));
-      setSugestaoMovAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
-      setAviso(r.enviado ? { tipo: "ok", msg: "Animal movido para o lote sugerido." } : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      if (r.enviado) {
+        // Enviou de verdade agora (não ficou na fila offline) — confere se o
+        // backend REALMENTE moveu o animal antes de comemorar (mesma checagem
+        // de `movidos`/`nao_encontrados` usada em criarMovimentacao/FormParto;
+        // um 200 aqui não garante que o número bateu com algum animal).
+        const moveuDeFato = (r.resposta?.movidos ?? 0) >= 1 && !(r.resposta?.nao_encontrados || []).includes(e.numero_animal);
+        if (!moveuDeFato) {
+          setAviso({ tipo: "erro", msg: `Não foi possível confirmar a movimentação da matriz ${e.numero_animal} — verifique o cadastro do animal.` });
+          return;
+        }
+        setFeitos((p) => new Set(p).add(e.id));
+        setSugestaoMovAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
+        setAviso({ tipo: "ok", msg: "Animal movido para o lote sugerido." });
+      } else {
+        // Sem internet agora: entrou na fila e será reenviada sozinha depois
+        // — só nesse momento (mais tarde, fora desta tela) dá pra saber se o
+        // backend realmente moveu; por ora fica como pendência normal.
+        setFeitos((p) => new Set(p).add(e.id));
+        setSugestaoMovAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
+        setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      }
     } catch (err) {
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível mover o animal." });
     } finally {
