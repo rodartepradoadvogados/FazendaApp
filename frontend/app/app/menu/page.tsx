@@ -20,7 +20,7 @@ import {
   Milk, FlaskConical, Droplet, Droplets, Scale,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
-import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
+import { usePendentes, sincronizar, descartarPendente } from "@/lib/offline";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
@@ -124,7 +124,6 @@ export default function Pagina() {
   const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
-  const online = useOnline();
   const [sincronizando, setSincronizando] = useState(false);
 
   useEffect(() => { setMontado(true); }, []);
@@ -136,7 +135,14 @@ export default function Pagina() {
     const abrirSeHashNews = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
     abrirSeHashNews();
     window.addEventListener("hashchange", abrirSeHashNews);
-    return () => window.removeEventListener("hashchange", abrirSeHashNews);
+    // Clique no botão News do cabeçalho enquanto já se está em /app/menu —
+    // pushState não dispara 'hashchange', então o cabeçalho avisa por este
+    // evento customizado (ver app/app/layout.tsx).
+    window.addEventListener("app-abrir-news", abrirSeHashNews);
+    return () => {
+      window.removeEventListener("hashchange", abrirSeHashNews);
+      window.removeEventListener("app-abrir-news", abrirSeHashNews);
+    };
   }, []);
 
   async function enviarAgora() {
@@ -273,8 +279,12 @@ export default function Pagina() {
         ))}
 
         {fila.length > 0 && (
-          <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={!online || sincronizando} style={{ marginTop: "0.2rem" }}>
-            <CloudUpload size={17} /> {sincronizando ? "Enviando…" : online ? "Enviar agora" : "Sem internet"}
+          // Não trava no estado `online` (React, só atualiza via evento
+          // 'online'/'offline' — pode ficar desatualizado se o WebView não
+          // disparar o evento) — sempre permite tentar; sincronizar() já
+          // lida bem com estar realmente offline (falha rápido, tenta depois).
+          <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={sincronizando} style={{ marginTop: "0.2rem" }}>
+            <CloudUpload size={17} /> {sincronizando ? "Enviando…" : "Enviar agora"}
           </button>
         )}
       </div>
