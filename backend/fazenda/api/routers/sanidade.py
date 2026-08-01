@@ -15,7 +15,7 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
-    EventoSanitario, ExameDefinicao, ExameResultado,
+    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica,
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
@@ -25,6 +25,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _estoque_devolver, resolver_item as _resolver_item_estoque
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
+from fazenda.rules.farmacia import resumo_principios
 from fazenda.rules.unidades import unidades_compativeis
 
 RESULTADOS_EXAME = ["positivo", "negativo", "indefinido"]
@@ -49,6 +50,44 @@ DIAS_RECIDIVA_MASTITE = 20
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
 
 FREQUENCIAS = ["dias", "meses", "anos"]
+
+STATUS_ESTOQUE_RANK = {"ok": 0, "low": 1, "out": 2}
+
+
+@router.get("/indicacoes-doenca/{doenca_id}")
+def indicacoes_por_doenca(
+    doenca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Ranking de medicamentos indicados para uma doença (prioridade clínica) com
+    estoque ao vivo — alimenta a consulta "Remédios por doença" e o banner de
+    substituto no lançamento (quando o 1º colocado está sem estoque)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    doenca = session.get(Doenca, doenca_id)
+    if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Doença não encontrada")
+    indicacoes = session.exec(
+        select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca_id).order_by(IndicacaoTerapeutica.prioridade)
+    ).all()
+    resumo_por_pa = {r["id"]: r for r in resumo_principios(session, fazenda_id)}
+    opcoes = []
+    for ind in indicacoes:
+        r = resumo_por_pa.get(ind.principio_ativo_id)
+        if not r:
+            continue
+        status = "out" if not r["itens"] or (r["total_apresentacoes"] or 0) <= 0 else ("low" if r["abaixo_minimo"] else "ok")
+        marcas = sorted({it["marca"] for it in r["itens"] if it["marca"]})
+        opcoes.append({
+            "principio_ativo_id": ind.principio_ativo_id,
+            "nome": r["nome"],
+            "classificacao": r["categoria_software"],
+            "prioridade": ind.prioridade,
+            "status_estoque": status,
+            "total_apresentacoes": r["total_apresentacoes"],
+            "unidade_apresentacao": r["unidade_apresentacao"],
+            "marcas": marcas,
+        })
+    opcoes.sort(key=lambda o: (o["prioridade"], STATUS_ESTOQUE_RANK.get(o["status_estoque"], 9)))
+    return {"doenca_id": doenca_id, "doenca": doenca.nome, "opcoes": opcoes}
 
 
 @router.get("/aplicacoes")

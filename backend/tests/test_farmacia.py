@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Estoque, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Sanidade
+from fazenda.models import Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Sanidade
 from fazenda.rules.farmacia import compatibilizar_estoque, resumo_principios, seed_farmacia
 
 
@@ -271,3 +271,115 @@ class TestUnidadesCompativeis:
         from fazenda.rules.unidades import unidades_compativeis
         assert "ml" in unidades_compativeis("un")
         assert set(unidades_compativeis("un")) == set(unidades_compativeis("unidade"))
+
+
+class TestIndicacoesTerapeuticas:
+    """Substituto inteligente: vínculo N-para-N princípio ativo ↔ doença com
+    prioridade, e o ranking com estoque ao vivo que alimenta a consulta
+    "Remédios por doença" e o banner de substituto no lançamento."""
+
+    def _cenario_mastite(self, engine):
+        """Doença Mastite clínica com 3 opções: Ceftiofur (estoque ok),
+        Cefquinoma (abaixo do mínimo) e Amoxicilina (sem estoque)."""
+        from fazenda.models import Doenca
+
+        with Session(engine) as s:
+            doenca = Doenca(nome="Mastite clínica")
+            s.add(doenca); s.commit(); s.refresh(doenca)
+
+            ceftiofur = PrincipioAtivo(nome="Ceftiofur", categoria_software="Antibiótico sistêmico",
+                                        unidade_base="ml", unidade_apresentacao="frasco", estoque_minimo_apresentacoes=1.0)
+            cefquinoma = PrincipioAtivo(nome="Cefquinoma", categoria_software="Antibiótico sistêmico",
+                                         unidade_base="ml", unidade_apresentacao="frasco", estoque_minimo_apresentacoes=2.0)
+            amoxicilina = PrincipioAtivo(nome="Amoxicilina + Clavulanato", categoria_software="Antibiótico sistêmico",
+                                          unidade_base="ml", unidade_apresentacao="frasco")
+            s.add(ceftiofur); s.add(cefquinoma); s.add(amoxicilina); s.commit()
+            s.refresh(ceftiofur); s.refresh(cefquinoma); s.refresh(amoxicilina)
+
+            # Ceftiofur: 4 frascos de 100ml cheios → bem acima do mínimo.
+            s.add(Estoque(nome="Excenel", laboratorio="Zoetis", principio_ativo_id=ceftiofur.id,
+                          quantidade=400.0, unidade="ml", volume_por_apresentacao=100.0, volume_unidade="ml",
+                          estoque_inicializado=True))
+            # Cefquinoma: 1 frasco de 100ml, mínimo é 2 → abaixo do mínimo.
+            s.add(Estoque(nome="Cobactan", laboratorio="MSD", principio_ativo_id=cefquinoma.id,
+                          quantidade=100.0, unidade="ml", volume_por_apresentacao=100.0, volume_unidade="ml",
+                          estoque_inicializado=True))
+            # Amoxicilina: sem nenhum item de estoque vinculado → "out".
+            s.commit()
+
+            s.add(IndicacaoTerapeutica(principio_ativo_id=ceftiofur.id, doenca_id=doenca.id, prioridade=1))
+            s.add(IndicacaoTerapeutica(principio_ativo_id=cefquinoma.id, doenca_id=doenca.id, prioridade=2))
+            s.add(IndicacaoTerapeutica(principio_ativo_id=amoxicilina.id, doenca_id=doenca.id, prioridade=3))
+            s.commit()
+            return {"doenca_id": doenca.id, "ceftiofur_id": ceftiofur.id, "cefquinoma_id": cefquinoma.id,
+                    "amoxicilina_id": amoxicilina.id}
+
+    def test_ranking_por_doenca_traz_status_de_estoque_correto(self, client):
+        c, engine = client
+        ids = self._cenario_mastite(engine)
+        r = c.get(f"/sanidade/indicacoes-doenca/{ids['doenca_id']}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["doenca"] == "Mastite clínica"
+        opcoes = body["opcoes"]
+        assert [o["principio_ativo_id"] for o in opcoes] == [ids["ceftiofur_id"], ids["cefquinoma_id"], ids["amoxicilina_id"]]
+        assert opcoes[0]["status_estoque"] == "ok" and opcoes[0]["marcas"] == ["Zoetis"]
+        assert opcoes[1]["status_estoque"] == "low"
+        assert opcoes[2]["status_estoque"] == "out" and opcoes[2]["marcas"] == []
+
+    def test_doenca_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.get("/sanidade/indicacoes-doenca/999999")
+        assert r.status_code == 404
+
+    def test_doenca_sem_indicacao_traz_lista_vazia(self, client):
+        from fazenda.models import Doenca
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Doenca(nome="Doença sem tratamento cadastrado")); s.commit()
+            doenca_id = s.exec(select(Doenca).where(Doenca.nome == "Doença sem tratamento cadastrado")).first().id
+        r = c.get(f"/sanidade/indicacoes-doenca/{doenca_id}")
+        assert r.status_code == 200 and r.json()["opcoes"] == []
+
+    def test_crud_indicacao(self, client):
+        from fazenda.models import Doenca
+        c, engine = client
+        with Session(engine) as s:
+            doenca = Doenca(nome="Pneumonia"); s.add(doenca)
+            pa = PrincipioAtivo(nome="Tulatromicina"); s.add(pa)
+            s.commit(); s.refresh(doenca); s.refresh(pa)
+            doenca_id, pa_id = doenca.id, pa.id
+
+        assert c.get("/farmacia/indicacoes", params={"principio_ativo_id": pa_id}).json() == []
+
+        r = c.post("/farmacia/indicacoes", json={"principio_ativo_id": pa_id, "doenca_id": doenca_id, "prioridade": 1})
+        assert r.status_code == 201
+        criada = r.json()
+        assert criada["doenca"] == "Pneumonia" and criada["prioridade"] == 1
+
+        listada = c.get("/farmacia/indicacoes", params={"principio_ativo_id": pa_id}).json()
+        assert len(listada) == 1 and listada[0]["id"] == criada["id"]
+
+        # Duplicata (mesmo princípio + doença) é bloqueada.
+        dup = c.post("/farmacia/indicacoes", json={"principio_ativo_id": pa_id, "doenca_id": doenca_id, "prioridade": 2})
+        assert dup.status_code == 409
+
+        excluir = c.delete(f"/farmacia/indicacoes/{criada['id']}")
+        assert excluir.status_code == 200
+        assert c.get("/farmacia/indicacoes", params={"principio_ativo_id": pa_id}).json() == []
+
+    def test_criar_indicacao_com_principio_ou_doenca_inexistente_da_400(self, client):
+        from fazenda.models import Doenca
+        c, engine = client
+        with Session(engine) as s:
+            doenca = Doenca(nome="Verminose"); s.add(doenca)
+            pa = PrincipioAtivo(nome="Ivermectina 1%"); s.add(pa)
+            s.commit(); s.refresh(doenca); s.refresh(pa)
+            doenca_id, pa_id = doenca.id, pa.id
+
+        assert c.post("/farmacia/indicacoes", json={"principio_ativo_id": 999999, "doenca_id": doenca_id}).status_code == 400
+        assert c.post("/farmacia/indicacoes", json={"principio_ativo_id": pa_id, "doenca_id": 999999}).status_code == 400
+
+    def test_excluir_indicacao_inexistente_da_404(self, client):
+        c, engine = client
+        assert c.delete("/farmacia/indicacoes/999999").status_code == 404

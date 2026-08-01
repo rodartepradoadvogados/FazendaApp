@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History } from "lucide-react";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
@@ -19,6 +19,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
+import RemediosPorDoenca from "@/components/RemediosPorDoenca";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -1360,10 +1361,11 @@ const ABAS_SANIDADE = [
   { id: "rastreabilidade", label: "Rastreabilidade", icon: Route, title: "Rastreabilidade sanitária/GTA: linha do tempo por animal ou por GTA" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
-type AbaCurativa = "curativo" | "doenca" | "protocolos" | "taxa_cura";
+type AbaCurativa = "curativo" | "doenca" | "remedios" | "protocolos" | "taxa_cura";
 const ABAS_CURATIVA = [
   { id: "curativo", label: "Curativo (aplicações)", icon: ClipboardList, title: "Medicamentos aplicados no rebanho" },
   { id: "doenca", label: "Doença / Motivo", icon: Activity, title: "Tratamentos por doença/motivo" },
+  { id: "remedios", label: "Remédios por doença", icon: FlaskConical, title: "Ranking de medicamentos indicados por doença, com estoque ao vivo" },
   { id: "protocolos", label: "Protocolos sanitários", icon: ListChecks, title: "Protocolos multi-etapa lançados (mastite e outros)" },
   { id: "taxa_cura", label: "Taxa de cura", icon: Percent, title: "Taxa de cura dos tratamentos (aplicações e protocolos)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
@@ -1420,6 +1422,7 @@ export default function SanidadePage() {
         <>
           {abaCur === "curativo" && <AplicacoesView natureza="curativo" />}
           {abaCur === "doenca" && <DoencaMotivoView />}
+          {abaCur === "remedios" && <RemediosPorDoenca />}
           {abaCur === "protocolos" && <ProtocolosSanitariosView />}
           {abaCur === "taxa_cura" && <TaxaCuraView />}
         </>

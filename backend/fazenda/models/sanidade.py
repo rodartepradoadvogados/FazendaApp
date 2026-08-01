@@ -148,6 +148,25 @@ class Doenca(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class IndicacaoTerapeutica(SQLModel, table=True):
+    """Vínculo N-para-N entre princípio ativo e doença, com prioridade clínica
+    (1 = 1ª escolha, 2 = 2ª opção, ...). Generaliza `PrincipioAtivo.doenca_id`
+    (1-para-1, usado só por biológicos) para o caso geral — mesmo antibiótico
+    tratando mais de uma doença, mesma doença com várias opções ranqueadas.
+    Base do "substituto inteligente": ao faltar o 1º colocado, a 2ª/3ª opção
+    aparecem automaticamente no lançamento."""
+
+    __tablename__ = "indicacao_terapeutica"
+    __table_args__ = (UniqueConstraint("principio_ativo_id", "doenca_id", name="uq_indicacao_principio_doenca"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    doenca_id: int = Field(foreign_key="doenca.id", index=True)
+    prioridade: int = 2  # 1 = 1ª escolha, 2 = 2ª opção, 3 = 3ª opção...
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
 class ExameDefinicao(SQLModel, table=True):
     """
     Cadastro de um exame (ex.: Tuberculose, Brucelose) para o calendário
