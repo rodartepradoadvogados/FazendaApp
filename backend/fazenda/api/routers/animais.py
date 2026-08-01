@@ -577,6 +577,21 @@ def ficha_animal(
             if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_data:
                 previsao_secagem = ultimo_parto_data - timedelta(days=seco)
 
+    # Card "Precisão de parto": só existe com gestação em aberto (mesma
+    # condição de `servicos_positivos` acima — último serviço com diagnóstico
+    # positivo, sem perda, posterior ao último parto). Reaproveita `concepcao`/
+    # `previsao_parto` já calculados acima em vez de duplicar a lógica.
+    precisao_parto = None
+    if servicos_positivos:
+        ultimo_positivo = servicos_positivos[-1]
+        precisao_parto = {
+            "data_ultima_ia_positiva": ultimo_positivo.data_servico,
+            "data_confirmacao_prenhez": ultimo_positivo.data_diagnostico,
+            "dias_gestacao": (date.today() - ultimo_positivo.data_servico).days,
+            "data_parto_provavel": previsao_parto,
+            "dias_para_parto": (previsao_parto - date.today()).days,
+        }
+
     # DEL e categoria AO VIVO (ver funções no topo do arquivo) — corrige o
     # texto/número congelados do GERAL.csv quando há parto (e secagem) já
     # lançados no app mais recentes do que o último import.
@@ -592,6 +607,7 @@ def ficha_animal(
         "pai": pai,
         "previsao_parto": previsao_parto,
         "previsao_secagem": previsao_secagem,
+        "precisao_parto": precisao_parto,
         "partos": partos_dump,
         "servicos": servicos_dump,
         # Já vem agrupado por protocolo (dicts prontos), não passa por _dump.
