@@ -3030,6 +3030,36 @@ export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { qua
   return res.json();
 }
 
+// ── Indicações terapêuticas (substituto inteligente: princípio ↔ doença ↔ prioridade) ──
+export type IndicacaoTerapeutica = { id: number; doenca_id: number; doenca: string; prioridade: number };
+export type OpcaoIndicacaoDoenca = {
+  principio_ativo_id: number; nome: string; classificacao: string | null; prioridade: number;
+  status_estoque: "ok" | "low" | "out"; total_apresentacoes: number | null; unidade_apresentacao: string | null;
+  marcas: string[];
+};
+export async function fetchIndicacoes(principioAtivoId: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes?principio_ativo_id=${principioAtivoId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicações error: ${res.status}`);
+  return res.json() as Promise<IndicacaoTerapeutica[]>;
+}
+export async function criarIndicacao(dados: { principio_ativo_id: number; doenca_id: number; prioridade: number }) {
+  const res = await authFetch(`${API}/farmacia/indicacoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao indicar princípio para a doença"); }
+  return res.json() as Promise<IndicacaoTerapeutica>;
+}
+export async function excluirIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir indicação"); }
+  return res.json();
+}
+export async function fetchIndicacoesDoenca(doencaId: number) {
+  const res = await authFetch(`${API}/sanidade/indicacoes-doenca/${doencaId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicações por doença error: ${res.status}`);
+  return res.json() as Promise<{ doenca_id: number; doenca: string; opcoes: OpcaoIndicacaoDoenca[] }>;
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);

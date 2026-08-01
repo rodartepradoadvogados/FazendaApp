@@ -10,7 +10,8 @@ import {
   fetchExames, criarExame, atualizarExame, excluirExame,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, excluirProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchEstoque, fetchLotes,
-  type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload, type PrincipioFarmacia, type MarcaComercial,
+  fetchIndicacoes, criarIndicacao, excluirIndicacao,
+  type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload, type PrincipioFarmacia, type MarcaComercial, type IndicacaoTerapeutica,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -1139,12 +1140,16 @@ function ListaPrincipiosAtivos() {
   const [restaurando, setRestaurando] = useState(false);
   const [marcas, setMarcas] = useState<Record<number, MarcaComercial[]>>({});
   const [novaMarca, setNovaMarca] = useState({ nome_comercial: "", laboratorio: "" });
+  const [indicacoes, setIndicacoes] = useState<Record<number, IndicacaoTerapeutica[]>>({});
+  const [novaIndicacao, setNovaIndicacao] = useState({ doenca_id: "", prioridade: "1" });
 
   const carregar = () => fetchFarmaciaPrincipios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchDoencas().then(setDoencas).catch(() => {}); }, []);
 
   const carregarMarcas = (id: number) =>
     fetchFarmaciaDetalhe(id).then((d: any) => setMarcas((m) => ({ ...m, [id]: d.marcas || [] }))).catch(() => {});
+  const carregarIndicacoes = (id: number) =>
+    fetchIndicacoes(id).then((r: IndicacaoTerapeutica[]) => setIndicacoes((m) => ({ ...m, [id]: r }))).catch(() => {});
 
   const restaurar = async () => {
     setRestaurando(true); setMsg(null);
@@ -1162,6 +1167,7 @@ function ListaPrincipiosAtivos() {
     });
     setEditando(i.id); setMsg(null);
     carregarMarcas(i.id);
+    carregarIndicacoes(i.id);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
 
@@ -1212,6 +1218,25 @@ function ListaPrincipiosAtivos() {
     catch (e: any) { setMsg(e.message || "Erro ao excluir marca comercial"); }
   };
 
+  const adicionarIndicacao = async (principioId: number) => {
+    if (!novaIndicacao.doenca_id) return;
+    try {
+      await criarIndicacao({
+        principio_ativo_id: principioId, doenca_id: Number(novaIndicacao.doenca_id),
+        prioridade: Number(novaIndicacao.prioridade),
+      });
+      setNovaIndicacao({ doenca_id: "", prioridade: "1" });
+      await carregarIndicacoes(principioId);
+    } catch (e: any) {
+      setMsg(e.message || "Erro ao adicionar doença indicada");
+    }
+  };
+  const removerIndicacao = async (principioId: number, indicacaoId: number) => {
+    try { await excluirIndicacao(indicacaoId); await carregarIndicacoes(principioId); }
+    catch (e: any) { setMsg(e.message || "Erro ao excluir doença indicada"); }
+  };
+  const labelPrioridade = (p: number) => (p === 1 ? "1ª escolha" : p === 2 ? "2ª opção" : p === 3 ? "3ª opção" : `${p}ª opção`);
+
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((i) => !termoBusca || normalizar(i.nome).includes(termoBusca));
   const grupos = ORDEM_CATEGORIAS
@@ -1261,6 +1286,34 @@ function ListaPrincipiosAtivos() {
             <input style={{ ...inputStyle, flex: 1 }} placeholder="Laboratório (opcional)" value={novaMarca.laboratorio}
               onChange={(e) => setNovaMarca({ ...novaMarca, laboratorio: e.target.value })} />
             <button className="btn-ghost" style={{ fontSize: "0.76rem", whiteSpace: "nowrap" }} onClick={() => adicionarMarca(editando)}>
+              <Plus size={13} /> Adicionar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {typeof editando === "number" && (
+        <div style={{ marginBottom: "0.8rem" }}>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Doenças indicadas</p>
+          {(indicacoes[editando] || []).map((ind) => (
+            <div key={ind.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", marginBottom: "0.3rem" }}>
+              <span style={{ flex: 1 }}>{ind.doenca} — {labelPrioridade(ind.prioridade)}</span>
+              <button className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => removerIndicacao(editando, ind.id)}><Trash2 size={12} /></button>
+            </div>
+          ))}
+          {!(indicacoes[editando] || []).length && <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.3rem" }}>Nenhuma doença indicada ainda.</p>}
+          <div className="flex items-center gap-2" style={{ marginTop: "0.4rem" }}>
+            <select style={{ ...inputStyle, flex: 1 }} value={novaIndicacao.doenca_id}
+              onChange={(e) => setNovaIndicacao({ ...novaIndicacao, doenca_id: e.target.value })}>
+              <option value="">Selecione a doença…</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+            </select>
+            <select style={{ ...inputStyle, flex: 1 }} value={novaIndicacao.prioridade}
+              onChange={(e) => setNovaIndicacao({ ...novaIndicacao, prioridade: e.target.value })}>
+              <option value="1">1ª escolha</option>
+              <option value="2">2ª opção</option>
+              <option value="3">3ª opção</option>
+            </select>
+            <button className="btn-ghost" style={{ fontSize: "0.76rem", whiteSpace: "nowrap" }} onClick={() => adicionarIndicacao(editando)}>
               <Plus size={13} /> Adicionar
             </button>
           </div>

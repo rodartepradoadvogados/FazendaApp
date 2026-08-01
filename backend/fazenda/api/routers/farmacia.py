@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Estoque, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
+from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.farmacia import resumo_principios
 
@@ -226,3 +226,70 @@ def inicializar_estoque(estoque_id: int, dados: InicializarIn, session: Session 
     ))
     session.commit()
     return {"ok": True, "estoque_inicializado": True, "quantidade": item.quantidade}
+
+
+# ── Indicações terapêuticas (princípio ativo ↔ doença ↔ prioridade) ─────────
+# Base do "substituto inteligente": gerenciado na edição do princípio ativo
+# (Configurações > Cadastro > Sanitário > Princípio ativo), consultado por
+# doença em GET /sanidade/indicacoes-doenca/{id}.
+@router.get("/indicacoes")
+def listar_indicacoes(
+    principio_ativo_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.principio_ativo_id == principio_ativo_id)
+    if fazenda_id is not None:
+        query = query.where(IndicacaoTerapeutica.fazenda_id == fazenda_id)
+    indicacoes = session.exec(query.order_by(IndicacaoTerapeutica.prioridade)).all()
+    doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+    return [
+        {"id": i.id, "doenca_id": i.doenca_id, "doenca": doencas.get(i.doenca_id, "—"), "prioridade": i.prioridade}
+        for i in indicacoes
+    ]
+
+
+class IndicacaoIn(BaseModel):
+    principio_ativo_id: int
+    doenca_id: int
+    prioridade: int = 2
+
+
+@router.post("/indicacoes", status_code=201)
+def criar_indicacao(
+    dados: IndicacaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pa = session.get(PrincipioAtivo, dados.principio_ativo_id)
+    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=400, detail="Princípio ativo inexistente")
+    doenca = session.get(Doenca, dados.doenca_id)
+    if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=400, detail="Doença inexistente")
+    if dados.prioridade < 1:
+        raise HTTPException(status_code=400, detail="Prioridade deve ser 1 ou maior")
+    existe = session.exec(
+        select(IndicacaoTerapeutica).where(
+            IndicacaoTerapeutica.principio_ativo_id == dados.principio_ativo_id,
+            IndicacaoTerapeutica.doenca_id == dados.doenca_id,
+        )
+    ).first()
+    if existe:
+        raise HTTPException(status_code=409, detail=f"'{pa.nome}' já está indicado para '{doenca.nome}'")
+    ind = IndicacaoTerapeutica(**dados.model_dump(), fazenda_id=fazenda_id)
+    session.add(ind)
+    session.commit()
+    session.refresh(ind)
+    return {"id": ind.id, "doenca_id": ind.doenca_id, "doenca": doenca.nome, "prioridade": ind.prioridade}
+
+
+@router.delete("/indicacoes/{indicacao_id}")
+def excluir_indicacao(
+    indicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    ind = session.get(IndicacaoTerapeutica, indicacao_id)
+    if not ind or (fazenda_id is not None and ind.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Indicação não encontrada")
+    session.delete(ind)
+    session.commit()
+    return {"ok": True}
