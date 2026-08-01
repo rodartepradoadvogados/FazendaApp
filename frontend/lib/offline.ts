@@ -38,6 +38,19 @@
 //   - localStorage não guarda Blob de forma segura e tem cota pequena
 //     (~5-10MB) — insuficiente para fotos de câmera. Fila migrada para
 //     IndexedDB (ver lib/outboxDb.ts), guardando o Blob por referência.
+//   - Item ficava preso em "Aguardando envio…" pra sempre, sem nunca crescer
+//     o contador de tentativas nem deixar pista nenhuma do motivo: (1)
+//     enviarOuEnfileirar/enviarOuEnfileirarArquivo usavam AbortSignal.timeout()
+//     como sinal de abort — API ausente em WebView Android desatualizada,
+//     que lança TypeError antes do fetch sequer sair, tratado (de propósito)
+//     como falha de rede → trocado pelo padrão manual (AbortController +
+//     setTimeout) já usado em fetchCru, que funciona em qualquer WebView.
+//     (2) o catch genérico do loop de sincronizar() e o `continue` do filtro
+//     de fazenda engoliam o erro sem logar nem contar tentativa — agora
+//     ambos logam (console.error/warn, visível via chrome://inspect — já
+//     ligado, ver capacitor.config.ts) e incrementam tentativas com o mesmo
+//     backoff dos outros ramos, só pra tornar o retry visível (não muda o
+//     design de nunca marcar erro definitivo por falha de rede).
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
 import { API, getToken, getFazendaAtual } from "@/lib/api";
@@ -236,12 +249,21 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     return { enviado: false };
   }
   const { authFetch } = await import("@/lib/api");
+  // AbortController manual em vez de AbortSignal.timeout() — a API estática
+  // só existe em WebView/Chrome 103+ (meados de 2022); num Android System
+  // WebView desatualizado (comum em aparelho de uso rural) ela lança um
+  // TypeError IMEDIATO, antes do fetch sequer começar, que o catch abaixo
+  // trata como falha de rede — enfileirando uma ação que na real tinha
+  // internet disponível. O padrão manual (igual ao já usado em fetchCru,
+  // abaixo) funciona em qualquer WebView.
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_ENVIO_MS);
   try {
     const res = await authFetch(`${API}${caminho}`, {
       method: metodo,
       headers: { "Content-Type": "application/json", "Idempotency-Key": id },
       body: JSON.stringify(corpo),
-      signal: AbortSignal.timeout(TIMEOUT_ENVIO_MS),
+      signal: controlador.signal,
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
@@ -258,6 +280,8 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
       return { enviado: false };
     }
     throw e; // resposta do servidor (validação etc.) → o formulário mostra
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -304,11 +328,15 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
   }
 
   const { authFetch } = await import("@/lib/api");
+  // Mesmo motivo do AbortController manual em enviarOuEnfileirar (acima):
+  // AbortSignal.timeout() não existe em WebView antiga.
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_ENVIO_ARQUIVO_MS);
   try {
     const res = await authFetch(`${API}${opcoes.caminho}`, {
       method: metodo,
       body: montarFormData(), // sem Content-Type manual — o browser gera o boundary
-      signal: AbortSignal.timeout(TIMEOUT_ENVIO_ARQUIVO_MS),
+      signal: controlador.signal,
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
@@ -323,6 +351,8 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
       return { enviado: false };
     }
     throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   async function enfileirarArquivo() {
@@ -414,10 +444,16 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
         // Item enfileirado numa fazenda e o usuário trocou de fazenda antes
         // de sincronizar — o backend grava na fazenda do TOKEN vigente, não
         // na de quando o item foi criado, então enviar agora gravaria no
-        // lugar errado. Pula (sem contar tentativa) até o usuário voltar
-        // pra fazenda certa. `fazendaId` undefined = item antigo (migrado
-        // antes deste campo existir) — sincroniza normalmente.
-        if (atual.fazendaId !== undefined && atual.fazendaId !== (getFazendaAtual()?.id ?? null)) continue;
+        // lugar errado. Pula até o usuário voltar pra fazenda certa — mas
+        // conta como tentativa (com log) pra não travar em "Aguardando
+        // envio…" sem nenhuma pista. `fazendaId` undefined = item antigo
+        // (migrado antes deste campo existir) — sincroniza normalmente.
+        if (atual.fazendaId !== undefined && atual.fazendaId !== (getFazendaAtual()?.id ?? null)) {
+          console.warn(`[offline] sincronizar: pulando "${atual.descricao}" (id ${atual.id}) — fazenda do item (${atual.fazendaId}) difere da atual (${getFazendaAtual()?.id ?? null}).`);
+          const tentativas = (atual.tentativas || 0) + 1;
+          await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
+          continue;
+        }
         try {
           const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCru(atual.caminho, atual.metodo, atual.corpo, atual.id);
           if (res.ok) {
@@ -435,9 +471,15 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           // 4xx "de verdade" (400/404/409/422...) = dado inválido, exige o usuário.
           const detalhe = await res.json().catch(() => ({}));
           await atualizarItem(atual.id, { status: "erro", erro: detalhe.detail || `Erro ${res.status}` });
-        } catch {
+        } catch (err) {
           // Rede caiu de novo no meio deste grupo — para só este grupo;
-          // o próximo (json→form ou form→json) ainda é tentado.
+          // o próximo (json→form ou form→json) ainda é tentado. Loga o
+          // motivo real (visível via chrome://inspect) e conta como
+          // tentativa, pra UI parar de mostrar "Aguardando envio…" parado
+          // sem nenhuma pista de que ainda está tentando de verdade.
+          console.error(`[offline] sincronizar: falha de rede ao enviar "${atual.descricao}" (id ${atual.id}):`, err);
+          const tentativas = (atual.tentativas || 0) + 1;
+          await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
           break;
         }
       }

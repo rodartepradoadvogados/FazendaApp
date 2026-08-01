@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
-import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
+import { MobTitulo, MobVoltar, MobAviso } from "@/components/mobile/ui";
 import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
@@ -123,6 +123,12 @@ export default function Pagina() {
   const fila = usePendentes();
   const online = useOnline();
   const [sincronizando, setSincronizando] = useState(false);
+  // Feedback brando quando "Enviar agora" termina sem mandar nada, apesar de
+  // ter itens pendentes — sem isso o botão só volta ao normal, sem dizer se
+  // tentou e falhou ou nem tentou. NÃO é alarme: falha de rede momentânea é
+  // normal (a sincronização automática — iniciarSincronizacaoAutomatica —
+  // continua tentando sozinha), então o texto é só informativo.
+  const [avisoSync, setAvisoSync] = useState(false);
 
   useEffect(() => { setMontado(true); }, []);
 
@@ -138,7 +144,13 @@ export default function Pagina() {
 
   async function enviarAgora() {
     setSincronizando(true);
-    try { await sincronizar(); } finally { setSincronizando(false); }
+    setAvisoSync(false);
+    try {
+      const { enviados, restantes } = await sincronizar();
+      if (enviados === 0 && restantes > 0) setAvisoSync(true);
+    } finally {
+      setSincronizando(false);
+    }
   }
 
   const usuario = montado ? getUsuario() : null;
@@ -273,6 +285,9 @@ export default function Pagina() {
           <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={!online || sincronizando} style={{ marginTop: "0.2rem" }}>
             <CloudUpload size={17} /> {sincronizando ? "Enviando…" : online ? "Enviar agora" : "Sem internet"}
           </button>
+        )}
+        {avisoSync && fila.length > 0 && (
+          <MobAviso tipo="offline">Ainda sem conseguir enviar — tentando de novo automaticamente.</MobAviso>
         )}
       </div>
 
