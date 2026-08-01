@@ -1905,9 +1905,17 @@ export async function fetchSugestoesMovimentacao() {
 // errado etc.) — usado para não reportar "movido com sucesso" quando na
 // verdade ninguém foi movido.
 export type ResultadoMovimentacao = { movidos: number; nao_encontrados: string[] };
+// De onde veio a movimentação — não confundir com `motivo` (texto livre, pode
+// repetir o mesmo valor tanto numa troca manual quanto numa automática). Ver
+// o comentário completo em fazenda.models.animais.MovimentoLote.origem.
+// - "manual": Rebanho > Movimentar animais, ou inativação de lote (Configurações).
+// - "sugestao_confirmada": pop-up de sugestão pós-evento (parto/secagem/pré-parto) confirmado pelo usuário.
+// - "sugestao_automatica": mesma sugestão do motor de critérios, aplicada sem pop-up (ex.: cria no parto em lote).
+// - "sugestao_passiva": card da Agenda ou tela Rebanho > Sugestões de movimentação.
+export type OrigemMovimentacao = "manual" | "sugestao_confirmada" | "sugestao_automatica" | "sugestao_passiva" | "importacao";
 export async function criarMovimentacao(dados: {
   data_movimento: string; hora_movimento?: string; motivo?: string; observacao?: string;
-  responsavel?: string; lote_destino_codigo: string; animais: string[];
+  responsavel?: string; lote_destino_codigo: string; animais: string[]; origem?: OrigemMovimentacao;
 }): Promise<ResultadoMovimentacao> {
   const res = await authFetch(`${API}/movimentacoes/mover`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

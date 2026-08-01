@@ -74,6 +74,7 @@ export default function MovimentarAnimais() {
       const r = await criarMovimentacao({
         data_movimento: data, hora_movimento: hora, motivo: motivoFinal || undefined, observacao: observacao || undefined,
         responsavel: responsavel || undefined, lote_destino_codigo: destinoCodigo, animais: Array.from(selecionados),
+        origem: "manual",
       });
       setMsg({ tipo: "sucesso", texto: `${r.movidos} animal(is) movido(s) com sucesso.` });
       limparSelecao();

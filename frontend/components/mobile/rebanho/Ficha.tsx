@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { fetchAnimais, fetchFichaAnimal, formatDate } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar } from "@/lib/offline";
 import { MobCard, MobVoltar, MobLinha, MobCampo, MobAviso } from "@/components/mobile/ui";
-import { estiloSexado } from "@/lib/constants";
+import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { BuscaAnimal, subtituloAnimal, type AnimalMob } from "./comum";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
@@ -37,7 +37,7 @@ type Ficha = {
 // Grupos de lançamentos (as chaves batem com o retorno de /animais/{n}/ficha).
 type Campo = [chave: string, rotulo: string, data?: boolean];
 const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
-  { chave: "movimentos_lote", titulo: "Movimentações de lote", campos: [["data_movimento", "Data", true], ["lote_origem", "De"], ["lote_destino", "Para"], ["motivo", "Motivo"]] },
+  { chave: "movimentos_lote", titulo: "Movimentações de lote", campos: [["data_movimento", "Data", true], ["lote_origem", "De"], ["lote_destino", "Para"], ["motivo", "Motivo"], ["origem", "Origem"]] },
   { chave: "partos", titulo: "Partos", campos: [["data_parto", "Data", true], ["ordem_parto", "Ordem"], ["tipo_parto", "Tipo"]] },
   { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["tipo_semen", "Sêmen"], ["ordem_parto_na_ia", "Ordem de parto (na IA)"], ["diagnostico", "Diagnóstico"], ["data_diagnostico", "Diagnosticado em", true]] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF", campos: [["dia", "Dia"], ["descricao", "Descrição"], ["data_prevista", "Prevista", true], ["realizada", "Feito"]] },
@@ -88,7 +88,7 @@ function Secao({ chave, titulo, linhas, campos, altInicio }: { chave: string; ti
             style={chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}>
             <Grade>
               {campos.map(([chave, rot, data]) => (
-                <ParDado key={chave} label={rot} valor={mostrarValor(l[chave], data)} />
+                <ParDado key={chave} label={rot} valor={chave === "origem" ? rotuloOrigemMovimentoLote(l[chave]) : mostrarValor(l[chave], data)} />
               ))}
             </Grade>
           </MobCard>

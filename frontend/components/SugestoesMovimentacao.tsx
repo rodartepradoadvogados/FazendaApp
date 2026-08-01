@@ -27,6 +27,7 @@ function FormMover({ sugestao, motivos, onFeito, onCancelar }: { sugestao: Suges
       await criarMovimentacao({
         data_movimento: hoje(), motivo, responsavel: responsavel || undefined,
         lote_destino_codigo: destino, animais: [sugestao.numero_matriz],
+        origem: "sugestao_passiva",
       });
       onFeito();
     } catch (e: any) {

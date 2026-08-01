@@ -579,7 +579,7 @@ function InativarLoteWizard({ lote, lotesDestino, onFechar, onConcluido }: {
       if (modo === "lote") {
         await criarMovimentacao({
           data_movimento: hoje, motivo: "Inativação de lote", lote_destino_codigo: destinoUnico,
-          animais: animais.map((a) => a.numero),
+          animais: animais.map((a) => a.numero), origem: "manual",
         });
       } else {
         // Agrupa por destino pra minimizar chamadas (1 por lote de destino escolhido).
@@ -589,7 +589,7 @@ function InativarLoteWizard({ lote, lotesDestino, onFechar, onConcluido }: {
           porDestino.set(dest, [...(porDestino.get(dest) || []), a.numero]);
         }
         for (const [destino, numeros] of porDestino) {
-          await criarMovimentacao({ data_movimento: hoje, motivo: "Inativação de lote", lote_destino_codigo: destino, animais: numeros });
+          await criarMovimentacao({ data_movimento: hoje, motivo: "Inativação de lote", lote_destino_codigo: destino, animais: numeros, origem: "manual" });
         }
       }
       await atualizarLote(lote.id, payloadDoLote(lote, { ativo: false }));

@@ -178,6 +178,39 @@ class MovimentoLote(SQLModel, table=True):
     responsavel: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # De ONDE veio a movimentação — não confundir com `motivo` (texto livre/
+    # cadastrável, ex.: "Secagem", "Parto"), que pode ter o MESMO valor tanto
+    # numa troca automática confirmada quanto numa digitada à mão. `origem` é
+    # quem determina isso de fato, atribuído pelo próprio código que chama
+    # POST /movimentacoes/mover (ver fazenda.api.routers.movimentacoes),
+    # nunca inferido do texto do motivo. Valores possíveis:
+    #   "manual"               — Rebanho > Movimentar animais (tela avulsa),
+    #                            e a inativação de lote (CadastroLotes; humano
+    #                            escolhe o destino explicitamente nos dois casos).
+    #   "sugestao_confirmada"  — pop-up de sugestão pós-evento (parto/secagem/
+    #                            pré-parto) que o usuário viu e confirmou.
+    #   "sugestao_automatica"  — mesma sugestão do motor de critérios de um
+    #                            evento, mas aplicada sem pop-up de confirmação
+    #                            (hoje só a alocação da cria no lançamento de
+    #                            parto em lote/categoria — ver alocarSemConfirmar
+    #                            em FormParto.tsx; é uma decisão do código, não
+    #                            um clique do usuário, por isso não entra em
+    #                            "sugestao_confirmada").
+    #   "sugestao_passiva"     — card de sugestão da Agenda ou tela dedicada
+    #                            Rebanho > Sugestões de movimentação (sugestão
+    #                            periódica, não amarrada a um evento específico).
+    #   "importacao"           — reservado para o dia em que o upload do
+    #                            GERAL.csv passar a gerar histórico de
+    #                            movimentação; HOJE o upload só atualiza
+    #                            Animal.grupo_primario direto, sem criar
+    #                            MovimentoLote (ver test_lotes_movimentacoes.py
+    #                            ::test_upload_geral_nao_sobrescreve_lote_movido_manualmente)
+    #                            — não usado ainda.
+    #   None ("desconhecida" no /movimentacoes/ listado, ver rótulo no front)
+    #                          — histórico gravado antes deste campo existir;
+    #                            não dá pra inferir retroativamente, então fica
+    #                            em branco em vez de forçar uma origem falsa.
+    origem: Optional[str] = None
 
 
 class MotivoBaixa(SQLModel, table=True):

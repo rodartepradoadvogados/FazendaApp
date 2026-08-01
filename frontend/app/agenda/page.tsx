@@ -182,6 +182,7 @@ export default function AgendaPage() {
       await criarMovimentacao({
         data_movimento: today(), motivo: motivosMov.includes("Aptidão") ? "Aptidão" : (motivosMov[0] || "Aptidão"),
         lote_destino_codigo: destinoMov, animais: [sugestaoMovAberta.numero_animal],
+        origem: "sugestao_passiva",
       });
       setSugestaoMovAberta(null);
       await carregar();

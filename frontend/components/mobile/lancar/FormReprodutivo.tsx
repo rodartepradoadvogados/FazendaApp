@@ -427,7 +427,7 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
     if (!item) return;
     setMovendo(true);
     try {
-      await criarMovimentacao({ data_movimento: data, motivo: item.motivo, lote_destino_codigo: item.codigo, animais: [item.numero] });
+      await criarMovimentacao({ data_movimento: data, motivo: item.motivo, lote_destino_codigo: item.codigo, animais: [item.numero], origem: "sugestao_confirmada" });
       setAvisosLote((p) => [...p, { tipo: "ok", msg: `${item.numero} movido para o lote ${item.rotulo}.` }]);
     } catch (e) {
       // Erro real na movimentação — não finge sucesso, mostra o problema.

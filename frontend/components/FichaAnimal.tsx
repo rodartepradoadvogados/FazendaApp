@@ -6,7 +6,7 @@ import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SecaoRecolhivel } from "@/components/ui";
-import { estiloSexado } from "@/lib/constants";
+import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Ficha = {
@@ -67,7 +67,7 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
   ] },
   { chave: "movimentos_lote", titulo: "Movimentação de lote", colunas: [
     { header: "Data", key: "data_movimentoFmt" }, { header: "Lote origem", key: "lote_origem" }, { header: "Lote destino", key: "lote_destino" },
-    { header: "Motivo", key: "motivo" }, { header: "Responsável", key: "responsavel" },
+    { header: "Motivo", key: "motivo" }, { header: "Origem", key: "origemFmt" }, { header: "Responsável", key: "responsavel" },
   ] },
   { chave: "controles_leiteiros", titulo: "Controle leiteiro", colunas: [
     { header: "Data", key: "data_controleFmt" }, { header: "Produção (kg)", key: "producao_kg" },
@@ -127,6 +127,9 @@ function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Recor
     if ("gemelar" in nova) nova.gemelar = nova.gemelar ? "Sim" : "Não";
     if ("retencao_placenta" in nova) nova.retencao_placenta = nova.retencao_placenta ? "Sim" : "Não";
     if ("realizada" in nova) nova.realizada = nova.realizada ? "Sim" : "Não";
+    // Rótulo amigável da origem (manual/sugestão confirmada/automática/passiva)
+    // — badge só de leitura na Ficha, mantendo o valor bruto para ordenação.
+    if (chave === "movimentos_lote") nova.origemFmt = rotuloOrigemMovimentoLote(l.origem);
     return nova;
   });
 }

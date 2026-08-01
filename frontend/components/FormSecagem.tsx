@@ -161,7 +161,7 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
     const { numero, lote } = transferenciaPendente;
     setTransferindo(true);
     try {
-      const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero] });
+      const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero], origem: "sugestao_confirmada" });
       const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
       if (!moveuDeFato) throw new Error(`Não foi possível mover ${numero} para o lote ${lote.rotulo}.`);
       setSucesso((s) => `${s || ""} ${numero} movida para o lote ${lote.rotulo}.`);

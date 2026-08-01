@@ -124,12 +124,19 @@ class TestSugestaoNaAgenda:
     def test_aceitar_sugestao_move_animal_e_some_da_agenda(self, client):
         c, engine = client
         _preparar_sugestao(engine)
+        # Mesma chamada feita pelo card de sugestão da Agenda (front:
+        # aceitarSugestaoMov em app/agenda/page.tsx) — origem "sugestao_passiva".
         r = c.post("/movimentacoes/mover", json={
             "data_movimento": date.today().isoformat(), "motivo": "Aptidão",
-            "lote_destino_codigo": "02", "animais": ["900"],
+            "lote_destino_codigo": "02", "animais": ["900"], "origem": "sugestao_passiva",
         })
         assert r.status_code == 200
         assert r.json()["movidos"] == 1
 
         r2 = c.get("/agenda/", params={"data": date.today().isoformat()})
         assert not any(e.get("tipo") == "sugestao_movimentacao" and e["numero_animal"] == "900" for e in r2.json()["eventos"])
+
+        # A rastreabilidade fica registrada no histórico, distinguindo essa
+        # movimentação (sugestão passiva confirmada) de um lançamento manual.
+        registro = next(m for m in c.get("/movimentacoes/").json() if m["numero_matriz"] == "900")
+        assert registro["origem"] == "sugestao_passiva"
