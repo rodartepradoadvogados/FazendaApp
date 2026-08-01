@@ -179,6 +179,14 @@ export default function AgendaMovel() {
   // Vacas já confirmadas individualmente dentro de um cartão (some da lista).
   const [iatfVacasFeitas, setIatfVacasFeitas] = useState<Record<string, Set<string>>>({});
 
+  // Protocolo customizado (Configurações > Protocolos): mesmo padrão do IATF
+  // acima (lote ou individual) quando o grupo do dia tem mais de 1 animal —
+  // paridade com o site, que ganhou a mesma seleção fina por animal.
+  const [protocoloCustomAberto, setProtocoloCustomAberto] = useState<Set<string>>(new Set());
+  const [protocoloCustomChecks, setProtocoloCustomChecks] = useState<Record<string, Set<string>>>({});
+  const [protocoloCustomModo, setProtocoloCustomModo] = useState<Record<string, "lote" | "individual">>({});
+  const [protocoloCustomFeitos, setProtocoloCustomFeitos] = useState<Record<string, Set<string>>>({});
+
   // Grupos de protocolo sanitário (aplicação em lote): mesma pergunta lote/individual.
   const [sanAberto, setSanAberto] = useState<Set<string>>(new Set());
   const [sanModo, setSanModo] = useState<Record<string, "lote" | "individual">>({});
@@ -403,6 +411,35 @@ export default function AgendaMovel() {
       if (individual) setIatfVacasFeitas((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
       else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} vaca(s).` });
+    } catch (err) {
+      if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
+  const abrirProtocoloCustom = (id: string, animais: string[]) => {
+    setProtocoloCustomAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setProtocoloCustomChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+  };
+  const toggleAnimalProtocoloCustom = (id: string, numero: string) => setProtocoloCustomChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+
+  async function confirmarProtocoloCustom(e: Evento, animaisSel: string[], individual = false) {
+    if (!animaisSel.length) return;
+    setAviso(null);
+    // Só marca o cartão inteiro como feito no modo lote; individual mantém o
+    // cartão para confirmar os demais animais (mesmo comportamento do IATF).
+    if (!individual) setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, animais: animaisSel },
+        `${e.descricao} — ${animaisSel.length} animal(is)`, "POST");
+      if (individual) setProtocoloCustomFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} animal(is).` });
     } catch (err) {
       if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
@@ -757,8 +794,89 @@ export default function AgendaMovel() {
                         </div>
                       );
                     })}
-                    {!pendentes.length && (
+    {!pendentes.length && (
                       <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todas as vacas confirmadas.</p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+        </MobCard>
+      );
+    }
+
+    // Protocolo customizado (Configurações > Protocolos): mesmo padrão do
+    // IATF acima (lote ou individual), sem hormônio/medicamento — só quando
+    // o grupo do dia tem mais de 1 animal; com 1 só, numero_animal já vem
+    // preenchido pelo backend e cai no card simples de sempre.
+    if (e.tipo === "protocolo_customizado" && (e.animais?.length ?? 0) > 1) {
+      const aberto = protocoloCustomAberto.has(e.id);
+      const sel = protocoloCustomChecks[e.id] || new Set(e.animais);
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirProtocoloCustom(e.id, e.animais!)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+                {e.animais!.length} {e.animais!.length !== 1 ? "animais" : "animal"}
+              </div>
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+
+          {aberto && (() => {
+            const modo = protocoloCustomModo[e.id];
+            const feitosAnimal = protocoloCustomFeitos[e.id] || new Set<string>();
+            const pendentes = e.animais!.filter((n) => !feitosAnimal.has(n));
+            return (
+              <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+                {!modo ? (
+                  <>
+                    <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como deseja confirmar?</p>
+                    <div style={{ display: "flex", gap: "0.6rem" }}>
+                      <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setProtocoloCustomModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todos)</button>
+                      <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setProtocoloCustomModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
+                    </div>
+                  </>
+                ) : modo === "lote" ? (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Marque os animais que receberam:</p>
+                    {e.animais!.map((numero) => (
+                      <label key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.2rem", borderBottom: "1px solid var(--mob-border)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={sel.has(numero)} onChange={() => toggleAnimalProtocoloCustom(e.id, numero)} style={{ width: 20, height: 20 }} />
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{numero}</span>
+                      </label>
+                    ))}
+                    <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }}
+                      disabled={feito || !sel.size} onClick={() => confirmarProtocoloCustom(e, Array.from(sel))}>
+                      Confirmar ({sel.size}/{e.animais!.length})
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>
+                      Confirme animal por animal:
+                    </p>
+                    {e.animais!.map((numero) => {
+                      const jaFeito = feitosAnimal.has(numero);
+                      return (
+                        <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                          <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeito ? "line-through" : "none" }}>{numero}</span>
+                          {jaFeito ? (
+                            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Confirmado</span>
+                          ) : (
+                            <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }}
+                              onClick={() => confirmarProtocoloCustom(e, [numero], true)}>Sim</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {!pendentes.length && (
+                      <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todos os animais confirmados.</p>
                     )}
                   </>
                 )}
