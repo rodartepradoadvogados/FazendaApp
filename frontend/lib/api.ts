@@ -3561,6 +3561,17 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   return res.json();
 }
 
+// Sugestão de casamento entre o texto vindo da nota/documento e o cadastro
+// existente (fornecedor, produto de estoque ou serviço) — só aparece quando
+// há semelhança mas não certeza (confiança "provavel"; ver
+// backend/fazenda/rules/sugestao_documento.py). Devolvida junto do resultado
+// de importarXmlFinanceiro/lerDocumentoFinanceiro, dentro de `sugestoes_cadastro`.
+export type SugestaoCadastroItem = {
+  texto: string; candidato: string; score: number; confianca: "provavel";
+  tipo?: "produto" | "servico"; indice?: number;
+};
+export type SugestoesCadastro = { fornecedor: SugestaoCadastroItem | null; itens: SugestaoCadastroItem[] };
+
 export async function importarXmlFinanceiro(xml: string) {
   const res = await authFetch(`${API}/financeiro/importar-xml`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),

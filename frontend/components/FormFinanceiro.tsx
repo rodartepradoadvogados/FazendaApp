@@ -4,6 +4,7 @@ import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camer
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
+  type SugestoesCadastro, type SugestaoCadastroItem,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   FINALIDADES_ESTOQUE,
 } from "@/lib/api";
@@ -258,6 +259,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [confirmandoDuplicado, setConfirmandoDuplicado] = useState(false);
   const [verificandoDuplicado, setVerificandoDuplicado] = useState(false);
 
+  // Sugestões de casamento com o cadastro (fornecedor/produto/serviço
+  // parecido, mas não idêntico) devolvidas junto da leitura de XML/documento —
+  // ver aplicarXml abaixo e backend/fazenda/rules/sugestao_documento.py.
+  // Cada checkbox nasce marcada (linha ausente de `sugestoesEscolhidas` conta
+  // como "usar", ver aplicarSugestoesEscolhidas).
+  const [sugestoesCadastro, setSugestoesCadastro] = useState<SugestoesCadastro | null>(null);
+  const [sugestoesEscolhidas, setSugestoesEscolhidas] = useState<Record<string, boolean>>({});
+
   function atualizarItem(idx: number, patch: Partial<Item>) {
     setItens((arr) => arr.map((it, i) => {
       if (i !== idx) return it;
@@ -434,6 +443,37 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       setQtdParcelas(String(dados.parcelas.length));
       setParcelas(dados.parcelas.map((p: any) => ({ data_vencimento: p.data_vencimento || "", valor: p.valor != null ? String(p.valor) : "" })));
     }
+    // Fornecedor/produto/serviço parecido mas não idêntico no cadastro —
+    // mostra o quadro de confirmação (ver JSX abaixo) só quando há alguma
+    // sugestão de verdade; senão limpa qualquer sugestão de uma leitura anterior.
+    const sug: SugestoesCadastro | undefined = dados.sugestoes_cadastro;
+    if (sug && (sug.fornecedor || sug.itens.length)) {
+      setSugestoesCadastro(sug);
+      setSugestoesEscolhidas({});
+    } else {
+      setSugestoesCadastro(null);
+    }
+  }
+
+  function aplicarSugestoesEscolhidas() {
+    if (!sugestoesCadastro) return;
+    if (sugestoesCadastro.fornecedor && sugestoesEscolhidas["fornecedor"] !== false) {
+      setFornecedor(sugestoesCadastro.fornecedor.candidato);
+    }
+    if (sugestoesCadastro.itens.length) {
+      const porIndice = new Map(
+        sugestoesCadastro.itens
+          .filter((s) => s.indice != null && sugestoesEscolhidas[`item-${s.indice}`] !== false)
+          .map((s) => [s.indice as number, s]),
+      );
+      if (porIndice.size) {
+        setItens((arr) => arr.map((it, idx) => {
+          const s = porIndice.get(idx);
+          return s ? { ...it, produto: s.candidato, tipo_item: s.tipo === "servico" ? "servico" : "produto" } : it;
+        }));
+      }
+    }
+    setSugestoesCadastro(null);
   }
 
   async function importarXml(texto: string) {
@@ -1203,6 +1243,55 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <div className="flex items-center gap-3 mt-3">
               <button className="btn-primary" title="Salvar mesmo assim (não é duplicado)" onClick={salvar}><Check size={14} /> Salvar mesmo assim</button>
               <button className="btn-ghost" title="Cancelar e revisar os dados" onClick={() => { setConfirmandoDuplicado(false); setDuplicados([]); }}><X size={14} /> Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sugestoesCadastro && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" style={{ width: "620px", maxWidth: "95vw" }}>
+            <div className="flex items-center gap-2 mb-2"><AlertTriangle size={18} style={{ color: "var(--amber)" }} /><strong>Parecido com algo já cadastrado</strong></div>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+              O texto da nota não bate exatamente com o cadastro, mas achei algo parecido. Confira, edite a marcação
+              se quiser manter o texto original, e aplique — ou mantenha tudo como veio da nota.
+            </p>
+            <div style={{ overflowX: "auto" }}>
+              <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
+                <thead><tr><th></th><th>A nota diz</th><th>O cadastro tem parecido</th><th style={{ textAlign: "center" }}>Usar sugestão</th></tr></thead>
+                <tbody>
+                  {sugestoesCadastro.fornecedor && (
+                    <tr>
+                      <td style={{ color: "var(--text-muted)" }}>Fornecedor/cliente</td>
+                      <td>{sugestoesCadastro.fornecedor.texto}</td>
+                      <td style={{ color: "var(--dourado-light)" }}>
+                        {sugestoesCadastro.fornecedor.candidato} <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({Math.round(sugestoesCadastro.fornecedor.score * 100)}% parecido)</span>
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <input type="checkbox" checked={sugestoesEscolhidas["fornecedor"] !== false}
+                          onChange={(e) => setSugestoesEscolhidas((s) => ({ ...s, fornecedor: e.target.checked }))} />
+                      </td>
+                    </tr>
+                  )}
+                  {sugestoesCadastro.itens.map((it: SugestaoCadastroItem) => (
+                    <tr key={it.indice}>
+                      <td style={{ color: "var(--text-muted)" }}>{it.tipo === "servico" ? "Serviço" : "Produto"}</td>
+                      <td>{it.texto}</td>
+                      <td style={{ color: "var(--dourado-light)" }}>
+                        {it.candidato} <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({Math.round(it.score * 100)}% parecido)</span>
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <input type="checkbox" checked={sugestoesEscolhidas[`item-${it.indice}`] !== false}
+                          onChange={(e) => setSugestoesEscolhidas((s) => ({ ...s, [`item-${it.indice}`]: e.target.checked }))} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <button className="btn-primary" title="Aplicar as sugestões marcadas acima" onClick={aplicarSugestoesEscolhidas}><Check size={14} /> Aplicar marcadas</button>
+              <button className="btn-ghost" title="Manter tudo como veio da nota, sem aplicar nenhuma sugestão" onClick={() => setSugestoesCadastro(null)}><X size={14} /> Manter como veio da nota</button>
             </div>
           </div>
         </div>
