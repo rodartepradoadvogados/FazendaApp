@@ -85,6 +85,7 @@ DEFINICOES: list[dict] = [
     # ---- Agenda e sistema ------------------------------------------------------
     {"chave": "janela_eventos_sanitarios_passado", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no passado", "valor": 120, "unidade": "dias"},
     {"chave": "janela_eventos_sanitarios_futuro", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no futuro", "valor": 180, "unidade": "dias"},
+    {"chave": "cronograma_sanitario_dias_aviso", "grupo": "agenda_sistema", "label": "Cronograma sanitário — aviso obrigatório antes do evento sem veterinário definido", "valor": 5, "unidade": "dias"},
     {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
     {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
 
@@ -349,6 +350,10 @@ def janela_eventos_sanitarios_passado() -> int:
 
 def janela_eventos_sanitarios_futuro() -> int:
     return int(get_param("janela_eventos_sanitarios_futuro", 180) or 180)
+
+
+def cronograma_sanitario_dias_aviso() -> int:
+    return int(get_param("cronograma_sanitario_dias_aviso", 5) or 5)
 
 
 def dias_contas_a_pagar_agenda() -> int:

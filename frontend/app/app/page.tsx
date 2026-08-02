@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
-import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, today, type ApresentacaoDieta } from "@/lib/api";
+import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
@@ -190,6 +190,24 @@ export default function AgendaMovel() {
   // Grupos de protocolo sanitário (aplicação em lote): mesma pergunta lote/individual.
   const [sanAberto, setSanAberto] = useState<Set<string>>(new Set());
   const [sanModo, setSanModo] = useState<Record<string, "lote" | "individual">>({});
+
+  // Cronograma sanitário — 3 cartões novos (o 4º, "animal", não precisa de
+  // estado próprio: é sempre um cartão simples com 2 botões).
+  // (2) "modo" / "urgente": expansível, com sub-tela "vet" (escolher/cadastrar
+  // veterinário) ou "adiar" (nova data + motivo).
+  const [cronModoAberto, setCronModoAberto] = useState<Set<string>>(new Set());
+  const [cronSubTela, setCronSubTela] = useState<Record<string, "vet" | "adiar" | undefined>>({});
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  const [pessoasCarregando, setPessoasCarregando] = useState(false);
+  const [novoVetNome, setNovoVetNome] = useState<Record<string, string>>({});
+  const [criandoVet, setCriandoVet] = useState<Set<string>>(new Set());
+  const [cronNovaData, setCronNovaData] = useState<Record<string, string>>({});
+  const [cronMotivoAdiar, setCronMotivoAdiar] = useState<Record<string, string>>({});
+  const [adiandoCron, setAdiandoCron] = useState<Set<string>>(new Set());
+  // (3) "aplicar": mesmo padrão lote/individual do IATF.
+  const [cronAplicarAberto, setCronAplicarAberto] = useState<Set<string>>(new Set());
+  const [cronAplicarModo, setCronAplicarModo] = useState<Record<string, "lote" | "individual">>({});
+  const [cronAplicarFeitos, setCronAplicarFeitos] = useState<Record<string, Set<string>>>({});
 
   // Alerta de nova dieta: cartão expansível que mostra a apresentação da dieta
   // (produtos, por cabeça, total/dia, total/trato e kg no vagão) para o funcionário.
@@ -440,6 +458,102 @@ export default function AgendaMovel() {
       if (individual) setProtocoloCustomFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
       else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} animal(is).` });
+    } catch (err) {
+      if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
+  // ── Cronograma sanitário ──────────────────────────────────────────────
+  // (1) Trilha do animal: incluir/excluir a matriz sugerida no cronograma.
+  async function decidirCronAnimal(e: Evento, incluir: boolean) {
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id, incluir },
+        `${incluir ? "Incluir" : "Excluir"} ${e.numero_animal || ""} no cronograma`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
+  // Lista de pessoas carregada sob demanda (1ª vez que um cartão "modo" abre
+  // a escolha de veterinário) — reaproveitada por todos os cartões da tela.
+  function carregarPessoas() {
+    if (pessoas.length || pessoasCarregando) return;
+    setPessoasCarregando(true);
+    fetchPessoas().then(setPessoas).catch(() => {}).finally(() => setPessoasCarregando(false));
+  }
+  const veterinarios = pessoas.filter((p: any) =>
+    p.ativo !== false && (p.tipos || []).some((t: string) => t.toLowerCase().includes("veterinár")));
+
+  // (2) Trilha do agendamento: decidir modo (veterinário / própria) ou adiar.
+  async function confirmarCronModo(e: Evento, modo: "veterinario" | "propria", veterinarioPessoaId?: number) {
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, modo, veterinario_pessoa_id: veterinarioPessoaId },
+        `Definir aplicação — ${e.descricao}`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: "Aplicação definida." });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+  async function cadastrarNovoVetEConfirmar(e: Evento) {
+    const nome = (novoVetNome[e.id] || "").trim();
+    if (!nome) return;
+    setCriandoVet((p) => new Set(p).add(e.id));
+    setAviso(null);
+    try {
+      const pessoa = await criarPessoa({ nome, tipos: ["Veterinário"] });
+      setPessoas((p) => [...p, pessoa]);
+      await confirmarCronModo(e, "veterinario", pessoa.id);
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível cadastrar o veterinário." });
+    } finally {
+      setCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+  async function confirmarAdiarCron(e: Evento) {
+    const novaData = cronNovaData[e.id];
+    if (!novaData) return;
+    setAdiandoCron((p) => new Set(p).add(e.id));
+    setAviso(null);
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, nova_data: novaData, motivo: (cronMotivoAdiar[e.id] || "").trim() || undefined },
+        `Adiar — ${e.descricao}`, "POST");
+      setFeitos((p) => new Set(p).add(e.id));
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: "Data adiada." });
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    } finally {
+      setAdiandoCron((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+
+  // (3) Aplicar: em lote (sem `animais` = todos os incluídos) ou individual
+  // (1 número por vez — o backend só conclui o cronograma quando o último
+  // incluído for confirmado).
+  async function confirmarCronAplicar(e: Evento, animaisSel?: string[], individual = false) {
+    setAviso(null);
+    if (!individual) setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const corpo: Record<string, unknown> = { evento_id: e.id };
+      if (animaisSel && animaisSel.length) corpo.animais = animaisSel;
+      const r = await enviarOuEnfileirar("/agenda/realizados", corpo,
+        `Aplicar ${e.descricao}${animaisSel ? ` — ${animaisSel.join(", ")}` : ""}`, "POST");
+      if (individual && animaisSel) {
+        setCronAplicarFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
+      }
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: individual ? "Confirmado." : "Aplicação confirmada." });
     } catch (err) {
       if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
@@ -883,6 +997,199 @@ export default function AgendaMovel() {
               </div>
             );
           })()}
+        </MobCard>
+      );
+    }
+
+    // Cronograma sanitário (1): matriz entrou na janela do gatilho — só
+    // incluir/excluir no cronograma da regra, sem opções de aplicação aqui.
+    if (e.tipo === "cronograma_sanitario_animal") {
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", marginBottom: feito ? 0 : "0.7rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito && <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span>}
+          </div>
+          {!feito && (
+            <div style={{ display: "flex", gap: "0.6rem" }}>
+              <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => decidirCronAnimal(e, true)}>Incluir</button>
+              <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => decidirCronAnimal(e, false)}>Excluir</button>
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    // Cronograma sanitário (2): decidir COMO vai ser aplicado — veterinário
+    // agendado (escolhido de Pessoas, ou cadastrado na hora), equipe própria,
+    // ou (só quando urgente, faltando poucos dias) adiar a data prevista.
+    if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
+      const urgente = e.tipo === "cronograma_sanitario_urgente";
+      const aberto = cronModoAberto.has(e.id);
+      const sub = cronSubTela[e.id];
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem", ...(urgente && !feito ? { border: "1px solid var(--mob-vermelho)" } : {}) }}>
+          <button type="button" onClick={() => { setCronModoAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; }); carregarPessoas(); }}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : urgente ? "var(--mob-vermelho)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: urgente && !feito ? "var(--mob-vermelho)" : "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+            )}
+          </button>
+
+          {aberto && !feito && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {!sub ? (
+                <>
+                  <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como vai ser aplicado?</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <button type="button" className="mob-btn" onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: "vet" }))}>Veterinário</button>
+                    <button type="button" className="mob-btn mob-btn-sec" onClick={() => confirmarCronModo(e, "propria")}>Aplicação própria</button>
+                    {urgente && (
+                      <button type="button" className="mob-btn mob-btn-sec" style={{ color: "var(--mob-vermelho)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: "adiar" }))}>
+                        Adiar
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : sub === "vet" ? (
+                <>
+                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Selecione o veterinário:</p>
+                  {pessoasCarregando && !pessoas.length ? (
+                    <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>Carregando…</p>
+                  ) : (
+                    <>
+                      {!veterinarios.length && (
+                        <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Nenhum veterinário cadastrado ainda.</p>
+                      )}
+                      {veterinarios.map((v: any) => (
+                        <button key={v.id} type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.4rem" }} onClick={() => confirmarCronModo(e, "veterinario", v.id)}>
+                          {v.nome}
+                        </button>
+                      ))}
+                      <div style={{ marginTop: "0.6rem" }}>
+                        <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>+ cadastrar novo veterinário</label>
+                        <input className="mob-input" placeholder="Nome do veterinário" value={novoVetNome[e.id] || ""} onChange={(ev) => setNovoVetNome((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                        <button type="button" className="mob-btn" style={{ marginTop: "0.4rem" }}
+                          disabled={!(novoVetNome[e.id] || "").trim() || criandoVet.has(e.id)} onClick={() => cadastrarNovoVetEConfirmar(e)}>
+                          {criandoVet.has(e.id) ? "Cadastrando…" : "Cadastrar e confirmar"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.6rem", color: "var(--mob-muted)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: undefined }))}>
+                    Voltar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Nova data</label>
+                  <input type="date" className="mob-input" style={{ marginBottom: "0.5rem" }} value={cronNovaData[e.id] || ""} onChange={(ev) => setCronNovaData((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Motivo (opcional)</label>
+                  <input className="mob-input" style={{ marginBottom: "0.6rem" }} value={cronMotivoAdiar[e.id] || ""} onChange={(ev) => setCronMotivoAdiar((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                  <button type="button" className="mob-btn" disabled={!cronNovaData[e.id] || adiandoCron.has(e.id)} onClick={() => confirmarAdiarCron(e)}>
+                    {adiandoCron.has(e.id) ? "Salvando…" : "Confirmar nova data"}
+                  </button>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.5rem", color: "var(--mob-muted)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: undefined }))}>
+                    Voltar
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    // Cronograma sanitário (3): dia do evento chegou, modo já definido —
+    // aplicar em lote (todos os incluídos de uma vez) ou individualizado
+    // (mesmo padrão do protocolo IATF acima).
+    if (e.tipo === "cronograma_sanitario_aplicar") {
+      const aberto = cronAplicarAberto.has(e.id);
+      const modo = cronAplicarModo[e.id];
+      const animais = e.animais || [];
+      const feitosAnimal = cronAplicarFeitos[e.id] || new Set<string>();
+      const pendentes = animais.filter((n) => !feitosAnimal.has(n));
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => setCronAplicarAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; })}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+            )}
+          </button>
+
+          {aberto && !feito && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {!modo ? (
+                <>
+                  <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Aplicar em lote ou individual?</p>
+                  <div style={{ display: "flex", gap: "0.6rem" }}>
+                    <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setCronAplicarModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todos)</button>
+                    <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setCronAplicarModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
+                  </div>
+                </>
+              ) : modo === "lote" ? (
+                <>
+                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Animais incluídos:</p>
+                  {animais.map((n) => (
+                    <div key={n} style={{ padding: "0.45rem 0.2rem", borderBottom: "1px solid var(--mob-border)", fontWeight: 800, fontSize: "1.02rem" }}>{n}</div>
+                  ))}
+                  <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }} onClick={() => confirmarCronAplicar(e)}>
+                    Confirmar aplicação em todos
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Confirme animal por animal — aplicado?</p>
+                  {animais.map((numero) => {
+                    const jaFeito = feitosAnimal.has(numero);
+                    return (
+                      <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeito ? "line-through" : "none" }}>{numero}</span>
+                        {jaFeito ? (
+                          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Aplicado</span>
+                        ) : (
+                          <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }} onClick={() => confirmarCronAplicar(e, [numero], true)}>Sim</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {!pendentes.length && (
+                    <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todos os animais confirmados.</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </MobCard>
       );
     }

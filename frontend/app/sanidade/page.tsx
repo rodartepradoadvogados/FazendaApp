@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
+  fetchCronogramasSanitarios,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchResultadosExame, type ExameResultado,
   fetchMedicamentos,
@@ -431,6 +432,82 @@ function CalendarioSanitarioView() {
       )}
       </>
       )}
+    </>
+  );
+}
+
+// Cronogramas sanitários (regras usa_cronograma=True — ver
+// fazenda/rules/cronograma_sanitario.py): 1 linha por ocorrência (aberta ou
+// concluída), com contagem de animais por status na trilha do animal.
+type CronogramaAnimalContagem = { sugerido: number; incluido: number; excluido: number; aplicado: number };
+type Cronograma = {
+  id: number; calendario_sanitario_id: number; evento_sanitario_nome: string; categoria_alvo: string | null;
+  data_evento: string; data_original: string | null; status: string; modo_execucao: string | null;
+  veterinario_nome: string | null; animais_contagem: CronogramaAnimalContagem;
+};
+const STATUS_CRONOGRAMA_LABEL: Record<string, string> = {
+  aberto: "Aberto — aguardando decisão", agendado: "Agendado", concluido: "Concluído", cancelado: "Cancelado",
+};
+const STATUS_CRONOGRAMA_COR: Record<string, string> = {
+  aberto: "var(--amber)", agendado: "var(--dourado-light)", concluido: "var(--green-light)", cancelado: "var(--text-muted)",
+};
+function CronogramasSanitariosView() {
+  const [cronogramas, setCronogramas] = useState<Cronograma[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [statusFiltro, setStatusFiltro] = useState<"todos" | "aberto" | "agendado" | "concluido" | "cancelado">("todos");
+
+  useEffect(() => {
+    fetchCronogramasSanitarios().then(setCronogramas).catch((e) => setError(e.message));
+  }, []);
+
+  const filtrados = useMemo(
+    () => (cronogramas || []).filter((c) => statusFiltro === "todos" || c.status === statusFiltro),
+    [cronogramas, statusFiltro]
+  );
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
+
+  return (
+    <>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
+        Ocorrências das regras do calendário sanitário marcadas "Usar cronograma sanitário" — cada linha é uma janela de
+        aplicação (ex.: "Vacina Brucelose — Novilhas 3 meses"), com quem vai aplicar e quantos animais já entraram na lista.
+      </p>
+      <div className="flex items-center gap-2 my-2" style={{ flexWrap: "wrap" }}>
+        {(["todos", "aberto", "agendado", "concluido", "cancelado"] as const).map((s) => (
+          <button key={s} type="button" className={statusFiltro === s ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.72rem" }} onClick={() => setStatusFiltro(s)}>
+            {s === "todos" ? "Todos" : STATUS_CRONOGRAMA_LABEL[s]}
+          </button>
+        ))}
+      </div>
+      {error && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{error}</p>}
+      <div className="overflow-x-auto">
+        <table className="fazenda-table">
+          <thead><tr>
+            <ThOrdenavel label="Evento" campo="evento_sanitario_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+            <ThOrdenavel label="Categoria alvo" campo="categoria_alvo" coluna={coluna} dir={dir} ordenar={ordenar} />
+            <ThOrdenavel label="Data prevista" campo="data_evento" coluna={coluna} dir={dir} ordenar={ordenar} />
+            <ThOrdenavel label="Status" campo="status" coluna={coluna} dir={dir} ordenar={ordenar} />
+            <ThOrdenavel label="Veterinário" campo="veterinario_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+            <th>Sugerido</th><th>Incluído</th><th>Excluído</th><th>Aplicado</th>
+          </tr></thead>
+          <tbody>
+            {linhasOrdenadas.map((c) => (
+              <tr key={c.id}>
+                <td style={{ fontWeight: 700 }}>{c.evento_sanitario_nome}</td>
+                <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.categoria_alvo || "—"}</td>
+                <td style={{ fontSize: "0.78rem" }}>{formatDate(c.data_evento)}{c.data_original && c.data_original !== c.data_evento ? <span style={{ color: "var(--text-muted)", fontSize: "0.68rem" }}> (adiado, era {formatDate(c.data_original)})</span> : null}</td>
+                <td style={{ fontSize: "0.78rem", fontWeight: 600, color: STATUS_CRONOGRAMA_COR[c.status] || "var(--text-muted)" }}>{STATUS_CRONOGRAMA_LABEL[c.status] || c.status}</td>
+                <td style={{ fontSize: "0.78rem" }}>{c.veterinario_nome || (c.modo_execucao === "propria" ? "Equipe própria" : "—")}</td>
+                <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.sugerido ?? 0}</td>
+                <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.incluido ?? 0}</td>
+                <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.excluido ?? 0}</td>
+                <td style={{ fontSize: "0.78rem", textAlign: "center" }}>{c.animais_contagem?.aplicado ?? 0}</td>
+              </tr>
+            ))}
+            {!linhasOrdenadas.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum cronograma no filtro.</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -1370,10 +1447,11 @@ const ABAS_CURATIVA = [
   { id: "taxa_cura", label: "Taxa de cura", icon: Percent, title: "Taxa de cura dos tratamentos (aplicações e protocolos)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
 
-type AbaPreventiva = "aplicacoes" | "calendario" | "historico";
+type AbaPreventiva = "aplicacoes" | "calendario" | "cronogramas" | "historico";
 const ABAS_PREVENTIVA = [
   { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Aplicações preventivas já lançadas" },
   { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Regras recorrentes do calendário preventivo" },
+  { id: "cronogramas", label: "Cronogramas", icon: ListChecks, title: "Acompanhamento das regras usa_cronograma: animais na lista de espera e decisão de execução" },
   { id: "historico", label: "Histórico", icon: History, title: "Vacinas e exames já realizados, agrupados por produto/exame, com filtros" },
 ] as const satisfies readonly { id: AbaPreventiva; label: string; icon: any; title: string }[];
 
@@ -1431,6 +1509,7 @@ export default function SanidadePage() {
         <>
           {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" autoEditarId={autoEditarId} />}
           {abaPrev === "calendario" && <CalendarioSanitarioView />}
+          {abaPrev === "cronogramas" && <CronogramasSanitariosView />}
           {abaPrev === "historico" && <HistoricoPreventivoView />}
         </>
       )}

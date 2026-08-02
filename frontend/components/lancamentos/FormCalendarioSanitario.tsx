@@ -24,6 +24,7 @@ type RegraCalendario = {
   frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; proxima_ocorrencia: string; observacao: string | null; ativo: boolean;
   categoria_preventiva: string | null; ultimo_evento_data: string | null; ultimo_evento_id: number | null;
+  usa_cronograma?: boolean;
 };
 
 // vacina | exame | avulso/outro (nada marcado nos dois primeiros) | todos.
@@ -142,6 +143,10 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const [dataEvento, setDataEvento] = useState("");
   const [observacao, setObservacao] = useState("");
   const [realizado, setRealizado] = useState(false);
+  // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py): em vez
+  // de cobrar aplicação na hora, o animal que bate o critério entra numa
+  // lista de espera até o usuário decidir veterinário/aplicação própria.
+  const [usaCronograma, setUsaCronograma] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -159,7 +164,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     [pessoas]
   );
   const veterinariosZootecnistas = useMemo(
-    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista", "Vet/Zootec."].includes(t))),
+    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t))),
     [pessoasAtivas]
   );
 
@@ -210,7 +215,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const limpar = () => {
     setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setDoencaId(""); setProduto("");
     setPrincipioId(""); setDosagem(""); setUnidade(""); setResponsavel(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
-    setDataEvento(""); setObservacao(""); setRealizado(false);
+    setDataEvento(""); setObservacao(""); setRealizado(false); setUsaCronograma(false);
     setModoFreq("periodica"); setGatilho("nascimento"); setGatilhoLote(""); setGatilhoIdadeMeses(""); setOffsetDias("0");
   };
 
@@ -224,6 +229,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     setVeterinario((r as any).veterinario || "");
     setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade);
     setDataEvento(r.data_evento); setObservacao(r.observacao || ""); setRealizado(false);
+    setUsaCronograma(r.usa_cronograma ?? false);
   };
 
   const excluir = async (r: RegraCalendario) => {
@@ -271,7 +277,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
         responsavel: responsavel || undefined,
         veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor), frequencia_unidade: freqUnidade, data_evento: dataEvento,
-        observacao: observacao || undefined, realizado,
+        observacao: observacao || undefined, realizado, usa_cronograma: usaCronograma,
       };
       if (editando) await atualizarCalendarioSanitario(editando, dados);
       else await criarCalendarioSanitario(dados);
@@ -411,6 +417,18 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
           <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
         </label>
       )}
+      {modoFreq === "periodica" && (
+        <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.7rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", fontWeight: 700 }}>
+            <input type="checkbox" checked={usaCronograma} onChange={(e) => setUsaCronograma(e.target.checked)} /> Usar cronograma sanitário
+          </label>
+          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+            Em vez de cobrar aplicação na hora, os animais que baterem o critério entram numa lista de espera até você agendar
+            com o veterinário ou confirmar aplicação própria. A Agenda mostra a lista de espera, a decisão de quem vai aplicar e,
+            perto da data prevista sem decisão, cobra confirmação obrigatória.
+          </p>
+        </div>
+      )}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -447,7 +465,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
               <tbody>
                 {ordRegras.linhasOrdenadas.map((r) => (
                   <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
+                    <td style={{ fontWeight: 700 }}>
+                      {r.evento_sanitario_nome}
+                      {r.usa_cronograma && (
+                        <span title="Usa cronograma sanitário" style={{ marginLeft: "0.4rem", fontSize: "0.62rem", fontWeight: 700, color: "var(--dourado-light)", background: "rgba(212,175,55,0.14)", padding: "0.05rem 0.4rem", borderRadius: 999 }}>
+                          Cronograma
+                        </span>
+                      )}
+                    </td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
                       {tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro"}
                     </td>
