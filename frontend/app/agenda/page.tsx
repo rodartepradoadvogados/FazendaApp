@@ -144,6 +144,23 @@ export default function AgendaPage() {
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
     return { ...p, [id]: atual };
   });
+  // Protocolo customizado (Configurações > Protocolos): mesmo padrão do IATF
+  // acima — grupo (lançamento+dia) expandido mostra os animais com checkbox,
+  // permitindo confirmar só um subconjunto (o backend já aceita `animais`
+  // parcial em marcar_realizado; só faltava esta UI usar isso em vez de
+  // marcar o grupo inteiro de uma vez).
+  const [protocoloCustomAbertos, setProtocoloCustomAbertos] = useState<Set<string>>(new Set());
+  const toggleProtocoloCustom = (id: string) => setProtocoloCustomAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const [protocoloCustomChecks, setProtocoloCustomChecks] = useState<Record<string, Set<string>>>({});
+  const abrirProtocoloCustom = (id: string, animais: string[]) => {
+    setProtocoloCustomChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+    toggleProtocoloCustom(id);
+  };
+  const toggleAnimalProtocoloCustom = (id: string, numero: string) => setProtocoloCustomChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
   // Indução de lactação: mesmo padrão do protocolo IATF (grupo lançamento+dia
   // expandido mostra os animais + medicamentos/observação de manejo do dia).
   const [inducaoAbertos, setInducaoAbertos] = useState<Set<string>>(new Set());
@@ -695,6 +712,11 @@ export default function AgendaPage() {
           linhas.push({ tipo: "iatf", e });
         } else if (e.tipo === "protocolo_inducao") {
           linhas.push({ tipo: "inducao", e });
+        } else if (e.tipo === "protocolo_customizado" && (e.animais?.length ?? 0) > 1) {
+          // Só usa o card expansível (com seleção por animal) quando há mais de
+          // 1 animal no grupo — com 1 só, o fallback genérico (linha "simples",
+          // numero_animal já preenchido) é suficiente e mais direto.
+          linhas.push({ tipo: "protocolo_custom", e });
         } else if (e.categoria === "Gestão/Financeiro" && e.ref) {
           const arr = financeiroPorRef.get(e.ref) ?? [];
           arr.push(e); financeiroPorRef.set(e.ref, arr);
@@ -976,6 +998,52 @@ export default function AgendaPage() {
                                       </button>
                                     </div>
                                   )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
+                    if (linha.tipo === "protocolo_custom") {
+                      const e = linha.e;
+                      const aberto = protocoloCustomAbertos.has(e.id);
+                      const checks = protocoloCustomChecks[e.id] || new Set(e.animais);
+                      return (
+                        <React.Fragment key={`protocolo-custom-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => abrirProtocoloCustom(e.id, e.animais)}>
+                            {tdAccent(e.categoria)}
+                            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
+                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
+                              {aberto ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
+                            <td onClick={(ev) => ev.stopPropagation()} />
+                          </tr>
+                          {aberto && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.5rem 0" }}>
+                                  <table className="fazenda-table" style={{ margin: 0 }}>
+                                    <thead><tr><th></th><th>Nº</th></tr></thead>
+                                    <tbody>
+                                      {e.animais.map((numero: string) => (
+                                        <tr key={numero}>
+                                          <td><input type="checkbox" checked={checks.has(numero)} onChange={() => toggleAnimalProtocoloCustom(e.id, numero)} /></td>
+                                          <td style={{ fontWeight: 700 }}>{numero}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
+                                      onClick={() => marcarRealizado(e.id, Array.from(checks))}>
+                                      <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
+                                    </button>
+                                  </div>
                                 </div>
                               </td>
                             </tr>
