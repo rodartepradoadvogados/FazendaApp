@@ -442,9 +442,18 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           // 4xx "de verdade" (400/404/409/422...) = dado inválido, exige o usuário.
           const detalhe = await res.json().catch(() => ({}));
           await atualizarItem(atual.id, { status: "erro", erro: detalhe.detail || `Erro ${res.status}` });
-        } catch {
-          // Rede caiu de novo no meio deste grupo — para só este grupo;
-          // o próximo (json→form ou form→json) ainda é tentado.
+        } catch (e) {
+          // Rede caiu de novo no meio deste grupo — para só este grupo; o
+          // próximo (json→form ou form→json) ainda é tentado. Registra a
+          // tentativa e a mensagem técnica (diagnóstico só — não bloqueia
+          // retentativa) em vez de falhar 100% em silêncio: sem isso, uma
+          // falha que se repete sempre (CORS, DNS, URL de API errada) parece
+          // idêntica a "nunca tentou", indistinguível pra quem usa o app.
+          const tentativas = (atual.tentativas || 0) + 1;
+          await atualizarItem(atual.id, {
+            tentativas, proximaTentativaEm: proximaTentativa(tentativas),
+            debugUltimoErro: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+          });
           break;
         }
       }

@@ -264,6 +264,11 @@ export default function Pagina() {
             {!item.erro && (
               <div style={{ marginTop: "0.35rem", fontSize: "0.78rem", color: "var(--mob-muted)" }}>
                 {(item.tentativas || 0) > 0 ? `Aguardando envio (tentativa ${item.tentativas})…` : "Aguardando envio…"}
+                {item.debugUltimoErro && (
+                  <div style={{ marginTop: "0.2rem", color: "var(--mob-ambar)", fontSize: "0.72rem" }}>
+                    Última falha: {item.debugUltimoErro}
+                  </div>
+                )}
               </div>
             )}
             {item.erro && (
