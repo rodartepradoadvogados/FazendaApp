@@ -281,6 +281,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       };
       if (editando) await atualizarCalendarioSanitario(editando, dados);
       else await criarCalendarioSanitario(dados);
+      if (usaCronograma) {
+        // "Registrar cronograma deste evento" marcado — leva direto para o
+        // card Cronogramas (Sanidade > Preventiva > Calendário sanitário),
+        // para confirmar o 1º ciclo (agendar com veterinário, aplicação
+        // própria ou deixar em aberto), como pedido no momento do cadastro.
+        window.location.href = "/sanidade?ir=cronogramas";
+        return;
+      }
       setSucesso(editando ? "Regra atualizada com sucesso." : "Regra do calendário sanitário criada com sucesso.");
       limpar();
       carregarRegras();

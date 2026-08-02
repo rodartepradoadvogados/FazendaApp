@@ -277,6 +277,11 @@ class EventoSanitario(SQLModel, table=True):
     # confirmar o exame com o veterinário (pendência distinta da do próprio dia).
     agenda_dias_antes: Optional[int] = None
 
+    # Serviço financeiro (nome de um ServicoCadastro) para o botão "Lançar
+    # financeiro" no calendário sanitário — explícito em vez de adivinhar pelo
+    # nome do evento, para funcionar tanto em vacina quanto em exame.
+    servico_financeiro: Optional[str] = None
+
     # Condição de exclusão mútua — ex.: alternativas de vacina para a mesma
     # doença (Brucelose B19 × Brucelose RB51): só agenda ESTE evento se o
     # animal NUNCA tiver recebido o evento apontado aqui (ver

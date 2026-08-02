@@ -24,6 +24,8 @@ from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.calendario_visao import montar_calendario_visual
+from fazenda.rules.cronograma_sanitario import cronograma_aberto
 from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _estoque_devolver, resolver_item as _resolver_item_estoque
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
@@ -480,13 +482,14 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
 # ---------------------------------------------------------------------------
-def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None]]:
+def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None]]:
     evs = session.exec(select(EventoSanitario)).all()
     eventos = {e.id: e.nome for e in evs}
     categorias = {e.id: e.categoria_preventiva for e in evs}
+    servicos_financeiro = {e.id: e.servico_financeiro for e in evs}
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
-    return eventos, doencas, principios, categorias
+    return eventos, doencas, principios, categorias, servicos_financeiro
 
 
 def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
@@ -512,14 +515,17 @@ def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
 def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
+    servicos_financeiro: dict | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
+    servicos_financeiro = servicos_financeiro or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
         "categoria_preventiva": categorias.get(c.evento_sanitario_id),
+        "servico_financeiro": servicos_financeiro.get(c.evento_sanitario_id),
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
@@ -540,13 +546,13 @@ def listar_calendario(
     (esse fica em /sanidade/aplicacoes).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
-    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos) for c in regras]
+    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro) for c in regras]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -625,9 +631,9 @@ def criar_calendario(
     # seguintes continuam pendentes normalmente.
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -647,9 +653,9 @@ def atualizar_calendario(
     session.refresh(c)
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
 @router.delete("/calendario/{calendario_id}")
@@ -664,6 +670,39 @@ def excluir_calendario(
     session.delete(c)
     session.commit()
     return {"excluido": True, "id": calendario_id}
+
+
+@router.get("/calendario/visao")
+def calendario_visao(
+    data_inicio: str = "", data_fim: str = "",
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Card CALENDÁRIO (Sanidade > Preventiva > Calendário Sanitário): projeta
+    as próximas ocorrências das regras num intervalo, com estimativa de
+    animais e agrupamento (ver fazenda.rules.calendario_visao) para sugerir
+    quando vale chamar o veterinário."""
+    hoje = date.today()
+    ini = date.fromisoformat(data_inicio) if data_inicio else hoje
+    fim = date.fromisoformat(data_fim) if data_fim else hoje + timedelta(days=90)
+    return montar_calendario_visual(session, fazenda_id, ini, fim)
+
+
+def _serializar_cronograma(session: Session, cron: CronogramaSanitario, calendarios: dict, eventos: dict, pessoas: dict) -> dict:
+    calendario = calendarios.get(cron.calendario_sanitario_id)
+    animais = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+    ).all()
+    contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+    for a in animais:
+        contagem[a.status] = contagem.get(a.status, 0) + 1
+    return {
+        **cron.model_dump(),
+        "evento_sanitario_nome": eventos.get(calendario.evento_sanitario_id, "—") if calendario else "—",
+        "categoria_alvo": calendario.categoria_alvo if calendario else None,
+        "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+        "animais_contagem": contagem,
+        "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
+    }
 
 
 @router.get("/cronogramas")
@@ -688,25 +727,32 @@ def listar_cronogramas(
     calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario)).all()}
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return [_serializar_cronograma(session, cron, calendarios, eventos, pessoas) for cron in cronogramas]
 
-    saida = []
-    for cron in cronogramas:
-        calendario = calendarios.get(cron.calendario_sanitario_id)
-        animais = session.exec(
-            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
-        ).all()
-        contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
-        for a in animais:
-            contagem[a.status] = contagem.get(a.status, 0) + 1
-        saida.append({
-            **cron.model_dump(),
-            "evento_sanitario_nome": eventos.get(calendario.evento_sanitario_id, "—") if calendario else "—",
-            "categoria_alvo": calendario.categoria_alvo if calendario else None,
-            "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
-            "animais_contagem": contagem,
-            "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
-        })
-    return saida
+
+class NovoCronogramaIn(BaseModel):
+    calendario_sanitario_id: int
+
+
+@router.post("/cronogramas")
+def criar_cronograma_manual(
+    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cria (ou devolve, se já existir) o cronograma em aberto de uma regra —
+    para o card Cronogramas > "Novo cronograma", quando o usuário quer
+    adiantar o 1º ciclo sem esperar a Agenda criar sozinha. Sempre vinculado a
+    uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
+    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    if not calendario.usa_cronograma:
+        raise HTTPException(status_code=400, detail="Esta regra não está marcada para usar cronograma sanitário — ative em Regras cadastradas antes de criar um cronograma.")
+    cron = cronograma_aberto(session, calendario)
+    calendarios = {calendario.id: calendario}
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
 
 
 @router.get("/calendario/eventos-vida")
@@ -952,9 +998,9 @@ def cadastrar_preventivo(
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     return {
-        "regra": _serializar(regra, eventos, doencas, principios, categorias) if regra else None,
+        "regra": _serializar(regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro) if regra else None,
         "aplicacao": aplicacao,
         "resultado_exame": resultado_exame,
     }

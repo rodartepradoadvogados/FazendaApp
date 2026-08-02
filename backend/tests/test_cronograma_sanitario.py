@@ -286,3 +286,36 @@ class TestListagem:
         assert len(cronogramas) == 1
         assert cronogramas[0]["animais_contagem"]["sugerido"] == 1
         assert cronogramas[0]["evento_sanitario_nome"] == "Vacina Brucelose"
+
+
+class TestCriacaoManual:
+    """POST /sanidade/cronogramas — card Cronogramas > "Novo cronograma":
+    sempre exige vincular a uma regra existente com usa_cronograma=True."""
+
+    def test_exige_regra_existente(self, client):
+        c, _ = client
+        r = c.post("/sanidade/cronogramas", json={"calendario_sanitario_id": 9999})
+        assert r.status_code == 404
+
+    def test_recusa_regra_sem_usa_cronograma(self, client):
+        c, engine = client
+        evento_id = c.post("/cadastro/eventos-sanitarios", json={"nome": "Vacina X", "categoria_preventiva": "vacina"}).json()["id"]
+        calendario_id = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": evento_id, "categoria_alvo": "Vacas",
+            "frequencia_valor": 12, "frequencia_unidade": "meses", "data_evento": HOJE.isoformat(),
+        }).json()["id"]
+        r = c.post("/sanidade/cronogramas", json={"calendario_sanitario_id": calendario_id})
+        assert r.status_code == 400
+        assert "usa_cronograma" in r.json()["detail"] or "cronograma" in r.json()["detail"].lower()
+
+    def test_cria_cronograma_vinculado_a_regra(self, client):
+        c, _ = client
+        _, calendario_id = _criar_evento_e_calendario(c, dias_ate_evento=20)
+        r = c.post("/sanidade/cronogramas", json={"calendario_sanitario_id": calendario_id})
+        assert r.status_code == 200, r.text
+        cron = r.json()
+        assert cron["calendario_sanitario_id"] == calendario_id
+        assert cron["status"] == "aberto"
+        # Chamar de novo devolve o MESMO cronograma em aberto (não duplica).
+        r2 = c.post("/sanidade/cronogramas", json={"calendario_sanitario_id": calendario_id})
+        assert r2.json()["id"] == cron["id"]

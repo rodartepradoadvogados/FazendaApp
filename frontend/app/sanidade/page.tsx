@@ -2,8 +2,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical } from "lucide-react";
 import {
-  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
-  fetchCronogramasSanitarios,
+  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, today, fetchTaxaCura, type CasoTaxaCura,
+  fetchCronogramasSanitarios, criarCronogramaSanitario,
+  fetchCalendarioVisao, type JanelaCalendario, type JanelaCalendarioEvento,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchResultadosExame, type ExameResultado,
   fetchMedicamentos,
@@ -38,18 +39,25 @@ type RegraCalendario = {
   id: number; evento_sanitario_id: number; evento_sanitario_nome: string; categoria_alvo: string | null;
   doenca_nome: string | null; produto: string | null; principio_ativo_nome: string | null; dosagem: string | null;
   responsavel: string | null; veterinario: string | null; categoria_preventiva: string | null;
+  servico_financeiro: string | null; usa_cronograma?: boolean;
   frequencia_valor: number; frequencia_unidade: string; data_evento: string; proxima_ocorrencia: string; observacao: string | null;
 };
 
-// vacina | exame | avulso/outro (nada marcado nos dois primeiros) | todos.
+// vacina | exame | tratamento | legado (sem categoria — não é mais possível
+// cadastrar assim, só sobra em eventos antigos) | todos.
 const TIPOS_REGRA_FILTRO = [
-  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
+  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" },
+  { v: "tratamento", l: "Tratamento" }, { v: "legado", l: "Legado (sem categoria)" },
 ] as const;
-function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
+function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "tratamento" | "legado" {
   if (r.categoria_preventiva === "exame") return "exame";
   if (r.categoria_preventiva === "vacina") return "vacina";
-  return "avulso";
+  if (r.categoria_preventiva === "tratamento") return "tratamento";
+  return "legado";
 }
+const ROTULO_TIPO_REGRA: Record<ReturnType<typeof tipoRegra>, string> = {
+  vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", legado: "Legado (sem categoria)",
+};
 
 const LABEL_FREQ: Record<string, string> = { dias: "dia(s)", meses: "mês(es)", anos: "ano(s)" };
 const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento" };
@@ -79,13 +87,15 @@ type LinhaEventoVida = {
  * evento sanitário já cadastrado por evento (herda o gatilho) ou um evento de
  * vida avulso (exploração livre, sem precisar cadastrar antes).
  */
-function RelatorioEventosVidaView() {
+function RelatorioEventosVidaView({
+  eventoSanitarioIdInicial, dataIniInicial, dataFimInicial,
+}: { eventoSanitarioIdInicial?: number; dataIniInicial?: string; dataFimInicial?: string } = {}) {
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
-  const [eventoSanitarioId, setEventoSanitarioId] = useState("");
+  const [eventoSanitarioId, setEventoSanitarioId] = useState(eventoSanitarioIdInicial ? String(eventoSanitarioIdInicial) : "");
   const [gatilho, setGatilho] = useState("");
-  const [ini, setIni] = useState("");
-  const [fim, setFim] = useState("");
+  const [ini, setIni] = useState(dataIniInicial || "");
+  const [fim, setFim] = useState(dataFimInicial || "");
   const [resultado, setResultado] = useState<{ rotulo: string; evento_sanitario_nome: string | null; animais: LinhaEventoVida[] } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -296,15 +306,220 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
   );
 }
 
-function CalendarioSanitarioView() {
-  const [modo, setModo] = useState<"regras" | "relatorio" | "exames">("regras");
+const COR_CATEGORIA_PREVENTIVA: Record<string, string> = {
+  vacina: "var(--blue)", exame: "#7A5C99", tratamento: "var(--amber)",
+};
+
+function maisDias(iso: string, dias: number): string {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().split("T")[0];
+}
+function primeiroDiaMes(d: Date): string {
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split("T")[0];
+}
+function ultimoDiaMes(d: Date): string {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split("T")[0];
+}
+
+/**
+ * Card CALENDÁRIO — visão em Lista ou Mês das próximas ocorrências das regras
+ * (vacina/exame), agrupadas quando caem perto no tempo (parâmetro "janela de
+ * agrupamento"), com estimativa de animais e sinalização de "vale chamar o
+ * veterinário" quando a soma bate o mínimo configurado.
+ */
+function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calendarioSanitarioId: number) => void }) {
+  const [visualizacao, setVisualizacao] = useState<"lista" | "mes">("lista");
+  const [mesAtual, setMesAtual] = useState(() => new Date());
+  const [dados, setDados] = useState<{ janelas: JanelaCalendario[]; min_animais_agrupamento: number; janela_agrupamento_dias: number } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [diaSelecionado, setDiaSelecionado] = useState<string | null>(null);
+  const [drillDown, setDrillDown] = useState<{ eventoId: number; ini: string; fim: string } | null>(null);
+
+  useEffect(() => {
+    const hoje = today();
+    const filtro = visualizacao === "lista"
+      ? { dataInicio: hoje, dataFim: maisDias(hoje, 180) }
+      : { dataInicio: primeiroDiaMes(mesAtual), dataFim: ultimoDiaMes(mesAtual) };
+    fetchCalendarioVisao(filtro).then(setDados).catch((e) => setErro(e.message));
+  }, [visualizacao, mesAtual]);
+
+  const eventosPlanos = useMemo(
+    () => (dados?.janelas || []).flatMap((j) => j.eventos.map((e) => ({ ...e, janela: j }))),
+    [dados]
+  );
+
+  const linhaEvento = (o: JanelaCalendarioEvento & { janela: JanelaCalendario }) => {
+    const podeVerAnimais = !o.usa_cronograma && o.animais !== null && !o.estimativa;
+    return (
+      <div key={`${o.calendario_sanitario_id}-${o.data}`} style={{ padding: "0.55rem 0", borderTop: "1px solid var(--border)" }}>
+        <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
+          <div>
+            <span style={{ fontWeight: 700 }}>{o.evento_sanitario_nome}</span>
+            <span style={{ marginLeft: 8, fontSize: "0.68rem", color: COR_CATEGORIA_PREVENTIVA[o.categoria_preventiva || ""] || "var(--text-muted)", fontWeight: 700 }}>
+              {o.categoria_preventiva ? ROTULO_TIPO_REGRA[o.categoria_preventiva as keyof typeof ROTULO_TIPO_REGRA] || o.categoria_preventiva : ""}
+            </span>
+            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+              {o.categoria_alvo || "Todos os animais"} · {formatDate(o.data)}
+            </div>
+          </div>
+          <div style={{ textAlign: "right", fontSize: "0.78rem" }}>
+            <div>
+              {o.animais == null ? "sem estimativa" : <>{o.estimativa ? "~" : ""}{o.animais} animal(is){o.estimativa && <span style={{ color: "var(--text-muted)" }}> (última aplicação)</span>}</>}
+            </div>
+            <div className="flex items-center gap-2" style={{ justifyContent: "flex-end", marginTop: "0.2rem" }}>
+              {o.usa_cronograma && o.cronograma && (
+                <button className="btn-secondary" style={{ fontSize: "0.7rem" }} onClick={() => onAbrirCronograma(o.calendario_sanitario_id)}>
+                  Cronograma: {STATUS_CRONOGRAMA_LABEL[o.cronograma.status] || o.cronograma.status}
+                </button>
+              )}
+              {podeVerAnimais && (
+                <button className="btn-secondary" style={{ fontSize: "0.7rem" }} onClick={() => setDrillDown({ eventoId: o.evento_sanitario_id, ini: o.janela.data_inicio, fim: o.janela.data_fim })}>
+                  Ver animais
+                </button>
+              )}
+              {o.servico_financeiro && (
+                <a className="btn-secondary" style={{ fontSize: "0.7rem", color: "var(--green-light)" }}
+                  href={`/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(o.servico_financeiro)}`}>
+                  $ Financeiro
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const diasComEvento = useMemo(() => {
+    const mapa = new Map<string, (JanelaCalendarioEvento & { janela: JanelaCalendario })[]>();
+    for (const o of eventosPlanos) {
+      if (!mapa.has(o.data)) mapa.set(o.data, []);
+      mapa.get(o.data)!.push(o);
+    }
+    return mapa;
+  }, [eventosPlanos]);
+
+  const gradeMes = useMemo(() => {
+    const ano = mesAtual.getFullYear(), mes = mesAtual.getMonth();
+    const primeiro = new Date(ano, mes, 1);
+    const dias: (string | null)[] = Array(primeiro.getDay()).fill(null);
+    const totalDias = new Date(ano, mes + 1, 0).getDate();
+    for (let d = 1; d <= totalDias; d++) dias.push(new Date(ano, mes, d).toISOString().split("T")[0]);
+    return dias;
+  }, [mesAtual]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", margin: 0 }}>
+          Próximas vacinas e exames, agrupados quando caem perto no tempo — mínimo de {dados?.min_animais_agrupamento ?? "…"} animais e janela de {dados?.janela_agrupamento_dias ?? "…"} dias (ajustável em Configurações › Parâmetros).
+        </p>
+        <div className="flex items-center gap-1">
+          <button className={visualizacao === "lista" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.75rem" }} onClick={() => setVisualizacao("lista")}>Lista</button>
+          <button className={visualizacao === "mes" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.75rem" }} onClick={() => setVisualizacao("mes")}>Mês</button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && visualizacao === "lista" && (
+        dados.janelas.length === 0
+          ? <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma ocorrência nos próximos 180 dias.</p>
+          : dados.janelas.map((j) => (
+            <div key={j.data_inicio + j.data_fim} className="card mb-3">
+              <div className="flex items-center justify-between mb-1">
+                <span style={{ fontWeight: 700 }}>
+                  {formatDate(j.data_inicio)}{j.data_fim !== j.data_inicio ? ` – ${formatDate(j.data_fim)}` : ""}
+                </span>
+                <span style={{
+                  fontSize: "0.72rem", fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: 6,
+                  color: j.sugerir_veterinario ? "var(--green-light)" : "var(--text-muted)",
+                  background: j.sugerir_veterinario ? "rgba(76,175,128,0.12)" : "transparent",
+                  border: j.sugerir_veterinario ? "none" : "1px solid var(--border)",
+                }}>
+                  {j.animais_total} animal(is){j.tem_estimativa ? " (estimado)" : ""} {j.sugerir_veterinario ? "· vale chamar o veterinário" : ""}
+                </span>
+              </div>
+              {j.eventos.map((o) => linhaEvento({ ...o, janela: j }))}
+            </div>
+          ))
+      )}
+
+      {dados && visualizacao === "mes" && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-3">
+            <button className="btn-secondary" style={{ fontSize: "0.78rem" }} onClick={() => setMesAtual((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>‹ Anterior</button>
+            <span style={{ fontWeight: 700 }}>{mesAtual.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</span>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem" }} onClick={() => setMesAtual((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>Próximo ›</button>
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {["D", "S", "T", "Q", "Q", "S", "S"].map((d, i) => (
+              <div key={i} style={{ fontSize: "0.68rem", color: "var(--text-muted)", textAlign: "center" }}>{d}</div>
+            ))}
+            {gradeMes.map((iso, i) => {
+              if (!iso) return <div key={i} />;
+              const eventosDia = diasComEvento.get(iso) || [];
+              const algumSugereVet = eventosDia.some((o) => o.janela.sugerir_veterinario);
+              return (
+                <button
+                  key={iso}
+                  onClick={() => eventosDia.length && setDiaSelecionado(iso)}
+                  style={{
+                    aspectRatio: "1", borderRadius: 8, fontSize: "0.72rem", padding: "0.3rem",
+                    background: "var(--surface-2)", color: "var(--text)", textAlign: "left", cursor: eventosDia.length ? "pointer" : "default",
+                    border: "1px solid " + (algumSugereVet ? "var(--dourado)" : "var(--border)"),
+                  }}
+                >
+                  <div style={{ fontWeight: 700 }}>{Number(iso.split("-")[2])}</div>
+                  {eventosDia.length > 0 && (
+                    <div className="flex" style={{ gap: 2, flexWrap: "wrap", marginTop: 2 }}>
+                      {eventosDia.slice(0, 4).map((o, idx) => (
+                        <span key={idx} style={{ width: 6, height: 6, borderRadius: "50%", background: COR_CATEGORIA_PREVENTIVA[o.categoria_preventiva || ""] || "var(--text-muted)" }} />
+                      ))}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {diaSelecionado && (
+            <div className="mt-4" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
+              <div className="flex items-center justify-between mb-1">
+                <span style={{ fontWeight: 700 }}>{formatDate(diaSelecionado)}</span>
+                <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setDiaSelecionado(null)}>Fechar</button>
+              </div>
+              {(diasComEvento.get(diaSelecionado) || []).map((o) => linhaEvento(o))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {drillDown && (
+        <div className="card mt-3">
+          <div className="flex items-center justify-between mb-2">
+            <span style={{ fontWeight: 700 }}>Quais animais entram nesta janela</span>
+            <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setDrillDown(null)}>Fechar</button>
+          </div>
+          <RelatorioEventosVidaView eventoSanitarioIdInicial={drillDown.eventoId} dataIniInicial={drillDown.ini} dataFimInicial={drillDown.fim} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" | "cronogramas" } = {}) {
+  const [modo, setModo] = useState<"calendario" | "regras" | "cronogramas" | "exames">(modoInicial || "calendario");
+  const [cronogramaFiltroCalendarioId, setCronogramaFiltroCalendarioId] = useState<number | null>(null);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [eventoId, setEventoId] = useState("");
-  const [tipoFiltro, setTipoFiltro] = useState<"todos" | "vacina" | "exame" | "avulso">("todos");
+  const [tipoFiltro, setTipoFiltro] = useState<"todos" | "vacina" | "exame" | "tratamento" | "legado">("todos");
   const [recarregar, setRecarregar] = useState(0);
   const admin = ehAdmin();
 
@@ -321,7 +536,7 @@ function CalendarioSanitarioView() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(regrasFiltradas);
 
   const linhasExport = regrasFiltradas.map((r) => ({
-    ...r, tipoFmt: tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro",
+    ...r, tipoFmt: ROTULO_TIPO_REGRA[tipoRegra(r)],
     frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
     proxima_ocorrencia_fmt: formatDate(r.proxima_ocorrencia),
   }));
@@ -331,8 +546,14 @@ function CalendarioSanitarioView() {
     try { await excluirCalendarioSanitario(r.id); setRecarregar((n) => n + 1); }
     catch (e: any) { setError(e.message); }
   };
+  // Serviço explícito cadastrado no evento (vale para vacina, exame ou
+  // tratamento) tem prioridade; sem ele, só o exame ainda tem um "chute" por
+  // nome (compatibilidade com regras antigas que nunca configuraram o campo).
+  const servicoFinanceiro = (r: RegraCalendario) => r.servico_financeiro || (tipoRegra(r) === "exame" ? servicoDoExame(r.evento_sanitario_nome) : null);
   const lancarFinanceiro = (r: RegraCalendario) => {
-    window.location.href = `/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(servicoDoExame(r.evento_sanitario_nome))}`;
+    const servico = servicoFinanceiro(r);
+    if (!servico) return;
+    window.location.href = `/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(servico)}`;
   };
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -346,15 +567,20 @@ function CalendarioSanitarioView() {
 
       <TabBar
         abas={[
+          { id: "calendario", label: "Calendário", title: "Próximas vacinas e exames, em lista ou por mês, com sugestão de agrupamento" },
           { id: "regras", label: "Regras cadastradas", title: "Regras recorrentes já cadastradas" },
-          { id: "relatorio", label: "Relatório de eventos de vida", title: "Quais animais entrarão em cada calendário na próxima aplicação" },
+          { id: "cronogramas", label: "Cronogramas", title: "Acompanhamento das regras usa_cronograma: animais na lista de espera e decisão de execução" },
           { id: "exames", label: "Resultados de exames", title: "Diagnóstico/valor lançado em cada exame preventivo" },
         ] as const}
         ativa={modo}
-        onChange={setModo}
+        onChange={(id) => { setModo(id); if (id !== "cronogramas") setCronogramaFiltroCalendarioId(null); }}
       />
 
-      {modo === "relatorio" ? <RelatorioEventosVidaView /> : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} /> : (
+      {modo === "calendario" ? (
+        <CalendarioVisualView onAbrirCronograma={(id) => { setCronogramaFiltroCalendarioId(id); setModo("cronogramas"); }} />
+      ) : modo === "cronogramas" ? (
+        <CronogramasSanitariosView calendarioIdInicial={cronogramaFiltroCalendarioId} onLimparFiltro={() => setCronogramaFiltroCalendarioId(null)} />
+      ) : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} /> : (
       <>
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -397,11 +623,12 @@ function CalendarioSanitarioView() {
               <tbody>
                 {linhasOrdenadas.map((r) => {
                   const ehExame = (r as any).categoria_preventiva === "exame";
+                  const servico = servicoFinanceiro(r);
                   return (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}{ehExame ? <span style={{ fontSize: "0.68rem", color: "var(--blue)", marginLeft: 6 }}>exame</span> : null}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                      {tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro"}
+                      {ROTULO_TIPO_REGRA[tipoRegra(r)]}
                     </td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.doenca_nome || "—"}</td>
@@ -413,8 +640,8 @@ function CalendarioSanitarioView() {
                     {admin && (
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
-                          {ehExame && (
-                            <button title="Lançar financeiro (exame)" onClick={() => lancarFinanceiro(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--green-light)", fontSize: "0.72rem", fontWeight: 700 }}>$ Financeiro</button>
+                          {servico && (
+                            <button title={`Lançar financeiro (${servico})`} onClick={() => lancarFinanceiro(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--green-light)", fontSize: "0.72rem", fontWeight: 700 }}>$ Financeiro</button>
                           )}
                           <a title="Editar em Lançamentos" href="/lancamentos?ir=calendario_sanitario" style={{ color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></a>
                           <button title="Excluir" onClick={() => excluir(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
@@ -451,13 +678,23 @@ const STATUS_CRONOGRAMA_LABEL: Record<string, string> = {
 const STATUS_CRONOGRAMA_COR: Record<string, string> = {
   aberto: "var(--amber)", agendado: "var(--dourado-light)", concluido: "var(--green-light)", cancelado: "var(--text-muted)",
 };
-function CronogramasSanitariosView() {
+function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { calendarioIdInicial?: number | null; onLimparFiltro?: () => void } = {}) {
   const [cronogramas, setCronogramas] = useState<Cronograma[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFiltro, setStatusFiltro] = useState<"todos" | "aberto" | "agendado" | "concluido" | "cancelado">("todos");
+  const [regrasCronograma, setRegrasCronograma] = useState<RegraCalendario[] | null>(null);
+  const [novoAberto, setNovoAberto] = useState(false);
+  const [novaRegraId, setNovaRegraId] = useState("");
+  const [criando, setCriando] = useState(false);
+  const [msgNovo, setMsgNovo] = useState<string | null>(null);
 
+  const carregar = useCallback(() => {
+    fetchCronogramasSanitarios(calendarioIdInicial ? { calendarioId: calendarioIdInicial } : undefined)
+      .then(setCronogramas).catch((e) => setError(e.message));
+  }, [calendarioIdInicial]);
+  useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => {
-    fetchCronogramasSanitarios().then(setCronogramas).catch((e) => setError(e.message));
+    fetchCalendarioSanitario().then((rs: RegraCalendario[]) => setRegrasCronograma(rs.filter((r) => r.usa_cronograma))).catch(() => {});
   }, []);
 
   const filtrados = useMemo(
@@ -466,19 +703,73 @@ function CronogramasSanitariosView() {
   );
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
+  // Só oferece regras usa_cronograma=True que ainda não têm um ciclo em
+  // aberto — cada regra tem no máximo 1 cronograma aberto por vez.
+  const regrasElegiveis = useMemo(() => {
+    const todosCronogramas = cronogramas || [];
+    return (regrasCronograma || []).filter((r) => !todosCronogramas.some(
+      (c) => c.calendario_sanitario_id === r.id && (c.status === "aberto" || c.status === "agendado")
+    ));
+  }, [regrasCronograma, cronogramas]);
+
+  const criarNovo = async () => {
+    if (!novaRegraId) { setMsgNovo("Escolha uma regra."); return; }
+    setCriando(true); setMsgNovo(null);
+    try {
+      await criarCronogramaSanitario(Number(novaRegraId));
+      setNovoAberto(false); setNovaRegraId("");
+      carregar();
+    } catch (e: any) { setMsgNovo(e.message); }
+    finally { setCriando(false); }
+  };
+
   return (
     <>
       <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
         Ocorrências das regras do calendário sanitário marcadas "Usar cronograma sanitário" — cada linha é uma janela de
         aplicação (ex.: "Vacina Brucelose — Novilhas 3 meses"), com quem vai aplicar e quantos animais já entraram na lista.
       </p>
-      <div className="flex items-center gap-2 my-2" style={{ flexWrap: "wrap" }}>
-        {(["todos", "aberto", "agendado", "concluido", "cancelado"] as const).map((s) => (
-          <button key={s} type="button" className={statusFiltro === s ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.72rem" }} onClick={() => setStatusFiltro(s)}>
-            {s === "todos" ? "Todos" : STATUS_CRONOGRAMA_LABEL[s]}
-          </button>
-        ))}
+      {calendarioIdInicial && (
+        <p style={{ fontSize: "0.78rem", marginBottom: "0.5rem" }}>
+          Filtrado por uma regra específica. <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={onLimparFiltro}>Ver todos</button>
+        </p>
+      )}
+      <div className="flex items-center justify-between my-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          {(["todos", "aberto", "agendado", "concluido", "cancelado"] as const).map((s) => (
+            <button key={s} type="button" className={statusFiltro === s ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.72rem" }} onClick={() => setStatusFiltro(s)}>
+              {s === "todos" ? "Todos" : STATUS_CRONOGRAMA_LABEL[s]}
+            </button>
+          ))}
+        </div>
+        <button className="btn-primary" style={{ fontSize: "0.75rem" }} onClick={() => setNovoAberto((v) => !v)}>+ Novo cronograma</button>
       </div>
+
+      {novoAberto && (
+        <div className="card mb-3">
+          <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Regra vinculada (obrigatório)</label>
+          <select
+            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%", maxWidth: 420 }}
+            value={novaRegraId} onChange={(e) => setNovaRegraId(e.target.value)}
+          >
+            <option value="">
+              {regrasElegiveis.length ? "Selecione…" : "Nenhuma regra disponível (crie uma com \"usa_cronograma\" em Regras cadastradas)"}
+            </option>
+            {regrasElegiveis.map((r) => (
+              <option key={r.id} value={r.id}>{r.evento_sanitario_nome} — {r.categoria_alvo || "Todos os animais"}</option>
+            ))}
+          </select>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+            Não é possível criar um cronograma sem vincular a uma regra já cadastrada — regras sem "Usar cronograma sanitário" marcado não aparecem aqui.
+          </p>
+          {msgNovo && <p style={{ color: "var(--red)", fontSize: "0.78rem" }}>{msgNovo}</p>}
+          <div className="flex items-center gap-2 mt-2">
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={criarNovo} disabled={criando || !novaRegraId}>{criando ? "Criando…" : "Criar"}</button>
+            <button className="btn-secondary" style={{ fontSize: "0.78rem" }} onClick={() => { setNovoAberto(false); setMsgNovo(null); }}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
       {error && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{error}</p>}
       <div className="overflow-x-auto">
         <table className="fazenda-table">
@@ -1447,11 +1738,10 @@ const ABAS_CURATIVA = [
   { id: "taxa_cura", label: "Taxa de cura", icon: Percent, title: "Taxa de cura dos tratamentos (aplicações e protocolos)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
 
-type AbaPreventiva = "aplicacoes" | "calendario" | "cronogramas" | "historico";
+type AbaPreventiva = "aplicacoes" | "calendario" | "historico";
 const ABAS_PREVENTIVA = [
   { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Aplicações preventivas já lançadas" },
-  { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Regras recorrentes do calendário preventivo" },
-  { id: "cronogramas", label: "Cronogramas", icon: ListChecks, title: "Acompanhamento das regras usa_cronograma: animais na lista de espera e decisão de execução" },
+  { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Calendário, regras cadastradas, cronogramas e resultados de exames" },
   { id: "historico", label: "Histórico", icon: History, title: "Vacinas e exames já realizados, agrupados por produto/exame, com filtros" },
 ] as const satisfies readonly { id: AbaPreventiva; label: string; icon: any; title: string }[];
 
@@ -1462,11 +1752,18 @@ export default function SanidadePage() {
   // Vindo do popup "regra já agendada" em Lançamentos > Preventivo > Aplicações
   // (link "editar/dar baixa no último evento lançado"): abre direto na aba certa.
   const [autoEditarId, setAutoEditarId] = useState<number | null>(null);
+  // Vindo de "Registrar cronograma deste evento" (Lançamentos > Sanitário >
+  // Preventivo > Calendário sanitário): abre direto no card Cronogramas.
+  const [modoPreventivoInicial, setModoPreventivoInicial] = useState<"calendario" | "cronogramas">("calendario");
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("editar_aplicacao_id")) {
       setAba("preventiva"); setAbaPrev("aplicacoes");
       setAutoEditarId(Number(qs.get("editar_aplicacao_id")));
+    }
+    if (qs.get("ir") === "cronogramas") {
+      setAba("preventiva"); setAbaPrev("calendario");
+      setModoPreventivoInicial("cronogramas");
     }
   }, []);
 
@@ -1508,8 +1805,7 @@ export default function SanidadePage() {
       {aba === "preventiva" && (
         <>
           {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" autoEditarId={autoEditarId} />}
-          {abaPrev === "calendario" && <CalendarioSanitarioView />}
-          {abaPrev === "cronogramas" && <CronogramasSanitariosView />}
+          {abaPrev === "calendario" && <CalendarioSanitarioView modoInicial={modoPreventivoInicial} />}
           {abaPrev === "historico" && <HistoricoPreventivoView />}
         </>
       )}

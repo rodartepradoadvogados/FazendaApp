@@ -374,6 +374,10 @@ class EventoSanitarioIn(BaseModel):
     # Só para exame: qual ExameDefinicao decide o tipo de resultado
     # (diagnóstico/numérico) mostrado no lançamento (Sanitário > Preventivo).
     exame_definicao_id: int | None = None
+    # Nome de um ServicoCadastro — liga este evento (vacina ou exame) ao
+    # botão "Lançar financeiro" no calendário sanitário, sem depender de
+    # adivinhar pelo nome do evento.
+    servico_financeiro: str | None = None
 
 
 def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:

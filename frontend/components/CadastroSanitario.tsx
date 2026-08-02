@@ -11,6 +11,7 @@ import {
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, excluirProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchEstoque, fetchLotes,
   fetchIndicacoes, criarIndicacao, excluirIndicacao,
+  fetchServicosCadastro,
   type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload, type PrincipioFarmacia, type MarcaComercial, type IndicacaoTerapeutica,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
@@ -438,15 +439,17 @@ type EventoForm = {
   avisar_veterinario_30_dias: boolean;
   condicao_evento_id: string;
   exame_definicao_id: string;
+  servico_financeiro: string;
 };
 const eventoFormVazio = (): EventoForm => ({
-  nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", categoria_preventiva: "", doenca_id: "",
+  nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", categoria_preventiva: "vacina", doenca_id: "",
   data_primeiro: "", frequencia_valor: "", frequencia_unidade: "meses",
   gatilho: "nascimento", gatilho_lote: "", gatilho_idade_meses: "", offset_dias: "",
   produto_padrao: "", dose_padrao: "", unidade_padrao: "", via_padrao: "",
   avisar_veterinario_30_dias: false,
   condicao_evento_id: "",
   exame_definicao_id: "",
+  servico_financeiro: "",
 });
 
 export function CadastroEventosSanitarios() {
@@ -455,6 +458,7 @@ export function CadastroEventosSanitarios() {
   const [estoque, setEstoque] = useState<EstoqueItemPicker[]>([]);
   const [lotes, setLotes] = useState<{ codigo: string; nome?: string }[]>([]);
   const [exames, setExames] = useState<{ id: number; nome: string }[]>([]);
+  const [servicos, setServicos] = useState<{ id: number; nome: string; ativo?: boolean }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [form, setForm] = useState<EventoForm>(eventoFormVazio());
@@ -469,6 +473,7 @@ export function CadastroEventosSanitarios() {
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchLotes().then(setLotes).catch(() => {});
     fetchExames().then(setExames).catch(() => {});
+    fetchServicosCadastro().then(setServicos).catch(() => {});
   }, []);
 
   const abrirNovo = () => { setForm(eventoFormVazio()); setEditando("novo"); setMsg(null); };
@@ -485,6 +490,7 @@ export function CadastroEventosSanitarios() {
       avisar_veterinario_30_dias: !!(e as any).agenda_dias_antes,
       condicao_evento_id: e.condicao_evento_id ? String(e.condicao_evento_id) : "",
       exame_definicao_id: (e as any).exame_definicao_id ? String((e as any).exame_definicao_id) : "",
+      servico_financeiro: (e as any).servico_financeiro || "",
     });
     setEditando(e.id); setMsg(null);
   };
@@ -508,6 +514,7 @@ export function CadastroEventosSanitarios() {
       agenda_dias_antes: form.categoria_preventiva === "exame" && form.avisar_veterinario_30_dias ? 30 : null,
       condicao_evento_id: form.condicao_evento_id ? Number(form.condicao_evento_id) : null,
       exame_definicao_id: form.categoria_preventiva === "exame" && form.exame_definicao_id ? Number(form.exame_definicao_id) : null,
+      servico_financeiro: form.servico_financeiro || null,
     };
     setSalvando(true); setMsg(null);
     try {
@@ -542,7 +549,10 @@ export function CadastroEventosSanitarios() {
           </select></div>
         <div><label style={labelStyle}>Categoria preventiva</label>
           <select style={inputStyle} value={form.categoria_preventiva} onChange={(e) => setForm({ ...form, categoria_preventiva: e.target.value })}>
-            <option value="">—</option>
+            {/* Evento "avulso" (sem categoria) não é mais uma opção nova — só
+                preservada aqui se for o valor herdado de um evento antigo, para
+                não trocar o valor por engano ao abrir a edição. */}
+            {!form.categoria_preventiva && <option value="">— (legado, escolha uma categoria)</option>}
             <option value="vacina">Vacina</option>
             <option value="exame">Exame</option>
             <option value="tratamento">Tratamento</option>
@@ -645,6 +655,19 @@ export function CadastroEventosSanitarios() {
             </>
           )}
         </>
+      )}
+
+      {!!form.categoria_preventiva && (
+        <div className="mb-3" style={{ maxWidth: 360 }}>
+          <label style={labelStyle}>Serviço financeiro (opcional)</label>
+          <select style={inputStyle} value={form.servico_financeiro} onChange={(e) => setForm({ ...form, servico_financeiro: e.target.value })}>
+            <option value="">— (sem botão "Lançar financeiro" no calendário)</option>
+            {servicos.filter((s) => s.ativo !== false).map((s) => <option key={s.id} value={s.nome}>{s.nome}</option>)}
+          </select>
+          <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+            Liga este evento a um serviço já cadastrado (Configurações › Cadastro › Serviços), para o botão "Lançar financeiro" no calendário sanitário.
+          </span>
+        </div>
       )}
 
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
