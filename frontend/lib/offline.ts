@@ -395,7 +395,14 @@ let sincronizando = false;
  *  grupo ainda é tentado nesta mesma rodada. */
 export async function sincronizar(): Promise<{ enviados: number; restantes: number }> {
   await iniciar();
-  if (sincronizando || !navigator.onLine) return { enviados: 0, restantes: (await listarTudo()).length };
+  // NÃO trava em navigator.onLine aqui — em WebView Android essa API é
+  // conhecida por ficar presa em `false` mesmo com internet real (não há
+  // garantia de que os eventos 'online'/'offline' disparem de volta), o que
+  // travava a fila para sempre (tentativas nunca passava de 0, nenhum erro
+  // visível). Tenta de verdade; se estiver offline mesmo, o fetch falha
+  // rápido (dentro do timeout) e cai no backoff normal — mesmo resultado,
+  // sem o risco de nunca tentar.
+  if (sincronizando) return { enviados: 0, restantes: (await listarTudo()).length };
   sincronizando = true;
   let enviados = 0;
   try {
