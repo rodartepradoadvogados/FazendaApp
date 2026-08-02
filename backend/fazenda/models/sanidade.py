@@ -319,7 +319,73 @@ class CalendarioSanitario(SQLModel, table=True):
     data_evento: date  # data de referência do evento (base da recorrência)
     observacao: Optional[str] = None
     ativo: bool = True
+    # Liga esta regra ao workflow de Cronograma (ver CronogramaSanitario
+    # abaixo): em vez de virar pendência de "aplicar agora" direto, o animal
+    # que bate o critério entra numa lista de espera, e a aplicação em si só
+    # acontece quando um veterinário for agendado (ou a equipe própria
+    # confirmar que vai aplicar) — decisão pedida na Agenda a cada ocorrência.
+    # False (padrão) preserva 100% o comportamento antigo — nenhuma regra já
+    # cadastrada muda de comportamento sozinha.
+    usa_cronograma: bool = False
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Cronograma sanitário — workflow dinâmico de acompanhamento de UMA ocorrência
+# de uma regra do calendário sanitário marcada `usa_cronograma=True` (ver
+# CalendarioSanitario acima). Existe no máximo 1 cronograma "em aberto" (não
+# concluído/cancelado) por regra a qualquer momento — cada evento sanitário
+# "toca" nesse cronograma aberto por duas trilhas independentes:
+#   (1) trilha do animal — CronogramaSanitarioAnimal, alimentada todo dia
+#       conforme animais batem o critério do EventoSanitario (idade/gatilho);
+#   (2) trilha do agendamento — os campos abaixo, decidindo COM QUEM e
+#       QUANDO a aplicação de fato acontece (veterinário/própria/em branco,
+#       com lembrete obrigatório N dias antes se ninguém decidiu nada).
+# Ver fazenda.rules.cronograma_sanitario para o motor de estado completo.
+# ---------------------------------------------------------------------------
+class CronogramaSanitario(SQLModel, table=True):
+    __tablename__ = "cronograma_sanitario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    calendario_sanitario_id: int = Field(foreign_key="calendario_sanitario.id", index=True)
+    # Data prevista desta ocorrência — nasce igual à próxima ocorrência
+    # projetada da regra (ver rules.calendario_sanitario.proxima_ocorrencia),
+    # mas pode ser adiada (ver "adiar" abaixo) sem alterar a regra em si.
+    data_evento: date
+    data_original: Optional[date] = None  # 1ª data prevista, preenchida só se já foi adiado 1x
+    # None = "em branco" (ainda não decidido) | "veterinario" | "propria".
+    modo_execucao: Optional[str] = None
+    veterinario_pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
+    # "aberto" (recém-criado, aceitando inclusão de animais e aguardando
+    #   decisão de modo) | "agendado" (modo definido, aguardando a data) |
+    #   "aguardando_confirmacao" (passou o aviso de N dias antes sem decisão,
+    #   Agenda cobrando confirmar/adiar) | "concluido" (aplicado) |
+    #   "cancelado".
+    status: str = Field(default="aberto", index=True)
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    concluido_em: Optional[datetime] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class CronogramaSanitarioAnimal(SQLModel, table=True):
+    """Um animal dentro de um CronogramaSanitario — trilha (1) acima. Nasce
+    "sugerido" assim que o animal bate o critério do evento sanitário
+    (idade/gatilho); o funcionário aprova ("incluido") ou recusa ("excluido")
+    pela Agenda. "aplicado" é marcado quando o cronograma é executado."""
+
+    __tablename__ = "cronograma_sanitario_animal"
+    __table_args__ = (UniqueConstraint("cronograma_id", "numero_matriz", name="uq_cronograma_animal"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    numero_matriz: str = Field(index=True)
+    status: str = Field(default="sugerido", index=True)  # sugerido | incluido | excluido | aplicado
+    data_sugestao: date
+    data_decisao: Optional[date] = None
+    data_aplicacao: Optional[date] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 

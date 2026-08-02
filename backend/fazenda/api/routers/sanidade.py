@@ -14,9 +14,10 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
+    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
+    Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica,
-    Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
@@ -570,6 +571,12 @@ class CalendarioSanitarioIn(BaseModel):
     data_evento: date
     observacao: str | None = None
     ativo: bool = True
+    # Liga esta regra ao workflow de Cronograma (ver
+    # fazenda.rules.cronograma_sanitario) — animal que bate o critério entra
+    # numa lista de espera em vez de virar pendência de aplicar na hora, e a
+    # aplicação em si exige veterinário agendado ou aplicação própria
+    # confirmada. Ver fazenda/models/sanidade.py::CalendarioSanitario.
+    usa_cronograma: bool = False
     # "Já foi realizado?" — quando a 1ª ocorrência é hoje/passada e já aconteceu,
     # marca o evento como realizado (some da Agenda). Não é campo do modelo.
     realizado: bool = False
@@ -657,6 +664,49 @@ def excluir_calendario(
     session.delete(c)
     session.commit()
     return {"excluido": True, "id": calendario_id}
+
+
+@router.get("/cronogramas")
+def listar_cronogramas(
+    calendario_id: int | None = None, status: str | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Cronogramas sanitários (workflow de acompanhamento das regras do
+    calendário marcadas usa_cronograma=True) — lista de animais + decisão de
+    execução (veterinário/própria/em branco) por ocorrência. Usado pela tela
+    Sanidade > Preventivo > Cronogramas/Agendamentos."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CronogramaSanitario)
+    if fazenda_id is not None:
+        query = query.where(CronogramaSanitario.fazenda_id == fazenda_id)
+    if calendario_id is not None:
+        query = query.where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
+    if status is not None:
+        query = query.where(CronogramaSanitario.status == status)
+    cronogramas = session.exec(query.order_by(CronogramaSanitario.data_evento.desc())).all()
+
+    calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario)).all()}
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+
+    saida = []
+    for cron in cronogramas:
+        calendario = calendarios.get(cron.calendario_sanitario_id)
+        animais = session.exec(
+            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        ).all()
+        contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+        for a in animais:
+            contagem[a.status] = contagem.get(a.status, 0) + 1
+        saida.append({
+            **cron.model_dump(),
+            "evento_sanitario_nome": eventos.get(calendario.evento_sanitario_id, "—") if calendario else "—",
+            "categoria_alvo": calendario.categoria_alvo if calendario else None,
+            "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+            "animais_contagem": contagem,
+            "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
+        })
+    return saida
 
 
 @router.get("/calendario/eventos-vida")
