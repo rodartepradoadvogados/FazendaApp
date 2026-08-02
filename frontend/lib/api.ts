@@ -2433,6 +2433,9 @@ export type EventoSanitarioPayload = {
   // Só para exame: qual ExameDefinicao decide o tipo de resultado
   // (diagnóstico/numérico) mostrado no lançamento de Sanitário > Preventivo.
   exame_definicao_id?: number | null;
+  // Nome de um serviço cadastrado (Configurações > Cadastro > Serviços) —
+  // liga este evento ao botão "Lançar financeiro" no calendário sanitário.
+  servico_financeiro?: string | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });

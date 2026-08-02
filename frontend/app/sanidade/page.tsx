@@ -38,18 +38,25 @@ type RegraCalendario = {
   id: number; evento_sanitario_id: number; evento_sanitario_nome: string; categoria_alvo: string | null;
   doenca_nome: string | null; produto: string | null; principio_ativo_nome: string | null; dosagem: string | null;
   responsavel: string | null; veterinario: string | null; categoria_preventiva: string | null;
+  servico_financeiro: string | null;
   frequencia_valor: number; frequencia_unidade: string; data_evento: string; proxima_ocorrencia: string; observacao: string | null;
 };
 
-// vacina | exame | avulso/outro (nada marcado nos dois primeiros) | todos.
+// vacina | exame | tratamento | legado (sem categoria — não é mais possível
+// cadastrar assim, só sobra em eventos antigos) | todos.
 const TIPOS_REGRA_FILTRO = [
-  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
+  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" },
+  { v: "tratamento", l: "Tratamento" }, { v: "legado", l: "Legado (sem categoria)" },
 ] as const;
-function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
+function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "tratamento" | "legado" {
   if (r.categoria_preventiva === "exame") return "exame";
   if (r.categoria_preventiva === "vacina") return "vacina";
-  return "avulso";
+  if (r.categoria_preventiva === "tratamento") return "tratamento";
+  return "legado";
 }
+const ROTULO_TIPO_REGRA: Record<ReturnType<typeof tipoRegra>, string> = {
+  vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", legado: "Legado (sem categoria)",
+};
 
 const LABEL_FREQ: Record<string, string> = { dias: "dia(s)", meses: "mês(es)", anos: "ano(s)" };
 const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento" };
@@ -304,7 +311,7 @@ function CalendarioSanitarioView() {
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [eventoId, setEventoId] = useState("");
-  const [tipoFiltro, setTipoFiltro] = useState<"todos" | "vacina" | "exame" | "avulso">("todos");
+  const [tipoFiltro, setTipoFiltro] = useState<"todos" | "vacina" | "exame" | "tratamento" | "legado">("todos");
   const [recarregar, setRecarregar] = useState(0);
   const admin = ehAdmin();
 
@@ -321,7 +328,7 @@ function CalendarioSanitarioView() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(regrasFiltradas);
 
   const linhasExport = regrasFiltradas.map((r) => ({
-    ...r, tipoFmt: tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro",
+    ...r, tipoFmt: ROTULO_TIPO_REGRA[tipoRegra(r)],
     frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
     proxima_ocorrencia_fmt: formatDate(r.proxima_ocorrencia),
   }));
@@ -331,8 +338,14 @@ function CalendarioSanitarioView() {
     try { await excluirCalendarioSanitario(r.id); setRecarregar((n) => n + 1); }
     catch (e: any) { setError(e.message); }
   };
+  // Serviço explícito cadastrado no evento (vale para vacina, exame ou
+  // tratamento) tem prioridade; sem ele, só o exame ainda tem um "chute" por
+  // nome (compatibilidade com regras antigas que nunca configuraram o campo).
+  const servicoFinanceiro = (r: RegraCalendario) => r.servico_financeiro || (tipoRegra(r) === "exame" ? servicoDoExame(r.evento_sanitario_nome) : null);
   const lancarFinanceiro = (r: RegraCalendario) => {
-    window.location.href = `/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(servicoDoExame(r.evento_sanitario_nome))}`;
+    const servico = servicoFinanceiro(r);
+    if (!servico) return;
+    window.location.href = `/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(servico)}`;
   };
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -397,11 +410,12 @@ function CalendarioSanitarioView() {
               <tbody>
                 {linhasOrdenadas.map((r) => {
                   const ehExame = (r as any).categoria_preventiva === "exame";
+                  const servico = servicoFinanceiro(r);
                   return (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}{ehExame ? <span style={{ fontSize: "0.68rem", color: "var(--blue)", marginLeft: 6 }}>exame</span> : null}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                      {tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro"}
+                      {ROTULO_TIPO_REGRA[tipoRegra(r)]}
                     </td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.doenca_nome || "—"}</td>
@@ -413,8 +427,8 @@ function CalendarioSanitarioView() {
                     {admin && (
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
-                          {ehExame && (
-                            <button title="Lançar financeiro (exame)" onClick={() => lancarFinanceiro(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--green-light)", fontSize: "0.72rem", fontWeight: 700 }}>$ Financeiro</button>
+                          {servico && (
+                            <button title={`Lançar financeiro (${servico})`} onClick={() => lancarFinanceiro(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--green-light)", fontSize: "0.72rem", fontWeight: 700 }}>$ Financeiro</button>
                           )}
                           <a title="Editar em Lançamentos" href="/lancamentos?ir=calendario_sanitario" style={{ color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></a>
                           <button title="Excluir" onClick={() => excluir(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>

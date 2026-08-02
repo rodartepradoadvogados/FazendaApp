@@ -480,13 +480,14 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
 # ---------------------------------------------------------------------------
-def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None]]:
+def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None]]:
     evs = session.exec(select(EventoSanitario)).all()
     eventos = {e.id: e.nome for e in evs}
     categorias = {e.id: e.categoria_preventiva for e in evs}
+    servicos_financeiro = {e.id: e.servico_financeiro for e in evs}
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
-    return eventos, doencas, principios, categorias
+    return eventos, doencas, principios, categorias, servicos_financeiro
 
 
 def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
@@ -512,14 +513,17 @@ def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
 def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
+    servicos_financeiro: dict | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
+    servicos_financeiro = servicos_financeiro or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
         "categoria_preventiva": categorias.get(c.evento_sanitario_id),
+        "servico_financeiro": servicos_financeiro.get(c.evento_sanitario_id),
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
@@ -540,13 +544,13 @@ def listar_calendario(
     (esse fica em /sanidade/aplicacoes).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
-    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos) for c in regras]
+    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro) for c in regras]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -625,9 +629,9 @@ def criar_calendario(
     # seguintes continuam pendentes normalmente.
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -647,9 +651,9 @@ def atualizar_calendario(
     session.refresh(c)
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
 @router.delete("/calendario/{calendario_id}")
@@ -952,9 +956,9 @@ def cadastrar_preventivo(
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     return {
-        "regra": _serializar(regra, eventos, doencas, principios, categorias) if regra else None,
+        "regra": _serializar(regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro) if regra else None,
         "aplicacao": aplicacao,
         "resultado_exame": resultado_exame,
     }
