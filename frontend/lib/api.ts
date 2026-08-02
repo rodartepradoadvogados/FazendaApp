@@ -2696,6 +2696,39 @@ export async function fetchCronogramasSanitarios(filtros?: { calendarioId?: numb
   if (!res.ok) throw new Error(`Cronogramas sanitários error: ${res.status}`);
   return res.json();
 }
+// Cria (ou devolve, se já existir) o cronograma em aberto de uma regra — card
+// Cronogramas > "Novo cronograma". Sempre exige uma regra existente marcada
+// usa_cronograma=True; nunca cria um cronograma solto.
+export async function criarCronogramaSanitario(calendarioSanitarioId: number) {
+  const res = await authFetch(`${API}/sanidade/cronogramas`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ calendario_sanitario_id: calendarioSanitarioId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cronograma"); }
+  return res.json();
+}
+
+export type JanelaCalendarioEvento = {
+  calendario_sanitario_id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
+  categoria_alvo: string | null; categoria_preventiva: string | null; servico_financeiro: string | null;
+  usa_cronograma: boolean; data: string; animais: number | null; estimativa: boolean;
+  estimativa_base: "ultima_aplicacao" | null;
+  cronograma: { id: number; status: string; modo_execucao: string | null; veterinario_nome: string | null; animais_contagem: { sugerido: number; incluido: number; excluido: number; aplicado: number } } | null;
+};
+export type JanelaCalendario = {
+  data_inicio: string; data_fim: string; animais_total: number; tem_estimativa: boolean;
+  sugerir_veterinario: boolean; eventos: JanelaCalendarioEvento[];
+};
+// Card CALENDÁRIO — projeção agrupada das próximas ocorrências (vacina/exame),
+// com estimativa de animais e sinalização de "vale chamar o veterinário".
+export async function fetchCalendarioVisao(filtros?: { dataInicio?: string; dataFim?: string }) {
+  const params = new URLSearchParams();
+  if (filtros?.dataInicio) params.set("data_inicio", filtros.dataInicio);
+  if (filtros?.dataFim) params.set("data_fim", filtros.dataFim);
+  const res = await authFetch(`${API}/sanidade/calendario/visao?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Calendário sanitário (visão) error: ${res.status}`);
+  return res.json() as Promise<{ janelas: JanelaCalendario[]; min_animais_agrupamento: number; janela_agrupamento_dias: number }>;
+}
 
 // ── Relatório de eventos de vida (mudança de categoria) ──
 export async function fetchEventosVidaVocabulario(): Promise<{ gatilho: string; rotulo: string }[]> {
