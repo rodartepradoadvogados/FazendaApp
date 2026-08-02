@@ -164,7 +164,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     [pessoas]
   );
   const veterinariosZootecnistas = useMemo(
-    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista", "Vet/Zootec."].includes(t))),
+    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t))),
     [pessoasAtivas]
   );
 

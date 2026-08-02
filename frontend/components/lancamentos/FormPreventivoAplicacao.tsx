@@ -38,7 +38,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
   const [pessoas, setPessoas] = useState<any[]>([]);
   useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const veterinariosZootecnistas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false && (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista", "Vet/Zootec."].includes(t)))
+    () => pessoas.filter((p) => p.ativo !== false && (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t)))
       .sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
     [pessoas]
   );
