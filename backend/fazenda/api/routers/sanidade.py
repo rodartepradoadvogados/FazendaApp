@@ -24,6 +24,8 @@ from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.calendario_visao import montar_calendario_visual
+from fazenda.rules.cronograma_sanitario import cronograma_aberto
 from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _estoque_devolver, resolver_item as _resolver_item_estoque
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
@@ -670,6 +672,39 @@ def excluir_calendario(
     return {"excluido": True, "id": calendario_id}
 
 
+@router.get("/calendario/visao")
+def calendario_visao(
+    data_inicio: str = "", data_fim: str = "",
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Card CALENDÁRIO (Sanidade > Preventiva > Calendário Sanitário): projeta
+    as próximas ocorrências das regras num intervalo, com estimativa de
+    animais e agrupamento (ver fazenda.rules.calendario_visao) para sugerir
+    quando vale chamar o veterinário."""
+    hoje = date.today()
+    ini = date.fromisoformat(data_inicio) if data_inicio else hoje
+    fim = date.fromisoformat(data_fim) if data_fim else hoje + timedelta(days=90)
+    return montar_calendario_visual(session, fazenda_id, ini, fim)
+
+
+def _serializar_cronograma(session: Session, cron: CronogramaSanitario, calendarios: dict, eventos: dict, pessoas: dict) -> dict:
+    calendario = calendarios.get(cron.calendario_sanitario_id)
+    animais = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+    ).all()
+    contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+    for a in animais:
+        contagem[a.status] = contagem.get(a.status, 0) + 1
+    return {
+        **cron.model_dump(),
+        "evento_sanitario_nome": eventos.get(calendario.evento_sanitario_id, "—") if calendario else "—",
+        "categoria_alvo": calendario.categoria_alvo if calendario else None,
+        "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+        "animais_contagem": contagem,
+        "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
+    }
+
+
 @router.get("/cronogramas")
 def listar_cronogramas(
     calendario_id: int | None = None, status: str | None = None,
@@ -692,25 +727,32 @@ def listar_cronogramas(
     calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario)).all()}
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return [_serializar_cronograma(session, cron, calendarios, eventos, pessoas) for cron in cronogramas]
 
-    saida = []
-    for cron in cronogramas:
-        calendario = calendarios.get(cron.calendario_sanitario_id)
-        animais = session.exec(
-            select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
-        ).all()
-        contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
-        for a in animais:
-            contagem[a.status] = contagem.get(a.status, 0) + 1
-        saida.append({
-            **cron.model_dump(),
-            "evento_sanitario_nome": eventos.get(calendario.evento_sanitario_id, "—") if calendario else "—",
-            "categoria_alvo": calendario.categoria_alvo if calendario else None,
-            "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
-            "animais_contagem": contagem,
-            "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
-        })
-    return saida
+
+class NovoCronogramaIn(BaseModel):
+    calendario_sanitario_id: int
+
+
+@router.post("/cronogramas")
+def criar_cronograma_manual(
+    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cria (ou devolve, se já existir) o cronograma em aberto de uma regra —
+    para o card Cronogramas > "Novo cronograma", quando o usuário quer
+    adiantar o 1º ciclo sem esperar a Agenda criar sozinha. Sempre vinculado a
+    uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
+    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    if not calendario.usa_cronograma:
+        raise HTTPException(status_code=400, detail="Esta regra não está marcada para usar cronograma sanitário — ative em Regras cadastradas antes de criar um cronograma.")
+    cron = cronograma_aberto(session, calendario)
+    calendarios = {calendario.id: calendario}
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
 
 
 @router.get("/calendario/eventos-vida")
