@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
-  criarMovimentacao, fetchMotivosMovimentacao,
+  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa,
 } from "@/lib/api";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -161,6 +161,113 @@ export default function AgendaPage() {
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
     return { ...p, [id]: atual };
   });
+  // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) — 3 cards
+  // novos na Agenda: (1) animal que entrou na janela — incluir/excluir direto,
+  // sem expandir; (2) decisão de modo (veterinário/própria/adiar) — mesmo id
+  // de evento seja "modo" (normal) ou "urgente" (perto da data, sem decisão);
+  // (3) aplicar — mesmo padrão checklist do protocolo customizado acima.
+  const [pessoasCronograma, setPessoasCronograma] = useState<any[]>([]);
+  useEffect(() => { fetchPessoas().then(setPessoasCronograma).catch(() => setPessoasCronograma([])); }, []);
+  const veterinariosCronograma = useMemo(
+    () => pessoasCronograma.filter((p) => p.ativo !== false && (p.tipos || []).includes("Veterinário")).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoasCronograma]
+  );
+  const [cronogramaModoAbertos, setCronogramaModoAbertos] = useState<Set<string>>(new Set());
+  const toggleCronogramaModo = (id: string) => setCronogramaModoAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // "" = ainda escolhendo entre veterinário/própria/adiar; "veterinario"/"adiar" = sub-formulário aberto.
+  const [cronogramaAcao, setCronogramaAcao] = useState<Record<string, "" | "veterinario" | "adiar">>({});
+  const [cronogramaVetSel, setCronogramaVetSel] = useState<Record<string, string>>({});
+  const [cronogramaNovoVet, setCronogramaNovoVet] = useState<Record<string, boolean>>({});
+  const [cronogramaNovoVetNome, setCronogramaNovoVetNome] = useState<Record<string, string>>({});
+  const [cronogramaCriandoVet, setCronogramaCriandoVet] = useState<Set<string>>(new Set());
+  const [cronogramaAdiarData, setCronogramaAdiarData] = useState<Record<string, string>>({});
+  const [cronogramaAdiarMotivo, setCronogramaAdiarMotivo] = useState<Record<string, string>>({});
+
+  const [cronogramaAplicarAbertos, setCronogramaAplicarAbertos] = useState<Set<string>>(new Set());
+  const toggleCronogramaAplicar = (id: string) => setCronogramaAplicarAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const [cronogramaAplicarChecks, setCronogramaAplicarChecks] = useState<Record<string, Set<string>>>({});
+  const abrirCronogramaAplicar = (id: string, animais: string[]) => {
+    setCronogramaAplicarChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+    toggleCronogramaAplicar(id);
+  };
+  const toggleAnimalCronogramaAplicar = (id: string, numero: string) => setCronogramaAplicarChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+
+  const decidirCronogramaAnimal = async (e: any, incluir: boolean) => {
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, undefined, undefined, { incluir });
+      await carregar();
+      mostrarFeedback(incluir ? `Matriz ${e.numero_animal} incluída no cronograma.` : `Matriz ${e.numero_animal} excluída do cronograma.`);
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const decidirCronogramaModo = async (e: any, modo: "veterinario" | "propria") => {
+    if (modo === "veterinario" && !cronogramaVetSel[e.id]) { mostrarFeedback("Selecione o veterinário.", true); return; }
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, undefined, undefined, {
+        modo, veterinario_pessoa_id: modo === "veterinario" ? Number(cronogramaVetSel[e.id]) : undefined,
+      });
+      setCronogramaAcao((p) => ({ ...p, [e.id]: "" }));
+      await carregar();
+      mostrarFeedback("Cronograma agendado.");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const adiarCronograma = async (e: any) => {
+    const novaData = cronogramaAdiarData[e.id];
+    if (!novaData) { mostrarFeedback("Informe a nova data.", true); return; }
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, undefined, undefined, { nova_data: novaData, motivo: cronogramaAdiarMotivo[e.id] || undefined });
+      setCronogramaAcao((p) => ({ ...p, [e.id]: "" }));
+      await carregar();
+      mostrarFeedback("Data adiada.");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const criarVetInlineCronograma = async (e: any) => {
+    const nome = (cronogramaNovoVetNome[e.id] || "").trim();
+    if (!nome) return;
+    setCronogramaCriandoVet((p) => new Set(p).add(e.id));
+    try {
+      const novo = await criarPessoa({ nome, tipos: ["Veterinário"] });
+      setPessoasCronograma((p) => [...p, novo]);
+      setCronogramaVetSel((p) => ({ ...p, [e.id]: String(novo.id) }));
+      setCronogramaNovoVet((p) => ({ ...p, [e.id]: false }));
+      setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: "" }));
+    } catch (err: any) { mostrarFeedback(err.message || "Erro ao cadastrar veterinário", true); }
+    finally { setCronogramaCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const aplicarCronogramaLote = async (e: any) => {
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id);
+      await carregar();
+      mostrarFeedback("Aplicação registrada para todos os animais incluídos.");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const aplicarCronogramaIndividual = async (e: any) => {
+    const checks = cronogramaAplicarChecks[e.id] || new Set(e.animais);
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, Array.from(checks));
+      await carregar();
+      mostrarFeedback(`Aplicação registrada em ${checks.size} animal(is).`);
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Indução de lactação: mesmo padrão do protocolo IATF (grupo lançamento+dia
   // expandido mostra os animais + medicamentos/observação de manejo do dia).
   const [inducaoAbertos, setInducaoAbertos] = useState<Set<string>>(new Set());
@@ -717,6 +824,12 @@ export default function AgendaPage() {
           // 1 animal no grupo — com 1 só, o fallback genérico (linha "simples",
           // numero_animal já preenchido) é suficiente e mais direto.
           linhas.push({ tipo: "protocolo_custom", e });
+        } else if (e.tipo === "cronograma_sanitario_animal") {
+          linhas.push({ tipo: "cronograma_animal", e });
+        } else if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
+          linhas.push({ tipo: "cronograma_modo", e });
+        } else if (e.tipo === "cronograma_sanitario_aplicar") {
+          linhas.push({ tipo: "cronograma_aplicar", e });
         } else if (e.categoria === "Gestão/Financeiro" && e.ref) {
           const arr = financeiroPorRef.get(e.ref) ?? [];
           arr.push(e); financeiroPorRef.set(e.ref, arr);
@@ -1042,6 +1155,169 @@ export default function AgendaPage() {
                                     <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
                                       onClick={() => marcarRealizado(e.id, Array.from(checks))}>
                                       <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
+                    if (linha.tipo === "cronograma_animal") {
+                      const e = linha.e;
+                      return (
+                        <tr key={`cron-animal-${i}`}>
+                          {tdAccent(e.categoria)}
+                          <td style={{ fontWeight: 700 }}>{e.numero_animal}</td>
+                          <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                          <td>
+                            <span className="flex items-center gap-1">
+                              <button className="btn-primary" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaAnimal(e, true)}>
+                                <Check size={11} /> Incluir
+                              </button>
+                              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaAnimal(e, false)}>
+                                <X size={11} /> Excluir
+                              </button>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    if (linha.tipo === "cronograma_modo") {
+                      const e = linha.e;
+                      const urgente = e.tipo === "cronograma_sanitario_urgente";
+                      const abertoCron = cronogramaModoAbertos.has(e.id);
+                      const acao = cronogramaAcao[e.id] || "";
+                      return (
+                        <React.Fragment key={`cron-modo-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => toggleCronogramaModo(e.id)}>
+                            {tdAccent(e.categoria)}
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>—</td>
+                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
+                              {abertoCron ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}
+                              {urgente && (
+                                <span style={{ marginLeft: "0.5rem", fontSize: "0.66rem", fontWeight: 700, color: "var(--red)", background: "rgba(220,38,38,0.12)", padding: "0.05rem 0.45rem", borderRadius: 999 }}>
+                                  Urgente
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                            <td onClick={(ev) => ev.stopPropagation()} />
+                          </tr>
+                          {abertoCron && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.6rem 0" }}>
+                                  {!acao ? (
+                                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                                      <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "veterinario" }))}>
+                                        Veterinário
+                                      </button>
+                                      <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaModo(e, "propria")}>
+                                        Aplicação própria
+                                      </button>
+                                      {urgente && (
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "adiar" }))}>
+                                          Adiar
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : acao === "veterinario" ? (
+                                    <div style={{ maxWidth: 420 }}>
+                                      <label style={rotuloInline}>Veterinário</label>
+                                      {!cronogramaNovoVet[e.id] ? (
+                                        <>
+                                          <select style={inputInline} value={cronogramaVetSel[e.id] || ""} onChange={(ev) => setCronogramaVetSel((p) => ({ ...p, [e.id]: ev.target.value }))}>
+                                            <option value="">Selecione…</option>
+                                            {veterinariosCronograma.map((v) => <option key={v.id} value={v.id}>{v.nome}</option>)}
+                                          </select>
+                                          <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", marginTop: "0.35rem" }} onClick={() => setCronogramaNovoVet((p) => ({ ...p, [e.id]: true }))}>
+                                            + cadastrar novo veterinário
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <div className="flex items-center gap-2" style={{ marginTop: "0.3rem" }}>
+                                          <input style={inputInline} placeholder="Nome do veterinário" value={cronogramaNovoVetNome[e.id] || ""} onChange={(ev) => setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                                          <button className="btn-secondary" style={{ fontSize: "0.7rem" }} disabled={cronogramaCriandoVet.has(e.id)} onClick={() => criarVetInlineCronograma(e)}>
+                                            {cronogramaCriandoVet.has(e.id) ? "Salvando…" : "Salvar"}
+                                          </button>
+                                          <button className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => setCronogramaNovoVet((p) => ({ ...p, [e.id]: false }))}>Cancelar</button>
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !cronogramaVetSel[e.id]} onClick={() => decidirCronogramaModo(e, "veterinario")}>
+                                          <Check size={12} /> Confirmar
+                                        </button>
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "" }))}>Voltar</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ maxWidth: 320 }}>
+                                      <label style={rotuloInline}>Nova data</label>
+                                      <input type="date" style={inputInline} value={cronogramaAdiarData[e.id] || ""} onChange={(ev) => setCronogramaAdiarData((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                                      <label style={{ ...rotuloInline, marginTop: "0.4rem" }}>Motivo (opcional)</label>
+                                      <input style={inputInline} value={cronogramaAdiarMotivo[e.id] || ""} onChange={(ev) => setCronogramaAdiarMotivo((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id)} onClick={() => adiarCronograma(e)}>
+                                          <Check size={12} /> Confirmar adiamento
+                                        </button>
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "" }))}>Voltar</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
+                    if (linha.tipo === "cronograma_aplicar") {
+                      const e = linha.e;
+                      const abertoCron = cronogramaAplicarAbertos.has(e.id);
+                      const checks = cronogramaAplicarChecks[e.id] || new Set(e.animais);
+                      return (
+                        <React.Fragment key={`cron-aplicar-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => abrirCronogramaAplicar(e.id, e.animais)}>
+                            {tdAccent(e.categoria)}
+                            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
+                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
+                              {abertoCron ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                            <td onClick={(ev) => ev.stopPropagation()}>
+                              <button className="btn-primary" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => aplicarCronogramaLote(e)}>
+                                <Check size={11} /> Aplicar em lote
+                              </button>
+                            </td>
+                          </tr>
+                          {abertoCron && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.5rem 0" }}>
+                                  <table className="fazenda-table" style={{ margin: 0 }}>
+                                    <thead><tr><th></th><th>Nº</th></tr></thead>
+                                    <tbody>
+                                      {e.animais.map((numero: string) => (
+                                        <tr key={numero}>
+                                          <td><input type="checkbox" checked={checks.has(numero)} onChange={() => toggleAnimalCronogramaAplicar(e.id, numero)} /></td>
+                                          <td style={{ fontWeight: 700 }}>{numero}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size} onClick={() => aplicarCronogramaIndividual(e)}>
+                                      <Check size={12} /> Individualizado ({checks.size}/{e.animais.length})
                                     </button>
                                   </div>
                                 </div>

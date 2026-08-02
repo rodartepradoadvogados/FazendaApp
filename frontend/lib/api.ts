@@ -747,12 +747,28 @@ export async function fetchAgenda(data?: string, dias?: number) {
 }
 
 export type MedicamentoIatf = { produto: string; estoque_id?: number | null; dose?: number | null; unidade?: string | null; via?: string | null };
-export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[]) {
+// Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) + overrides
+// de aplicação agendada — cada campo só é lido pelo prefixo de evento_id
+// correspondente no backend (agenda.py::RealizadoIn), ignorado nos demais.
+export type RealizadoExtras = {
+  incluir?: boolean;                    // cronograma_sanitario_animal_ — incluir/excluir o animal
+  modo?: "veterinario" | "propria";     // cronograma_sanitario_modo_/_urgente_ — decisão de execução
+  veterinario_pessoa_id?: number;       // idem, quando modo="veterinario"
+  nova_data?: string;                   // idem — presente = adiar em vez de decidir
+  motivo?: string;                      // idem — motivo do adiamento (opcional)
+  responsavel?: string;                 // cronograma_sanitario_aplicar_ / aplic_agendada_
+  observacao?: string;                  // idem
+  produto?: string; dose?: number; unidade?: string; via?: string; // overrides de aplicação agendada
+};
+export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[], extras?: RealizadoExtras) {
   const res = await authFetch(`${API}/agenda/realizados`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ evento_id: eventoId, animais: animais || undefined, medicamentos: medicamentos && medicamentos.length ? medicamentos : undefined }),
+    body: JSON.stringify({
+      evento_id: eventoId, animais: animais || undefined, medicamentos: medicamentos && medicamentos.length ? medicamentos : undefined,
+      ...(extras || {}),
+    }),
   });
-  if (!res.ok) throw new Error("Erro ao marcar como realizado");
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar como realizado"); }
   return res.json();
 }
 
@@ -2641,6 +2657,10 @@ type CalendarioSanitarioPayload = {
   evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
   principio_ativo_id?: number; dosagem?: string; unidade?: string; responsavel?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; observacao?: string; ativo?: boolean; realizado?: boolean;
+  // Liga esta regra ao workflow de Cronograma sanitário (ver
+  // fazenda/rules/cronograma_sanitario.py): animal que bate o critério entra
+  // numa lista de espera em vez de virar pendência de aplicar na hora.
+  usa_cronograma?: boolean;
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario`, {
@@ -2659,6 +2679,18 @@ export async function atualizarCalendarioSanitario(id: number, dados: Calendario
 export async function excluirCalendarioSanitario(id: number) {
   const res = await authFetch(`${API}/sanidade/calendario/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir regra do calendário sanitário"); }
+  return res.json();
+}
+
+// Cronogramas sanitários (regras usa_cronograma=True) — Sanidade > Preventiva >
+// Cronogramas. Lista as ocorrências (abertas ou concluídas) com contagem de
+// animais por status (sugerido/incluído/excluído/aplicado).
+export async function fetchCronogramasSanitarios(filtros?: { calendarioId?: number; status?: string }) {
+  const params = new URLSearchParams();
+  if (filtros?.calendarioId) params.set("calendario_id", String(filtros.calendarioId));
+  if (filtros?.status) params.set("status", filtros.status);
+  const res = await authFetch(`${API}/sanidade/cronogramas?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cronogramas sanitários error: ${res.status}`);
   return res.json();
 }
 
