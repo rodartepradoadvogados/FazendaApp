@@ -52,6 +52,11 @@ export type RegistroOutbox = {
   corpo: unknown;
   arquivo?: ArquivoOutbox;
   erro?: string;
+  // Mensagem técnica da ÚLTIMA falha de rede/exceção ao tentar reenviar —
+  // diagnóstico apenas (não bloqueia retentativa, ao contrário de `erro`,
+  // que marca falha definitiva de validação). Some sozinha quando o envio
+  // finalmente funciona (o item é removido da fila).
+  debugUltimoErro?: string;
   tentativas?: number;
   proximaTentativaEm?: string;
   // Fazenda selecionada no momento em que o item foi enfileirado (ver
