@@ -39,13 +39,21 @@ const TITULOS: Record<Tela, string> = {
 
 export function LancarTela() {
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
-  const [tela, setTela] = useState<Tela | null>(null);
+  // /app/lancar#financeiro (ex.: atalho "$ Lançar financeiro" do Calendário
+  // Sanitário) abre direto em Financeiro > Contas a pagar — o `?servico=`
+  // que vem junto é lido pelo próprio FormFinanceiro (ver components/
+  // FormFinanceiro.tsx), não precisa ser tratado aqui.
+  const [tela, setTela] = useState<Tela | null>(() => (
+    typeof window !== "undefined" && window.location.hash === "#financeiro" ? "financeiro" : null
+  ));
   const [fixado, setFixado] = useState<Animal | null>(null);
   // Ao "gerar movimentação financeira" no Balanço de estoque, guarda qual
   // pílula (despesa/receita) o Financeiro deve abrir já selecionada. Fica
   // undefined ao entrar por "Financeiro" direto, para o submenu aparecer
   // primeiro (ver FormFinanceiroApp: tipoInicial ausente = mostra a grade).
-  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita" | undefined>(undefined);
+  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita" | undefined>(() => (
+    typeof window !== "undefined" && window.location.hash === "#financeiro" ? "despesa" : undefined
+  ));
   // Só sabemos a permissão real depois de montar (localStorage não existe no
   // servidor) — evita vazar os blocos de Financeiro/Estoque antes da hora.
   const [montado, setMontado] = useState(false);

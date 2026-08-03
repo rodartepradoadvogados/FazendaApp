@@ -145,6 +145,14 @@ export default function Pagina() {
     };
   }, []);
 
+  // Atalho pós-salvar de Lançar > Sanidade (regra com "Registrar cronograma"
+  // marcado): navega para /app/menu#calendario-sanitario. Vindo de outra
+  // rota a página monta do zero, então o hash já está certo no 1º render;
+  // sem 'hashchange' aqui porque não há como cair já em /app/menu antes.
+  useEffect(() => {
+    if (window.location.hash === "#calendario-sanitario") { setSecaoAberta("sanidade"); setSub("calendario"); }
+  }, []);
+
   async function enviarAgora() {
     setSincronizando(true);
     try { await sincronizar(); } finally { setSincronizando(false); }

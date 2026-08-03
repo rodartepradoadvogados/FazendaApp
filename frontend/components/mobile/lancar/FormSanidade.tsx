@@ -6,6 +6,7 @@
 // POST /sanidade/calendario/cadastrar-preventivo | POST /sanidade/calendario |
 // GET /agenda/ (BST).
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
@@ -536,6 +537,7 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
 
 // ── Preventiva > Calendário sanitário — POST /sanidade/calendario ───────────
 function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
+  const router = useRouter();
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [eventoId, setEventoId] = useState("");
@@ -553,6 +555,11 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   // bate o critério entra numa lista de espera até agendar com o
   // veterinário ou confirmar aplicação própria (ver Agenda).
   const [usaCronograma, setUsaCronograma] = useState(false);
+  // true só depois de um envio ONLINE bem-sucedido com o flag marcado — é
+  // quando o 1º ciclo do cronograma já foi de fato criado no servidor (se
+  // ficou na fila offline, o ciclo só nasce ao sincronizar, então não
+  // adianta linkar ainda).
+  const [cronogramaCriado, setCronogramaCriado] = useState(false);
 
   useEffect(() => {
     fetchComCache<EventoPrev[]>("sanidade_eventos_sanitarios_ativos", () => fetchEventosSanitarios().then((d: any[]) => d.filter((e) => e.ativo)))
@@ -569,6 +576,7 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   function salvar() {
     if (!eventoId) return erroValidacao("Selecione o evento sanitário.");
     if (!data) return erroValidacao("Informe a data do evento.");
+    const usouCronograma = usaCronograma;
     enviar(
       "/sanidade/calendario",
       {
@@ -579,7 +587,10 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
         usa_cronograma: usaCronograma,
       },
       `Regra do calendário — ${evento?.nome || ""}`,
-      () => { setEventoId(""); setCategoriaAlvoSel([]); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); setUsaCronograma(false); },
+      () => {
+        setEventoId(""); setCategoriaAlvoSel([]); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); setUsaCronograma(false);
+        setCronogramaCriado(usouCronograma);
+      },
     );
   }
 
@@ -648,6 +659,15 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
       </label>
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
+      {aviso?.tipo === "ok" && cronogramaCriado && (
+        <button
+          type="button" className="mob-btn"
+          style={{ marginTop: "0.5rem", background: "var(--mob-vinho)" }}
+          onClick={() => router.push("/app/menu#calendario-sanitario")}
+        >
+          Ver em Calendário Sanitário →
+        </button>
+      )}
     </>
   );
 }
