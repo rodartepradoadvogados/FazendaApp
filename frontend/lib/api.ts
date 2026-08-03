@@ -829,6 +829,50 @@ export async function fetchInducaoLactacaoAtivos() {
   return res.json();
 }
 
+// ── Cadastro do protocolo de indução de lactação (Configurações > Cadastro >
+// Sanitário > Indução de lactação) — CRUD completo; a leitura acima
+// (fetchProtocolosInducaoLactacao, /producao/...) é só o seletor enxuto usado
+// na hora de lançar. ──
+export type EtapaInducaoLactacao = {
+  id?: number;
+  dia: number;
+  tipo: "medicamento" | "dispositivo" | "manejo";
+  principio_ativo_id?: number | null;
+  produto: string;
+  acao_dispositivo?: "colocar" | "retirar" | null;
+  dose?: number | null;
+  unidade?: string | null;
+  via?: string | null;
+};
+export type ProtocoloInducaoLactacaoPayload = {
+  nome: string;
+  dia_inicial: number;
+  observacao?: string;
+  ativo: boolean;
+  etapas: EtapaInducaoLactacao[];
+};
+export type ProtocoloInducaoLactacaoCadastro = ProtocoloInducaoLactacaoPayload & { id: number; criado_em: string };
+
+export async function fetchProtocolosInducaoLactacaoCadastro(): Promise<ProtocoloInducaoLactacaoCadastro[]> {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar protocolos de indução de lactação");
+  return res.json();
+}
+export async function criarProtocoloInducaoLactacao(dados: ProtocoloInducaoLactacaoPayload) {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo de indução de lactação"); }
+  return res.json();
+}
+export async function atualizarProtocoloInducaoLactacao(id: number, dados: ProtocoloInducaoLactacaoPayload) {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo de indução de lactação"); }
+  return res.json();
+}
+
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
