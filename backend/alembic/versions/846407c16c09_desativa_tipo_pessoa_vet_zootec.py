@@ -29,9 +29,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.execute(sa.text("UPDATE tipo_pessoa SET ativo = 0 WHERE nome = 'Vet/Zootec.'"))
+    # `ativo` é boolean de verdade no Postgres — "= 0" é um DatatypeMismatch
+    # lá (SQLite aceita por não ter tipo boolean próprio, o que escondeu o
+    # bug em teste local; catou o deploy real de produção).
+    op.execute(sa.text("UPDATE tipo_pessoa SET ativo = false WHERE nome = 'Vet/Zootec.'"))
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.execute(sa.text("UPDATE tipo_pessoa SET ativo = 1 WHERE nome = 'Vet/Zootec.'"))
+    op.execute(sa.text("UPDATE tipo_pessoa SET ativo = true WHERE nome = 'Vet/Zootec.'"))
