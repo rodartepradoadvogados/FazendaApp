@@ -230,11 +230,11 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
   // cliente vê erro de rede e enfileira, porém o reenvio usa a MESMA chave,
   // então o servidor devolve a resposta já salva em vez de duplicar.
   const id = gerarId();
-  if (!navigator.onLine) {
-    await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
-    await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
-    return { enviado: false };
-  }
+  // NÃO trava em navigator.onLine (mesmo motivo de sincronizar() — em WebView
+  // Android essa API é conhecida por ficar presa em `false` mesmo com
+  // internet real, o que fazia todo lançamento cair direto na fila sem nem
+  // tentar enviar, mesmo com internet de verdade). Tenta de verdade; falha de
+  // rede cai no catch abaixo e enfileira do mesmo jeito.
   const { authFetch } = await import("@/lib/api");
   try {
     const res = await authFetch(`${API}${caminho}`, {
@@ -296,13 +296,10 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
     return fd;
   };
 
-  if (!navigator.onLine) {
-    if (modoLegado) throw new Error("Este aparelho não consegue guardar fotos offline — tente novamente com internet.");
-    if (!(await cabeNoDisco(opcoes.arquivo.size))) throw new ErroCotaOutbox();
-    await enfileirarArquivo();
-    return { enviado: false };
-  }
-
+  // NÃO trava em navigator.onLine — mesmo motivo de enviarOuEnfileirar/
+  // sincronizar() acima: em WebView Android essa API pode ficar presa em
+  // `false` mesmo com internet real. Tenta de verdade; falha de rede cai no
+  // catch abaixo e enfileira do mesmo jeito.
   const { authFetch } = await import("@/lib/api");
   try {
     const res = await authFetch(`${API}${opcoes.caminho}`, {
@@ -434,9 +431,17 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           }
           if (res.status === 401 || res.status === 403 || res.status >= 500) {
             // Sessão expirada ou servidor fora do ar — tenta de novo mais
-            // tarde, nunca descarta nem marca como erro definitivo.
+            // tarde, nunca descarta nem marca como erro definitivo. Mas
+            // registra o motivo em debugUltimoErro (igual ao catch abaixo):
+            // sem isso, um token expirado ficava pendurado indefinidamente
+            // como "pendente", sem nenhuma pista visível na tela de
+            // Sincronização de por que nunca ia embora (relato: "app não
+            // envia dados pra nuvem" — a causa mais provável é essa).
             const tentativas = (atual.tentativas || 0) + 1;
-            await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
+            const motivo = res.status === 401 || res.status === 403
+              ? "Sessão expirada — abra o app e faça login de novo para este item ser enviado."
+              : `Servidor indisponível (${res.status}) — vai tentar de novo automaticamente.`;
+            await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas), debugUltimoErro: motivo });
             continue;
           }
           // 4xx "de verdade" (400/404/409/422...) = dado inválido, exige o usuário.

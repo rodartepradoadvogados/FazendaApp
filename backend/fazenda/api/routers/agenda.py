@@ -558,9 +558,16 @@ def calcular_agenda(
 
     # Aplicações programadas ("aplicado? não" / data futura) ainda não baixadas.
     # Dar baixa aqui gera a aplicação de verdade e a saída de estoque.
-    aplic_agendadas = session.exec(
-        select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False)  # noqa: E712
-    ).all()
+    # Uma vez criada, essa linha ficava pendurada pra sempre — mesmo que o
+    # animal fosse baixado depois (relato: "03M" macho e já baixado ainda
+    # aparecendo pra vacina). Exclui só quem está CONFIRMADAMENTE baixado —
+    # um numero_matriz sem cadastro em Animal (ex.: lançamento avulso/animal
+    # ainda não importado) continua aparecendo normalmente, como sempre.
+    animais_baixados = set(session.exec(select(Animal.numero).where(Animal.ativo == False)))  # noqa: E712
+    aplic_agendadas = [
+        a for a in session.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False))  # noqa: E712
+        if a.numero_matriz not in animais_baixados
+    ]
     # Vacina(s) pré-parto (vindas da Secagem) formam um cartão só por animal —
     # o número do animal com o indicador "Vacina(s) pré-parto" e a lista das
     # vacinas logo abaixo — em vez de uma linha solta por vacina.
