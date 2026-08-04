@@ -903,6 +903,35 @@ export async function fetchIndicadores(data?: string) {
   return res.json();
 }
 
+export type NaoConformidadeItem = {
+  chave: string;
+  dominio: "reproducao" | "recria" | "financeiro" | "manejo";
+  label: string;
+  sublabel: string;
+  valor: number;
+  meta: number | null;
+  unidade: string;
+  maior_melhor: boolean;
+  status: "ok" | "atencao" | "critico";
+  rota: string;
+  rota_label: string;
+};
+export type NaoConformidadeSemMeta = {
+  chave: string; dominio: string; label: string; sublabel: string; valor: number; unidade: string;
+  rota: string; rota_label: string;
+};
+export type NaoConformidadesResp = {
+  itens: NaoConformidadeItem[];
+  sem_meta: NaoConformidadeSemMeta[];
+  resumo: { critico: number; atencao: number; ok: number; total: number };
+  atualizado_em: string;
+};
+export async function fetchNaoConformidades(): Promise<NaoConformidadesResp> {
+  const res = await authFetch(`${API}/nao-conformidades/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Não conformidades error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchServicosAnalise() {
   const res = await authFetch(`${API}/reproducao/servicos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Análise error: ${res.status}`);

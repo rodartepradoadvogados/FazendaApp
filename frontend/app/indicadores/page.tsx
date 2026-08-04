@@ -7,6 +7,7 @@ import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Modal } from "@/components/Modal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
+import NaoConformidades from "@/components/NaoConformidades";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -229,7 +230,7 @@ export function IndicadoresGerais() {
 // fica mais aqui em Análise. Ver frontend/app/rebanho/page.tsx.
 // "Relatório personalizado" migrou para a aba Relatórios (ver
 // frontend/app/analise-relatorios/page.tsx) — não fica mais aqui.
-type Aba = "gerencial" | "bezerras";
+type Aba = "gerencial" | "naoconformidades" | "bezerras";
 
 export default function IndicadoresPage() {
   const router = useRouter();
@@ -243,6 +244,10 @@ export default function IndicadoresPage() {
   const subNavTree: SubNavNode[] = useMemo(() => {
     const tree: SubNavNode[] = [];
     if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Indicadores Gerais", icon: LineChart });
+    // Visão única do que está fora da meta em reprodução, recria, financeiro
+    // e manejo — reaproveita os mesmos cálculos das telas de origem, ver
+    // GET /nao-conformidades (backend/fazenda/api/routers/nao_conformidades.py).
+    if (vePermiteGerencial) tree.push({ id: "naoconformidades", label: "Não Conformidades", icon: AlertTriangle });
     tree.push({ id: "bezerras", label: "Relatório de bezerras", icon: Baby });
     if (vePermiteRecria) tree.push({ id: "recria", label: "Recria", icon: Baby });
     return tree;
@@ -255,6 +260,7 @@ export default function IndicadoresPage() {
   return (
     <>
       {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
+      {aba === "naoconformidades" && vePermiteGerencial && <div className="p-6 animate-in"><NaoConformidades /></div>}
       {aba === "bezerras" && <RelatorioBezerras />}
     </>
   );
