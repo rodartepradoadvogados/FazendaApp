@@ -113,7 +113,7 @@ def montar_calendario_visual(session: Session, fazenda_id: int | None, data_inic
             continue
 
         if ev.tipo_agendamento == "evento" and ev.gatilho:
-            gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0)
+            gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
             por_data: dict[date, set[str]] = {}
             for numero, quando in gatilhos:
                 if data_inicio <= quando <= data_fim:

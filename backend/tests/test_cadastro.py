@@ -1042,6 +1042,45 @@ class TestCadastroSanitario:
         n2 = len(c.get("/cadastro/eventos-sanitarios").json())
         assert n1 == n2
 
+    def test_configurar_calendario_padrao_bota_brucelose_b19_no_cronograma(self, client):
+        # Brucelose B19 é "por fase fisiológica" (gatilho=nascimento, sem
+        # rastreio de rebanho) — deve entrar na lista de espera do cronograma
+        # (usa_cronograma=True) em vez de virar pendência de "aplicar agora"
+        # direto assim que a bezerra bate a idade.
+        c, engine = client
+        from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
+        from fazenda.rules.farmacia import bootstrap_farmacia
+        from fazenda.models import CalendarioSanitario, EventoSanitario
+        with Session(engine) as s:
+            seed_cadastro_sanitario(s)
+            bootstrap_farmacia(s)
+            configurar_calendario_sanitario_padrao(s)
+            ev = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose B19")).first()
+            assert ev.sexo_alvo == "F"
+            regra = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).first()
+            assert regra is not None
+            assert regra.usa_cronograma is True
+
+    def test_configurar_calendario_padrao_nao_duplica_nem_mexe_em_regra_existente(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
+        from fazenda.rules.farmacia import bootstrap_farmacia
+        from fazenda.models import CalendarioSanitario, EventoSanitario
+        with Session(engine) as s:
+            seed_cadastro_sanitario(s)
+            bootstrap_farmacia(s)
+            ev = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose B19")).first()
+            # Simula uma regra já cadastrada manualmente pelo usuário, sem cronograma.
+            s.add(CalendarioSanitario(
+                evento_sanitario_id=ev.id, categoria_alvo="Bezerras", frequencia_valor=30,
+                frequencia_unidade="dias", data_evento=date.today(), usa_cronograma=False,
+            ))
+            s.commit()
+            configurar_calendario_sanitario_padrao(s)
+            regras = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).all()
+            assert len(regras) == 1
+            assert regras[0].usa_cronograma is False
+
     def test_cria_e_atualiza_doenca(self, client):
         c, engine = client
         doenca_id = c.post("/cadastro/doencas", json={"nome": "Raiva bovina"}).json()["id"]

@@ -83,7 +83,7 @@ def _limiares_categoria(session: Session) -> tuple[int, int]:
 
 def _datas_gatilho(
     session: Session, gatilho: str, gatilho_lote: str | None = None, gatilho_idade_meses: int | None = None,
-    offset_dias: int = 0,
+    offset_dias: int = 0, sexo_alvo: str | None = None,
 ) -> list[tuple[str, date]]:
     """Datas (por animal) em que um gatilho de evento de vida ocorre ou vai
     ocorrer — usado tanto para gerar a pendência na Agenda (`eventos_agenda`)
@@ -133,7 +133,22 @@ def _datas_gatilho(
             prevista = calcular_parto_provavel(s.data_servico, s.raca_matriz).data_parto_provavel
             saida.append((s.numero_matriz, prevista - timedelta(days=limite) + offset))
 
-    return saida
+    # Filtro único no fim (não em cada ramo, pra cobrir gatilho novo por
+    # igual): nunca sugere animal já baixado (vendido/morto/etc.) — pendência
+    # de vacina pra quem não está mais no rebanho não faz sentido — nem fora
+    # do sexo-alvo do evento, quando um está definido (ex.: Brucelose B19 só
+    # em fêmeas; macho não recebe).
+    animais = {a.numero: a for a in session.exec(select(Animal)).all()}
+
+    def elegivel(numero: str) -> bool:
+        a = animais.get(numero)
+        if not a or not a.ativo:
+            return False
+        if sexo_alvo and a.sexo != sexo_alvo:
+            return False
+        return True
+
+    return [(n, d) for n, d in saida if elegivel(n)]
 
 
 def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
@@ -313,7 +328,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
 
         minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
         limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
-        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset)
+        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo)
 
         calendario_cron = calendarios_cronograma.get(ev.id)
 

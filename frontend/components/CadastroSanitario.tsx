@@ -674,7 +674,7 @@ const GATILHO_LABEL: Record<string, string> = Object.fromEntries(GATILHOS);
 type EventoSanitarioRow = EventoSanitarioPayload & { id: number; doenca_nome?: string | null; condicao_evento_nome?: string | null; proxima_ocorrencia?: string | null };
 type EventoForm = {
   nome: string; ativo: boolean; tipo_agendamento: "nenhum" | "epoca" | "evento";
-  categoria_alvo: string; categoria_preventiva: string; doenca_id: string;
+  categoria_alvo: string; sexo_alvo: string; categoria_preventiva: string; doenca_id: string;
   data_primeiro: string; frequencia_valor: string; frequencia_unidade: string;
   gatilho: string; gatilho_lote: string; gatilho_idade_meses: string; offset_dias: string;
   produto_padrao: string; dose_padrao: string; unidade_padrao: string; via_padrao: string;
@@ -684,7 +684,7 @@ type EventoForm = {
   servico_financeiro: string;
 };
 const eventoFormVazio = (): EventoForm => ({
-  nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", categoria_preventiva: "vacina", doenca_id: "",
+  nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", sexo_alvo: "", categoria_preventiva: "vacina", doenca_id: "",
   data_primeiro: "", frequencia_valor: "", frequencia_unidade: "meses",
   gatilho: "nascimento", gatilho_lote: "", gatilho_idade_meses: "", offset_dias: "",
   produto_padrao: "", dose_padrao: "", unidade_padrao: "", via_padrao: "",
@@ -722,7 +722,7 @@ export function CadastroEventosSanitarios() {
   const abrirEdicao = (e: EventoSanitarioRow) => {
     setForm({
       nome: e.nome, ativo: e.ativo ?? true, tipo_agendamento: (e.tipo_agendamento as any) || "nenhum",
-      categoria_alvo: e.categoria_alvo || "", categoria_preventiva: (e as any).categoria_preventiva || "", doenca_id: e.doenca_id ? String(e.doenca_id) : "",
+      categoria_alvo: e.categoria_alvo || "", sexo_alvo: (e as any).sexo_alvo || "", categoria_preventiva: (e as any).categoria_preventiva || "", doenca_id: e.doenca_id ? String(e.doenca_id) : "",
       data_primeiro: e.data_primeiro || "", frequencia_valor: e.frequencia_valor ? String(e.frequencia_valor) : "",
       frequencia_unidade: e.frequencia_unidade || "meses", gatilho: e.gatilho || "nascimento",
       gatilho_lote: e.gatilho_lote || "", gatilho_idade_meses: e.gatilho_idade_meses ? String(e.gatilho_idade_meses) : "",
@@ -742,7 +742,8 @@ export function CadastroEventosSanitarios() {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
     const dados: EventoSanitarioPayload = {
       nome: form.nome.trim(), ativo: form.ativo, tipo_agendamento: form.tipo_agendamento,
-      categoria_alvo: form.categoria_alvo.trim() || null, doenca_id: form.doenca_id ? Number(form.doenca_id) : null,
+      categoria_alvo: form.categoria_alvo.trim() || null, sexo_alvo: (form.sexo_alvo as "F" | "M" | "") || null,
+      doenca_id: form.doenca_id ? Number(form.doenca_id) : null,
       categoria_preventiva: form.categoria_preventiva || null,
       data_primeiro: form.tipo_agendamento === "epoca" && form.data_primeiro ? form.data_primeiro : null,
       frequencia_valor: form.tipo_agendamento === "epoca" && form.frequencia_valor ? Number(form.frequencia_valor) : null,
@@ -788,6 +789,12 @@ export function CadastroEventosSanitarios() {
         <div><label style={labelStyle}>Doença combatida</label>
           <select style={inputStyle} value={form.doenca_id} onChange={(e) => setForm({ ...form, doenca_id: e.target.value })}>
             <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+          </select></div>
+        <div><label style={labelStyle}>Sexo-alvo</label>
+          <select style={inputStyle} value={form.sexo_alvo} onChange={(e) => setForm({ ...form, sexo_alvo: e.target.value })}>
+            <option value="">Ambos</option>
+            <option value="F">Só fêmeas</option>
+            <option value="M">Só machos</option>
           </select></div>
         <div><label style={labelStyle}>Categoria preventiva</label>
           <select style={inputStyle} value={form.categoria_preventiva} onChange={(e) => setForm({ ...form, categoria_preventiva: e.target.value })}>

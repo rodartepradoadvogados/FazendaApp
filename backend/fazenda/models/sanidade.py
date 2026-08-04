@@ -248,6 +248,10 @@ class EventoSanitario(SQLModel, table=True):
     # Agendamento: "nenhum" (só o nome, retrocompatível) | "epoca" | "evento".
     tipo_agendamento: str = Field(default="nenhum")
     categoria_alvo: Optional[str] = None  # ex.: "Bezerras (3 a 8 meses)"
+    # Restringe o evento a um sexo (ex.: Brucelose B19 é só para fêmeas) —
+    # None = ambos os sexos (retrocompatível). Só filtra quando preenchido;
+    # nunca inferido do nome/categoria_alvo (texto livre não é confiável).
+    sexo_alvo: Optional[str] = None  # "F" | "M" | None
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     # Tipo do manejo preventivo: "vacina" | "exame" | "tratamento".
     categoria_preventiva: Optional[str] = None

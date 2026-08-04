@@ -784,6 +784,7 @@ def relatorio_eventos_vida(
     cadastrar o evento sanitário antes).
     """
     nome_evento = None
+    sexo_alvo = None
     if evento_sanitario_id is not None:
         ev = session.get(EventoSanitario, evento_sanitario_id)
         if not ev:
@@ -792,13 +793,14 @@ def relatorio_eventos_vida(
             raise HTTPException(status_code=400, detail="Este evento sanitário não está agendado por evento de vida")
         gatilho, gatilho_lote, gatilho_idade_meses = ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses
         nome_evento = ev.nome
+        sexo_alvo = ev.sexo_alvo
     if not gatilho or gatilho not in GATILHOS_EVENTO:
         raise HTTPException(status_code=400, detail=f"Gatilho inválido (use: {', '.join(GATILHOS_EVENTO)})")
 
     animais = {a.numero: a for a in session.exec(select(Animal)).all()}
     hoje = date.today()
     linhas = []
-    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses):
+    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo):
         if data_inicio and quando.isoformat() < data_inicio:
             continue
         if data_fim and quando.isoformat() > data_fim:
