@@ -235,6 +235,19 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
 
   const eventosExame = useMemo(() => eventos.filter((e) => e.categoria_preventiva === "exame"), [eventos]);
 
+  // Agrupado em 2 níveis pra navegação por clique: 1º nível por data (card),
+  // 2º nível por tipo de exame dentro da data (sub-card) — a listagem de
+  // diagnóstico dos animais só aparece dentro do sub-card, ao expandi-lo.
+  const porData = useMemo(() => {
+    const mapa = new Map<string, ExameResultado[]>();
+    for (const l of linhas ?? []) {
+      const arr = mapa.get(l.data_exame) ?? [];
+      arr.push(l);
+      mapa.set(l.data_exame, arr);
+    }
+    return Array.from(mapa.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [linhas]);
+
   useEffect(() => {
     fetchResultadosExame({
       eventoSanitarioId: eventoId ? Number(eventoId) : undefined,
@@ -277,33 +290,69 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
       {!linhas && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
-      {linhas && (
-        <div className="overflow-x-auto">
-          <table className="fazenda-table">
-            <thead><tr><th>Nº</th><th>Exame</th><th>Data</th><th>Resultado</th><th>Veterinário</th></tr></thead>
-            <tbody>
-              {linhas.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{l.evento_sanitario_nome || "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_exame)}</td>
-                  <td style={{ fontSize: "0.78rem" }}>
-                    {l.resultado ? (
-                      <span style={{ fontWeight: 700, color: COR_RESULTADO_EXAME[l.resultado] }}>{LABEL_RESULTADO_EXAME[l.resultado]}</span>
-                    ) : l.valor_numerico != null ? (
-                      <>{l.valor_numerico}{l.banda ? ` (${l.banda === "abaixo" ? "abaixo da faixa" : l.banda === "acima" ? "acima da faixa" : "dentro da faixa"})` : ""}</>
-                    ) : "—"}
-                  </td>
-                  <td style={{ fontSize: "0.78rem" }}>{l.veterinario || "—"}</td>
-                </tr>
-              ))}
-              {!linhas.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum resultado no filtro.</td></tr>}
-            </tbody>
-          </table>
+      {linhas && !porData.length && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum resultado no filtro.</p>
+      )}
+
+      {linhas && !!porData.length && (
+        <div className="space-y-2">
+          {porData.map(([data, itensData]) => (
+            <SecaoRecolhivel
+              key={data}
+              titulo={formatDate(data)}
+              icon={CalendarClock}
+              badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{itensData.length} exame(s)</span>}
+            >
+              <div className="space-y-2">
+                {agruparPorTipoExame(itensData).map(([tipo, itensTipo]) => (
+                  <SecaoRecolhivel
+                    key={tipo}
+                    titulo={`${formatDate(data)} — ${tipo.toUpperCase()}`}
+                    icon={FlaskConical}
+                    badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{itensTipo.length} animal(is)</span>}
+                  >
+                    <div className="overflow-x-auto">
+                      <table className="fazenda-table">
+                        <thead><tr><th>Nº</th><th>Resultado</th><th>Veterinário</th></tr></thead>
+                        <tbody>
+                          {itensTipo.map((l) => (
+                            <tr key={l.id}>
+                              <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
+                              <td style={{ fontSize: "0.78rem" }}>
+                                {l.resultado ? (
+                                  <span style={{ fontWeight: 700, color: COR_RESULTADO_EXAME[l.resultado] }}>{LABEL_RESULTADO_EXAME[l.resultado]}</span>
+                                ) : l.valor_numerico != null ? (
+                                  <>{l.valor_numerico}{l.banda ? ` (${l.banda === "abaixo" ? "abaixo da faixa" : l.banda === "acima" ? "acima da faixa" : "dentro da faixa"})` : ""}</>
+                                ) : "—"}
+                              </td>
+                              <td style={{ fontSize: "0.78rem" }}>{l.veterinario || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SecaoRecolhivel>
+                ))}
+              </div>
+            </SecaoRecolhivel>
+          ))}
         </div>
       )}
     </div>
   );
+}
+
+// Agrupa os resultados de uma mesma data por tipo de exame (evento
+// sanitário vinculado) — usado pelo 2º nível de RelatorioResultadosExameView.
+function agruparPorTipoExame(itens: ExameResultado[]): [string, ExameResultado[]][] {
+  const mapa = new Map<string, ExameResultado[]>();
+  for (const l of itens) {
+    const chave = l.evento_sanitario_nome || "Sem exame vinculado";
+    const arr = mapa.get(chave) ?? [];
+    arr.push(l);
+    mapa.set(chave, arr);
+  }
+  return Array.from(mapa.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 const COR_CATEGORIA_PREVENTIVA: Record<string, string> = {

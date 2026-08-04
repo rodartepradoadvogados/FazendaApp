@@ -32,7 +32,7 @@ from . import (
     servicos,
 )
 from .animais import seed_motivos_baixa, seed_motivos_venda, seed_racas_grau_sangue
-from .estoque import sindicar_conta_gerencial_estoque
+from .estoque import seed_cadastros_estoque, sindicar_conta_gerencial_estoque
 from .genetica import (
     atualizar_estoque_semen_202607,
     router_touros_leitura,
@@ -74,6 +74,7 @@ __all__ = [
     "seed_motivos_venda",
     "seed_racas_grau_sangue",
     "sindicar_conta_gerencial_estoque",
+    "seed_cadastros_estoque",
     "seed_cadastro_sanitario",
     "configurar_calendario_sanitario_padrao",
     "seed_protocolos_inducao_lactacao",

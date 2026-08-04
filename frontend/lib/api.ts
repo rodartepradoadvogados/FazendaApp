@@ -2071,6 +2071,70 @@ export async function atualizarRaca(id: number, dados: { nome: string; ativo: bo
   return res.json();
 }
 
+export type ItemCadastroSimples = { id: number; nome: string; ativo: boolean };
+
+// Fábrica de fetch/criar/atualizar para os cadastros "nome + ativo" simples
+// (mesmo padrão de Raça acima) — evita repetir a mesma tripla de funções
+// para cada cadastro novo (ver Local de Armazenamento/Categoria/Finalidade/
+// Unidade/Unidade de embalagem/Unidade de medida do estoque, abaixo).
+function criarApiCadastroSimples(rota: string, rotulo: string) {
+  return {
+    fetch: async (): Promise<ItemCadastroSimples[]> => {
+      const res = await authFetch(`${API}/cadastro/${rota}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${rotulo} error: ${res.status}`);
+      return res.json();
+    },
+    criar: async (dados: { nome: string; ativo?: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/cadastro/${rota}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    atualizar: async (id: number, dados: { nome: string; ativo: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/cadastro/${rota}/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+  };
+}
+
+// Cadastros de apoio ao item de estoque (Configurações > Cadastro > Estoque)
+// — antes listas fixas (CATEGORIAS_ESTOQUE, FINALIDADES_ESTOQUE, UNIDADES,
+// UNIDADES_EMBALAGEM, MEDIDAS_EMBALAGEM) ou texto livre sem sugestão
+// (local_armazenamento), agora cadastráveis.
+const apiLocaisArmazenamento = criarApiCadastroSimples("locais-armazenamento", "Local de armazenamento");
+export const fetchLocaisArmazenamento = apiLocaisArmazenamento.fetch;
+export const criarLocalArmazenamento = apiLocaisArmazenamento.criar;
+export const atualizarLocalArmazenamento = apiLocaisArmazenamento.atualizar;
+
+const apiCategoriasEstoque = criarApiCadastroSimples("categorias-estoque", "Categoria de estoque");
+export const fetchCategoriasEstoqueCadastro = apiCategoriasEstoque.fetch;
+export const criarCategoriaEstoque = apiCategoriasEstoque.criar;
+export const atualizarCategoriaEstoque = apiCategoriasEstoque.atualizar;
+
+const apiFinalidadesEstoque = criarApiCadastroSimples("finalidades-estoque", "Finalidade de estoque");
+export const fetchFinalidadesEstoqueCadastro = apiFinalidadesEstoque.fetch;
+export const criarFinalidadeEstoque = apiFinalidadesEstoque.criar;
+export const atualizarFinalidadeEstoque = apiFinalidadesEstoque.atualizar;
+
+const apiUnidadesEstoque = criarApiCadastroSimples("unidades-estoque", "Unidade de estoque");
+export const fetchUnidadesEstoqueCadastro = apiUnidadesEstoque.fetch;
+export const criarUnidadeEstoque = apiUnidadesEstoque.criar;
+export const atualizarUnidadeEstoque = apiUnidadesEstoque.atualizar;
+
+const apiUnidadesEmbalagemEstoque = criarApiCadastroSimples("unidades-embalagem-estoque", "Unidade de embalagem");
+export const fetchUnidadesEmbalagemEstoqueCadastro = apiUnidadesEmbalagemEstoque.fetch;
+export const criarUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.criar;
+export const atualizarUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.atualizar;
+
+const apiUnidadesMedidaEmbalagemEstoque = criarApiCadastroSimples("unidades-medida-embalagem-estoque", "Unidade de medida");
+export const fetchUnidadesMedidaEmbalagemEstoqueCadastro = apiUnidadesMedidaEmbalagemEstoque.fetch;
+export const criarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.criar;
+export const atualizarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.atualizar;
+
 // ── Graus de sangue (Configurações > Cadastro) ──
 export async function fetchGrausSangue() {
   const res = await authFetch(`${API}/cadastro/graus-sangue`, { cache: "no-store" });

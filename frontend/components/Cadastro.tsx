@@ -10,7 +10,7 @@ import CadastroRecria from "./CadastroRecria";
 import Farmacia from "./Farmacia";
 import CadastroAnimalForm from "./CadastroAnimalForm";
 import CadastroFornecedores from "./CadastroFornecedores";
-import CadastroEstoqueMeta from "./CadastroEstoqueMeta";
+import CadastroEstoque, { type AbaCadastroEstoque } from "./CadastroEstoque";
 import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroRacas from "./CadastroRacas";
@@ -34,7 +34,7 @@ export const ABAS_CADASTRO = [
   ["excluir", "Excluir cadastros", Trash2],
   ["farmacia", "Farmácia", Pill],
   ["fornecedores", "Fornecedores", Truck],
-  ["estoque", "Itens de estoque", Package],
+  ["estoque", "Estoque", Package],
   ["lotes", "Lotes", Layers],
   ["motivos-baixa", "Motivos de baixa", HeartCrack],
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
@@ -59,20 +59,25 @@ export default function Cadastro({
   aba: abaExterna, onAbaChange,
   abaSanitario: abaSanitarioExterna, onAbaSanitarioChange,
   abaCentralSemen: abaCentralSemenExterna, onAbaCentralSemenChange,
+  abaEstoque: abaEstoqueExterna, onAbaEstoqueChange,
 }: {
   aba?: AbaCadastro; onAbaChange?: (id: AbaCadastro) => void;
   abaSanitario?: AbaCadastroSanitario; onAbaSanitarioChange?: (id: AbaCadastroSanitario) => void;
   abaCentralSemen?: AbaCentralSemen; onAbaCentralSemenChange?: (id: AbaCentralSemen) => void;
+  abaEstoque?: AbaCadastroEstoque; onAbaEstoqueChange?: (id: AbaCadastroEstoque) => void;
 } = {}) {
   const [abaInterna, setAbaInterna] = useState<AbaCadastro>("lotes");
   const [abaSanitarioInterna, setAbaSanitarioInterna] = useState<AbaCadastroSanitario>("principios");
   const [abaCentralSemenInterna, setAbaCentralSemenInterna] = useState<AbaCentralSemen>("estoque-semen");
+  const [abaEstoqueInterna, setAbaEstoqueInterna] = useState<AbaCadastroEstoque>("itens");
   const aba = abaExterna ?? abaInterna;
   const setAba = onAbaChange ?? setAbaInterna;
   const abaSanitario = abaSanitarioExterna ?? abaSanitarioInterna;
   const setAbaSanitario = onAbaSanitarioChange ?? setAbaSanitarioInterna;
   const abaCentralSemen = abaCentralSemenExterna ?? abaCentralSemenInterna;
   const setAbaCentralSemen = onAbaCentralSemenChange ?? setAbaCentralSemenInterna;
+  const abaEstoque = abaEstoqueExterna ?? abaEstoqueInterna;
+  const setAbaEstoque = onAbaEstoqueChange ?? setAbaEstoqueInterna;
 
   // Conversão bidirecional Alimento ↔ Estoque (ver lib/alimentoEstoqueBridge)
   // — quando a tela irmã pede pra "ir pra lá", só troca a aba EXTERNA daqui;
@@ -95,7 +100,7 @@ export default function Cadastro({
       {aba === "lotes" && <CadastroLotesSemMoldura />}
       {aba === "animal" && <CadastroAnimalForm />}
       {aba === "fornecedores" && <CadastroFornecedores />}
-      {aba === "estoque" && <CadastroEstoqueMeta />}
+      {aba === "estoque" && <CadastroEstoque abaControlada={abaEstoque} onAbaChange={setAbaEstoque} />}
       {aba === "central-semen" && <CentralSemen abaControlada={abaCentralSemen} onAbaChange={setAbaCentralSemen} />}
       {aba === "farmacia" && <Farmacia />}
       {aba === "alimentacao" && <CadastroAlimentacao />}
