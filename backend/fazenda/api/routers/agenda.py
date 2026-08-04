@@ -508,6 +508,18 @@ def calcular_agenda(
     for ap in aplicacoes_inducao:
         grupos_inducao.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
 
+    # Medicamentos cadastrados por (lançamento, dia) + as opções de estoque do
+    # princípio ativo de cada um — mesmo mecanismo do protocolo IATF acima
+    # (_opcoes_medicamento), pra dar o campo clicável "qual frasco?" na hora
+    # de confirmar, em vez de resolver por nome sozinho.
+    medicamentos_por_grupo_inducao: dict[tuple[int, int], list[dict]] = {}
+    for m in session.exec(select(ProtocoloInducaoMedicamento)).all():
+        pa_id, opcoes = _opcoes_medicamento(m.produto)
+        medicamentos_por_grupo_inducao.setdefault((m.lancamento_id, m.dia), []).append({
+            "produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via,
+            "principio_ativo_id": pa_id, "opcoes": opcoes,
+        })
+
     eventos_inducao = []
     for (lancamento_id, dia), aps in grupos_inducao.items():
         chave = f"protocolo_inducao_{lancamento_id}_{dia}"
@@ -523,6 +535,7 @@ def calcular_agenda(
             "numero_animal": None, "observacao": aps[0].observacao_manejo,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_inducao", "dia": dia, "animais": animais_grupo,
+            "medicamentos_opcoes": medicamentos_por_grupo_inducao.get((lancamento_id, dia), []),
             "medicamentos": aps[0].descricao, "protocolo": lancamento.nome_protocolo,
         })
 
@@ -948,11 +961,12 @@ class MedicamentoIatfIn(BaseModel):
 
 class RealizadoIn(BaseModel):
     evento_id: str
-    animais: list[str] | None = None  # subconjunto opcional (protocolo_iatf) — None = todos do grupo
-    # Medicamentos efetivamente aplicados neste dia do protocolo IATF, com o
-    # frasco escolhido ("qual medicamento você está usando?"). Quando vem, é ele
-    # que gera a aplicação em Sanidade e a baixa; sem ele, cai nos hormônios
-    # cadastrados no lançamento (comportamento anterior).
+    animais: list[str] | None = None  # subconjunto opcional (protocolo_iatf/protocolo_inducao) — None = todos do grupo
+    # Medicamentos efetivamente aplicados neste dia do protocolo IATF ou de
+    # indução de lactação, com o frasco escolhido ("qual medicamento você
+    # está usando?"). Quando vem, é ele que gera a aplicação em Sanidade e a
+    # baixa; sem ele, cai nos hormônios/medicamentos cadastrados no
+    # lançamento (comportamento anterior).
     medicamentos: list[MedicamentoIatfIn] | None = None
     # Overrides opcionais do produto/dose/unidade/via aplicados de fato — só
     # usados quando evento_id é de uma aplicação agendada ("aplic_agendada_");
@@ -1270,6 +1284,7 @@ def _marcar_protocolo_iatf_realizado(
 
 def _marcar_protocolo_inducao_realizado(
     session: Session, evento_id: str, animais: list[str] | None,
+    medicamentos: list["MedicamentoIatfIn"] | None = None,
     fazenda_id: int | None = None, usuario_id: int | None = None,
 ) -> list[str]:
     """
@@ -1277,6 +1292,12 @@ def _marcar_protocolo_inducao_realizado(
     lactação como realizadas. Sem `animais`, marca o grupo inteiro; com
     `animais`, confirma só esse subconjunto. Etapas de manejo/dispositivo
     (sem medicamento) só marcam a aplicação — não geram Sanidade nem baixa.
+
+    `medicamentos` (opcional): os frascos que o usuário escolheu na hora de
+    confirmar o dia ("qual medicamento?"), mesmo mecanismo do protocolo IATF.
+    Quando vem, é ele que gera a aplicação em Sanidade e a baixa (abatendo do
+    frasco pelo estoque_id); sem ele, usa os medicamentos cadastrados no
+    lançamento e resolve o item de estoque só pelo nome (comportamento antigo).
     """
     resto = evento_id.removeprefix("protocolo_inducao_")
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
@@ -1297,39 +1318,50 @@ def _marcar_protocolo_inducao_realizado(
     lancamento = session.get(ProtocoloInducaoLancamento, lancamento_id)
     responsavel = getattr(lancamento, "responsavel", None)
 
-    medicamentos = session.exec(
-        select(ProtocoloInducaoMedicamento).where(
-            ProtocoloInducaoMedicamento.lancamento_id == lancamento_id,
-            ProtocoloInducaoMedicamento.dia == dia,
-        )
-    ).all()
+    if medicamentos:
+        aplicados = [
+            {"produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via, "estoque_id": m.estoque_id}
+            for m in medicamentos if (m.produto or "").strip()
+        ]
+    else:
+        cadastrados = session.exec(
+            select(ProtocoloInducaoMedicamento).where(
+                ProtocoloInducaoMedicamento.lancamento_id == lancamento_id,
+                ProtocoloInducaoMedicamento.dia == dia,
+            )
+        ).all()
+        aplicados = [
+            {"produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via, "estoque_id": None}
+            for m in cadastrados
+        ]
 
     for ap in aplicacoes:
         ap.realizada = True
         ap.data_realizacao = hoje
         session.add(ap)
-        for m in medicamentos:
+        for m in aplicados:
             session.add(Sanidade(
-                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m.produto,
-                dose=m.dose, unidade=m.unidade, via=m.via, responsavel=responsavel,
+                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
+                dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Indução de lactação — D{dia}",
             ))
 
-    # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas
-    # (item cadastrado por nome exato — combina automaticamente quando o
-    # princípio do protocolo já é um item de estoque real).
+    # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
+    # Abate do frasco escolhido (estoque_id) ou, na falta, do item pelo nome.
     avisos: list[str] = []
     n_vacas = len(aplicacoes)
     if n_vacas:
-        for m in medicamentos:
-            if not m.dose:
+        for m in aplicados:
+            if not m["dose"]:
                 continue
-            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=m.produto)
-            total = m.dose * n_vacas
+            estoque_item = estoque_baixa.resolver_item(
+                session, fazenda_id=fazenda_id, produto=m["produto"], estoque_id=m["estoque_id"],
+            )
+            total = m["dose"] * n_vacas
             avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=total, unidade=m.unidade, data=hoje,
+                session, item=estoque_item, quantidade=total, unidade=m["unidade"], data=hoje,
                 fazenda_id=fazenda_id, observacao=f"Indução de lactação — D{dia} — {n_vacas} vaca(s)",
-                usuario_id=usuario_id, origem_tipo="inducao", origem_id=lancamento_id, produto=m.produto,
+                usuario_id=usuario_id, origem_tipo="inducao", origem_id=lancamento_id, produto=m["produto"],
             ))
     session.commit()
     return avisos
@@ -1377,7 +1409,7 @@ def marcar_realizado(
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith("protocolo_inducao_"):
         avisos = _marcar_protocolo_inducao_realizado(
-            session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
+            session, dados.evento_id, dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):

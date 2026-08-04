@@ -1257,6 +1257,7 @@ def adicionar_animais_iatf(
                 dia=dias,
                 descricao=_descricao_dia(dias, descricao),
                 data_prevista=lancamento.data_d0 + timedelta(days=dias),
+                fazenda_id=fazenda_id,
             ))
         novos += 1
 

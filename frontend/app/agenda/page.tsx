@@ -1343,7 +1343,7 @@ export default function AgendaPage() {
                             <td style={{ color: "var(--amber)", fontSize: "0.78rem", fontWeight: e.observacao ? 700 : 400 }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
                             <td onClick={(ev) => ev.stopPropagation()}>
-                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id, undefined, e.medicamentos_opcoes)} />
                             </td>
                           </tr>
                           {abertoInducao && (
@@ -1371,9 +1371,39 @@ export default function AgendaPage() {
                                       ))}
                                     </tbody>
                                   </table>
+                                  {(e.medicamentos_opcoes?.length ?? 0) > 0 && (
+                                    <div style={{ marginTop: "0.6rem", background: "var(--surface)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+                                      <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.35rem" }}>
+                                        Qual medicamento/frasco você está usando?
+                                      </div>
+                                      {e.medicamentos_opcoes.map((h: any, idx: number) => {
+                                        const sel = medIatf[e.id]?.[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
+                                        return (
+                                          <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
+                                              {h.produto}{h.dose ? ` · ${h.dose}${h.unidade || ""}` : ""}
+                                            </span>
+                                            {(h.opcoes?.length ?? 0) === 0 ? (
+                                              <span style={{ fontSize: "0.72rem", color: "var(--amber)" }}>Sem medicamento em estoque para este princípio.</span>
+                                            ) : (
+                                              <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} value={sel ?? ""}
+                                                onChange={(ev) => escolherMedIatf(e.id, idx, ev.target.value ? Number(ev.target.value) : null)}>
+                                                <option value="">Selecione o frasco…</option>
+                                                {h.opcoes.map((o: any) => (
+                                                  <option key={o.estoque_id} value={o.estoque_id}>
+                                                    {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}{!o.estoque_inicializado ? " (sem estoque inicial)" : ""}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                   <div className="flex items-center gap-2 mt-2">
                                     <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
-                                      onClick={() => marcarRealizado(e.id, Array.from(checks))}>
+                                      onClick={() => marcarRealizado(e.id, Array.from(checks), e.medicamentos_opcoes)}>
                                       <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
                                     </button>
                                   </div>
