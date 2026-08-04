@@ -87,6 +87,11 @@ class Estoque(SQLModel, table=True):
     # por aplicação/consumo e pode ser doado/recebido de cortesia). False = item
     # cadastrado só para lançamento financeiro (produto de nota), sem controle de quantidade.
     estocavel: Optional[bool] = None
+    # True = item de patrimônio (ex.: trator, benfeitoria) — uma compra desse
+    # item no lançamento financeiro sugere vincular/criar um registro em
+    # Controle Financeiro > Patrimônio (ver ContaGerencial.patrimonio_id e
+    # fazenda/api/routers/financeiro.py). Nada a ver com estocável/gera_receita.
+    gera_patrimonio: Optional[bool] = None
     # Campo legado — a elegibilidade do custo físico do RMCA (ver GET
     # /financeiro/rmca) hoje é decidida por `conta_gerencial_despesa_padrao`
     # (conta "3.01.01" — Alimentação do rebanho — ou qualquer conta dentro

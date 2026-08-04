@@ -131,7 +131,16 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
     # `vinculo_contador` diz ao frontend se deve mandar direto pro Painel do
     # Contador (/contador, casca própria) em vez da navegação normal da
     # fazenda — ver components/AuthShell.tsx e fazenda/models/multitenant.py.
-    return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "vinculo_contador": bool(vinculo and vinculo.contador)}
+    # `vinculo_consultor` diz ao frontend que este usuário é um vínculo
+    # externo (veterinário/agrônomo convidado) — usado para ESCONDER
+    # funcionalidades sensíveis (ex.: botão de acesso ao banco de dados
+    # externo em Relatórios financeiros) mesmo quando ele tem o módulo
+    # "financeiro" liberado, ver frontend/lib/api.ts::ehConsultor().
+    return {
+        "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
+        "vinculo_contador": bool(vinculo and vinculo.contador),
+        "vinculo_consultor": bool(vinculo and vinculo.consultor),
+    }
 
 
 def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazenda | None:

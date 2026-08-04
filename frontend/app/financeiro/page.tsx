@@ -7,13 +7,16 @@ import {
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   atualizarPlanoManutencaoPatrimonio, fetchManutencoesPatrimonio, registrarManutencaoPatrimonio,
+  criarPatrimonio, atualizarPatrimonio, atualizarValorMercadoPatrimonio, vincularLancamentoPatrimonio, fetchPatrimonioListaSimples, type PatrimonioPayload,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
-  atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  atualizarLancamentoFinanceiro, ehAdmin, ehConsultor, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  fetchSupabaseDashboardUrl,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
   fetchItensCenario, criarItemCenario, atualizarItemCenario, excluirItemCenario, fetchProjecaoCenario,
   importarParaPedido, type OrcamentoItemPayload, type CenarioPayload, type PlanejamentoItemPayload,
+  anexarArquivoLancamento, listarAnexosLancamento, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -60,6 +63,7 @@ type Lanc = {
   mes_competencia: string | null; mes_caixa: string | null;
   itens?: { produto: string }[];
   usuario_nome?: string | null;
+  patrimonio_id?: number | null;
 };
 
 type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes";
@@ -199,6 +203,15 @@ export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rel, setRel] = useState<Rel>("a_pagar");
+  // Link pro banco de dados externo (Supabase) — só busca quando o usuário
+  // entra numa sub-aba de Relatórios financeiros, e só se não for consultor
+  // (backend já bloqueia; aqui é só pra não mostrar o botão à toa).
+  const [supabaseUrl, setSupabaseUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (RELATORIOS.some((r) => r.id === rel) && !ehConsultor() && supabaseUrl === null) {
+      fetchSupabaseDashboardUrl().then((d) => setSupabaseUrl(d.url || "")).catch(() => setSupabaseUrl(""));
+    }
+  }, [rel]);
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
@@ -511,9 +524,16 @@ export default function FinanceiroPage() {
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+      <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+        </div>
+        {RELATORIOS.some((r) => r.id === rel) && !!supabaseUrl && (
+          <a href={supabaseUrl} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+            <Layers size={13} /> Banco de dados (Supabase)
+          </a>
+        )}
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o CONTA_GERENCIAL</a>.</span></div>}
@@ -1268,6 +1288,10 @@ type ItemPatrimonio = {
   frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
   data_proxima_manutencao: string | null; observacao_manutencao: string | null;
   situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
+  // Não depreciável (ex.: terra) — acompanha valor de mercado em vez de depreciar.
+  depreciavel: boolean; valor_mercado_atual: number | null;
+  data_ultima_atualizacao_valor_mercado: string | null; atualizacao_valor_mercado_frequencia_meses: number | null;
+  proxima_atualizacao_valor_mercado: string | null;
 };
 type InconsistenciaPatrimonio = { item: string; numero: string | null; motivo: string };
 
@@ -1290,9 +1314,23 @@ function SeloManutencao({ item }: { item: ItemPatrimonio }) {
 }
 
 function PatrimonioView() {
+  if (!ehAdmin()) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+        <Building2 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
+        <p style={{ color: "var(--text-muted)" }}>Controle Financeiro &gt; Patrimônio é restrito a administradores da fazenda.</p>
+      </div>
+    );
+  }
+  return <PatrimonioViewAdmin />;
+}
+
+function PatrimonioViewAdmin() {
   const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number; inconsistencias: InconsistenciaPatrimonio[] } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
+  const [itemEditando, setItemEditando] = useState<ItemPatrimonio | "novo" | null>(null);
+  const [itemValorMercado, setItemValorMercado] = useState<ItemPatrimonio | null>(null);
 
   const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
   useEffect(carregar, []);
@@ -1360,7 +1398,12 @@ function PatrimonioView() {
         </div>
       )}
       <div className="card">
-        <div className="card-header mb-3">Bens</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span>Bens</span>
+          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setItemEditando("novo")}>
+            <Plus size={13} /> Novo patrimônio
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead>
@@ -1385,26 +1428,47 @@ function PatrimonioView() {
               {bensOrdenados.map((i) => (
                 <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
-                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{i.nome}</td>
+                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
+                    {i.nome}
+                    {!i.depreciavel && <span title="Não depreciável — acompanha valor de mercado" style={{ marginLeft: "0.35rem", fontSize: "0.68rem", color: "var(--dourado-light)", border: "1px solid var(--dourado)", borderRadius: "999px", padding: "0.05rem 0.4rem" }}>valor de mercado</span>}
+                  </td>
                   <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.metodo_depreciacao || "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.vida_util || "—"}</td>
-                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_depreciacao || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.vida_util || "—") : "—"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.depreciavel && i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
-                    {i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
+                    {!i.depreciavel ? "—" : i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
                   <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
-                  <td>{i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span> : <SeloManutencao item={i} />}</td>
                   <td>
-                    {!i.data_baixa && (
-                      <button className="btn-ghost" title="Plano de manutenção" style={{ padding: "0.25rem" }} onClick={() => setItemManutencao(i)}>
-                        <Wrench size={14} />
+                    {i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span>
+                      : i.depreciavel ? <SeloManutencao item={i} />
+                      : i.proxima_atualizacao_valor_mercado ? (
+                        <span style={{ fontSize: "0.75rem", color: new Date(i.proxima_atualizacao_valor_mercado) < new Date() ? "var(--red)" : "var(--text-muted)" }}>
+                          Atualizar valor até {formatDate(i.proxima_atualizacao_valor_mercado)}
+                        </span>
+                      ) : <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Sem agenda</span>}
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-1">
+                      <button className="btn-ghost" title="Editar" style={{ padding: "0.25rem" }} onClick={() => setItemEditando(i)}>
+                        <Pencil size={14} />
                       </button>
-                    )}
+                      {!i.data_baixa && i.depreciavel && (
+                        <button className="btn-ghost" title="Plano de manutenção" style={{ padding: "0.25rem" }} onClick={() => setItemManutencao(i)}>
+                          <Wrench size={14} />
+                        </button>
+                      )}
+                      {!i.data_baixa && !i.depreciavel && (
+                        <button className="btn-ghost" title="Atualizar valor de mercado" style={{ padding: "0.25rem" }} onClick={() => setItemValorMercado(i)}>
+                          <TrendingUp size={14} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1415,7 +1479,179 @@ function PatrimonioView() {
       {itemManutencao && (
         <ModalManutencaoPatrimonio item={itemManutencao} onClose={() => setItemManutencao(null)} onSalvo={() => { carregar(); }} />
       )}
+      {itemEditando && (
+        <ModalNovoPatrimonio item={itemEditando === "novo" ? null : itemEditando} onClose={() => setItemEditando(null)} onSalvo={() => { setItemEditando(null); carregar(); }} />
+      )}
+      {itemValorMercado && (
+        <ModalValorMercadoPatrimonio item={itemValorMercado} onClose={() => setItemValorMercado(null)} onSalvo={() => { setItemValorMercado(null); carregar(); }} />
+      )}
     </>
+  );
+}
+
+/** Cadastro manual de um item de patrimônio (substitui o upload de CSV) —
+ * cria diretamente, ou, se marcado "é uma compra agora?", redireciona para
+ * Lançar > Financeiro > Contas a pagar com o item pré-preenchido; a criação
+ * de fato acontece quando ESSE lançamento for salvo (ver FormFinanceiro e
+ * POST /financeiro/lancamentos, campo criar_patrimonio). */
+function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio | null; onClose: () => void; onSalvo: () => void }) {
+  const [ehCompraAgora, setEhCompraAgora] = useState(false);
+  const [nome, setNome] = useState(item?.nome || "");
+  const [tipo, setTipo] = useState(item?.tipo || "");
+  const [numero, setNumero] = useState(item?.numero || "");
+  const [dataImobilizacao, setDataImobilizacao] = useState(item?.data_imobilizacao || "");
+  const [quantidade, setQuantidade] = useState(item?.quantidade != null ? String(item.quantidade) : "");
+  const [unidade, setUnidade] = useState(item?.unidade || "");
+  const [valorTotal, setValorTotal] = useState(item?.valor_total != null ? String(item.valor_total) : "");
+  const [depreciavel, setDepreciavel] = useState(item?.depreciavel ?? true);
+  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "");
+  const [vidaUtil, setVidaUtil] = useState(item?.vida_util || "");
+  const [valorResidual, setValorResidual] = useState(item?.valor_residual != null ? String(item.valor_residual) : "");
+  const [frequenciaValorMercado, setFrequenciaValorMercado] = useState(
+    item?.atualizacao_valor_mercado_frequencia_meses != null ? String(item.atualizacao_valor_mercado_frequencia_meses) : ""
+  );
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
+    const payload: PatrimonioPayload = {
+      nome: nome.trim(), tipo: tipo || null, numero: numero || null,
+      data_imobilizacao: dataImobilizacao || null,
+      quantidade: quantidade ? Number(quantidade) : null, unidade: unidade || null,
+      valor_total: valorTotal ? Number(valorTotal) : null,
+      depreciavel,
+      metodo_depreciacao: depreciavel ? (metodoDepreciacao || null) : null,
+      vida_util: depreciavel ? (vidaUtil || null) : null,
+      valor_residual: depreciavel && valorResidual ? Number(valorResidual) : null,
+      atualizacao_valor_mercado_frequencia_meses: !depreciavel && frequenciaValorMercado ? Number(frequenciaValorMercado) : null,
+    };
+    if (ehCompraAgora && !item) {
+      const params = new URLSearchParams({
+        ir: "financeiro_despesa", patrimonio_nome: payload.nome,
+        patrimonio_tipo: payload.tipo || "", patrimonio_valor: payload.valor_total != null ? String(payload.valor_total) : "",
+        patrimonio_depreciavel: depreciavel ? "1" : "0",
+      });
+      window.location.href = `/lancamentos?${params.toString()}`;
+      return;
+    }
+    setSalvando(true); setErro("");
+    try {
+      if (item) await atualizarPatrimonio(item.id, payload);
+      else await criarPatrimonio(payload);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={item ? `Editar patrimônio — ${item.nome}` : "Novo patrimônio"} onClose={onClose} width="640px">
+      <div className="space-y-3">
+        {!item && (
+          <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", background: "var(--surface-2)", padding: "0.5rem 0.7rem", borderRadius: "6px" }}>
+            <input type="checkbox" checked={ehCompraAgora} onChange={(e) => setEhCompraAgora(e.target.checked)} />
+            É uma compra agora? (leva para Lançar &gt; Financeiro já com estes dados — o patrimônio é criado junto com o lançamento)
+          </label>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div style={{ gridColumn: "1 / -1" }}><label style={label}>Nome</label>
+            <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Trator Massey Ferguson" /></div>
+          <div><label style={label}>Tipo</label>
+            <input style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="ex.: Máquinas, Terra, Benfeitoria" /></div>
+          <div><label style={label}>Nº patrimônio</label>
+            <input style={inputStyle} value={numero} onChange={(e) => setNumero(e.target.value)} /></div>
+          <div><label style={label}>Data de imobilização</label>
+            <input type="date" style={inputStyle} value={dataImobilizacao} onChange={(e) => setDataImobilizacao(e.target.value)} /></div>
+          <div><label style={label}>Valor {depreciavel ? "de aquisição" : "inicial (de mercado)"} (R$)</label>
+            <input type="number" step="0.01" style={inputStyle} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} /></div>
+          <div><label style={label}>Quantidade</label>
+            <input type="number" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></div>
+          <div><label style={label}>Unidade</label>
+            <input style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} /></div>
+        </div>
+
+        <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
+          <button type="button" className={depreciavel ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }} onClick={() => setDepreciavel(true)}>Deprecia normalmente</button>
+          <button type="button" className={!depreciavel ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }} onClick={() => setDepreciavel(false)}>
+            Não depreciável (ex.: terra) — só valoriza
+          </button>
+        </div>
+
+        {depreciavel ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div><label style={label}>Método de depreciação</label>
+              <input style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)} placeholder="ex.: Linear" /></div>
+            <div><label style={label}>Vida útil</label>
+              <input style={inputStyle} value={vidaUtil} onChange={(e) => setVidaUtil(e.target.value)} placeholder="ex.: 10 Anos" /></div>
+            <div><label style={label}>Valor residual (R$)</label>
+              <input type="number" step="0.01" style={inputStyle} value={valorResidual} onChange={(e) => setValorResidual(e.target.value)} /></div>
+          </div>
+        ) : (
+          <div>
+            <label style={label}>Frequência de atualização do valor de mercado (meses)</label>
+            <input type="number" min={0} style={{ ...inputStyle, maxWidth: "220px" }} value={frequenciaValorMercado}
+              onChange={(e) => setFrequenciaValorMercado(e.target.value)} placeholder="vazio = usa o padrão do sistema; 0 = nunca" />
+          </div>
+        )}
+
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>
+            {salvando ? "Salvando…" : ehCompraAgora && !item ? "Ir para o lançamento" : "Salvar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Registra uma nova avaliação de valor de mercado — só para patrimônio não
+ * depreciável (ver ItemPatrimonio.depreciavel). */
+function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
+  const [valor, setValor] = useState(item.valor_mercado_atual != null ? String(item.valor_mercado_atual) : "");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!valor) { setErro("Informe o valor de mercado."); return; }
+    setSalvando(true); setErro("");
+    try {
+      await atualizarValorMercadoPatrimonio(item.id, Number(valor), data);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={`Atualizar valor de mercado — ${item.nome}`} onClose={onClose} width="420px">
+      <div className="space-y-3">
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          Última avaliação: {item.valor_mercado_atual != null ? formatBRL(item.valor_mercado_atual) : "—"}
+          {item.data_ultima_atualizacao_valor_mercado ? ` (${formatDate(item.data_ultima_atualizacao_valor_mercado)})` : ""}
+        </p>
+        <div><label style={label}>Novo valor de mercado (R$)</label>
+          <input type="number" step="0.01" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+        <div><label style={label}>Data da avaliação</label>
+          <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1760,6 +1996,16 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
+  const [anexos, setAnexos] = useState<AnexoLancamento[] | null>(null);
+  const [enviandoAnexo, setEnviandoAnexo] = useState(false);
+  const [categoriaAnexo, setCategoriaAnexo] = useState(lanc.tipo_documento || "");
+  const fileInputAnexoRef = useRef<HTMLInputElement>(null);
+  // Vincular esta compra/venda a um item de Patrimônio (entrada/saída de
+  // patrimônio) — FK de verdade, editável tanto aqui quanto pela tela de
+  // Patrimônio (mesmo endpoint, ver vincularLancamentoPatrimonio).
+  const [patrimonioId, setPatrimonioId] = useState(lanc.patrimonio_id ? String(lanc.patrimonio_id) : "");
+  const [patrimonios, setPatrimonios] = useState<{ id: number; nome: string; tipo: string | null }[]>([]);
+  useEffect(() => { fetchPatrimonioListaSimples().then(setPatrimonios).catch(() => {}); }, []);
   const tipoConta = lanc.tipo === "receita" ? "receita" : "despesa";
   const fornecedoresDisponiveis = useMemo(
     () => Array.from(new Set([...(fornecedor ? [fornecedor] : []), ...fornecedores])).sort(),
@@ -1767,6 +2013,26 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   );
   const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
   useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
+  useEffect(() => {
+    if (lanc.numero_lancamento) listarAnexosLancamento(lanc.numero_lancamento).then(setAnexos).catch(() => setAnexos([]));
+  }, [lanc.numero_lancamento]);
+
+  const enviarAnexo = async (file: File) => {
+    if (!lanc.numero_lancamento) return;
+    setEnviandoAnexo(true); setErro("");
+    try {
+      const novo = await anexarArquivoLancamento(lanc.numero_lancamento, file, categoriaAnexo || null);
+      setAnexos((p) => [...(p || []), novo]);
+    } catch (e: any) { setErro(e.message); }
+    finally { setEnviandoAnexo(false); }
+  };
+
+  const removerAnexo = async (id: number) => {
+    try {
+      await excluirAnexoLancamento(id);
+      setAnexos((p) => (p || []).filter((a) => a.id !== id));
+    } catch (e: any) { setErro(e.message); }
+  };
 
   const salvar = async () => {
     setSalvando(true); setErro("");
@@ -1780,6 +2046,10 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
         numero_documento_pagamento: numeroPagamento || null, tipo_documento: tipoDocumento || null,
         ...(podeEditarProduto && produto.trim() ? { produto: produto.trim() } : {}),
       });
+      const novoPatrimonioId = patrimonioId ? Number(patrimonioId) : null;
+      if (novoPatrimonioId !== (lanc.patrimonio_id ?? null) && lanc.numero_lancamento) {
+        await vincularLancamentoPatrimonio(lanc.numero_lancamento, novoPatrimonioId);
+      }
       onSalvo();
     } catch (e: any) { setErro(e.message); setSalvando(false); }
   };
@@ -1850,7 +2120,47 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
           <input style={selStyleLote} value={numeroOsOrcamento} onChange={(e) => setNumeroOsOrcamento(e.target.value)} placeholder="ex.: OS-123 ou ORC-45" /></div>
         <div><label style={labelStyleLote}>Número do pagamento</label>
           <input style={selStyleLote} value={numeroPagamento} onChange={(e) => setNumeroPagamento(e.target.value)} placeholder="ex.: comprovante, nº do PIX…" /></div>
+        <div><label style={labelStyleLote}>Vincular a patrimônio (entrada/saída de bem)</label>
+          <select style={selStyleLote} value={patrimonioId} onChange={(e) => setPatrimonioId(e.target.value)}>
+            <option value="">— Nenhum</option>
+            {patrimonioId && !patrimonios.some((p) => String(p.id) === patrimonioId) && (
+              <option value={patrimonioId}>Item vinculado (Nº {patrimonioId})</option>
+            )}
+            {patrimonios.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.tipo ? ` — ${p.tipo}` : ""}</option>)}
+          </select></div>
       </div>
+      {lanc.numero_lancamento && (
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
+          <label style={labelStyleLote}>Anexos</label>
+          <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+            <select style={{ ...selStyleLote, width: "auto" }} value={categoriaAnexo} onChange={(e) => setCategoriaAnexo(e.target.value)}>
+              <option value="">Categoria do anexo…</option>
+              {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
+            </select>
+            <input ref={fileInputAnexoRef} type="file" accept="application/pdf,image/jpeg,image/png" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ""; }} />
+            <button type="button" className="btn-ghost" disabled={enviandoAnexo} onClick={() => fileInputAnexoRef.current?.click()}>
+              <Paperclip size={13} /> {enviandoAnexo ? "Enviando…" : "Anexar arquivo (PDF/JPEG/PNG)"}
+            </button>
+          </div>
+          {anexos === null ? (
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Carregando anexos…</p>
+          ) : anexos.length === 0 ? (
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Nenhum anexo ainda.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {anexos.map((a) => (
+                <li key={a.id} className="flex items-center gap-2" style={{ padding: "0.25rem 0", fontSize: "0.78rem" }}>
+                  <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}>
+                    {a.nome_arquivo}{a.categoria ? ` — ${a.categoria}` : ""}
+                  </a>
+                  <button type="button" className="btn-ghost" title="Excluir anexo" onClick={() => removerAnexo(a.id)}><Trash2 size={13} /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2 justify-end">
         <button className="btn-ghost" onClick={onCancelar} disabled={salvando}>Cancelar</button>

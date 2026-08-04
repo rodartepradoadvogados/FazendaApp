@@ -71,6 +71,13 @@ class ContaGerencial(SQLModel, table=True):
     # Vínculo opcional ao Pedido que esta nota fiscal/recibo está atendendo —
     # é só quando esse vínculo existe que o Pedido passa a refletir em Financeiro.
     pedido_id: Optional[int] = Field(default=None, foreign_key="pedido.id")
+    # Vínculo opcional a um item de Patrimônio (ver Patrimonio, mais abaixo
+    # neste arquivo) — esta compra/venda representa uma entrada/saída de
+    # patrimônio. FK de verdade (não string), editável dos dois lados: aqui
+    # (POST/PUT /financeiro/lancamentos) e do lado do Patrimônio (POST
+    # /financeiro/patrimonio, campo `criar_patrimonio` na criação do
+    # lançamento, ou vínculo posterior via PUT /financeiro/patrimonio/{id}).
+    patrimonio_id: Optional[int] = Field(default=None, foreign_key="patrimonio.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +108,13 @@ class LancamentoItem(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
-# Anexo de lançamento financeiro (ex.: boleto de um parcelamento) — o conteúdo
-# fica no próprio banco (bytes), sem depender de disco persistente no deploy.
+# Anexo de lançamento financeiro (ex.: boleto, nota fiscal, comprovante de um
+# parcelamento) — o conteúdo vive no Supabase Storage (ver
+# fazenda/rules/supabase_storage.py), igual ao Arquivo fiscal-contábil
+# (DocumentoArquivado, ver fazenda/models/documentos.py); aqui só ficam os
+# metadados e o caminho. `conteudo` (bytes direto no Postgres) é o formato
+# ANTIGO, mantido só para ler anexos já existentes — todo anexo novo usa
+# `caminho_storage`, nunca os dois ao mesmo tempo.
 # ---------------------------------------------------------------------------
 class LancamentoAnexo(SQLModel, table=True):
     __tablename__ = "lancamento_anexo"
@@ -114,7 +126,9 @@ class LancamentoAnexo(SQLModel, table=True):
     nome_arquivo: str
     mime_type: str
     tamanho_bytes: int
-    conteudo: bytes
+    conteudo: Optional[bytes] = None  # formato antigo (legado) — ver docstring acima
+    categoria: Optional[str] = None  # nome de um tipo de documento cadastrado (TIPOS_DOCUMENTO)
+    caminho_storage: Optional[str] = None  # Supabase Storage — formato atual
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
@@ -368,6 +382,19 @@ class Patrimonio(SQLModel, table=True):
     valor_total: Optional[float] = None
     data_baixa: Optional[date] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+    # True (padrão) = deprecia normalmente (calcular_depreciacao). False =
+    # patrimônio que só valoriza (ex.: terra/fazenda) — não deprecia, e em vez
+    # disso acompanha `valor_mercado_atual`, atualizado periodicamente (ver
+    # campos abaixo e o card "Atualizar valor de mercado" na Agenda).
+    depreciavel: bool = True
+    valor_mercado_atual: Optional[float] = None
+    data_ultima_atualizacao_valor_mercado: Optional[date] = None
+    # Frequência de atualização do valor de mercado, só para depreciavel=False:
+    # None = usa o padrão do sistema (Configurações > Parâmetros, ver
+    # fazenda.rules.parametros.patrimonio_atualizacao_valor_mercado_meses); 0 =
+    # nunca (não gera pendência); N = a cada N meses (override deste item).
+    atualizacao_valor_mercado_frequencia_meses: Optional[int] = None
 
     # Plano de manutenção preventiva (opcional) — periodicidade só por DATA
     # (ex.: "a cada 6 meses"). O sistema hoje não rastreia horímetro/horas de

@@ -57,6 +57,7 @@ type Evento = {
   via?: string | null;
   dia?: number | null;
   hormonio?: string | null;
+  medicamentos?: string | null;
   protocolo?: string | null;
   grupo?: string | null;
   grupo_titulo?: string | null;
@@ -118,7 +119,7 @@ function catInfo(categoria: string): { chave: string; rotulo: string } {
 // Identificação em negrito + detalhe cinza de cada cartão, a partir do evento.
 function linhas(e: Evento): { principal: string; detalhe: string | null } {
   if (e.numero_animal) return { principal: `Nº ${e.numero_animal}`, detalhe: e.descricao || e.observacao || null };
-  if (e.tipo === "protocolo_iatf" && e.animais?.length) {
+  if ((e.tipo === "protocolo_iatf" || e.tipo === "protocolo_inducao") && e.animais?.length) {
     return { principal: e.descricao, detalhe: `${e.animais.length} ${e.animais.length !== 1 ? "animais" : "animal"}` };
   }
   if (e.lote) return { principal: `Lote ${e.lote}`, detalhe: e.descricao || e.observacao || null };
@@ -425,7 +426,7 @@ export default function AgendaMovel() {
     try {
       const r = await enviarOuEnfileirar("/agenda/realizados",
         { evento_id: e.id, animais: animaisSel },
-        `IATF ${e.descricao} — ${animaisSel.length} vaca(s)`, "POST");
+        `${e.descricao} — ${animaisSel.length} vaca(s)`, "POST");
       if (individual) setIatfVacasFeitas((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
       else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} vaca(s).` });
@@ -909,6 +910,91 @@ export default function AgendaMovel() {
                       );
                     })}
     {!pendentes.length && (
+                      <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todas as vacas confirmadas.</p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+        </MobCard>
+      );
+    }
+
+    // Protocolo de indução de lactação: mesmo cartão expansível do IATF
+    // acima (lote ou individual), reaproveitando o mesmo estado — os ids são
+    // sempre prefixados de forma distinta ("protocolo_iatf_"/"protocolo_inducao_"),
+    // então não há colisão. O seletor de frasco em estoque (ver site) fica só
+    // no site por enquanto, igual ao IATF hoje — o app aplica pelo medicamento
+    // cadastrado no lançamento.
+    if (e.tipo === "protocolo_inducao" && e.animais?.length) {
+      const aberto = iatfAberto.has(e.id);
+      const sel = iatfChecks[e.id] || new Set(e.animais);
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+                {e.animais!.length} {e.animais!.length !== 1 ? "animais" : "animal"}{e.medicamentos ? ` · ${e.medicamentos}` : ""}
+              </div>
+              {e.observacao && <div style={{ fontSize: "0.78rem", color: "var(--mob-acao)", marginTop: "0.15rem", fontWeight: 700 }}>{e.observacao}</div>}
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+
+          {aberto && (() => {
+            const modo = iatfModo[e.id];
+            const feitasVaca = iatfVacasFeitas[e.id] || new Set<string>();
+            const pendentes = e.animais!.filter((n) => !feitasVaca.has(n));
+            return (
+              <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+                {/* Antes de tudo: aplicação em lote ou individual? */}
+                {!modo ? (
+                  <>
+                    <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como deseja confirmar a aplicação?</p>
+                    <div style={{ display: "flex", gap: "0.6rem" }}>
+                      <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setIatfModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todas)</button>
+                      <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setIatfModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
+                    </div>
+                  </>
+                ) : modo === "lote" ? (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Marque as vacas que receberam:</p>
+                    {e.animais!.map((numero) => (
+                      <label key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.2rem", borderBottom: "1px solid var(--mob-border)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={sel.has(numero)} onChange={() => toggleVaca(e.id, numero)} style={{ width: 20, height: 20 }} />
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{numero}</span>
+                      </label>
+                    ))}
+                    <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }}
+                      disabled={feito || !sel.size} onClick={() => confirmarIatf(e, Array.from(sel))}>
+                      Confirmar aplicação ({sel.size}/{e.animais!.length})
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>
+                      Confirme vaca por vaca — aplicado?
+                    </p>
+                    {e.animais!.map((numero) => {
+                      const jaFeita = feitasVaca.has(numero);
+                      return (
+                        <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                          <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeita ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeita ? "line-through" : "none" }}>{numero}</span>
+                          {jaFeita ? (
+                            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Aplicado</span>
+                          ) : (
+                            <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }}
+                              onClick={() => confirmarIatf(e, [numero], true)}>Sim</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {!pendentes.length && (
                       <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todas as vacas confirmadas.</p>
                     )}
                   </>

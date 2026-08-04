@@ -26,7 +26,7 @@ const vazio = {
   ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
-  gera_receita: false,
+  gera_receita: false, gera_patrimonio: false,
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
   principio_ativo: "", principio_ativo_id: "", classificacao_medicamento: "",
   tipo_semen: "",
@@ -78,6 +78,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       conta_gerencial_despesa_padrao: s(editando.conta_gerencial_despesa_padrao),
       conta_gerencial_receita_padrao: s(editando.conta_gerencial_receita_padrao),
       gera_receita: editando.gera_receita === true,
+      gera_patrimonio: editando.gera_patrimonio === true,
       exibir_necessidade_compra_agenda: editando.exibir_necessidade_compra_agenda === true,
       estocavel: editando.estocavel !== false, data_inicio_controle: s(editando.data_inicio_controle),
       principio_ativo: s(editando.principio_ativo), principio_ativo_id: s(editando.principio_ativo_id),
@@ -127,6 +128,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         conta_gerencial_despesa_padrao: str(form.conta_gerencial_despesa_padrao),
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
         gera_receita: form.gera_receita,
+        gera_patrimonio: form.gera_patrimonio,
         exibir_necessidade_compra_agenda: form.estocavel ? form.exibir_necessidade_compra_agenda : false,
         estocavel: form.estocavel,
         data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
@@ -296,6 +298,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         <div className="flex items-end gap-3">
           <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
             <input type="checkbox" checked={form.estocavel} onChange={(e) => set({ estocavel: e.target.checked })} /> Estocável
+          </label>
+        </div>
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Item de patrimônio (ex.: trator, benfeitoria) — uma compra deste item sugere vincular/criar um registro em Controle Financeiro > Patrimônio.">
+            <input type="checkbox" checked={form.gera_patrimonio} onChange={(e) => set({ gera_patrimonio: e.target.checked })} /> Patrimônio
           </label>
         </div>
 
