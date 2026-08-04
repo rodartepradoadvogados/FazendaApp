@@ -183,6 +183,15 @@ class TestReproducao:
         assert 25.5 <= j["estatisticas"]["media"] <= 26.5
         assert j["custo_excedente"]["custo_total"] > 0  # há novilha acima de 24 meses
         assert any(d["mes"] == 24 for d in j["distribuicao"])
+        assert j["meta_desvio_padrao"] == 1.7  # padrão de MetaRecria, agora exposto
+
+    def test_meta_desvio_padrao_reage_a_edicao_da_meta(self, client):
+        c, _ = client
+        m = c.get("/recria/metas").json()
+        c.put("/recria/metas", json={**{k: v for k, v in m.items() if k in (
+            "idade_parto_meses", "idade_prenhez_meses", "idade_1a_cobertura_meses",
+            "taxa_prenhez_meta", "desvio_padrao_meta", "custo_diario_recria")}, "desvio_padrao_meta": 2.5})
+        assert c.get("/recria/reproducao/idade-parto").json()["meta_desvio_padrao"] == 2.5
 
     def test_dossie_reune_secoes_e_kpis(self, client):
         from fazenda.models import Animal, Parto
@@ -230,6 +239,7 @@ class TestReproducao:
         c1 = j["ciclos"][0]
         assert c1["servidos"] == 2 and c1["prenhes"] == 1
         assert c1["taxa_concepcao"] == 50.0
+        assert j["meta_taxa_prenhez"] == 42.5  # padrão de MetaRecria, agora exposto
 
 
 class TestCocho:

@@ -22,6 +22,10 @@ from fazenda.rules.parametros import (
     gestacao_dias_referencia,
     get_param,
     idade_apta_min_meses,
+    meta_concepcao_novilha,
+    meta_taxa_concepcao,
+    meta_taxa_prenhez,
+    meta_taxa_servico,
     peso_apta_min,
     pev_dias,
 )
@@ -165,7 +169,23 @@ _BENCH_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dict], desde: date) -> list[dict]:
+def _metas_benchmark(categoria: str) -> dict[str, dict]:
+    """Metas do benchmark reprodutivo por categoria. taxa_servico/
+    taxa_concepcao/taxa_prenhez_ciclo vêm de Configurações > Parâmetros
+    (editáveis, ver `parametros.meta_taxa_servico/meta_taxa_prenhez/
+    meta_taxa_concepcao/meta_concepcao_novilha`) — as demais ainda usam a
+    referência fixa de `BENCHMARK_METAS` (sem parâmetro equivalente hoje).
+    Novilha usa sua própria meta de concepção, distinta da meta de vacas."""
+    metas = {chave: dict(valor) for chave, valor in BENCHMARK_METAS.items()}
+    metas["taxa_servico"]["meta"] = meta_taxa_servico()
+    metas["taxa_prenhez_ciclo"]["meta"] = meta_taxa_prenhez()
+    metas["taxa_concepcao"]["meta"] = meta_concepcao_novilha() if categoria == "novilha" else meta_taxa_concepcao()
+    return metas
+
+
+def _repro_benchmark(
+    animais: list[dict], servicos: list[dict], partos: list[dict], desde: date, categoria: str = "todas",
+) -> list[dict]:
     """Painel de benchmark reprodutivo (Prenhez = Serviço × Concepção) para um
     subconjunto do rebanho — usado para 'todas', 'vaca' e 'novilha'."""
     prenhes = vazias = inseminadas = 0
@@ -217,9 +237,10 @@ def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dic
         "servicos_por_prenhez": servicos_por_prenhez, "del_1a_ia": del_1a,
         "dias_abertos": dias_abertos, "iep_meses": iep_meses,
     }
+    metas = _metas_benchmark(categoria)
     lista = []
     for chave, (label, unidade) in _BENCH_LABELS.items():
-        m = BENCHMARK_METAS.get(chave, {})
+        m = metas.get(chave, {})
         lista.append({
             "chave": chave, "label": label, "unidade": unidade,
             "valor": valores.get(chave), "meta": m.get("meta"),
@@ -237,9 +258,9 @@ def _benchmark_categorias(
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
     serv_novilha = [s for s in servicos if (s.get("ordem_parto") or 0) < 1]
     return {
-        "todas": _repro_benchmark(animais, servicos, partos, desde),
-        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde),
-        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde),
+        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas"),
+        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca"),
+        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha"),
     }
 
 

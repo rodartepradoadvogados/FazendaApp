@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
-from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, PlanoContaGerencial
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, ParametroFazenda, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -679,6 +679,22 @@ class TestRmca:
         assert corpo["gerencial"]["receita_leite"] == 10000.0
         assert corpo["gerencial"]["custo_alimentacao"] == 3000.0
         assert corpo["gerencial"]["rmca"] == 7000.0
+        assert corpo["meta_rmca"] == 0  # padrão — preserva o "verde se >= 0" de antes
+
+    def test_meta_rmca_reage_ao_parametro_configurado(self, client, monkeypatch):
+        c, engine = client
+        # get_param()/_linha() lê `fazenda.database.engine` diretamente (não
+        # via Depends) — sem isso, a leitura pós-PUT cairia no engine
+        # padrão do módulo, não no engine isolado deste teste.
+        monkeypatch.setattr(database, "engine", engine)
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            s.add(ParametroFazenda(chave="meta_rmca", grupo="financeiro",
+                                    label="RMCA mínimo aceitável", valor="0", tipo="float", unidade="R$"))
+            s.commit()
+        assert c.put("/parametros/meta_rmca", json={"valor": 5000.0}).status_code == 200
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.json()["meta_rmca"] == 5000.0
 
     def test_versao_fisica_usa_consumo_real_x_valor_unitario_do_estoque(self, client):
         c, engine = client

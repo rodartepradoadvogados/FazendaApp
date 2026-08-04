@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fazenda.rules.parametros import get_param
+from fazenda.rules.parametros import dias_reinseminacao_max, dias_reinseminacao_min, get_param, meta_taxa_servico
 
 GESTACAO_DIAS = 280  # gestação média usada nas previsões de parto/secagem
 
@@ -412,6 +412,23 @@ def _buckets_intervalo(valores: list[int]) -> list[dict]:
              "pct": round(100 * n / total, 2) if total else 0} for lbl, lo, hi in faixas]
 
 
+def _buckets_dias_reinseminacao(valores: list[int]) -> list[dict]:
+    """Faixas do gráfico de dias-para-reinseminação — ao contrário de
+    `_buckets_intervalo` (fixas), calculadas a partir da janela configurada
+    em Configurações > Parâmetros > Reinseminação e observação de cio
+    (dias_reinseminacao_min/max): antes da janela = reinseminação adiantada,
+    dentro = dentro do padrão da fazenda, depois = atrasada."""
+    minimo, maximo = dias_reinseminacao_min(), dias_reinseminacao_max()
+    faixas = []
+    if minimo > 1:
+        faixas.append((f"1-{minimo - 1} dias (adiantada)", 1, minimo - 1))
+    faixas.append((f"{minimo}-{maximo} dias (janela ideal)", minimo, maximo))
+    faixas.append((f">{maximo} dias (atrasada)", maximo + 1, 100000))
+    total = len(valores)
+    return [{"faixa": lbl, "servicos": (n := sum(1 for v in valores if lo <= v <= hi)),
+             "pct": round(100 * n / total, 2) if total else 0} for lbl, lo, hi in faixas]
+
+
 def intervalo_entre_servicos(servicos: list[dict]) -> dict:
     """Distribuição do intervalo em dias entre serviços consecutivos."""
     intervalos = [s["intervalo_tentativas"] for s in servicos
@@ -436,12 +453,14 @@ def dias_para_reinseminacao(servicos: list[dict], partos: list[dict]) -> dict:
             prox_serv = prox.get("data_servico")
             if vazia_em and isinstance(prox_serv, date) and prox_serv >= vazia_em:
                 valores.append((prox_serv - vazia_em).days)
-    return {"barras": _buckets_intervalo(valores), "total": len(valores)}
+    return {"barras": _buckets_dias_reinseminacao(valores), "total": len(valores)}
 
 
 def taxa_servico_prenhez(animais: list[dict], servicos: list[dict], partos: list[dict], hoje: date) -> dict:
     """Taxa de serviço e taxa de prenhez por faixa de DEL + acumulado de prenhas.
-    Parâmetros inferidos: 50% até 100d, 75% até 150d, ≤10% aos 300d."""
+    Referências: meta de taxa de serviço aos 100d vem de Configurações >
+    Parâmetros (`meta_taxa_servico`, editável); 75% até 150d e ≤10% aos 300d
+    ainda não têm parâmetro equivalente, continuam fixos."""
     serv_idx, parto_idx = _indexar(servicos, partos)
     femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"
               and _eh_vaca(a["numero"], parto_idx)]
@@ -469,7 +488,7 @@ def taxa_servico_prenhez(animais: list[dict], servicos: list[dict], partos: list
             "acumulado_prenhas_pct": round(100 * prenhas_acum / total_vacas, 0) if total_vacas else 0,
         })
     return {"linhas": linhas, "total_vacas": total_vacas,
-            "parametros": {"meta_100d": 50, "meta_150d": 75, "max_300d": 10}}
+            "parametros": {"meta_100d": meta_taxa_servico(), "meta_150d": 75, "max_300d": 10}}
 
 
 def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict], hoje: date, meses: int = 8) -> dict:

@@ -15,9 +15,10 @@ type RmcaResp = {
   contas_custo: string[];
   gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
   fisico: { receita_leite: number; custo_alimentacao: number; rmca: number };
+  meta_rmca: number;
 };
 
-function BlocoRmca({ titulo, v }: { titulo: string; v: { receita_leite: number; custo_alimentacao: number; rmca: number } }) {
+function BlocoRmca({ titulo, v, meta }: { titulo: string; v: { receita_leite: number; custo_alimentacao: number; rmca: number }; meta: number }) {
   return (
     <MobCard style={{ marginBottom: "0.7rem" }}>
       <div style={{ fontWeight: 800, marginBottom: "0.6rem" }}>{titulo}</div>
@@ -31,7 +32,7 @@ function BlocoRmca({ titulo, v }: { titulo: string; v: { receita_leite: number; 
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.95rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.4rem", marginTop: "0.3rem" }}>
         <span style={{ fontWeight: 700 }}>RMCA</span>
-        <strong style={{ color: v.rmca >= 0 ? "var(--mob-verde)" : "var(--mob-vermelho)" }}>{brl(v.rmca)}</strong>
+        <strong style={{ color: v.rmca >= meta ? "var(--mob-verde)" : "var(--mob-vermelho)" }}>{brl(v.rmca)}</strong>
       </div>
     </MobCard>
   );
@@ -78,8 +79,8 @@ export default function Rmca({ onVoltar }: { onVoltar: () => void }) {
         <Vazio>Configure as contas gerenciais de RMCA no site (Configurações › Parâmetros financeiros) para ver este relatório.</Vazio>
       ) : (
         <>
-          <BlocoRmca titulo="RMCA gerencial" v={dados.gerencial} />
-          <BlocoRmca titulo="RMCA físico" v={dados.fisico} />
+          <BlocoRmca titulo="RMCA gerencial" v={dados.gerencial} meta={dados.meta_rmca} />
+          <BlocoRmca titulo="RMCA físico" v={dados.fisico} meta={dados.meta_rmca} />
           <p style={{ fontSize: "0.75rem", color: "var(--mob-muted)" }}>
             Contas de receita: {dados.contas_receita.join(", ") || "—"}<br />
             Contas de custo: {dados.contas_custo.join(", ") || "—"}
