@@ -8,6 +8,7 @@ import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
 import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components/CadastroSanitario";
 import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSemen";
+import { ABAS_CADASTRO_ESTOQUE, type AbaCadastroEstoque } from "@/components/CadastroEstoque";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import NewsAdmin from "@/components/NewsAdmin";
@@ -32,6 +33,7 @@ export default function ConfiguracoesPage() {
   const [cadastroAba, setCadastroAba] = useState<AbaCadastro>("lotes");
   const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("principios");
   const [centralSemenAba, setCentralSemenAba] = useState<AbaCentralSemen>("estoque-semen");
+  const [estoqueAba, setEstoqueAba] = useState<AbaCadastroEstoque>("itens");
   const [parametrosAba, setParametrosAba] = useState<AbaParametros>("gerais");
   const temFinanceiro = podeModulo("financeiro");
   const abasParametrosVisiveis = useMemo(() => ABAS_PARAMETROS.filter(([id]) => id !== "financeiro" || temFinanceiro), [temFinanceiro]);
@@ -70,6 +72,7 @@ export default function ConfiguracoesPage() {
           id: cid, label: clabel, icon: cIcon,
           children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
             : cid === "central-semen" ? ABAS_CENTRAL_SEMEN.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
+            : cid === "estoque" ? ABAS_CADASTRO_ESTOQUE.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
             : undefined,
         })),
       };
@@ -82,13 +85,14 @@ export default function ConfiguracoesPage() {
     }
     return { id: a.id, label: a.label, icon: a.icon };
   }), [abasVisiveis, abasParametrosVisiveis]);
-  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba === "central-semen" ? centralSemenAba : cadastroAba)
+  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba === "central-semen" ? centralSemenAba : cadastroAba === "estoque" ? estoqueAba : cadastroAba)
     : aba === "parametros" ? parametrosAba
     : (aba ?? "");
   const onSelect = useCallback((id: string) => {
     if (abasVisiveis.some((a) => a.id === id)) { setAba(id as Aba); return; }
     if (ABAS_CADASTRO_SANITARIO.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("sanitario"); setSanitarioAba(id as AbaCadastroSanitario); return; }
     if (ABAS_CENTRAL_SEMEN.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("central-semen"); setCentralSemenAba(id as AbaCentralSemen); return; }
+    if (ABAS_CADASTRO_ESTOQUE.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("estoque"); setEstoqueAba(id as AbaCadastroEstoque); return; }
     if (abasParametrosVisiveis.some(([pid]) => pid === id)) { setAba("parametros"); setParametrosAba(id as AbaParametros); return; }
     setAba("cadastro"); setCadastroAba(id as AbaCadastro);
   }, [abasVisiveis, abasParametrosVisiveis]);
@@ -131,6 +135,7 @@ export default function ConfiguracoesPage() {
             aba={cadastroAba} onAbaChange={setCadastroAba}
             abaSanitario={sanitarioAba} onAbaSanitarioChange={setSanitarioAba}
             abaCentralSemen={centralSemenAba} onAbaCentralSemenChange={setCentralSemenAba}
+            abaEstoque={estoqueAba} onAbaEstoqueChange={setEstoqueAba}
           />
         )}
         {aba === "parametros" && parametrosAba === "gerais" && <ParametrosPage />}

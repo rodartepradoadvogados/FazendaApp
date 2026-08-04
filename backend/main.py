@@ -91,6 +91,7 @@ from fazenda.api.routers.cadastro import (
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
+    seed_cadastros_estoque,
 )
 from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
 from fazenda.api.routers.recria import seed_recria
@@ -265,6 +266,10 @@ async def lifespan(app: FastAPI):
         # conta correspondente (a partir da finalidade) — só preenche o que
         # está vazio, nunca sobrescreve um vínculo já feito manualmente.
         sindicar_conta_gerencial_estoque(session)
+        # Cadastros de apoio ao item de estoque (categoria, finalidade,
+        # unidade, unidade de embalagem, unidade de medida, local de
+        # armazenamento) — Configurações > Cadastro > Estoque.
+        seed_cadastros_estoque(session)
         # Painel Mestre CowData: fazenda "lógica" que ancora Equipe/Financeiro
         # da própria CowData (nunca uma fazenda-cliente — ver Fazenda.eh_empresa_cowdata).
         seed_cowdata_empresa(session)

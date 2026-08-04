@@ -1,15 +1,16 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE, CATEGORIAS_ESTOQUE } from "@/lib/api";
+import {
+  criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos,
+  CLASSIFICACOES_MEDICAMENTO,
+  fetchCategoriasEstoqueCadastro, fetchFinalidadesEstoqueCadastro, fetchUnidadesEstoqueCadastro,
+  fetchUnidadesEmbalagemEstoqueCadastro, fetchUnidadesMedidaEmbalagemEstoqueCadastro, fetchLocaisArmazenamento,
+  type ItemCadastroSimples,
+} from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
-
-const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "metro", "saca 30kg", "saca 60kg"];
-
-const UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"];
-const MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"];
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -44,6 +45,12 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   const [centrosCusto, setCentrosCusto] = useState<string[]>([]);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [principiosAtivos, setPrincipiosAtivos] = useState<PrincipioAtivo[]>([]);
+  const [categorias, setCategorias] = useState<ItemCadastroSimples[]>([]);
+  const [finalidades, setFinalidades] = useState<ItemCadastroSimples[]>([]);
+  const [unidades, setUnidades] = useState<ItemCadastroSimples[]>([]);
+  const [unidadesEmbalagem, setUnidadesEmbalagem] = useState<ItemCadastroSimples[]>([]);
+  const [medidasEmbalagem, setMedidasEmbalagem] = useState<ItemCadastroSimples[]>([]);
+  const [locaisArmazenamento, setLocaisArmazenamento] = useState<ItemCadastroSimples[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -52,6 +59,16 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
     fetchOpcoesFinanceiro().then((d) => setCentrosCusto(d.centros_custo || [])).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
     fetchPrincipiosAtivos().then((lista: PrincipioAtivo[]) => setPrincipiosAtivos(lista.filter((p) => p.ativo !== false))).catch(() => {});
+    // Cadastros de apoio (Configurações > Cadastro > Estoque) — substituem as
+    // antigas listas fixas em código (CATEGORIAS_ESTOQUE, FINALIDADES_ESTOQUE,
+    // UNIDADES, UNIDADES_EMBALAGEM, MEDIDAS_EMBALAGEM) e o texto livre de
+    // local de armazenamento.
+    fetchCategoriasEstoqueCadastro().then((l) => setCategorias(l.filter((i) => i.ativo))).catch(() => {});
+    fetchFinalidadesEstoqueCadastro().then((l) => setFinalidades(l.filter((i) => i.ativo))).catch(() => {});
+    fetchUnidadesEstoqueCadastro().then((l) => setUnidades(l.filter((i) => i.ativo))).catch(() => {});
+    fetchUnidadesEmbalagemEstoqueCadastro().then((l) => setUnidadesEmbalagem(l.filter((i) => i.ativo))).catch(() => {});
+    fetchUnidadesMedidaEmbalagemEstoqueCadastro().then((l) => setMedidasEmbalagem(l.filter((i) => i.ativo))).catch(() => {});
+    fetchLocaisArmazenamento().then((l) => setLocaisArmazenamento(l.filter((i) => i.ativo))).catch(() => {});
   }, []);
 
   const set = (patch: Partial<typeof vazio>) => setForm((p) => ({ ...p, ...patch }));
@@ -167,12 +184,16 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         <div><label style={labelStyle}>Número</label><input style={inputStyle} value={form.numero_produto} onChange={(e) => set({ numero_produto: e.target.value })} /></div>
         <div><label style={labelStyle}>Categoria</label>
           <select style={inputStyle} value={form.categoria} onChange={(e) => set({ categoria: e.target.value })}>
-            <option value="">—</option>{CATEGORIAS_ESTOQUE.map((c) => <option key={c} value={c}>{c}</option>)}
+            <option value="">—</option>
+            {form.categoria && !categorias.some((c) => c.nome === form.categoria) && <option value={form.categoria}>{form.categoria}</option>}
+            {categorias.map((c) => <option key={c.id} value={c.nome}>{c.nome}</option>)}
           </select>
         </div>
         <div><label style={labelStyle}>Finalidade</label>
           <select style={inputStyle} value={form.finalidade} onChange={(e) => set({ finalidade: e.target.value })}>
-            <option value="">—</option>{FINALIDADES_ESTOQUE.map((f) => <option key={f} value={f}>{f}</option>)}
+            <option value="">—</option>
+            {form.finalidade && !finalidades.some((f) => f.nome === form.finalidade) && <option value={form.finalidade}>{form.finalidade}</option>}
+            {finalidades.map((f) => <option key={f.id} value={f.nome}>{f.nome}</option>)}
           </select>
           <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
             Decide se o item aparece nos seletores de aplicação de medicamento/hormônio.
@@ -211,7 +232,8 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         <div><label style={labelStyle}>Unidade</label>
           <select style={inputStyle} value={form.unidade} onChange={(e) => set({ unidade: e.target.value })}>
             <option value="">Selecione…</option>
-            {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
+            {form.unidade && !unidades.some((u) => u.nome === form.unidade) && <option value={form.unidade}>{form.unidade}</option>}
+            {unidades.map((u) => <option key={u.id} value={u.nome}>{u.nome}</option>)}
           </select>
         </div>
 
@@ -223,7 +245,13 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         )}
         <div><label style={labelStyle}>Valor unitário (R$)</label><input type="number" style={inputStyle} value={form.valor_unitario} onChange={(e) => set({ valor_unitario: e.target.value })} /></div>
         {form.estocavel && (
-          <div><label style={labelStyle}>Local de armazenamento</label><input style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })} /></div>
+          <div><label style={labelStyle}>Local de armazenamento</label>
+            <select style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })}>
+              <option value="">—</option>
+              {form.local_armazenamento && !locaisArmazenamento.some((l) => l.nome === form.local_armazenamento) && <option value={form.local_armazenamento}>{form.local_armazenamento}</option>}
+              {locaisArmazenamento.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
+            </select>
+          </div>
         )}
         {form.estocavel && (
           <div>
@@ -244,13 +272,15 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         <div><label style={labelStyle}>Unidade (embalagem)</label>
           <select style={inputStyle} value={form.unidade_embalagem} onChange={(e) => set({ unidade_embalagem: e.target.value })}>
             <option value="">—</option>
-            {UNIDADES_EMBALAGEM.map((u) => <option key={u} value={u}>{u}</option>)}
+            {form.unidade_embalagem && !unidadesEmbalagem.some((u) => u.nome === form.unidade_embalagem) && <option value={form.unidade_embalagem}>{form.unidade_embalagem}</option>}
+            {unidadesEmbalagem.map((u) => <option key={u.id} value={u.nome}>{u.nome}</option>)}
           </select>
         </div>
         <div><label style={labelStyle}>Unidade de medida</label>
           <select style={inputStyle} value={form.medida_embalagem} onChange={(e) => set({ medida_embalagem: e.target.value })}>
             <option value="">—</option>
-            {MEDIDAS_EMBALAGEM.map((m) => <option key={m} value={m}>{m}</option>)}
+            {form.medida_embalagem && !medidasEmbalagem.some((m) => m.nome === form.medida_embalagem) && <option value={form.medida_embalagem}>{form.medida_embalagem}</option>}
+            {medidasEmbalagem.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
           </select>
         </div>
         <div><label style={labelStyle}>Quantidade por embalagem</label><input type="number" style={inputStyle} value={form.quantidade_embalagem} onChange={(e) => set({ quantidade_embalagem: e.target.value })} /></div>
