@@ -6,6 +6,13 @@ import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
 import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { EstoquePicker } from "@/components/EstoquePicker";
+
+// Mesmo padrão de nome usado no backend para reconhecer um item de estoque
+// como BST (ver MARCADORES_BST em fazenda/api/routers/agenda.py) — não há
+// categoria/princípio ativo dedicado ainda, então os dois lados casam pelo
+// nome do produto.
+const MARCADORES_BST = /\b(lactotropin|boostin|bst|somatotropina)\b/i;
 
 const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -105,16 +112,14 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
     fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
   }, []);
 
-  // Boostin só aparece como opção de produto se já tiver saldo em estoque —
-  // caso contrário o lançamento continua só com Lactotropin, mas o item já
-  // fica cadastrado (seed no backend) para quando o saldo for lançado.
-  const boostinDisponivel = useMemo(
-    () => estoqueItens.some((i) => (i.nome || "").trim().toLowerCase() === "boostin" && (i.quantidade || 0) > 0),
+  // Itens de estoque reconhecidos como BST (mesmo critério do backend) —
+  // Lactotropin/Boostin aparecem aqui só se já cadastrados, mas qualquer
+  // outro produto com nome batendo no padrão também entra (ex.: genérico
+  // cadastrado pelo usuário em Configurações > Cadastro > Estoque).
+  const itensBst = useMemo(
+    () => estoqueItens.filter((i) => MARCADORES_BST.test(i.nome || "")),
     [estoqueItens]
   );
-  useEffect(() => {
-    if (produto === "Boostin" && !boostinDisponivel) setProduto("Lactotropin");
-  }, [boostinDisponivel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pessoasAtivas = useMemo(
     () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
@@ -212,11 +217,19 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
         <div className="flex items-end gap-3 flex-wrap">
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data da aplicação</label>
             <input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
-            <select style={{ ...inputStyle, width: "9rem" }} value={produto} onChange={(e) => setProduto(e.target.value)}>
-              <option value="Lactotropin">Lactotropin</option>
-              {boostinDisponivel && <option value="Boostin">Boostin</option>}
-            </select></div>
+          <div style={{ width: "13rem" }}><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
+            <EstoquePicker
+              itens={itensBst}
+              value={produto}
+              onChange={(nome) => {
+                setProduto(nome);
+                const item = itensBst.find((i) => i.nome === nome);
+                if (item?.unidade) setUnidade(item.unidade);
+              }}
+              placeholder="Selecionar produto…"
+              finalidades={["Medicamento"]}
+              incluirNaoEstocaveis
+            /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Dose</label>
             <input type="number" step="0.01" style={{ ...inputStyle, width: "5.5rem" }} value={dose} onChange={(e) => setDose(e.target.value)} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Unidade</label>

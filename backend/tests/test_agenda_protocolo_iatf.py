@@ -169,6 +169,91 @@ class TestMarcarRealizadoIatf:
         assert d0_depois["animais"] == ["701"]
 
 
+class TestVariosLancamentosMesmoD0:
+    """Animais incluídos um a um (chamadas separadas a POST
+    /reproducao/protocolo-iatf, sem usar "em lote") criam um
+    ProtocoloIatfLancamento próprio cada — mas com o mesmo D0, todos devem
+    continuar aparecendo juntos num único card por (data prevista, dia).
+    Reproduz o relato: 9 animais em D11, só 1 aparecendo na Agenda."""
+
+    def test_animais_incluidos_um_a_um_aparecem_no_mesmo_card(self, client):
+        c, engine = client
+        numeros = [str(700 + i) for i in range(9)]
+        for numero in numeros:
+            _lancar(c, [numero])  # 9 lançamentos separados, mesmo D0 padrão
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d11_eventos = [e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 11]
+        assert len(d11_eventos) == 1, "os 9 animais têm que cair num card só, não em 9"
+        assert set(d11_eventos[0]["animais"]) == set(numeros)
+
+    def test_marcar_grupo_mesclado_confirma_aplicacoes_dos_dois_lancamentos(self, client):
+        c, engine = client
+        _lancar(c, ["700"])
+        _lancar(c, ["701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert set(d0["animais"]) == {"700", "701"}
+
+        r = c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+        assert r.status_code == 200
+        with Session(engine) as s:
+            aps = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 0)).all()
+            assert {a.numero_matriz for a in aps} == {"700", "701"}
+            assert all(a.realizada for a in aps)
+
+        eventos2 = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        assert not any(e.get("tipo") == "protocolo_iatf" and e["dia"] == 0 for e in eventos2)
+
+    def test_desfazer_grupo_mesclado_reverte_os_dois_lancamentos(self, client):
+        c, engine = client
+        _lancar(c, ["700"])
+        _lancar(c, ["701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+
+        r = c.delete(f"/agenda/realizados/{d0['id']}")
+        assert r.status_code == 200
+        with Session(engine) as s:
+            aps = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 0)).all()
+            assert all(not a.realizada and a.data_realizacao is None for a in aps)
+
+        eventos_final = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0_final = next(e for e in eventos_final if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert set(d0_final["animais"]) == {"700", "701"}
+
+    def test_marcar_apenas_um_animal_de_lancamentos_diferentes(self, client):
+        c, engine = client
+        _lancar(c, ["700"])
+        _lancar(c, ["701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+
+        c.post("/agenda/realizados", json={"evento_id": d0["id"], "animais": ["700"]})
+        with Session(engine) as s:
+            ap700 = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "700", ProtocoloIatfAplicacao.dia == 0)).first()
+            ap701 = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "701", ProtocoloIatfAplicacao.dia == 0)).first()
+            assert ap700.realizada is True
+            assert ap701.realizada is False
+
+        eventos2 = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0_depois = next(e for e in eventos2 if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert d0_depois["animais"] == ["701"]
+
+    def test_concluidos_mostra_grupo_mesclado_como_um_so(self, client):
+        c, engine = client
+        _lancar(c, ["700"])
+        _lancar(c, ["701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+
+        concluidos = c.get("/agenda/protocolo-iatf/concluidos").json()
+        assert len(concluidos) == 1
+        assert set(concluidos[0]["animais"]) == {"700", "701"}
+
+
 class TestDesfazerIatf:
     def test_desfazer_grupo_volta_a_aparecer_na_agenda(self, client):
         c, engine = client
