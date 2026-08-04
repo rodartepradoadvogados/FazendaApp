@@ -165,6 +165,7 @@ class EstoqueIn(BaseModel):
     conta_gerencial_despesa_padrao: str | None = None
     conta_gerencial_receita_padrao: str | None = None
     gera_receita: bool = False
+    gera_patrimonio: bool = False
     exibir_necessidade_compra_agenda: bool = False
     estocavel: bool = True
     data_inicio_controle: date | None = None
@@ -221,6 +222,7 @@ def criar_item_estoque(
         conta_gerencial_despesa_padrao=dados.conta_gerencial_despesa_padrao,
         conta_gerencial_receita_padrao=dados.conta_gerencial_receita_padrao,
         gera_receita=dados.gera_receita,
+        gera_patrimonio=dados.gera_patrimonio,
         exibir_necessidade_compra_agenda=dados.exibir_necessidade_compra_agenda,
         estocavel=dados.estocavel,
         data_inicio_controle=dados.data_inicio_controle if dados.estocavel else None,
@@ -279,6 +281,7 @@ def atualizar_item_estoque(
     item.conta_gerencial_despesa_padrao = dados.conta_gerencial_despesa_padrao
     item.conta_gerencial_receita_padrao = dados.conta_gerencial_receita_padrao
     item.gera_receita = dados.gera_receita
+    item.gera_patrimonio = dados.gera_patrimonio
     item.exibir_necessidade_compra_agenda = dados.exibir_necessidade_compra_agenda
     item.estocavel = dados.estocavel
     item.data_inicio_controle = dados.data_inicio_controle if dados.estocavel else None

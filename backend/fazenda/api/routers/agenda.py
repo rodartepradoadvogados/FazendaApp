@@ -38,8 +38,8 @@ from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoe
 from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo
-from fazenda.rules.patrimonio import status_manutencao
+from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -825,6 +825,33 @@ def calcular_agenda(
             "tipo": "patrimonio_manutencao", "patrimonio_id": item.id, "situacao_manutencao": situacao,
         })
 
+    # Atualização de valor de mercado vencida — só para patrimônio não
+    # depreciável (ex.: terra, ver Patrimonio.depreciavel). Some sozinha
+    # quando o valor é registrado (PUT /financeiro/patrimonio/{id}/valor-mercado
+    # recalcula a data base) — não pode ser dispensada sem registrar (mesmo
+    # padrão da manutenção preventiva acima).
+    frequencia_padrao_valor_mercado = patrimonio_atualizacao_valor_mercado_meses()
+    itens_nao_depreciaveis = session.exec(
+        select(Patrimonio).where(Patrimonio.depreciavel == False)  # noqa: E712
+    ).all()
+    for item in itens_nao_depreciaveis:
+        if item.data_baixa:
+            continue
+        prox = proxima_atualizacao_valor_mercado(item.model_dump(), frequencia_padrao_valor_mercado)
+        if not prox or prox > data:
+            continue
+        chave = f"patrimonio_valor_mercado_{item.id}"
+        if chave in realizados:
+            continue
+        eventos_patrimonio.append({
+            "id": chave, "data": prox.isoformat(), "categoria": "Gestão/Financeiro",
+            "descricao": f"Atualizar valor de mercado — {item.nome}" + (f" (nº {item.numero})" if item.numero else ""),
+            "numero_animal": None,
+            "observacao": f"Última avaliação: {item.valor_mercado_atual if item.valor_mercado_atual is not None else item.valor_total}",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            "tipo": "patrimonio_valor_mercado", "patrimonio_id": item.id,
+        })
+
     # Diária com data de fim prevista chegando hoje — avisa no próprio dia
     # (não antes, não depois) para o usuário decidir se encerra ou estende.
     eventos_diaria_fim = []
@@ -1402,6 +1429,8 @@ def marcar_realizado(
         raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — preencha o dado que falta na ficha do animal.")
     if dados.evento_id.startswith("patrimonio_manutencao_"):
         raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — registre a manutenção no item de patrimônio (isso atualiza a próxima data sozinho).")
+    if dados.evento_id.startswith("patrimonio_valor_mercado_"):
+        raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — registre o novo valor de mercado no item de patrimônio (isso atualiza a próxima data sozinho).")
     if dados.evento_id.startswith("protocolo_iatf_"):
         avisos = _marcar_protocolo_iatf_realizado(
             session, dados.evento_id, dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,

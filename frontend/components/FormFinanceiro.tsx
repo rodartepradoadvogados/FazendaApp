@@ -6,7 +6,7 @@ import {
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
   type SugestoesCadastro, type SugestaoCadastroItem,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
-  FINALIDADES_ESTOQUE,
+  FINALIDADES_ESTOQUE, type PatrimonioPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -143,9 +143,26 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   // Pré-preenchimento via query string (ex.: botão "Lançar financeiro" do
   // calendário sanitário → /lancamentos?ir=financeiro_despesa&servico=Exame%20de%20brucelose).
+  // "patrimonio_*" vem de Controle Financeiro > Patrimônio > "+ Novo
+  // patrimônio" > "É uma compra agora?" — a criação do item de Patrimônio só
+  // acontece quando ESTE lançamento for salvo (ver criarPatrimonio abaixo e
+  // POST /financeiro/lancamentos, campo criar_patrimonio).
+  const [criarPatrimonio, setCriarPatrimonio] = useState<PatrimonioPayload | null>(null);
   useEffect(() => {
-    const servico = new URLSearchParams(window.location.search).get("servico");
+    const params = new URLSearchParams(window.location.search);
+    const servico = params.get("servico");
     if (servico) setItens([{ ...itemVazio(), tipo_item: "servico", produto: servico }]);
+    const patrimonioNome = params.get("patrimonio_nome");
+    if (patrimonioNome) {
+      const valor = params.get("patrimonio_valor") || "";
+      setItens([{ ...itemVazio(), tipo_item: "produto", produto: patrimonioNome, valor_total: valor, modoValor: "total" }]);
+      setCriarPatrimonio({
+        nome: patrimonioNome,
+        tipo: params.get("patrimonio_tipo") || null,
+        valor_total: valor ? Number(valor) : null,
+        depreciavel: params.get("patrimonio_depreciavel") !== "0",
+      });
+    }
   }, []);
   // Pré-preenchimento vindo do Balanço de estoque ("gerar movimentação
   // financeira" ao lançar entrada/saída) — puxa produto, conta gerencial,
@@ -647,6 +664,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       conta_bancaria: !parcelado && jaPago ? contaBancaria || null : null,
       numero_documento_pagamento: !parcelado && jaPago ? numeroDocumentoPagamento || null : null,
       forma_pagamento: !parcelado && jaPago ? formaPagamento || null : null,
+      criar_patrimonio: criarPatrimonio,
     };
   }
 
@@ -702,6 +720,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   return (
     <>
+      {criarPatrimonio && (
+        <div className="card mb-3" style={{ border: "1px solid var(--dourado)", background: "rgba(94,26,46,0.08)" }}>
+          <p style={{ fontSize: "0.8rem", margin: 0 }}>
+            Ao salvar, esta compra cria o item de patrimônio <strong>{criarPatrimonio.nome}</strong>
+            {criarPatrimonio.tipo ? ` (${criarPatrimonio.tipo})` : ""} já vinculado a este lançamento.
+          </p>
+        </div>
+      )}
       {/* Rascunho não salvo de uma edição anterior — retomar ou descartar */}
       {rascunhoPendente && !sujo && (
         <div className="card mb-3" style={{ border: "1px solid var(--amber)", background: "rgba(217,119,6,0.08)" }}>

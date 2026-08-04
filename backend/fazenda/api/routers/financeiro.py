@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
@@ -29,7 +29,10 @@ from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.sugestao_documento import sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
-from fazenda.rules.patrimonio import calcular_depreciacao, somar_meses, status_manutencao
+from fazenda.rules.patrimonio import calcular_depreciacao, proxima_atualizacao_valor_mercado, somar_meses, status_manutencao
+from fazenda.rules.parametros import patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
+from fazenda.config import settings
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -209,6 +212,28 @@ class ItemIn(BaseModel):
     valor_total: float
 
 
+class PatrimonioIn(BaseModel):
+    tipo: Optional[str] = None
+    nome: str
+    numero: Optional[str] = None
+    atividade_cultura: Optional[str] = None
+    data_imobilizacao: Optional[date] = None
+    quantidade: Optional[float] = None
+    unidade: Optional[str] = None
+    valor_total: Optional[float] = None
+    # depreciavel=True (padrão): informe metodo_depreciacao/vida_util/valor_residual.
+    # depreciavel=False (ex.: terra): informe valor_mercado_atual no lugar de
+    # valor_total (se vazio, valor_total é usado como valor de mercado inicial)
+    # e, opcionalmente, a frequência de atualização (None = usa o padrão do
+    # sistema, 0 = nunca).
+    depreciavel: bool = True
+    metodo_depreciacao: Optional[str] = None
+    vida_util: Optional[str] = None
+    valor_residual: Optional[float] = None
+    valor_mercado_atual: Optional[float] = None
+    atualizacao_valor_mercado_frequencia_meses: Optional[int] = None
+
+
 class LancamentoIn(BaseModel):
     tipo: str  # "receita" | "despesa"
     itens: list[ItemIn]  # um ou mais produtos/serviços da mesma nota
@@ -241,6 +266,12 @@ class LancamentoIn(BaseModel):
     # Vincula esta nota fiscal/recibo a um Pedido (Pedidos > módulo próprio) —
     # é só a partir deste vínculo que o pedido passa a refletir em Financeiro.
     pedido_id: Optional[int] = None
+    # Preenchido = esta compra é a aquisição de um item de patrimônio novo —
+    # cria o registro em Patrimônio e já vincula (patrimonio_id) ao lançamento,
+    # numa única operação (ver Configurações > Cadastro > Itens de estoque,
+    # flag "Patrimônio", e Controle Financeiro > Patrimônio > "+ Novo
+    # patrimônio" > "É uma compra agora?"). None = lançamento comum, sem vínculo.
+    criar_patrimonio: Optional[PatrimonioIn] = None
 
 
 FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
@@ -425,6 +456,7 @@ def listar_lancamentos(
             "data_emissao": c.data_emissao.isoformat() if c.data_emissao else None,
             "data_prevista_entrada": c.data_prevista_entrada.isoformat() if c.data_prevista_entrada else None,
             "data_pedido": c.data_pedido.isoformat() if c.data_pedido else None,
+            "patrimonio_id": c.patrimonio_id,
             "mes_competencia": f"{dc.year}-{dc.month:02d}" if dc else None,
             "ano_competencia": dc.year if dc else None,
             "mes_caixa": f"{dp.year}-{dp.month:02d}" if dp else None,
@@ -516,6 +548,28 @@ def itens_por_conta(
         for it in itens
         if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
     ]
+
+
+def _url_dashboard_supabase() -> str | None:
+    """Deriva a URL do painel do Supabase (Table Editor) a partir do
+    SUPABASE_URL já configurado (mesma conta usada pelo Storage) — evita
+    precisar de uma segunda variável de ambiente só para o link do botão.
+    ex.: https://abcdefgh.supabase.co -> https://supabase.com/dashboard/project/abcdefgh/editor"""
+    if not settings.supabase_url:
+        return None
+    host = settings.supabase_url.rstrip("/").split("://")[-1]
+    ref = host.split(".")[0]
+    return f"https://supabase.com/dashboard/project/{ref}/editor" if ref else None
+
+
+@router.get("/supabase-dashboard-url")
+def supabase_dashboard_url(_: None = Depends(exigir_nao_consultor())) -> dict:
+    """Link para o painel do Supabase (Table Editor) — Relatórios financeiros
+    > botão de acesso ao banco de dados externo. Disponível para quem tem o
+    módulo financeiro (o router inteiro já exige isso) ou é contador; bloqueado
+    para consultor (ver fazenda.auth.exigir_nao_consultor). `url: None` quando
+    o Supabase não está configurado (SUPABASE_URL vazio)."""
+    return {"url": _url_dashboard_supabase()}
 
 
 @router.get("/opcoes")
@@ -1089,16 +1143,35 @@ def custo_litro_leite(
     }
 
 
+@router.get("/patrimonio/lista-simples")
+def listar_patrimonio_simples(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Id + nome de cada item de patrimônio (sem depreciação/manutenção) —
+    para o seletor "Vincular a patrimônio" na edição de um lançamento
+    (qualquer usuário com módulo financeiro, não só administrador; a aba
+    Patrimônio em si continua admin-only, ver GET /financeiro/patrimonio)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Patrimonio).where(Patrimonio.data_baixa == None)  # noqa: E711
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    return [{"id": p.id, "nome": p.nome, "tipo": p.tipo} for p in session.exec(query).all()]
+
+
 @router.get("/patrimonio")
 def listar_patrimonio(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> dict:
-    """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv),
-    já com a depreciação linear calculada (valor atual = valor total menos a
-    depreciação acumulada desde a imobilização)."""
+    """Lista o patrimônio/imobilizado da fazenda, já com a depreciação linear
+    calculada (valor atual = valor total menos a depreciação acumulada desde
+    a imobilização) — ou, para patrimônio não depreciável (`depreciavel=False`,
+    ex.: terra), o valor de mercado mais recente. Só administradores da
+    fazenda têm acesso a esta aba."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
+    frequencia_padrao = patrimonio_atualizacao_valor_mercado_meses()
     query = select(Patrimonio)
     if fazenda_id is not None:
         query = query.where(Patrimonio.fazenda_id == fazenda_id)
@@ -1112,6 +1185,8 @@ def listar_patrimonio(
         dep = calcular_depreciacao(d, hoje)
         d.update(dep)
         d.update(status_manutencao(d, hoje))
+        prox_valor_mercado = proxima_atualizacao_valor_mercado(d, frequencia_padrao)
+        d["proxima_atualizacao_valor_mercado"] = prox_valor_mercado.isoformat() if prox_valor_mercado else None
         itens.append(d)
         if not i.data_baixa:
             valor_total_bruto += i.valor_total or 0
@@ -1124,6 +1199,108 @@ def listar_patrimonio(
         "valor_atual_total": round(valor_atual_total, 2),
         "inconsistencias": inconsistencias,
     }
+
+
+@router.post("/patrimonio", status_code=201)
+def criar_patrimonio(
+    dados: PatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Cadastra um item de patrimônio já existente na fazenda (não uma
+    compra nova — para isso, ver POST /financeiro/lancamentos com
+    `criar_patrimonio` preenchido, que cria os dois registros vinculados de
+    uma vez). Substitui o upload de CSV como forma de cadastro."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    item = Patrimonio(
+        **dados.model_dump(exclude={"nome"}), nome=dados.nome.strip(), fazenda_id=fazenda_id,
+    )
+    if not item.depreciavel and item.valor_mercado_atual is None:
+        item.valor_mercado_atual = item.valor_total
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+@router.put("/patrimonio/{item_id}")
+def atualizar_patrimonio(
+    item_id: int, dados: PatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Patrimonio, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    for campo, valor in dados.model_dump(exclude={"nome"}).items():
+        setattr(item, campo, valor)
+    item.nome = dados.nome.strip()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+class ValorMercadoIn(BaseModel):
+    valor_mercado_atual: float
+    data: Optional[date] = None
+
+
+@router.put("/patrimonio/{item_id}/valor-mercado")
+def atualizar_valor_mercado(
+    item_id: int, dados: ValorMercadoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Registra uma nova avaliação de valor de mercado — só para patrimônio
+    não depreciável (ver Patrimonio.depreciavel). Atualiza
+    `data_ultima_atualizacao_valor_mercado`, que é a base do próximo cálculo
+    de "quando cobrar de novo" (ver rules.patrimonio.proxima_atualizacao_valor_mercado)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Patrimonio, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if item.depreciavel:
+        raise HTTPException(status_code=400, detail="Este item deprecia normalmente — não usa valor de mercado")
+    item.valor_mercado_atual = dados.valor_mercado_atual
+    item.data_ultima_atualizacao_valor_mercado = dados.data or date.today()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+class VincularPatrimonioIn(BaseModel):
+    patrimonio_id: Optional[int] = None  # None = desvincula
+
+
+@router.put("/lancamentos/{numero_lancamento}/patrimonio")
+def vincular_lancamento_patrimonio(
+    numero_lancamento: str, dados: VincularPatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Vincula (ou desvincula, com patrimonio_id=None) um lançamento já
+    existente a um item de Patrimônio — FK de verdade (ContaGerencial.patrimonio_id),
+    editável tanto por aqui (tela do lançamento) quanto pela tela de
+    Patrimônio (mesmo endpoint, só troca qual lado abre o seletor)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
+    if not contas:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if dados.patrimonio_id is not None:
+        patrimonio = session.get(Patrimonio, dados.patrimonio_id)
+        if not patrimonio or (fazenda_id is not None and patrimonio.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    for conta in contas:
+        conta.patrimonio_id = dados.patrimonio_id
+        session.add(conta)
+    session.commit()
+    return {"numero_lancamento": numero_lancamento, "patrimonio_id": dados.patrimonio_id}
 
 
 class PlanoManutencaoIn(BaseModel):
@@ -1141,6 +1318,7 @@ def atualizar_plano_manutencao(
     dados: PlanoManutencaoIn,
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> dict:
     """Cadastra/edita o plano de manutenção preventiva (opcional) de um item de
     patrimônio — só periodicidade por data (ver rules/patrimonio.py). Sem
@@ -1175,6 +1353,7 @@ def listar_manutencoes(
     item_id: int,
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> list[dict]:
     """Histórico de manutenções registradas para um item de patrimônio."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
@@ -1211,6 +1390,7 @@ def registrar_manutencao(
     item_id: int, dados: ManutencaoRealizadaIn,
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> dict:
     """
     Registra que a manutenção preventiva de um item foi paga/realizada:
@@ -1425,6 +1605,21 @@ def criar_lancamento(
     if dados.pedido_id:
         from fazenda.api.routers.pedidos import atualizar_status_por_lancamento
         atualizar_status_por_lancamento(session, dados.pedido_id, valor_liquido)
+
+    if dados.criar_patrimonio:
+        pat = dados.criar_patrimonio
+        item_patrimonio = Patrimonio(
+            **pat.model_dump(exclude={"nome"}), nome=pat.nome.strip(), fazenda_id=fazenda_id,
+        )
+        if not item_patrimonio.depreciavel and item_patrimonio.valor_mercado_atual is None:
+            item_patrimonio.valor_mercado_atual = item_patrimonio.valor_total
+        session.add(item_patrimonio)
+        session.commit()
+        session.refresh(item_patrimonio)
+        for c in criados:
+            c.patrimonio_id = item_patrimonio.id
+            session.add(c)
+        session.commit()
 
     # Compra de produto estocável dá entrada automática no estoque — só para
     # despesa e só quando NÃO está vinculada a um Pedido (nesse caso a
@@ -1904,43 +2099,67 @@ async def ler_documento_anexado(
     return extraido
 
 
-# Tamanho máximo por anexo (boleto, contrato etc.) — o conteúdo fica no banco,
-# então um limite generoso evita que um arquivo enorme infle a tabela à toa.
+# Tamanho máximo por anexo (boleto, contrato etc.) — sobe pro Supabase Storage,
+# mas o limite continua generoso o bastante sem travar upload de PDF grande.
 TAMANHO_MAXIMO_ANEXO = 15 * 1024 * 1024  # 15 MB
+
+
+def _caminho_anexo_lancamento(session: Session, fazenda_id: int | None, numero_lancamento: str, nome_arquivo: str) -> str:
+    """fazenda-X/numero_lancamento/0001_nome.ext — sequencial dentro do
+    lançamento, mesmo espírito de _proximo_caminho em routers/documentos.py."""
+    pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/{numero_lancamento}"
+    existentes = session.exec(
+        select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
+    ).all()
+    seq = 1 + len(existentes)
+    return f"{pasta}/{seq:04d}_{nome_arquivo}"
 
 
 @router.post("/lancamentos/{numero_lancamento}/anexos", status_code=201)
 async def anexar_arquivo_lancamento(
-    numero_lancamento: str, file: UploadFile,
+    numero_lancamento: str, file: UploadFile, categoria: str | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Anexa um arquivo (ex.: boleto) a um lançamento já criado — várias chamadas
-    para vários arquivos do mesmo lançamento (um boleto por parcela, por
-    exemplo). Não faz nenhuma leitura/OCR aqui; isso já aconteceu, se foi o
-    caso, em /ler-documento antes de o lançamento ser salvo."""
+    """Anexa um arquivo (ex.: boleto, nota fiscal) a um lançamento já criado —
+    várias chamadas para vários arquivos do mesmo lançamento (um boleto por
+    parcela, por exemplo), cada um com sua própria categoria (ver
+    TIPOS_DOCUMENTO). Sobe para o Supabase Storage — não faz nenhuma
+    leitura/OCR aqui; isso já aconteceu, se foi o caso, em /ler-documento
+    antes de o lançamento ser salvo."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
     if fazenda_id is not None:
         query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
-    if not session.exec(query_conta).first():
+    conta = session.exec(query_conta).first()
+    if not conta:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     conteudo = await file.read()
     if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
         raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    nome_arquivo = file.filename or "arquivo"
+    caminho = _caminho_anexo_lancamento(session, fazenda_id, numero_lancamento, nome_arquivo)
+    try:
+        enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream", bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     anexo = LancamentoAnexo(
         numero_lancamento=numero_lancamento,
-        nome_arquivo=file.filename or "arquivo",
+        nome_arquivo=nome_arquivo,
         mime_type=file.content_type or "application/octet-stream",
         tamanho_bytes=len(conteudo),
-        conteudo=conteudo,
+        categoria=categoria or conta.tipo_documento,
+        caminho_storage=caminho,
         usuario_id=user.id if isinstance(user, Usuario) else None,
         fazenda_id=fazenda_id,
     )
     session.add(anexo)
     session.commit()
     session.refresh(anexo)
-    return {"id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type, "tamanho_bytes": anexo.tamanho_bytes}
+    return {
+        "id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type,
+        "tamanho_bytes": anexo.tamanho_bytes, "categoria": anexo.categoria,
+    }
 
 
 @router.get("/lancamentos/{numero_lancamento}/anexos")
@@ -1956,7 +2175,7 @@ def listar_anexos_lancamento(
     anexos = session.exec(query).all()
     return [
         {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
-         "criado_em": a.criado_em.isoformat()}
+         "categoria": a.categoria, "criado_em": a.criado_em.isoformat()}
         for a in anexos
     ]
 
@@ -1970,8 +2189,15 @@ def baixar_anexo(
     anexo = session.get(LancamentoAnexo, anexo_id)
     if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    if anexo.caminho_storage:
+        try:
+            conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    else:
+        conteudo = anexo.conteudo  # formato antigo (legado) — ver docstring do model
     return Response(
-        content=anexo.conteudo, media_type=anexo.mime_type,
+        content=conteudo, media_type=anexo.mime_type,
         headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
     )
 
@@ -1985,6 +2211,11 @@ def excluir_anexo(
     anexo = session.get(LancamentoAnexo, anexo_id)
     if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    if anexo.caminho_storage:
+        try:
+            excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     session.delete(anexo)
     session.commit()
     return {"excluido": True}

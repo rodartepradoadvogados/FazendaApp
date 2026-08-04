@@ -89,6 +89,7 @@ DEFINICOES: list[dict] = [
     {"chave": "cronograma_sanitario_min_animais_agrupamento", "grupo": "agenda_sistema", "label": "Calendário sanitário — mínimo de animais para sugerir chamada do veterinário", "valor": 15, "unidade": "animais"},
     {"chave": "cronograma_sanitario_janela_agrupamento_dias", "grupo": "agenda_sistema", "label": "Calendário sanitário — janela de agrupamento entre eventos próximos", "valor": 7, "unidade": "dias"},
     {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
+    {"chave": "patrimonio_atualizacao_valor_mercado_meses", "grupo": "agenda_sistema", "label": "Patrimônio não depreciável — frequência padrão de atualização do valor de mercado (0 = nunca)", "valor": 12, "unidade": "meses"},
     {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
 
     # ---- Metas reprodutivas ----------------------------------------------------
@@ -364,6 +365,13 @@ def cronograma_sanitario_min_animais_agrupamento() -> int:
 
 def cronograma_sanitario_janela_agrupamento_dias() -> int:
     return int(get_param("cronograma_sanitario_janela_agrupamento_dias", 7) or 7)
+
+
+def patrimonio_atualizacao_valor_mercado_meses() -> int:
+    """Frequência padrão (em meses) de "atualizar valor de mercado" pra
+    patrimônio não depreciável (ex.: terra) sem override próprio — ver
+    Patrimonio.atualizacao_valor_mercado_frequencia_meses. 0 = nunca."""
+    return int(get_param("patrimonio_atualizacao_valor_mercado_meses", 12) or 12)
 
 
 def dias_contas_a_pagar_agenda() -> int:

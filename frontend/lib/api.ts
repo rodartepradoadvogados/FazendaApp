@@ -23,7 +23,7 @@ export function manterConectadoAtivo(): boolean {
 // Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
 // — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
 // que nunca teve mais de uma fazenda vinculada (o caso de hoje).
-export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean };
+export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean; vinculo_consultor?: boolean };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
@@ -76,6 +76,13 @@ export function ehDono(): boolean {
 // navegação normal da fazenda. Ver components/AuthShell.tsx.
 export function ehContador(): boolean {
   return getFazendaAtual()?.vinculo_contador === true;
+}
+// Vínculo externo (veterinário/agrônomo convidado) — mesmo acesso de um
+// funcionário comum dentro da fazenda, mas deve ficar de fora de
+// funcionalidades sensíveis específicas (ex.: link para o banco de dados
+// externo em Relatórios financeiros), mesmo com o módulo financeiro liberado.
+export function ehConsultor(): boolean {
+  return getFazendaAtual()?.vinculo_consultor === true;
 }
 // Administração de News/Blog (matérias: criar, editar, revisar, aprovar) —
 // o dono sempre pode; além dele, só quem o dono designar via o toggle
@@ -3437,9 +3444,56 @@ export async function fetchLancamentos() {
   return res.json();
 }
 
+export async function fetchPatrimonioListaSimples(): Promise<{ id: number; nome: string; tipo: string | null }[]> {
+  const res = await authFetch(`${API}/financeiro/patrimonio/lista-simples`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Patrimônio error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchPatrimonio() {
   const res = await authFetch(`${API}/financeiro/patrimonio`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Patrimônio error: ${res.status}`);
+  return res.json();
+}
+
+export type PatrimonioPayload = {
+  nome: string; tipo?: string | null; numero?: string | null; atividade_cultura?: string | null;
+  data_imobilizacao?: string | null; quantidade?: number | null; unidade?: string | null;
+  valor_total?: number | null; depreciavel?: boolean; metodo_depreciacao?: string | null;
+  vida_util?: string | null; valor_residual?: number | null; valor_mercado_atual?: number | null;
+  atualizacao_valor_mercado_frequencia_meses?: number | null;
+};
+
+export async function criarPatrimonio(dados: PatrimonioPayload) {
+  const res = await authFetch(`${API}/financeiro/patrimonio`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar patrimônio"); }
+  return res.json();
+}
+
+export async function atualizarPatrimonio(itemId: number, dados: PatrimonioPayload) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar patrimônio"); }
+  return res.json();
+}
+
+export async function atualizarValorMercadoPatrimonio(itemId: number, valorMercadoAtual: number, data?: string) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/valor-mercado`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ valor_mercado_atual: valorMercadoAtual, data: data || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar valor de mercado"); }
+  return res.json();
+}
+
+export async function vincularLancamentoPatrimonio(numeroLancamento: string, patrimonioId: number | null) {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patrimonio_id: patrimonioId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular patrimônio"); }
   return res.json();
 }
 
@@ -3475,6 +3529,15 @@ export async function registrarManutencaoPatrimonio(itemId: number, dados: {
 export async function fetchOpcoesFinanceiro() {
   const res = await authFetch(`${API}/financeiro/opcoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Opções financeiro error: ${res.status}`);
+  return res.json();
+}
+
+// Link pro painel do Supabase (Table Editor) — botão em Relatórios
+// financeiros; backend bloqueia consultor (ver fazenda.auth.exigir_nao_consultor).
+// url: null quando o Supabase não está configurado.
+export async function fetchSupabaseDashboardUrl(): Promise<{ url: string | null }> {
+  const res = await authFetch(`${API}/financeiro/supabase-dashboard-url`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Link do Supabase error: ${res.status}`);
   return res.json();
 }
 
@@ -3816,11 +3879,12 @@ export async function lerDocumentoFinanceiro(file: File) {
 
 // Anexos do lançamento (ex.: boleto de um parcelamento) — o lançamento já
 // precisa existir (numero_lancamento vem do retorno de criarLancamentoFinanceiro).
-export type AnexoLancamento = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; criado_em?: string };
+export type AnexoLancamento = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria?: string | null; criado_em?: string };
 
-export async function anexarArquivoLancamento(numeroLancamento: string, file: File): Promise<AnexoLancamento> {
+export async function anexarArquivoLancamento(numeroLancamento: string, file: File, categoria?: string | null): Promise<AnexoLancamento> {
   const form = new FormData();
   form.append("file", file);
+  if (categoria) form.append("categoria", categoria);
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar o arquivo"); }
   return res.json();

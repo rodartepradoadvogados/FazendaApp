@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Fotos do campo (app móvel) — bucket separado do arquivo fiscal-contábil
     # acima; mesma conta/chave de serviço do Supabase, ver fazenda/api/routers/fotos.py.
     supabase_bucket_fotos: str = "fotos-campo"
+    # Anexo de lançamento financeiro (comprovante/nota de uma conta a pagar ou
+    # receber) — bucket próprio, mesma conta/chave de serviço do Supabase, ver
+    # fazenda/api/routers/financeiro.py (anexos de LancamentoAnexo).
+    supabase_bucket_financeiro: str = "anexos-financeiro"
 
     # Push do app Android NATIVO (Capacitor) via Firebase Cloud Messaging —
     # canal irmão do Web Push (VAPID, acima em fazenda/api/routers/push.py):

@@ -43,6 +43,18 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
     data_imob = item.get("data_imobilizacao")
     vida_util_anos = _vida_util_em_anos(item.get("vida_util"))
 
+    if item.get("depreciavel") is False:
+        # Só valoriza (ex.: terra/fazenda) — nunca deprecia; o "valor atual" é
+        # o valor de mercado mais recente informado, ou o valor de aquisição
+        # enquanto nenhuma atualização foi feita ainda. Nunca gera inconsistência
+        # por falta de vida útil/data de imobilização — não se aplica aqui.
+        valor_mercado = item.get("valor_mercado_atual")
+        return {
+            "depreciacao_acumulada": None,
+            "valor_atual": round(valor_mercado if valor_mercado is not None else valor_total, 2),
+            "vida_util_anos": None,
+            "inconsistencia": None,
+        }
     if item.get("data_baixa"):
         # Já baixado — parou de depreciar; o valor atual é o residual cadastrado.
         return {
@@ -111,3 +123,24 @@ def status_manutencao(item: dict, hoje: date | None = None) -> dict:
     else:
         situacao = "ok"
     return {"situacao_manutencao": situacao, "dias_para_manutencao": dias}
+
+
+def proxima_atualizacao_valor_mercado(item: dict, frequencia_padrao_meses: int) -> date | None:
+    """Data da próxima pendência de "atualizar valor de mercado" (Agenda) —
+    só para patrimônio não depreciável (ver Patrimonio.depreciavel). None =
+    nunca gera pendência: item deprecia normalmente, já foi baixado, ou a
+    frequência (própria do item ou o padrão do sistema) é 0 ("nunca").
+
+    frequencia_meses do PRÓPRIO item, quando preenchida, vence a do sistema
+    (override por item) — 0 é "nunca" mesmo que o padrão do sistema não seja."""
+    if item.get("depreciavel") is not False or item.get("data_baixa"):
+        return None
+    frequencia = item.get("atualizacao_valor_mercado_frequencia_meses")
+    if frequencia is None:
+        frequencia = frequencia_padrao_meses
+    if not frequencia:
+        return None
+    base = item.get("data_ultima_atualizacao_valor_mercado") or item.get("data_imobilizacao")
+    if not base:
+        return None
+    return somar_meses(base, frequencia)

@@ -57,6 +57,17 @@ class TestCriarItemEstoque:
         r = c.post("/estoque/", json={"nome": "Ração X", "unidade": "kg"})
         assert r.status_code == 409
 
+    def test_flag_gera_patrimonio(self, client):
+        c, _ = client
+        r = c.post("/estoque/", json={"nome": "Trator Massey", "gera_patrimonio": True})
+        assert r.status_code == 201, r.text
+        assert r.json()["gera_patrimonio"] is True
+
+    def test_gera_patrimonio_padrao_false(self, client):
+        c, _ = client
+        r = c.post("/estoque/", json={"nome": "Ração Y", "unidade": "kg"})
+        assert r.json()["gera_patrimonio"] is False
+
 
 class TestAtualizarItemEstoque:
     def test_edita_todos_os_campos(self, client):

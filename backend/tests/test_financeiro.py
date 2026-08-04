@@ -134,7 +134,7 @@ class TestNumeroLancamento:
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
 
@@ -153,6 +153,16 @@ def client():
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    # Fake do Supabase Storage (anexos de lançamento) — guarda em memória em
+    # vez de falar de verdade com o Supabase, mesmo padrão de
+    # test_arquivo_contador_desbloqueio.py, mas com um "bucket" fake de
+    # verdade (dict) para os testes que conferem o conteúdo baixado.
+    import fazenda.api.routers.financeiro as financeiro_mod
+    _bucket_fake: dict[str, bytes] = {}
+    monkeypatch.setattr(financeiro_mod, "enviar_arquivo", lambda caminho, conteudo, *a, **k: _bucket_fake.__setitem__(caminho, conteudo))
+    monkeypatch.setattr(financeiro_mod, "baixar_arquivo", lambda caminho, *a, **k: _bucket_fake[caminho])
+    monkeypatch.setattr(financeiro_mod, "excluir_arquivo", lambda caminho, *a, **k: _bucket_fake.pop(caminho, None))
 
     with TestClient(main.app) as c:
         yield c, engine
@@ -382,6 +392,44 @@ class TestAnexosLancamento:
         assert c.delete(f"/financeiro/anexos/{anexo_id}").status_code == 200
         assert c.get(f"/financeiro/anexos/{anexo_id}").status_code == 404
         assert c.get(f"/financeiro/lancamentos/{numero}/anexos").json() == []
+
+    def test_categoria_explicita_e_gravada(self, client):
+        c, _ = client
+        numero = self._criar_lancamento(c)
+        r = c.post(
+            f"/financeiro/lancamentos/{numero}/anexos",
+            data={"categoria": "Nota fiscal"},
+            files={"file": ("nf.pdf", b"conteudo", "application/pdf")},
+        )
+        assert r.json()["categoria"] == "Nota fiscal"
+        assert c.get(f"/financeiro/lancamentos/{numero}/anexos").json()[0]["categoria"] == "Nota fiscal"
+
+    def test_sem_categoria_explicita_herda_tipo_documento_do_lancamento(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "tipo_documento": "Recibo", "itens": [{"produto": "Insumo", "valor_total": 500.0}],
+        })
+        numero = r.json()["numero_lancamento"]
+        r = c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("x.pdf", b"conteudo", "application/pdf")})
+        assert r.json()["categoria"] == "Recibo"
+
+    def test_anexo_legado_sem_caminho_storage_continua_baixavel(self, client):
+        """Anexo já existente antes da migração pro Supabase (conteudo em
+        bytes no Postgres, sem caminho_storage) — precisa continuar sendo
+        baixado normalmente, sem tentar falar com o Supabase."""
+        c, engine = client
+        from fazenda.models import LancamentoAnexo
+        numero = self._criar_lancamento(c)
+        with Session(engine) as s:
+            legado = LancamentoAnexo(
+                numero_lancamento=numero, nome_arquivo="antigo.pdf", mime_type="application/pdf",
+                tamanho_bytes=7, conteudo=b"legado!",
+            )
+            s.add(legado); s.commit(); s.refresh(legado)
+            anexo_id = legado.id
+        r = c.get(f"/financeiro/anexos/{anexo_id}")
+        assert r.status_code == 200
+        assert r.content == b"legado!"
 
 
 class TestPlanoContas:
@@ -958,3 +1006,19 @@ class TestLancamentoRecorrente:
         modelo_id = self._criar_modelo(c).json()["id"]
         r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={"valor": 0})
         assert r.status_code == 400
+
+
+class TestSupabaseDashboardUrl:
+    def test_sem_config_devolve_url_nula(self, client):
+        c, _ = client
+        r = c.get("/financeiro/supabase-dashboard-url")
+        assert r.status_code == 200
+        assert r.json()["url"] is None
+
+    def test_deriva_url_do_supabase_url_configurado(self, client, monkeypatch):
+        c, _ = client
+        from fazenda.config import settings
+        monkeypatch.setattr(settings, "supabase_url", "https://abcdefgh.supabase.co")
+        r = c.get("/financeiro/supabase-dashboard-url")
+        assert r.status_code == 200
+        assert r.json()["url"] == "https://supabase.com/dashboard/project/abcdefgh/editor"
