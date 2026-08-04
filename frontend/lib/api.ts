@@ -3508,6 +3508,99 @@ export async function atualizarPlanoManutencaoPatrimonio(itemId: number, dados: 
   return res.json();
 }
 
+// ── Cartão de crédito (Controle Financeiro > Cartão de crédito) ────────────
+export type CartaoCredito = {
+  id: number; apelido: string; bandeira: string | null; banco_emissor: string | null;
+  conta_bancaria_id: number | null; dia_fechamento: number; dia_vencimento: number;
+  melhor_dia_compra: number; limite: number | null; controla_milhas: boolean;
+  milhas_por_real: number | null; ativo: boolean; milhas_totais?: number | null;
+};
+export type CartaoCreditoPayload = {
+  apelido: string; bandeira?: string | null; banco_emissor?: string | null;
+  conta_bancaria_id?: number | null; dia_fechamento: number; dia_vencimento: number;
+  limite?: number | null; controla_milhas?: boolean; milhas_por_real?: number | null; ativo?: boolean;
+};
+export type FaturaCartao = {
+  id: number; cartao_id: number; competencia: string; data_fechamento: string; data_vencimento: string;
+  valor_total: number | null; milhas_acumuladas: number | null; status: "aberta" | "fechada" | "paga";
+  numero_lancamento: string | null;
+};
+export type LancamentoCartao = {
+  id: number; cartao_id: number; fatura_id: number; data_compra: string; descricao: string;
+  codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; centro_custo: string | null;
+  valor: number; parcela_num: number | null; parcela_total: number | null; observacao: string | null;
+};
+export type LancamentoCartaoPayload = {
+  data_compra: string; descricao: string; codigo_conta_gerencial?: string | null;
+  nome_conta_gerencial?: string | null; centro_custo?: string | null; valor: number;
+  parcela_num?: number | null; parcela_total?: number | null; observacao?: string | null;
+};
+
+export async function fetchCartoesCredito(): Promise<CartaoCredito[]> {
+  const res = await authFetch(`${API}/financeiro/cartoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cartões de crédito error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCartaoCredito(cartaoId: number): Promise<CartaoCredito> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cartão de crédito error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarCartaoCredito(dados: CartaoCreditoPayload): Promise<CartaoCredito> {
+  const res = await authFetch(`${API}/financeiro/cartoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar cartão"); }
+  return res.json();
+}
+
+export async function atualizarCartaoCredito(cartaoId: number, dados: CartaoCreditoPayload): Promise<CartaoCredito> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar cartão"); }
+  return res.json();
+}
+
+export async function fetchExtratoCartao(cartaoId: number, competencia?: string): Promise<{ cartao: CartaoCredito; fatura: FaturaCartao; lancamentos: LancamentoCartao[] }> {
+  const qs = competencia ? `?competencia=${encodeURIComponent(competencia)}` : "";
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/extrato${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Extrato do cartão error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFaturasCartao(cartaoId: number): Promise<FaturaCartao[]> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/faturas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Faturas do cartão error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarLancamentoCartao(cartaoId: number, dados: LancamentoCartaoPayload): Promise<LancamentoCartao> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/lancamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar compra no cartão"); }
+  return res.json();
+}
+
+export async function fecharFaturaCartao(faturaId: number): Promise<FaturaCartao> {
+  const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/fechar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao fechar fatura"); }
+  return res.json();
+}
+
+export async function pagarFaturaCartao(faturaId: number, dados: {
+  data_pagamento?: string | null; codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null; centro_custo?: string | null;
+} = {}): Promise<FaturaCartao & { lancamento: any }> {
+  const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/pagar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao pagar fatura"); }
+  return res.json();
+}
+
 export async function fetchManutencoesPatrimonio(itemId: number) {
   const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Histórico de manutenção error: ${res.status}`);

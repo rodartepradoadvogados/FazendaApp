@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat,
+  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -17,6 +17,9 @@ import {
   fetchItensCenario, criarItemCenario, atualizarItemCenario, excluirItemCenario, fetchProjecaoCenario,
   importarParaPedido, type OrcamentoItemPayload, type CenarioPayload, type PlanejamentoItemPayload,
   anexarArquivoLancamento, listarAnexosLancamento, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
+  fetchCartoesCredito, fetchCartaoCredito, criarCartaoCredito, atualizarCartaoCredito, fetchExtratoCartao, fetchFaturasCartao,
+  criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
+  type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -66,7 +69,7 @@ type Lanc = {
   patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -294,10 +297,11 @@ export default function FinanceiroPage() {
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    // Patrimônio e Documentos são destinos únicos — viram folha direta (sem
-    // grupo "guarda-chuva" de 1 item só), economizando um nível/clique da
-    // árvore de navegação.
+    // Patrimônio, Cartão de crédito e Documentos são destinos únicos — viram
+    // folha direta (sem grupo "guarda-chuva" de 1 item só), economizando um
+    // nível/clique da árvore de navegação.
     { id: "patrimonio", label: "Patrimônio", icon: Building2 },
+    { id: "cartao_credito", label: "Cartão de crédito", icon: CreditCard },
     { id: "documentos", label: "Documentos", icon: Paperclip },
   ], []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
@@ -552,6 +556,7 @@ export default function FinanceiroPage() {
 
       {regs && regs.length > 0 && <>
         {rel === "patrimonio" ? <PatrimonioView />
+          : rel === "cartao_credito" ? <CartaoCreditoView />
           : rel === "documentos" ? <DocumentosFiscais />
           : rel === "recorrentes" ? <LancamentosRecorrentesView onFeito={recarregar} />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
@@ -1828,6 +1833,391 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
               </table>
             </div>
           )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─────────────────────── Cartão de crédito ───────────────────────
+const cartaoInputStyle: React.CSSProperties = {
+  background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+  borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+};
+const cartaoLabelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+function CartaoVisual({ cartao }: { cartao: CartaoCredito }) {
+  return (
+    <div style={{
+      background: "linear-gradient(135deg, var(--vinho, #5E1A2E) 0%, var(--vinho-forte, #431322) 100%)",
+      borderRadius: "10px", padding: "1rem 1.1rem", color: "#fff", display: "grid", gap: "0.5rem",
+      position: "relative", overflow: "hidden", minHeight: "110px",
+    }}>
+      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 85% 15%, rgba(232,199,102,0.25), transparent 55%)" }} />
+      <div style={{ fontSize: "0.68rem", letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85, position: "relative" }}>
+        {cartao.banco_emissor || "Cartão de crédito"}
+      </div>
+      <div style={{ fontSize: "1.05rem", fontWeight: 700, position: "relative" }}>{cartao.apelido}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", opacity: 0.9, position: "relative" }}>
+        <span>Fecha dia {cartao.dia_fechamento} · Vence dia {cartao.dia_vencimento}</span>
+        {cartao.bandeira && <span style={{ fontStyle: "italic", color: "#E8C766" }}>{cartao.bandeira}</span>}
+      </div>
+      {!cartao.ativo && <span style={{ fontSize: "0.68rem", opacity: 0.85, position: "relative" }}>Inativo</span>}
+    </div>
+  );
+}
+
+function CartaoCreditoView() {
+  const [cartoes, setCartoes] = useState<CartaoCredito[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [novoAberto, setNovoAberto] = useState(false);
+  const [editando, setEditando] = useState<CartaoCredito | null>(null);
+  const [selecionado, setSelecionado] = useState<CartaoCredito | null>(null);
+
+  const carregar = () => { fetchCartoesCredito().then(setCartoes).catch((e) => setErro(e.message)); };
+  useEffect(carregar, []);
+
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}.</span></div>;
+  if (!cartoes) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  if (selecionado) {
+    return (
+      <DetalheCartaoView
+        cartao={cartoes.find((c) => c.id === selecionado.id) || selecionado}
+        onVoltar={() => setSelecionado(null)}
+        onAtualizado={carregar}
+      />
+    );
+  }
+
+  return (
+    <>
+      {!cartoes.length ? (
+        <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+          <CreditCard size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
+          <p style={{ color: "var(--text-muted)" }}>Nenhum cartão de crédito cadastrado ainda.</p>
+          <button className="btn-primary mt-3" style={{ fontSize: "0.82rem" }} onClick={() => setNovoAberto(true)}>
+            <Plus size={14} /> Novo cartão
+          </button>
+        </div>
+      ) : (
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><CreditCard size={16} /> Cartões cadastrados</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setNovoAberto(true)}>
+              <Plus size={13} /> Novo cartão
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {cartoes.map((c) => (
+              <div key={c.id} style={{ cursor: "pointer" }} onClick={() => setSelecionado(c)}>
+                <CartaoVisual cartao={c} />
+                <div className="flex items-center justify-between mt-1">
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {c.limite != null ? `Limite ${formatBRL(c.limite)}` : "Sem limite cadastrado"}
+                  </span>
+                  <button className="btn-ghost" style={{ padding: "0.2rem" }} title="Editar cartão"
+                    onClick={(e) => { e.stopPropagation(); setEditando(c); }}>
+                    <Pencil size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(novoAberto || editando) && (
+        <ModalNovoCartao
+          cartao={editando}
+          onClose={() => { setNovoAberto(false); setEditando(null); }}
+          onSalvo={() => { setNovoAberto(false); setEditando(null); carregar(); }}
+        />
+      )}
+    </>
+  );
+}
+
+function ModalNovoCartao({ cartao, onClose, onSalvo }: { cartao: CartaoCredito | null; onClose: () => void; onSalvo: () => void }) {
+  const [apelido, setApelido] = useState(cartao?.apelido || "");
+  const [bandeira, setBandeira] = useState(cartao?.bandeira || "");
+  const [bancoEmissor, setBancoEmissor] = useState(cartao?.banco_emissor || "");
+  const [diaFechamento, setDiaFechamento] = useState(cartao?.dia_fechamento != null ? String(cartao.dia_fechamento) : "");
+  const [diaVencimento, setDiaVencimento] = useState(cartao?.dia_vencimento != null ? String(cartao.dia_vencimento) : "");
+  const [limite, setLimite] = useState(cartao?.limite != null ? String(cartao.limite) : "");
+  const [controlaMilhas, setControlaMilhas] = useState(cartao?.controla_milhas ?? false);
+  const [milhasPorReal, setMilhasPorReal] = useState(cartao?.milhas_por_real != null ? String(cartao.milhas_por_real) : "");
+  const [ativo, setAtivo] = useState(cartao?.ativo ?? true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!apelido.trim()) { setErro("Apelido é obrigatório."); return; }
+    if (!diaFechamento || !diaVencimento) { setErro("Informe o dia de fechamento e o dia de vencimento."); return; }
+    const payload: CartaoCreditoPayload = {
+      apelido: apelido.trim(), bandeira: bandeira || null, banco_emissor: bancoEmissor || null,
+      dia_fechamento: Number(diaFechamento), dia_vencimento: Number(diaVencimento),
+      limite: limite ? Number(limite) : null, controla_milhas: controlaMilhas,
+      milhas_por_real: controlaMilhas && milhasPorReal ? Number(milhasPorReal) : null, ativo,
+    };
+    setSalvando(true); setErro("");
+    try {
+      if (cartao) await atualizarCartaoCredito(cartao.id, payload);
+      else await criarCartaoCredito(payload);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <Modal title={cartao ? `Editar cartão — ${cartao.apelido}` : "Novo cartão de crédito"} onClose={onClose} width="520px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Apelido</label>
+            <input style={cartaoInputStyle} value={apelido} onChange={(e) => setApelido(e.target.value)} placeholder="ex.: Nubank PJ" /></div>
+          <div><label style={cartaoLabelStyle}>Bandeira</label>
+            <input style={cartaoInputStyle} value={bandeira} onChange={(e) => setBandeira(e.target.value)} placeholder="Visa, Mastercard, Elo…" /></div>
+          <div><label style={cartaoLabelStyle}>Banco emissor</label>
+            <input style={cartaoInputStyle} value={bancoEmissor} onChange={(e) => setBancoEmissor(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Dia de fechamento</label>
+            <input type="number" min={1} max={31} style={cartaoInputStyle} value={diaFechamento} onChange={(e) => setDiaFechamento(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Dia de vencimento</label>
+            <input type="number" min={1} max={31} style={cartaoInputStyle} value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Limite (R$)</label>
+            <input type="number" step="0.01" style={cartaoInputStyle} value={limite} onChange={(e) => setLimite(e.target.value)} /></div>
+          <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} /> Ativo</label></div>
+        </div>
+        <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+          <input type="checkbox" checked={controlaMilhas} onChange={(e) => setControlaMilhas(e.target.checked)} /> Este cartão acumula milhas/pontos
+        </label>
+        {controlaMilhas && (
+          <div style={{ maxWidth: "220px" }}>
+            <label style={cartaoLabelStyle}>Milhas por real gasto</label>
+            <input type="number" step="0.01" style={cartaoInputStyle} value={milhasPorReal} onChange={(e) => setMilhasPorReal(e.target.value)} placeholder="ex.: 1.2" />
+          </div>
+        )}
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const STATUS_FATURA_LABEL: Record<string, string> = { aberta: "Aberta", fechada: "Fechada — aguardando pagamento", paga: "Paga" };
+const STATUS_FATURA_COR: Record<string, string> = { aberta: "var(--dourado-light)", fechada: "var(--amber)", paga: "var(--green-light)" };
+
+function DetalheCartaoView({ cartao, onVoltar, onAtualizado }: { cartao: CartaoCredito; onVoltar: () => void; onAtualizado: () => void }) {
+  const [extrato, setExtrato] = useState<{ cartao: CartaoCredito; fatura: FaturaCartao; lancamentos: LancamentoCartao[] } | null>(null);
+  const [faturas, setFaturas] = useState<FaturaCartao[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [novaCompraAberta, setNovaCompraAberta] = useState(false);
+  const [pagando, setPagando] = useState<FaturaCartao | null>(null);
+  const [acao, setAcao] = useState<{ tipo: "fechar"; id: number } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const carregar = () => {
+    fetchExtratoCartao(cartao.id).then(setExtrato).catch((e) => setErro(e.message));
+    fetchFaturasCartao(cartao.id).then(setFaturas).catch(() => {});
+  };
+  useEffect(carregar, [cartao.id]);
+
+  const fechar = async (faturaId: number) => {
+    setAcao({ tipo: "fechar", id: faturaId }); setMsg(null);
+    try {
+      await fecharFaturaCartao(faturaId);
+      carregar(); onAtualizado();
+    } catch (e: any) { setMsg(e.message); }
+    finally { setAcao(null); }
+  };
+
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}.</span></div>;
+
+  return (
+    <>
+      <button className="btn-ghost mb-3" style={{ fontSize: "0.78rem" }} onClick={onVoltar}>
+        <ArrowLeft size={13} /> Voltar aos cartões
+      </button>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div><CartaoVisual cartao={cartao} /></div>
+        <div className="grid grid-cols-2 gap-3" style={{ gridColumn: "span 2" }}>
+          <KPI v={extrato ? formatBRL(extrato.fatura.valor_total || 0) : "…"} l={`Fatura atual (${extrato?.fatura.competencia || ""})`} c="var(--dourado-light)" />
+          <KPI v={extrato ? STATUS_FATURA_LABEL[extrato.fatura.status] : "…"} l="Status" />
+          {cartao.limite != null && <KPI v={formatBRL(cartao.limite)} l="Limite" c="var(--text-muted)" />}
+          {cartao.controla_milhas && (
+            <div className="kpi-card">
+              <div className="flex items-center gap-1" style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}><Award size={12} /> Milhas acumuladas</div>
+              <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--dourado-light)" }}>{cartao.milhas_totais ?? 0}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{msg}</p>}
+
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span>Extrato — fatura {extrato?.fatura.status === "aberta" ? "em aberto" : extrato?.fatura.competencia}</span>
+          {extrato?.fatura.status === "aberta" && (
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => fechar(extrato.fatura.id)} disabled={acao?.id === extrato.fatura.id}>
+                {acao?.id === extrato.fatura.id ? "Fechando…" : "Fechar fatura agora"}
+              </button>
+              <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setNovaCompraAberta(true)}>
+                <Plus size={13} /> Nova compra
+              </button>
+            </div>
+          )}
+        </div>
+        {!extrato ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !extrato.lancamentos.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma compra lançada nesta fatura ainda.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+              <tbody>
+                {extrato.lancamentos.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_compra)}</td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      {l.descricao}{l.parcela_num && l.parcela_total ? <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}> ({l.parcela_num}/{l.parcela_total})</span> : null}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.nome_conta_gerencial || "—"}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem", fontWeight: 600 }}>{formatBRL(l.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-3">Faturas anteriores</div>
+        {!faturas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !faturas.filter((f) => f.status !== "aberta").length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma fatura fechada ainda.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Competência</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {faturas.filter((f) => f.status !== "aberta").map((f) => (
+                  <tr key={f.id}>
+                    <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{f.competencia}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{formatDate(f.data_vencimento)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{f.valor_total != null ? formatBRL(f.valor_total) : "—"}</td>
+                    <td style={{ fontSize: "0.78rem", fontWeight: 600, color: STATUS_FATURA_COR[f.status] }}>{STATUS_FATURA_LABEL[f.status] || f.status}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {f.status === "fechada" && (
+                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} onClick={() => setPagando(f)}>Pagar</button>
+                      )}
+                      {f.status === "paga" && f.numero_lancamento && (
+                        <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lanç. {f.numero_lancamento}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {novaCompraAberta && (
+        <ModalNovaCompraCartao cartaoId={cartao.id} onClose={() => setNovaCompraAberta(false)} onSalvo={() => { setNovaCompraAberta(false); carregar(); }} />
+      )}
+      {pagando && (
+        <ModalPagarFatura fatura={pagando} cartao={cartao} onClose={() => setPagando(null)} onSalvo={() => { setPagando(null); carregar(); onAtualizado(); }} />
+      )}
+    </>
+  );
+}
+
+function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: number; onClose: () => void; onSalvo: () => void }) {
+  const [dataCompra, setDataCompra] = useState(new Date().toISOString().slice(0, 10));
+  const [descricao, setDescricao] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [valor, setValor] = useState("");
+  const [parcelaTotal, setParcelaTotal] = useState("1");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!descricao.trim()) { setErro("Descrição é obrigatória."); return; }
+    if (!valor || Number(valor) <= 0) { setErro("Informe um valor positivo."); return; }
+    setSalvando(true); setErro("");
+    try {
+      const totalParcelas = Math.max(1, Number(parcelaTotal) || 1);
+      await criarLancamentoCartao(cartaoId, {
+        data_compra: dataCompra, descricao: descricao.trim(), nome_conta_gerencial: categoria || null,
+        valor: Number(valor), parcela_num: totalParcelas > 1 ? 1 : null, parcela_total: totalParcelas > 1 ? totalParcelas : null,
+        observacao: observacao || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <Modal title="Nova compra no cartão" onClose={onClose} width="460px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><label style={cartaoLabelStyle}>Data da compra</label>
+            <input type="date" style={cartaoInputStyle} value={dataCompra} onChange={(e) => setDataCompra(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Valor (R$)</label>
+            <input type="number" step="0.01" style={cartaoInputStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Descrição</label>
+            <input style={cartaoInputStyle} value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="ex.: Peças trator" /></div>
+          <div><label style={cartaoLabelStyle}>Categoria (opcional)</label>
+            <input style={cartaoInputStyle} value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="ex.: Manutenção" /></div>
+          <div><label style={cartaoLabelStyle}>Parcelas</label>
+            <input type="number" min={1} style={cartaoInputStyle} value={parcelaTotal} onChange={(e) => setParcelaTotal(e.target.value)} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Observação</label>
+            <input style={cartaoInputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+        </div>
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+          Cai automaticamente na fatura certa: até o dia de fechamento entra na competência atual, depois do fechamento entra na fatura seguinte.
+        </p>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Lançar"}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: FaturaCartao; cartao: CartaoCredito; onClose: () => void; onSalvo: () => void }) {
+  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const pagar = async () => {
+    setSalvando(true); setErro("");
+    try {
+      await pagarFaturaCartao(fatura.id, { data_pagamento: dataPagamento });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <Modal title={`Pagar fatura — ${cartao.apelido} (${fatura.competencia})`} onClose={onClose} width="420px">
+      <div className="space-y-3">
+        <p style={{ fontSize: "0.85rem" }}>
+          Valor da fatura: <strong>{fatura.valor_total != null ? formatBRL(fatura.valor_total) : "—"}</strong>
+        </p>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          Gera uma Conta a Pagar de verdade em Financeiro (mesmo fluxo de baixa de qualquer outro lançamento) — dá pra editar
+          conta gerencial e centro de custo depois, em Contas a pagar.
+        </p>
+        <div><label style={cartaoLabelStyle}>Data do pagamento</label>
+          <input type="date" style={cartaoInputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={pagar} disabled={salvando}>{salvando ? "Pagando…" : "Confirmar pagamento"}</button>
         </div>
       </div>
     </Modal>
