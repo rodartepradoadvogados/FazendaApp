@@ -492,6 +492,81 @@ class LancamentoRecorrente(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Cartão de crédito (Financeiro > Controle Financeiro > Cartão de crédito) —
+# extrato próprio por fatura, fechamento por competência e pagamento
+# reaproveitando o mesmo fluxo de baixa do Financeiro (ver
+# fazenda/api/routers/cartao_credito.py). Não substitui o campo solto
+# `ContaGerencial.data_vencimento_cartao` (forma_pagamento="credito") já
+# existente — aquele continua servindo pagamentos avulsos no cartão sem
+# cadastro; este módulo é para quem quer extrato/fatura/milhas de verdade.
+# ---------------------------------------------------------------------------
+class CartaoCredito(SQLModel, table=True):
+    __tablename__ = "cartao_credito"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    apelido: str
+    bandeira: Optional[str] = None
+    banco_emissor: Optional[str] = None
+    conta_bancaria_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+    dia_fechamento: int  # 1-31
+    dia_vencimento: int  # 1-31
+    limite: Optional[float] = None
+    controla_milhas: bool = False
+    milhas_por_real: Optional[float] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FaturaCartao(SQLModel, table=True):
+    """Uma competência (mês) do cartão — nasce "aberta" na hora do 1º
+    lançamento daquele mês (mesmo padrão de `cronograma_aberto()`, ver
+    fazenda/rules/cronograma_sanitario.py: lida sempre cria se faltar).
+    `valor_total`/`milhas_acumuladas` só são gravados (congelados) no
+    fechamento — enquanto aberta, o extrato soma os LancamentoCartao ao vivo."""
+
+    __tablename__ = "fatura_cartao"
+    __table_args__ = (UniqueConstraint("cartao_id", "competencia", name="uq_fatura_cartao_competencia"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cartao_id: int = Field(foreign_key="cartao_credito.id", index=True)
+    competencia: str = Field(index=True)  # "2026-08"
+    data_fechamento: date
+    data_vencimento: date
+    valor_total: Optional[float] = None  # só preenchido no fechamento
+    milhas_acumuladas: Optional[int] = None
+    status: str = "aberta"  # "aberta" | "fechada" | "paga"
+    numero_lancamento: Optional[str] = None  # → ContaGerencial, só quando paga
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LancamentoCartao(SQLModel, table=True):
+    """Uma compra no cartão. `fatura_id` é atribuído na hora da criação,
+    resolvendo a competência pela data da compra x dia de fechamento do
+    cartão (ver `_resolver_fatura` no router)."""
+
+    __tablename__ = "lancamento_cartao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cartao_id: int = Field(foreign_key="cartao_credito.id", index=True)
+    fatura_id: int = Field(foreign_key="fatura_cartao.id", index=True)
+    data_compra: date
+    descricao: str
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    centro_custo: Optional[str] = None
+    valor: float
+    parcela_num: Optional[int] = None
+    parcela_total: Optional[int] = None
+    observacao: Optional[str] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Curva ABC (análise de compras / Pareto)
 # ---------------------------------------------------------------------------
 class CurvaABC(SQLModel, table=True):

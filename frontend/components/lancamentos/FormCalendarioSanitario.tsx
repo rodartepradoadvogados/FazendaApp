@@ -185,8 +185,12 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const ehExame = eventoSel?.categoria_preventiva === "exame";
 
   // Ao escolher um evento já cadastrado como "por evento" (tipo_agendamento
-  // == evento), o modo já vem pré-selecionado e os campos de gatilho preenchidos.
+  // == evento), o modo já vem pré-selecionado e os campos de gatilho
+  // preenchidos — só para uma regra NOVA (editando uma regra já existente,
+  // abrirEdicao já fixou modoFreq="periodica" e não deve ser sobrescrito,
+  // senão os campos da própria regra em edição somem da tela).
   useEffect(() => {
+    if (editando !== null) return;
     if (!eventoSel) return;
     if (eventoSel.tipo_agendamento === "evento" && eventoSel.gatilho) {
       setModoFreq("evento_vida");
@@ -194,11 +198,21 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       setGatilhoLote(eventoSel.gatilho_lote || "");
       setGatilhoIdadeMeses(eventoSel.gatilho_idade_meses ? String(eventoSel.gatilho_idade_meses) : "");
       setOffsetDias(eventoSel.offset_dias != null ? String(eventoSel.offset_dias) : "0");
+      // Pré-preenche o cronograma já vinculado a este evento (se existir) —
+      // permite revisar/ligar "usar cronograma sanitário" de um evento por
+      // evento de vida (ex.: Brucelose B19) direto por aqui, sem precisar
+      // achar a regra na lista "Regras cadastradas".
+      const regraVinculada = (regras ?? []).find((r) => r.evento_sanitario_id === eventoSel.id);
+      setUsaCronograma(regraVinculada?.usa_cronograma ?? false);
+      setFreqValor(regraVinculada ? String(regraVinculada.frequencia_valor) : "30");
+      setFreqUnidade(regraVinculada ? regraVinculada.frequencia_unidade : "dias");
+      setDataEvento(regraVinculada ? regraVinculada.data_evento : new Date().toISOString().slice(0, 10));
     } else {
       setModoFreq("periodica");
+      setUsaCronograma(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventoId]);
+  }, [eventoId, editando]);
 
   const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
   const carregarEventos = () => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
@@ -230,6 +244,12 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade);
     setDataEvento(r.data_evento); setObservacao(r.observacao || ""); setRealizado(false);
     setUsaCronograma(r.usa_cronograma ?? false);
+    // Está editando uma regra JÁ existente (linha real de CalendarioSanitario) —
+    // o modo é sempre "periódica", mesmo que o evento vinculado também tenha
+    // um agendamento "por evento de vida" configurado (ex.: Brucelose B19).
+    // Sem isto, o efeito abaixo trocava de modo sozinho e escondia os campos
+    // da própria regra que se está editando.
+    setModoFreq("periodica");
   };
 
   const excluir = async (r: RegraCalendario) => {
@@ -238,10 +258,19 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     catch (e: any) { setErro(e.message); }
   };
 
+  // Se marcar "usar cronograma sanitário", a janela do cronograma (frequência
+  // + data de referência) precisa existir mesmo quando o modo é "evento de
+  // vida" — é o que liga o gatilho por animal (ex.: Brucelose B19 aos 150
+  // dias) à lista de espera em vez de cobrar aplicação na hora.
+  const precisaCicloRegra = modoFreq === "periodica" || usaCronograma;
+  const regraVinculadaEventoVida = modoFreq === "evento_vida" && eventoId
+    ? (regras ?? []).find((r) => r.evento_sanitario_id === Number(eventoId))
+    : undefined;
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!eventoId) { setErro("Selecione o evento sanitário."); return; }
-    if (modoFreq === "periodica" && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return; }
+    if (precisaCicloRegra && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return; }
     if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return; }
     if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return; }
     // Só se marca como realizado evento do dia corrente ou retroativo — nunca um evento futuro.
@@ -251,23 +280,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     }
     setSalvando(true);
     try {
-      if (modoFreq === "evento_vida") {
-        // Não cria regra recorrente — configura o EVENTO SANITÁRIO selecionado
-        // para agendar por evento de vida (por animal), preservando os demais
-        // campos já cadastrados nele (produto padrão, dose, doença...).
-        await atualizarEventoSanitario(Number(eventoId), {
-          ...eventoSel, tipo_agendamento: "evento", gatilho,
-          gatilho_lote: gatilho === "entrada_lote" ? gatilhoLote.trim() : null,
-          gatilho_idade_meses: gatilho === "novilha_apta" ? Number(gatilhoIdadeMeses) : null,
-          offset_dias: offsetDias ? Number(offsetDias) : 0,
-        });
-        setSucesso("Evento sanitário configurado para agendar por evento de vida.");
-        limpar();
-        carregarEventos();
-        setSalvando(false);
-        return;
-      }
-      const dados = {
+      const montarDadosRegra = () => ({
         evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvoSel.length ? categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
         doenca_id: doencaId ? Number(doencaId) : undefined,
         produto: ehExame ? undefined : (produto || undefined),
@@ -278,7 +291,37 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
         veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor), frequencia_unidade: freqUnidade, data_evento: dataEvento,
         observacao: observacao || undefined, realizado, usa_cronograma: usaCronograma,
-      };
+      });
+
+      if (modoFreq === "evento_vida") {
+        // Configura o EVENTO SANITÁRIO selecionado para agendar por evento de
+        // vida (por animal), preservando os demais campos já cadastrados nele.
+        await atualizarEventoSanitario(Number(eventoId), {
+          ...eventoSel, tipo_agendamento: "evento", gatilho,
+          gatilho_lote: gatilho === "entrada_lote" ? gatilhoLote.trim() : null,
+          gatilho_idade_meses: gatilho === "novilha_apta" ? Number(gatilhoIdadeMeses) : null,
+          offset_dias: offsetDias ? Number(offsetDias) : 0,
+        });
+        // "Usar cronograma sanitário" marcado (ou já havia uma regra
+        // vinculada a este evento) — cria/atualiza a regra que liga esse
+        // gatilho por animal à lista de espera do cronograma.
+        if (usaCronograma || regraVinculadaEventoVida) {
+          const dadosRegra = montarDadosRegra();
+          if (regraVinculadaEventoVida) await atualizarCalendarioSanitario(regraVinculadaEventoVida.id, dadosRegra);
+          else await criarCalendarioSanitario(dadosRegra);
+        }
+        if (usaCronograma) {
+          window.location.href = "/sanidade?ir=cronogramas";
+          return;
+        }
+        setSucesso("Evento sanitário configurado para agendar por evento de vida.");
+        limpar();
+        carregarEventos();
+        carregarRegras();
+        setSalvando(false);
+        return;
+      }
+      const dados = montarDadosRegra();
       if (editando) await atualizarCalendarioSanitario(editando, dados);
       else await criarCalendarioSanitario(dados);
       if (usaCronograma) {
@@ -378,19 +421,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
             </label>
           </div>
         </Campo>
-        {modoFreq === "periodica" ? (
-          <>
-            <Campo label="Frequência">
-              <div className="flex items-center gap-2">
-                <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-                <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-                  {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
-                </select>
-              </div>
-            </Campo>
-            <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
-          </>
-        ) : (
+        {modoFreq === "evento_vida" && (
           <>
             <Campo label="Evento de vida">
               <select style={inputStyle} value={gatilho} onChange={(e) => setGatilho(e.target.value)}>
@@ -406,10 +437,25 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
             <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={offsetDias} onChange={(e) => setOffsetDias(e.target.value)} /></Campo>
             <div style={{ gridColumn: "1 / -1" }}>
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                Este modo não cria uma regra de frequência — ele configura o evento sanitário selecionado para entrar na Agenda
-                automaticamente quando cada animal atingir esse evento de vida (por animal, não por rebanho todo).
+                Este modo por si só não cria uma regra de frequência — ele configura o evento sanitário selecionado para
+                entrar na Agenda automaticamente quando cada animal atingir esse evento de vida (por animal, não por
+                rebanho todo). Marque "Usar cronograma sanitário" abaixo para, em vez de cobrar aplicação na hora
+                assim que o animal bater o critério, colocá-lo numa lista de espera por leva.
               </p>
             </div>
+          </>
+        )}
+        {precisaCicloRegra && (
+          <>
+            <Campo label={modoFreq === "evento_vida" ? "Frequência da leva do cronograma" : "Frequência"}>
+              <div className="flex items-center gap-2">
+                <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+                <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+                  {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+                </select>
+              </div>
+            </Campo>
+            <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
           </>
         )}
         <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
@@ -425,7 +471,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
           <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
         </label>
       )}
-      {modoFreq === "periodica" && (
+      {!!eventoId && (
         <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.7rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
           <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", fontWeight: 700 }}>
             <input type="checkbox" checked={usaCronograma} onChange={(e) => setUsaCronograma(e.target.checked)} /> Usar cronograma sanitário
@@ -433,7 +479,8 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
           <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
             Em vez de cobrar aplicação na hora, os animais que baterem o critério entram numa lista de espera até você agendar
             com o veterinário ou confirmar aplicação própria. A Agenda mostra a lista de espera, a decisão de quem vai aplicar e,
-            perto da data prevista sem decisão, cobra confirmação obrigatória.
+            perto da data prevista sem decisão, cobra confirmação obrigatória. Funciona tanto para uma regra de frequência
+            periódica quanto para um evento por evento de vida (ex.: uma vacina aplicada numa idade-alvo específica).
           </p>
         </div>
       )}

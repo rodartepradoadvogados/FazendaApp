@@ -458,6 +458,26 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
 
+/* Botão "secundário" — usado nos toggles de filtro (pills) ao lado de um
+   .btn-primary ativo. Referenciado em dezenas de telas mas nunca tinha sido
+   definido: sem esta classe, os botões inativos caíam no reset do Tailwind
+   (sem borda/fundo/padding) e liam como texto corrido em vez de um quadro
+   clicável. */
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-secondary:hover { background: var(--surface); color: var(--text); border-color: var(--gold-deep); }
+
 /* ── KPI cards ── */
 .kpi-card {
   background: var(--surface);
