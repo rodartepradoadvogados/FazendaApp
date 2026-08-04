@@ -2466,7 +2466,7 @@ export const atualizarDoenca = _doencas.atualizar;
 export type EventoSanitarioPayload = {
   nome: string; ativo?: boolean;
   tipo_agendamento?: "nenhum" | "epoca" | "evento";
-  categoria_alvo?: string | null; doenca_id?: number | null; categoria_preventiva?: string | null;
+  categoria_alvo?: string | null; sexo_alvo?: "F" | "M" | null; doenca_id?: number | null; categoria_preventiva?: string | null;
   data_primeiro?: string | null; frequencia_valor?: number | null; frequencia_unidade?: string | null;
   gatilho?: string | null; gatilho_lote?: string | null; gatilho_idade_meses?: number | null; offset_dias?: number | null;
   produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null; via_padrao?: string | null;

@@ -79,7 +79,7 @@ SEED_PRINCIPIOS_CALENDARIO = [
 SEED_EVENTOS_POR_ESTAGIO = [
     # nome, doença, gatilho, idade/offset, dose, unidade, via
     {"nome": "Brucelose B19", "doenca": "Brucelose", "gatilho": "nascimento", "offset_dias": 150,
-     "dose": 2, "unidade": "ml", "via": "Subcutânea"},
+     "dose": 2, "unidade": "ml", "via": "Subcutânea", "sexo_alvo": "F"},
     {"nome": "Brucelose RB51", "doenca": "Brucelose", "gatilho": "novilha_apta", "idade_meses": 13,
      "dose": 2, "unidade": "ml", "via": "Subcutânea"},
     {"nome": "Reprodutiva (Primovacinação)", "doenca": None, "gatilho": "novilha_apta", "idade_meses": 13,
@@ -92,6 +92,18 @@ SEED_EVENTOS_POR_ESTAGIO = [
      "dose": 3, "unidade": "ml", "via": "Subcutânea"},
     {"nome": "Tifopasteurina", "doenca": "Pasteurelose", "gatilho": "entrada_lote",
      "dose": 3, "unidade": "ml", "via": "Subcutânea"},
+]
+
+# Eventos "por fase fisiológica" que devem entrar na lista de espera do
+# cronograma sanitário (agendamento com veterinário) em vez de virar
+# pendência de "aplicar agora" direto assim que o animal bate o gatilho —
+# ver CalendarioSanitario.usa_cronograma. Só cria a regra (idempotente) se
+# NENHUMA já existir pra esse evento — nunca ativa/mexe numa regra que o
+# usuário já cadastrou do jeito dele pela tela de Regras cadastradas.
+SEED_CRONOGRAMA_POR_ESTAGIO = [
+    {"nome": "Brucelose B19", "categoria_alvo": "Bezerras (3 a 8 meses)",
+     "produto": "Brucelose Bovina (Cepa 19 ou RB51)", "dosagem": "2 mL", "unidade": "ml",
+     "freq_valor": 30, "freq_unidade": "dias"},
 ]
 
 # Regras do calendário fixo anual — época/rebanho (não por animal). Datas
@@ -171,8 +183,16 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
     lote_pre_parto = session.exec(select(Lote).where(Lote.pre_parto == True)).first()  # noqa: E712
     for cfg in SEED_EVENTOS_POR_ESTAGIO:
         ev = eventos.get(cfg["nome"])
-        if not ev or ev.tipo_agendamento != "nenhum":
-            continue  # não existe, ou já foi configurado manualmente — não mexe
+        if not ev:
+            continue
+        # sexo_alvo é campo novo (bug corrigido depois do 1º seed) — aplica
+        # mesmo em evento já configurado antes, só quando ainda está em
+        # branco (nunca sobrescreve edição manual feita pela tela de cadastro).
+        if cfg.get("sexo_alvo") and ev.sexo_alvo is None:
+            ev.sexo_alvo = cfg["sexo_alvo"]
+            session.add(ev)
+        if ev.tipo_agendamento != "nenhum":
+            continue  # já foi configurado manualmente — não mexe no resto
         if cfg["gatilho"] == "entrada_lote" and not lote_pre_parto:
             continue  # falta um lote pré-parto cadastrado — configurar depois
         ev.tipo_agendamento = "evento"
@@ -191,6 +211,31 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
         ev.unidade_padrao = ev.unidade_padrao or cfg["unidade"]
         ev.via_padrao = ev.via_padrao or cfg["via"]
         session.add(ev)
+    session.commit()
+
+    # 2.5) Regras "por fase fisiológica" que entram no cronograma (lista de
+    # espera de agendamento) em vez de aplicar direto — ver
+    # SEED_CRONOGRAMA_POR_ESTAGIO acima.
+    regras_por_evento = {c.evento_sanitario_id for c in session.exec(select(CalendarioSanitario)).all()}
+    for cfg in SEED_CRONOGRAMA_POR_ESTAGIO:
+        ev = eventos.get(cfg["nome"])
+        if not ev or ev.id in regras_por_evento:
+            continue  # não existe, ou já tem regra cadastrada (manual ou não) — não mexe
+        principio = principios.get(cfg.get("produto"))
+        session.add(CalendarioSanitario(
+            evento_sanitario_id=ev.id,
+            categoria_alvo=cfg["categoria_alvo"],
+            doenca_id=ev.doenca_id,
+            produto=cfg.get("produto"),
+            principio_ativo_id=principio.id if principio else None,
+            dosagem=cfg["dosagem"],
+            unidade=cfg["unidade"],
+            frequencia_valor=cfg["freq_valor"],
+            frequencia_unidade=cfg["freq_unidade"],
+            data_evento=date.today(),
+            usa_cronograma=True,
+        ))
+        regras_por_evento.add(ev.id)
     session.commit()
 
     # 3) Regras do calendário fixo anual — época/rebanho. Evita duplicar se já
@@ -353,6 +398,7 @@ class EventoSanitarioIn(BaseModel):
     ativo: bool = True
     tipo_agendamento: str = "nenhum"
     categoria_alvo: str | None = None
+    sexo_alvo: str | None = None  # "F" | "M" | None (ambos)
     categoria_preventiva: str | None = None  # "vacina" | "exame" | "tratamento"
     doenca_id: int | None = None
     data_primeiro: date | None = None
@@ -404,6 +450,8 @@ def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
 def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session, *, item_id: int | None = None) -> None:
     if dados.tipo_agendamento not in TIPOS_AGENDAMENTO:
         raise HTTPException(status_code=400, detail=f"Tipo de agendamento inválido (use: {', '.join(TIPOS_AGENDAMENTO)})")
+    if dados.sexo_alvo is not None and dados.sexo_alvo not in ("F", "M"):
+        raise HTTPException(status_code=400, detail="Sexo-alvo inválido (use F, M ou deixe em branco)")
     if dados.doenca_id is not None and not session.get(Doenca, dados.doenca_id):
         raise HTTPException(status_code=400, detail="Doença não encontrada")
     if dados.condicao_evento_id is not None:

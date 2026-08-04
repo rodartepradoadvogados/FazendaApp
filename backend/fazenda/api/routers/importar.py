@@ -868,7 +868,7 @@ async def importar_baixas_pendencias_agenda(
                     if len(numeros) != 1:
                         raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
                     numero = numeros[0]
-                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0)
+                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
                     if not any(n == numero and d == data_pendencia for n, d in candidatos):
                         raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
                     eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
