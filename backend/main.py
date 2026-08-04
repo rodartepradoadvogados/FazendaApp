@@ -50,6 +50,7 @@ from fazenda.api.routers import (
     lotes,
     manual_fazenda,
     movimentacoes,
+    nao_conformidades,
     news,
     notificacoes,
     onboarding,
@@ -528,6 +529,10 @@ app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo
 # Alertas de indicador — preferência pessoal do usuário (config de "avise-me
 # se X passar de Y"), sem gate de módulo contratado.
 app.include_router(alertas_indicador.router, dependencies=_protegido)
+# Não conformidades — área transversal (reprodução/recria/financeiro/manejo),
+# mesmo gate de indicadores.router; cada seção interna já se auto-restringe
+# por módulo do usuário (ver fazenda/api/routers/nao_conformidades.py).
+app.include_router(nao_conformidades.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])
