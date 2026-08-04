@@ -7,12 +7,17 @@
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
+
+// Carregado só quando o cartão "Aplicação de BST hoje" é aberto — mesmo
+// componente rico (com seleção/aplicar) já usado em Lançar > Produção > BST.
+const PainelLancarBst = dynamic(() => import("@/components/PainelLancarBst").then((m) => m.PainelLancarBst), { ssr: false });
 
 const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
@@ -1280,28 +1285,13 @@ export default function AgendaMovel() {
       );
     }
 
-    // Compromisso "Aplicação de BST hoje" — cartão expansível com as 3 listas
-    // já embutidas no evento (sem outra chamada à API): aptas, incluir no
-    // próximo BST e vacas em lactação inaptas (não elegíveis).
+    // Compromisso "Aplicação de BST hoje" — cartão expansível que, ao abrir,
+    // traz o mesmo painel de seleção/aplicação usado em Lançar > Produção >
+    // BST (checkbox por animal nas 3 listas + Aplicar/Marcar como inapta),
+    // em vez de só listar os números pra consulta — pode aplicar em uns e
+    // deixar de aplicar em outros na própria Agenda.
     if (e.tipo === "bst_aplicacao") {
       const aberto = bstAberto.has(e.id);
-      const aptas = e.aptas || [];
-      const incluir = e.incluir_proximo || [];
-      const inaptas = e.inaptas || [];
-      const ListaNumeros = ({ titulo, numeros, cor }: { titulo: string; numeros: string[]; cor: string }) => (
-        <div style={{ marginBottom: "0.6rem" }}>
-          <div style={{ fontSize: "0.78rem", fontWeight: 800, color: cor, marginBottom: "0.3rem" }}>{titulo} ({numeros.length})</div>
-          {numeros.length ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
-              {numeros.map((n) => (
-                <span key={n} style={{ fontSize: "0.78rem", fontWeight: 700, padding: "0.15rem 0.5rem", borderRadius: 999, background: "var(--mob-surface)", border: "1px solid var(--mob-border)" }}>{n}</span>
-              ))}
-            </div>
-          ) : (
-            <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)" }}>Nenhum animal.</p>
-          )}
-        </div>
-      );
       return (
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => toggleBst(e.id)}
@@ -1310,15 +1300,13 @@ export default function AgendaMovel() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>{e.descricao}</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para ver as listas</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para selecionar e aplicar</div>
             </div>
             <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
           </button>
           {aberto && (
-            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
-              <ListaNumeros titulo="BST aptas" numeros={aptas} cor="var(--mob-verde)" />
-              <ListaNumeros titulo="Incluir no próximo BST" numeros={incluir} cor="var(--mob-azul)" />
-              <ListaNumeros titulo="Vacas em lactação inaptas" numeros={inaptas} cor="var(--mob-ambar)" />
+            <div className="mob-form-embutido" style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              <PainelLancarBst agenda={agenda} onAtualizado={carregar} />
             </div>
           )}
         </MobCard>

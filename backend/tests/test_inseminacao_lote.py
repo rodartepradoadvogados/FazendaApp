@@ -162,14 +162,15 @@ class TestIatfNaoAbsorveAnimalDeOutroLancamento:
 class TestD0ConfirmadoNaListaAtivos:
     def test_d0_confirmado_falso_ate_marcar_realizado_na_agenda(self, client):
         c, engine = client
-        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
-        lancamento_id = r.json()["lancamento_id"]
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
 
         ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
         animal = next(a for g in ativos for a in g["animais"] if a["numero_matriz"] == "700")
         assert animal["d0_confirmado"] is False
 
-        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{lancamento_id}_0"})
+        # evento_id da Agenda é chaveado por (data prevista, dia), não mais
+        # por lancamento_id — ver comentário em calcular_agenda.
+        c.post("/agenda/realizados", json={"evento_id": "protocolo_iatf_2026-07-03_0"})
         ativos2 = c.get("/reproducao/protocolo-iatf/ativos").json()
         animal2 = next(a for g in ativos2 for a in g["animais"] if a["numero_matriz"] == "700")
         assert animal2["d0_confirmado"] is True
@@ -191,7 +192,9 @@ class TestRemoverAnimalIatf:
         c, engine = client
         r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
         lancamento_id = r.json()["lancamento_id"]
-        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{lancamento_id}_0"})
+        # evento_id da Agenda é chaveado por (data prevista, dia), não mais
+        # por lancamento_id — ver comentário em calcular_agenda.
+        c.post("/agenda/realizados", json={"evento_id": "protocolo_iatf_2026-07-03_0"})
 
         rd = c.delete(f"/reproducao/protocolo-iatf/{lancamento_id}/animais/700")
         assert rd.status_code == 409

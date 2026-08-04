@@ -18,6 +18,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Indicador } from "@/components/ui";
+import { PainelLancarBst } from "@/components/PainelLancarBst";
 
 const COLUNAS_AGENDA = [
   { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
@@ -1641,9 +1642,6 @@ export default function AgendaPage() {
   };
 
   const ordIatf = useOrdenacao(candidatas);
-  const ordBstAptos = useOrdenacao(bstAptos);
-  const ordBstExcl = useOrdenacao(bstExcl);
-  const ordBstNunca = useOrdenacao(bstNuncaAplicados);
   const [listaAtiva, setListaAtiva] = useState<Set<string>>(new Set());
   const toggleLista = (k: string) => setListaAtiva((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
@@ -1923,84 +1921,12 @@ export default function AgendaPage() {
             </div>
           )}
 
-          {listaAtiva.has("bstAptos") && (
-            <div className="card mb-2" style={{ overflowX: "auto" }}>
-              <table className="fazenda-table">
-                <thead><tr>
-                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <ThOrdenavel label="Já tomou BST?" campo="ja_aplicado_antes" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <th></th>
-                </tr></thead>
-                <tbody>
-                  {ordBstAptos.linhasOrdenadas.map((b: any, i: number) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                      <td>{b.del_dias ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem", color: b.ja_aplicado_antes ? "var(--text-muted)" : "var(--blue)" }}>
-                        {b.ja_aplicado_antes ? "Já tomou antes" : "Primeira vez"}
-                      </td>
-                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST" categoria="Sanidade" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {listaAtiva.has("bstExcl") && (
-            <div className="card mb-2" style={{ overflowX: "auto" }}>
-              <table className="fazenda-table">
-                <thead><tr>
-                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                  <ThOrdenavel label="Motivo" campo="motivo_exclusao" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                </tr></thead>
-                <tbody>
-                  {ordBstExcl.linhasOrdenadas.map((b: any, i: number) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                      <td>{b.del_dias ?? "—"}</td>
-                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{b.motivo_exclusao}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {listaAtiva.has("bstNunca") && (
-            <div className="card mb-2" style={{ overflowX: "auto" }}>
-              <table className="fazenda-table">
-                <thead><tr>
-                  <th></th>
-                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
-                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
-                  <th>Motivo</th>
-                  <th></th>
-                </tr></thead>
-                <tbody>
-                  {ordBstNunca.linhasOrdenadas.map((b: any, i: number) => (
-                    <tr key={i}>
-                      <td>
-                        {b.requer_reanalise && (
-                          <span title="Retirada do BST — revisar antes de incluir de novo" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
-                        )}
-                      </td>
-                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                      <td>{b.del_dias ?? "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{b.requer_reanalise ? (b.motivo_exclusao || "Revisar") : "Nunca aplicada — apta na próxima"}</td>
-                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST — nunca aplicada" categoria="Sanidade" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {(listaAtiva.has("bstAptos") || listaAtiva.has("bstExcl") || listaAtiva.has("bstNunca")) && (
+            <div className="mb-2">
+              {/* As 3 listas (aptas/inaptas/incluir no próximo) viram um painel só,
+                  com seleção — pode aplicar em umas e deixar de aplicar em outras
+                  na mesma tela, sem sair da Agenda. */}
+              <PainelLancarBst agenda={agenda} onAtualizado={carregar} />
             </div>
           )}
 

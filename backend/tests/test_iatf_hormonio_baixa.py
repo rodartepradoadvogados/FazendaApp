@@ -126,6 +126,50 @@ class TestConfirmarBaixaEstoque:
             assert s.exec(select(MovimentoEstoque)).all() == []
 
 
+class TestBaixaComLancamentosMesclados:
+    """Quando o card do dia reúne animais de mais de um ProtocoloIatfLancamento
+    (mesmo D0, incluídos separadamente — ver test_agenda_protocolo_iatf.py),
+    a baixa sem medicamento explícito tem que respeitar o hormônio cadastrado
+    em CADA lançamento, não misturar tudo como se fosse um só."""
+
+    def test_lancamentos_com_hormonios_diferentes_baixam_cada_um_o_seu(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Benzoato", quantidade=100, unidade="ml"))
+            s.commit()
+        # Lançamento 1 (vaca 700): SincroCP + Estron. Lançamento 2 (vaca 701): Benzoato.
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["700"], "data_d0": "2026-07-08", "protocolo": "IATF teste",
+            "hormonios": [
+                {"dia": 0, "produto": "SincroCP", "dose": 1, "unidade": "ml", "via": "Intramuscular"},
+                {"dia": 0, "produto": "Estron", "dose": 2, "unidade": "ml", "via": "Intramuscular"},
+            ],
+        })
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["701"], "data_d0": "2026-07-08", "protocolo": "IATF teste",
+            "hormonios": [{"dia": 0, "produto": "Benzoato", "dose": 3, "unidade": "ml", "via": "Intramuscular"}],
+        })
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert set(d0["animais"]) == {"700", "701"}
+
+        r = c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+        assert r.status_code == 200
+
+        with Session(engine) as s:
+            sincro = s.exec(select(Estoque).where(Estoque.nome == "SincroCP")).first()
+            estron = s.exec(select(Estoque).where(Estoque.nome == "Estron")).first()
+            benzoato = s.exec(select(Estoque).where(Estoque.nome == "Benzoato")).first()
+            assert sincro.quantidade == 100 - 1     # 1ml × 1 vaca (só 700 tem esse hormônio)
+            assert estron.quantidade == 100 - 2     # 2ml × 1 vaca
+            assert benzoato.quantidade == 100 - 3   # 3ml × 1 vaca (só 701)
+
+            sanidades = s.exec(select(Sanidade)).all()
+            assert {sa.numero_matriz for sa in sanidades if sa.produto == "Benzoato"} == {"701"}
+            assert {sa.numero_matriz for sa in sanidades if sa.produto in ("SincroCP", "Estron")} == {"700"}
+
+
 class TestQualMedicamentoNoConfirm:
     """Ao confirmar o dia (ex.: D9), o usuário escolhe QUAL medicamento/frasco
     foi usado; a baixa vai para o frasco escolhido (estoque_id) e não mais só
