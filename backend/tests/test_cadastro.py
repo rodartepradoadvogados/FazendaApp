@@ -1061,7 +1061,14 @@ class TestCadastroSanitario:
             assert regra is not None
             assert regra.usa_cronograma is True
 
-    def test_configurar_calendario_padrao_nao_duplica_nem_mexe_em_regra_existente(self, client):
+    def test_configurar_calendario_padrao_promove_regra_orfa_sem_cronograma(self, client):
+        # Uma regra "comum" (usa_cronograma=False) pré-existente pra Brucelose
+        # B19 é órfã de uma tentativa de cadastro manual que não conseguiu
+        # marcar "usar cronograma sanitário" (bug do checkbox, já corrigido em
+        # FormCalendarioSanitario.tsx) — o seed deve promovê-la no lugar de
+        # ficar bloqueado pra sempre (bug relatado: bezerras aparecendo pra
+        # "aplicar agora" + calendário atrasado de Brucelose B19, quando
+        # deveriam entrar na lista de espera do cronograma).
         c, engine = client
         from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
         from fazenda.rules.farmacia import bootstrap_farmacia
@@ -1079,7 +1086,30 @@ class TestCadastroSanitario:
             configurar_calendario_sanitario_padrao(s)
             regras = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).all()
             assert len(regras) == 1
-            assert regras[0].usa_cronograma is False
+            assert regras[0].usa_cronograma is True
+            # A regra promovida preserva o que já estava cadastrado nela (não
+            # é substituída pelos valores do seed).
+            assert regras[0].categoria_alvo == "Bezerras"
+
+    def test_configurar_calendario_padrao_nao_mexe_em_regra_ja_com_cronograma(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
+        from fazenda.rules.farmacia import bootstrap_farmacia
+        from fazenda.models import CalendarioSanitario, EventoSanitario
+        with Session(engine) as s:
+            seed_cadastro_sanitario(s)
+            bootstrap_farmacia(s)
+            ev = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose B19")).first()
+            s.add(CalendarioSanitario(
+                evento_sanitario_id=ev.id, categoria_alvo="Bezerras (customizado)", frequencia_valor=45,
+                frequencia_unidade="dias", data_evento=date.today(), usa_cronograma=True,
+            ))
+            s.commit()
+            configurar_calendario_sanitario_padrao(s)
+            regras = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).all()
+            assert len(regras) == 1
+            assert regras[0].categoria_alvo == "Bezerras (customizado)"
+            assert regras[0].frequencia_valor == 45
 
     def test_cria_e_atualiza_doenca(self, client):
         c, engine = client

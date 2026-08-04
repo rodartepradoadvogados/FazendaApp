@@ -97,9 +97,14 @@ SEED_EVENTOS_POR_ESTAGIO = [
 # Eventos "por fase fisiológica" que devem entrar na lista de espera do
 # cronograma sanitário (agendamento com veterinário) em vez de virar
 # pendência de "aplicar agora" direto assim que o animal bate o gatilho —
-# ver CalendarioSanitario.usa_cronograma. Só cria a regra (idempotente) se
-# NENHUMA já existir pra esse evento — nunca ativa/mexe numa regra que o
-# usuário já cadastrou do jeito dele pela tela de Regras cadastradas.
+# ver CalendarioSanitario.usa_cronograma. Idempotente: só cria a regra se
+# NENHUMA com usa_cronograma=True já existir pra esse evento. Uma regra
+# "comum" (usa_cronograma=False/None) órfã pra esse evento é promovida no
+# lugar em vez de duplicada — nasce de uma tentativa de cadastro manual que
+# não conseguiu marcar "usar cronograma sanitário" por um bug já corrigido
+# no formulário (checkbox sumia ao selecionar um evento "por evento de
+# vida", ver FormCalendarioSanitario.tsx), então preservar essa regra como
+# está (usa_cronograma=False pra sempre) contraria o que o usuário queria.
 SEED_CRONOGRAMA_POR_ESTAGIO = [
     {"nome": "Brucelose B19", "categoria_alvo": "Bezerras (3 a 8 meses)",
      "produto": "Brucelose Bovina (Cepa 19 ou RB51)", "dosagem": "2 mL", "unidade": "ml",
@@ -216,13 +221,23 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
     # 2.5) Regras "por fase fisiológica" que entram no cronograma (lista de
     # espera de agendamento) em vez de aplicar direto — ver
     # SEED_CRONOGRAMA_POR_ESTAGIO acima.
-    regras_por_evento = {c.evento_sanitario_id for c in session.exec(select(CalendarioSanitario)).all()}
+    regras_por_evento: dict[int, list[CalendarioSanitario]] = {}
+    for c in session.exec(select(CalendarioSanitario)).all():
+        regras_por_evento.setdefault(c.evento_sanitario_id, []).append(c)
     for cfg in SEED_CRONOGRAMA_POR_ESTAGIO:
         ev = eventos.get(cfg["nome"])
-        if not ev or ev.id in regras_por_evento:
-            continue  # não existe, ou já tem regra cadastrada (manual ou não) — não mexe
+        if not ev:
+            continue
+        existentes = regras_por_evento.get(ev.id, [])
+        if any(c.usa_cronograma for c in existentes):
+            continue  # já tem regra de cronograma pra esse evento — não mexe
+        orfa = existentes[0] if existentes else None
+        if orfa:
+            orfa.usa_cronograma = True
+            session.add(orfa)
+            continue
         principio = principios.get(cfg.get("produto"))
-        session.add(CalendarioSanitario(
+        nova = CalendarioSanitario(
             evento_sanitario_id=ev.id,
             categoria_alvo=cfg["categoria_alvo"],
             doenca_id=ev.doenca_id,
@@ -234,8 +249,9 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
             frequencia_unidade=cfg["freq_unidade"],
             data_evento=date.today(),
             usa_cronograma=True,
-        ))
-        regras_por_evento.add(ev.id)
+        )
+        session.add(nova)
+        regras_por_evento.setdefault(ev.id, []).append(nova)
     session.commit()
 
     # 3) Regras do calendário fixo anual — época/rebanho. Evita duplicar se já
