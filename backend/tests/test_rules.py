@@ -516,6 +516,25 @@ class TestBenchmarkCategorias:
         # Novilhas não têm parto → IEP fica indefinido.
         assert val(cats["novilha"], "iep_meses") is None
 
+    def test_metas_vem_dos_parametros_e_novilha_tem_meta_propria(self):
+        """taxa_servico/taxa_prenhez_ciclo/taxa_concepcao passam a ler
+        Configurações > Parâmetros (meta_taxa_servico/meta_taxa_prenhez/
+        meta_taxa_concepcao/meta_concepcao_novilha) em vez do valor fixo de
+        BENCHMARK_METAS — e novilha usa sua própria meta de concepção,
+        diferente da meta de vacas."""
+        animais, servicos, partos = self._dados()
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 7))
+        cats = r["benchmark_categorias"]
+
+        def meta(lista, chave):
+            return next(b["meta"] for b in lista if b["chave"] == chave)
+
+        assert meta(cats["todas"], "taxa_servico") == 50.0
+        assert meta(cats["todas"], "taxa_prenhez_ciclo") == 18.0
+        assert meta(cats["vaca"], "taxa_concepcao") == 35.0
+        assert meta(cats["todas"], "taxa_concepcao") == 35.0
+        assert meta(cats["novilha"], "taxa_concepcao") == 60.0
+
 
 # ============================================================
 # MOTOR DA AGENDA — pendências de parto provável

@@ -30,7 +30,7 @@ from fazenda.rules.sugestao_documento import sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
 from fazenda.rules.patrimonio import calcular_depreciacao, proxima_atualizacao_valor_mercado, somar_meses, status_manutencao
-from fazenda.rules.parametros import patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.parametros import meta_rmca, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
 from fazenda.config import settings
 
@@ -1098,6 +1098,7 @@ def rmca(
             "rmca": round(gerencial["receita_leite"] - fisico["custo_total"], 2),
             "itens": fisico["itens"],
         },
+        "meta_rmca": meta_rmca(),
     }
 
 

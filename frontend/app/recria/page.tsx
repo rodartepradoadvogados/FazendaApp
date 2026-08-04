@@ -351,7 +351,7 @@ function AbaReproducao() {
             {[
               { rot: "Novilhas", v: st.n, sub: "" },
               { rot: "Idade média ao parto", v: `${st.media} m`, cor: metaOk(st.media, d!.meta_idade_parto, 1) ? "var(--green-light)" : "var(--amber)", sub: `meta ${d!.meta_idade_parto}m` },
-              { rot: "Desvio-padrão", v: `${st.desvio_padrao} m`, cor: st.desvio_padrao <= 1.7 ? "var(--green-light)" : "var(--red)", sub: "meta < 1,7" },
+              { rot: "Desvio-padrão", v: `${st.desvio_padrao} m`, cor: st.desvio_padrao <= d!.meta_desvio_padrao ? "var(--green-light)" : "var(--red)", sub: `meta < ${d!.meta_desvio_padrao}` },
               { rot: "Assimetria", v: st.assimetria, sub: "cauda de tardias" },
               { rot: "Mais nova / mais velha", v: `${st.idade_tipica_min}–${st.idade_tipica_max}`, sub: "meses (típico)" },
               { rot: "Amplitude típica", v: `${st.amplitude_tipica} m`, cor: st.amplitude_tipica < 6 ? "var(--green-light)" : "var(--amber)", sub: "meta < 6" },
@@ -415,7 +415,7 @@ function AbaReproducao() {
         ) : (
           <>
             {ciclos.taxa_prenhez_media != null && (
-              <p style={{ fontSize: "0.9rem", marginBottom: "0.6rem" }}>Taxa de prenhez média do período: <strong style={{ fontSize: "1.1rem", color: ciclos.taxa_prenhez_media >= 42.5 ? "var(--green-light)" : "var(--amber)" }}>{ciclos.taxa_prenhez_media}%</strong> <span style={{ color: "var(--text-muted)" }}>(meta &gt; 42,5%)</span></p>
+              <p style={{ fontSize: "0.9rem", marginBottom: "0.6rem" }}>Taxa de prenhez média do período: <strong style={{ fontSize: "1.1rem", color: ciclos.taxa_prenhez_media >= ciclos.meta_taxa_prenhez ? "var(--green-light)" : "var(--amber)" }}>{ciclos.taxa_prenhez_media}%</strong> <span style={{ color: "var(--text-muted)" }}>(meta &gt; {ciclos.meta_taxa_prenhez}%)</span></p>
             )}
             <div style={{ overflowX: "auto" }}>
               <table className="fazenda-table">

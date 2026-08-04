@@ -222,6 +222,7 @@ def reproducao_idade_parto(
     meta = _meta_recria(session, fazenda_id)
     return {
         "meta_idade_parto": meta.idade_parto_meses,
+        "meta_desvio_padrao": meta.desvio_padrao_meta,
         "estatisticas": estatisticas_idade_parto(idades),
         "distribuicao": distribuicao_idade_parto(idades),
         "custo_excedente": custo_recria_excedente(idades, meta.idade_parto_meses, meta.custo_diario_recria),
@@ -252,10 +253,12 @@ def reproducao_taxa_prenhez(
     # Resumo do período: PR média ponderada pelos elegíveis.
     tot_el = sum(c["elegiveis"] for c in ciclos)
     tot_pr = sum((c["taxa_prenhez"] or 0) * c["elegiveis"] for c in ciclos)
+    meta = _meta_recria(session, fazenda_id)
     return {
         "ciclos": ciclos,
         "taxa_prenhez_media": round(tot_pr / tot_el, 1) if tot_el else None,
         "total_servicos": len(servicos),
+        "meta_taxa_prenhez": meta.taxa_prenhez_meta,
     }
 
 

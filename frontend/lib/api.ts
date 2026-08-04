@@ -4563,10 +4563,10 @@ export const salvarRecriaBenchmark = (d: RecriaBenchmark) => _rSend(`/recria/ben
 export const excluirRecriaBenchmark = (id: number) => _rSend(`/recria/benchmark/${id}`, "DELETE");
 
 export type WisconsinStats = { n: number; media: number; minimo: number; maximo: number; desvio_padrao: number; assimetria: number; curtose: number; idade_tipica_min: number; idade_tipica_max: number; amplitude_tipica: number };
-export type RecriaIdadeParto = { meta_idade_parto: number; estatisticas: WisconsinStats | null; distribuicao: { mes: number; n: number; pct: number }[]; custo_excedente: { n: number; dias_excedentes_total: number; custo_total: number; dias_por_novilha: number; custo_por_novilha: number } };
+export type RecriaIdadeParto = { meta_idade_parto: number; meta_desvio_padrao: number; estatisticas: WisconsinStats | null; distribuicao: { mes: number; n: number; pct: number }[]; custo_excedente: { n: number; dias_excedentes_total: number; custo_total: number; dias_por_novilha: number; custo_por_novilha: number } };
 export type RecriaCiclo = { ciclo: number; inicio: string; fim: string; elegiveis: number; servidos: number; prenhes: number; taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null };
 export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/recria/reproducao/idade-parto`);
-export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number }> =>
+export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; meta_taxa_prenhez: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
 export type RecriaDossie = {

@@ -2996,6 +2996,7 @@ type RmcaResp = {
   contas_custo: string[];
   gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
   fisico: { receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[] };
+  meta_rmca: number;
 };
 
 function primeiroDiaDoMes() {
@@ -3081,7 +3082,7 @@ function RmcaView() {
               <div className="grid grid-cols-1 gap-3 mb-3">
                 <KPI v={formatBRL(dados.gerencial.receita_leite)} l="Receita do leite" c="var(--green-light)" />
                 <KPI v={formatBRL(dados.gerencial.custo_alimentacao)} l="Custo de alimentação" c="var(--red)" />
-                <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= 0 ? "var(--green-light)" : "var(--amber)"} />
+                <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
               </div>
               {dados.contas_receita.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Receita: {dados.contas_receita.join(", ")}</p>}
               {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
@@ -3094,7 +3095,7 @@ function RmcaView() {
               <div className="grid grid-cols-1 gap-3 mb-3">
                 <KPI v={formatBRL(dados.fisico.receita_leite)} l="Receita do leite" c="var(--green-light)" />
                 <KPI v={formatBRL(dados.fisico.custo_alimentacao)} l="Custo de alimentação (físico)" c="var(--red)" />
-                <KPI v={formatBRL(dados.fisico.rmca)} l="RMCA" c={dados.fisico.rmca >= 0 ? "var(--green-light)" : "var(--amber)"} />
+                <KPI v={formatBRL(dados.fisico.rmca)} l="RMCA" c={dados.fisico.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
               </div>
               {dados.fisico.itens.length > 0 && (
                 <div className="overflow-x-auto">
