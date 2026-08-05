@@ -40,6 +40,10 @@ router = APIRouter()
 VIAS_APLICACAO = ["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]
 CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao", "doenca"]
 CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
+# Finalidade do protocolo sanitário de etapas. None (protocolo cadastrado
+# antes desta distinção) é lido como "curativo" — ver FINALIDADE_PADRAO.
+FINALIDADES_PROTOCOLO_SANITARIO = ["curativo", "preventivo"]
+FINALIDADE_PADRAO = "curativo"
 
 
 class ProtocoloEtapaIn(BaseModel):
@@ -57,8 +61,20 @@ class ProtocoloSanitarioIn(BaseModel):
     doenca_id: int | None = None
     eh_mastite: bool = False
     dia_inicial: int = 0
+    finalidade: str | None = None  # curativo | preventivo — None vira "curativo"
     ativo: bool = True
     etapas: list[ProtocoloEtapaIn]
+
+
+def _validar_finalidade(finalidade: str | None) -> str:
+    if finalidade is None:
+        return FINALIDADE_PADRAO
+    if finalidade not in FINALIDADES_PROTOCOLO_SANITARIO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Finalidade inválida — use uma de: {', '.join(FINALIDADES_PROTOCOLO_SANITARIO)}",
+        )
+    return finalidade
 
 
 def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
@@ -86,6 +102,10 @@ def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict
     ).all()
     return {
         **p.model_dump(),
+        # Protocolo cadastrado antes da distinção curativo/preventivo não tem
+        # finalidade gravada — é curativo por definição, e a tela precisa ver
+        # isso resolvido em vez de um campo vazio.
+        "finalidade": p.finalidade or FINALIDADE_PADRAO,
         "doenca_nome": doencas.get(p.doenca_id) if p.doenca_id else None,
         "etapas": [e.model_dump() for e in etapas],
     }
@@ -121,7 +141,8 @@ def criar_protocolo_sanitario(
 
     protocolo = ProtocoloSanitario(
         nome=nome, doenca_id=dados.doenca_id, eh_mastite=dados.eh_mastite,
-        dia_inicial=dados.dia_inicial, ativo=dados.ativo, fazenda_id=fazenda_id,
+        dia_inicial=dados.dia_inicial, finalidade=_validar_finalidade(dados.finalidade),
+        ativo=dados.ativo, fazenda_id=fazenda_id,
     )
     session.add(protocolo)
     session.commit()
@@ -152,6 +173,7 @@ def atualizar_protocolo_sanitario(
     protocolo.doenca_id = dados.doenca_id
     protocolo.eh_mastite = dados.eh_mastite
     protocolo.dia_inicial = dados.dia_inicial
+    protocolo.finalidade = _validar_finalidade(dados.finalidade)
     protocolo.ativo = dados.ativo
     session.add(protocolo)
 

@@ -246,6 +246,9 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     # classificação macro do protocolo customizado.
     "protocolo_iatf_lancamento": [("protocolo_id", "INTEGER")],
     "protocolo_customizado": [("tipo", "VARCHAR")],
+    # Curativo x preventivo no protocolo sanitário de etapas. Nulo = curativo
+    # (todo protocolo cadastrado antes desta distinção), resolvido na leitura.
+    "protocolo_sanitario": [("finalidade", "VARCHAR")],
 }
 
 

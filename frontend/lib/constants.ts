@@ -29,6 +29,16 @@ export const VIAS_APLICACAO = [
   "Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina",
 ];
 
+// Unidades de dose no CADASTRO de qualquer protocolo (IATF, sanitário,
+// indução de lactação, customizado) — lista fechada, pelo mesmo motivo das
+// vias acima: unidade digitada à mão não casa com a unidade do item de
+// estoque e quebra a baixa automática (ver rules/unidades.py no backend).
+// Espelha SEED_UNIDADES_ESTOQUE (api/routers/cadastro/estoque.py) + "frasco",
+// que é como o produtor conta hormônio no curral.
+export const UNIDADES_PROTOCOLO = [
+  "unidade", "ml", "L", "dose", "frasco", "kg", "g", "metro", "saca 30kg", "saca 60kg",
+];
+
 // Centrais (studs) oficiais da NAAB — o número inicial de um código NAAB
 // identifica a central. Ex.: "7HO12345" → central 7 = Select Sires, raça HO,
 // touro 12345. Lista oficial: https://www.naab-css.org/naab-icar-stud-codes

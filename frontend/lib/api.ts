@@ -2754,14 +2754,14 @@ export async function importarProtocoloSanitarioExcel(file: File) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
   return res.json();
 }
-export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; finalidade?: string | null; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo sanitário"); }
   return res.json();
 }
-export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; finalidade?: string | null; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
