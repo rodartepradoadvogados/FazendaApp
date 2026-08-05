@@ -1,11 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Plus, Trash2, ExternalLink } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import {
   fetchAnimais,
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
-  fetchProtocolosSanitarios, fetchProtocolosInducaoLactacaoCadastro, fetchProtocolosCustomizados,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
   fetchPrincipiosAtivos,
   formatDate,
@@ -13,11 +12,17 @@ import {
   type ProtocoloIatfMolde, type EtapaProtocoloIatf, type LinhaCentralProtocolos,
 } from "@/lib/api";
 import type { AnimalRow } from "@/components/AnimalModal";
+import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { TabBar } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
+// Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
+// componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
+const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
+const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
+const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
 
 const inputStyle: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
@@ -116,7 +121,12 @@ function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfM
           <div><label style={labelStyle}>Dose / unid.</label>
             <div style={{ display: "flex", gap: "0.3rem" }}>
               <input type="number" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizar(i, { dose: ev.target.value ? Number(ev.target.value) : null })} placeholder="0" />
-              <input style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizar(i, { unidade: ev.target.value })} placeholder="ml" />
+              <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizar(i, { unidade: ev.target.value })}>
+                <option value="">—</option>
+                {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
+                {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
+                {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
             </div>
           </div>
           <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => remover(i)} title="Remover etapa"><Trash2 size={15} /></button>
@@ -134,19 +144,14 @@ function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfM
   );
 }
 
-function CadastroTab() {
+// Cadastro de molde de IATF — o único dos 4 que não tinha editor próprio
+// antes da Central (os outros 3 já eram cadastrados em Configurações, e são
+// reaproveitados aqui pelos MESMOS componentes, ver CadastroTab).
+function CadastroIatf() {
   const [moldesIatf, setMoldesIatf] = useState<ProtocoloIatfMolde[] | null>(null);
   const [editando, setEditando] = useState<ProtocoloIatfMolde | null | "novo">(null);
-  const [sanitarios, setSanitarios] = useState<any[]>([]);
-  const [inducoes, setInducoes] = useState<any[]>([]);
-  const [customizados, setCustomizados] = useState<any[]>([]);
 
-  const carregar = () => {
-    fetchProtocolosIatfCadastrados().then(setMoldesIatf).catch(() => setMoldesIatf([]));
-    fetchProtocolosSanitarios().then(setSanitarios).catch(() => setSanitarios([]));
-    fetchProtocolosInducaoLactacaoCadastro().then(setInducoes).catch(() => setInducoes([]));
-    fetchProtocolosCustomizados().then(setCustomizados).catch(() => setCustomizados([]));
-  };
+  const carregar = () => { fetchProtocolosIatfCadastrados().then(setMoldesIatf).catch(() => setMoldesIatf([])); };
   useEffect(carregar, []);
 
   async function excluir(id: number) {
@@ -156,72 +161,98 @@ function CadastroTab() {
   }
 
   return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-2">
+        <div className="card-header" style={{ padding: 0 }}>Protocolos IATF cadastrados</div>
+        {editando === null && (
+          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => setEditando("novo")}>
+            <Plus size={13} /> Novo
+          </button>
+        )}
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+        Define os hormônios de D0/D7/D9 — D11 é sempre a inseminação e nunca faz parte do molde.
+        Lançar sem escolher um molde continua funcionando (hormônios digitados na hora), como sempre foi.
+      </p>
+      {editando !== null && (
+        <EditorMoldeIatf
+          molde={editando === "novo" ? null : editando}
+          onSalvo={() => { setEditando(null); carregar(); }}
+          onCancelar={() => setEditando(null)}
+        />
+      )}
+      <table className="fazenda-table">
+        <thead><tr><th>Nome</th><th>Etapas</th><th></th></tr></thead>
+        <tbody>
+          {(moldesIatf || []).map((m) => (
+            <tr key={m.id}>
+              <td style={{ fontWeight: 600 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+              <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.etapas.map((e) => `D${e.dia}`).join(", ") || "—"}</td>
+              <td style={{ textAlign: "right" }}>
+                <button className="btn-ghost" style={{ fontSize: "0.74rem", marginRight: "0.5rem" }} onClick={() => setEditando(m)}>Editar</button>
+                <button className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluir(m.id)}>Excluir</button>
+              </td>
+            </tr>
+          ))}
+          {moldesIatf && !moldesIatf.length && (
+            <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF cadastrado — lançar continua funcionando sem molde (hormônios digitados na hora).</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Cadastro único: escolhe-se DE QUE protocolo se trata e abre-se o editor
+// daquele tipo. Os três já existentes (sanitário, indução, customizado) são
+// os MESMOS componentes usados em Configurações > Cadastro — mesmo formulário,
+// mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
+// paralela: cadastrar aqui ou lá é indiferente.
+const TIPOS_CADASTRO = [
+  { id: "sanitario", label: "Sanitário", desc: "Curativo ou preventivo — cronograma de dias (D0/D1/D2…)" },
+  { id: "iatf", label: "IATF", desc: "Hormônios de D0/D7/D9" },
+  { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
+  { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
+] as const;
+type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
+
+function CadastroTab() {
+  const [tipo, setTipo] = useState<TipoCadastro>("sanitario");
+
+  return (
     <div>
       <div className="card mb-3">
-        <div className="flex items-center justify-between mb-2">
-          <div className="card-header" style={{ padding: 0 }}>Protocolos IATF cadastrados</div>
-          {editando === null && (
-            <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => setEditando("novo")}>
-              <Plus size={13} /> Novo protocolo IATF
-            </button>
-          )}
+        <div className="card-header mb-2">Do que se trata o protocolo?</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {TIPOS_CADASTRO.map((t) => {
+            const ativo = t.id === tipo;
+            return (
+              <button
+                key={t.id} type="button" onClick={() => setTipo(t.id)} title={t.desc}
+                style={{
+                  textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "8px", cursor: "pointer",
+                  border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+                  background: ativo ? "var(--pill-active-bg)" : "transparent",
+                  color: ativo ? "var(--dourado-light)" : "var(--text)",
+                }}
+              >
+                <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{t.label}</span>
+                <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{t.desc}</span>
+              </button>
+            );
+          })}
         </div>
-        {editando !== null && (
-          <EditorMoldeIatf
-            molde={editando === "novo" ? null : editando}
-            onSalvo={() => { setEditando(null); carregar(); }}
-            onCancelar={() => setEditando(null)}
-          />
-        )}
-        <table className="fazenda-table">
-          <thead><tr><th>Nome</th><th>Etapas</th><th></th></tr></thead>
-          <tbody>
-            {(moldesIatf || []).map((m) => (
-              <tr key={m.id}>
-                <td style={{ fontWeight: 600 }}>{m.nome}</td>
-                <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.etapas.map((e) => `D${e.dia}`).join(", ") || "—"}</td>
-                <td style={{ textAlign: "right" }}>
-                  <button className="btn-ghost" style={{ fontSize: "0.74rem", marginRight: "0.5rem" }} onClick={() => setEditando(m)}>Editar</button>
-                  <button className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluir(m.id)}>Excluir</button>
-                </td>
-              </tr>
-            ))}
-            {moldesIatf && !moldesIatf.length && (
-              <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF cadastrado — lançar continua funcionando sem molde (hormônios digitados na hora).</td></tr>
-            )}
-          </tbody>
-        </table>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="card">
-          <div className="card-header mb-2 flex items-center justify-between">
-            Sanitário <a href="/parametros?aba=cadastro" title="Editar em Configurações > Cadastro" style={{ color: "var(--text-muted)" }}><ExternalLink size={13} /></a>
-          </div>
-          {sanitarios.map((p) => <div key={p.id} style={{ fontSize: "0.82rem", padding: "0.25rem 0" }}>{p.nome}</div>)}
-          {!sanitarios.length && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum cadastrado.</p>}
-        </div>
-        <div className="card">
-          <div className="card-header mb-2 flex items-center justify-between">
-            Indução de lactação <a href="/parametros?aba=cadastro" title="Editar em Configurações > Cadastro" style={{ color: "var(--text-muted)" }}><ExternalLink size={13} /></a>
-          </div>
-          {inducoes.map((p) => <div key={p.id} style={{ fontSize: "0.82rem", padding: "0.25rem 0" }}>{p.nome}</div>)}
-          {!inducoes.length && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum cadastrado.</p>}
-        </div>
-        <div className="card">
-          <div className="card-header mb-2 flex items-center justify-between">
-            Customizado <a href="/parametros?aba=cadastro" title="Editar em Configurações > Cadastro" style={{ color: "var(--text-muted)" }}><ExternalLink size={13} /></a>
-          </div>
-          {customizados.map((p) => (
-            <div key={p.id} style={{ fontSize: "0.82rem", padding: "0.25rem 0", display: "flex", justifyContent: "space-between" }}>
-              <span>{p.nome}</span>
-              {p.tipo ? <Pill cor={COR_TIPO[p.tipo]}>{LABEL_TIPO[p.tipo]}</Pill> : <Pill>sem tipo</Pill>}
-            </div>
-          ))}
-          {!customizados.length && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum cadastrado.</p>}
-          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Sem "Tipo" definido, o protocolo continua funcionando na Agenda, mas fica fora de Acompanhamento/Histórico.</p>
-        </div>
-      </div>
+      {tipo === "iatf" && <CadastroIatf />}
+      {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
+      {tipo === "inducao" && <CadastroProtocolosInducao />}
+      {tipo === "customizado" && <CadastroProtocolosCustomizados />}
+
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "1rem" }}>
+        Regra que <strong>se repete</strong> no tempo (vermífugo a cada 4 meses, Brucelose no nascimento) não é protocolo
+        de etapas — continua no <strong>Calendário Sanitário</strong>, em Sanidade. Aqui ficam só os cronogramas de dias fixos.
+      </p>
     </div>
   );
 }

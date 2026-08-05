@@ -95,15 +95,16 @@ export default function CadastroSanitario({ abaControlada, onAbaChange }: {
 
 type Protocolo = {
   id: number; nome: string; doenca_id: number | null; doenca_nome: string | null; eh_mastite: boolean; ativo: boolean;
+  finalidade?: string | null;  // curativo | preventivo (null em protocolo antigo = curativo)
   dia_inicial?: number;
   etapas: ProtocoloEtapa[];
 };
-type ProtocoloForm = { nome: string; doenca_id: string; eh_mastite: boolean; dia_inicial: number; ativo: boolean; etapas: ProtocoloEtapa[] };
+type ProtocoloForm = { nome: string; doenca_id: string; eh_mastite: boolean; dia_inicial: number; finalidade: string; ativo: boolean; etapas: ProtocoloEtapa[] };
 const etapaVazia = (dia: number): ProtocoloEtapa => ({ dia, criterio_tipo: "medicamento", produto: "", dosagem: 0, unidade: "ml", via: "", observacao: "" });
 // Protocolos novos nascem em D0 (mesmo padrão da indução de lactação); um
 // protocolo já existente que veio com dia_inicial=1 (pré-padronização D0)
 // mantém o próprio dia_inicial ao ser editado — ver abrirEdicao.
-const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_mastite: false, dia_inicial: 0, ativo: true, etapas: [etapaVazia(0)] });
+const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_mastite: false, dia_inicial: 0, finalidade: "curativo", ativo: true, etapas: [etapaVazia(0)] });
 
 export function CadastroProtocolosSanitarios() {
   const [itens, setItens] = useState<Protocolo[] | null>(null);
@@ -134,7 +135,7 @@ export function CadastroProtocolosSanitarios() {
   const abrirEdicao = (p: Protocolo) => {
     setForm({
       nome: p.nome, doenca_id: p.doenca_id ? String(p.doenca_id) : "", eh_mastite: p.eh_mastite,
-      dia_inicial: p.dia_inicial ?? 0, ativo: p.ativo,
+      dia_inicial: p.dia_inicial ?? 0, finalidade: p.finalidade || "curativo", ativo: p.ativo,
       etapas: p.etapas.length ? p.etapas.map((e) => ({ ...e })) : [etapaVazia(p.dia_inicial ?? 0)],
     });
     setEditando(p.id); setMsg(null);
@@ -170,7 +171,7 @@ export function CadastroProtocolosSanitarios() {
     try {
       const dados = {
         nome: form.nome.trim(), doenca_id: form.doenca_id ? Number(form.doenca_id) : undefined,
-        eh_mastite: form.eh_mastite, dia_inicial: form.dia_inicial, ativo: form.ativo,
+        eh_mastite: form.eh_mastite, dia_inicial: form.dia_inicial, finalidade: form.finalidade, ativo: form.ativo,
         etapas: form.etapas.map((e) => ({ ...e, dia: Number(e.dia), dosagem: Number(e.dosagem), via: e.via || undefined, observacao: e.observacao || undefined })),
       };
       if (editando === "novo") await criarProtocoloSanitario(dados);
@@ -286,6 +287,7 @@ export function CadastroProtocolosSanitarios() {
             <thead><tr>
               <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
               <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+              <ThOrdenavel label="Finalidade" campo="finalidade" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
               <ThOrdenavel label="Mastite" campo="eh_mastite" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
               <th>Etapas</th><th></th>
             </tr></thead>
@@ -295,6 +297,7 @@ export function CadastroProtocolosSanitarios() {
                   <tr>
                     <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{(p.finalidade || "curativo") === "preventivo" ? "Preventivo" : "Curativo"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -308,7 +311,7 @@ export function CadastroProtocolosSanitarios() {
                     </td>
                   </tr>
                   {editando === p.id && (
-                    <tr><td colSpan={5} style={{ padding: 0 }}>
+                    <tr><td colSpan={6} style={{ padding: 0 }}>
                       <FormProtocolo
                         form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
                         acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
@@ -317,8 +320,8 @@ export function CadastroProtocolosSanitarios() {
                   )}
                 </Fragment>
               ))}
-              {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+              {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
           </div>
@@ -342,11 +345,20 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
           <select style={inputStyle} value={form.doenca_id} onChange={(e) => setForm({ ...form, doenca_id: e.target.value })}>
             <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
           </select></div>
+        <div><label style={labelStyle}>Finalidade</label>
+          <select style={inputStyle} value={form.finalidade} onChange={(e) => setForm({ ...form, finalidade: e.target.value })}>
+            <option value="curativo">Curativo (trata animal doente)</option>
+            <option value="preventivo">Preventivo (sem doença instalada)</option>
+          </select></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.eh_mastite} onChange={(e) => setForm({ ...form, eh_mastite: e.target.checked })} /> É protocolo de mastite</label></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
       </div>
+      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.4rem", marginBottom: "0.8rem" }}>
+        Preventivo aqui é um cronograma de <strong>dias fixos</strong> (D0/D1/D2…) aplicado sem doença instalada — ex.: vacinação em 2 doses.
+        Rotina que <strong>se repete</strong> ("a cada 4 meses") continua no Calendário Sanitário, na aba Eventos sanitários.
+      </p>
 
       <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
       <div className="space-y-2 mb-2">
@@ -435,7 +447,10 @@ const etapaInducaoVazia = (dia: number): EtapaInducaoLactacao => ({ dia, tipo: "
 type ProtocoloInducaoForm = { nome: string; dia_inicial: number; observacao: string; ativo: boolean; etapas: EtapaInducaoLactacao[] };
 const protocoloInducaoFormVazio = (): ProtocoloInducaoForm => ({ nome: "", dia_inicial: 0, observacao: "", ativo: true, etapas: [etapaInducaoVazia(0)] });
 
-function CadastroProtocolosInducao() {
+// Exportado para a Central de Protocolos (app/protocolos) reaproveitar o
+// MESMO editor usado aqui em Configurações — dois lugares de acesso, um só
+// formulário e um só endpoint, para os dois nunca divergirem.
+export function CadastroProtocolosInducao() {
   const [itens, setItens] = useState<ProtocoloInducaoLactacaoCadastro[] | null>(null);
   const [principios, setPrincipios] = useState<{ id: number; nome: string }[]>([]);
   const [error, setError] = useState<string | null>(null);

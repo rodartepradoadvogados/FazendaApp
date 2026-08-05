@@ -431,6 +431,14 @@ class ProtocoloSanitario(SQLModel, table=True):
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     eh_mastite: bool = False  # liga o fluxo diferenciado: CMT, teto afetado, classificação
     dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma (etapas já existentes usam 1)
+    # Curativo (trata um animal já doente — mastite, diarreia, pneumonia…) ou
+    # preventivo (cronograma de várias doses aplicado sem doença instalada,
+    # ex.: vacinação em 2 doses). None = curativo, que é o que todo protocolo
+    # cadastrado antes desta distinção é — nenhum muda de comportamento.
+    # NÃO substitui o Calendário Sanitário (EventoSanitario/CalendarioSanitario),
+    # que continua sendo o lugar da recorrência ("a cada 4 meses"): aqui é
+    # cronograma de dias fixos (D0/D1/D2…), lá é regra que se repete.
+    finalidade: Optional[str] = None  # "curativo" | "preventivo"
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

@@ -6,7 +6,7 @@ import {
   CATEGORIAS_PROTOCOLO_CUSTOM, TIPOS_PROTOCOLO_CUSTOM,
   type ProtocoloCustomizado, type EtapaProtocoloCustomizado,
 } from "@/lib/api";
-import { VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO, UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
@@ -202,7 +202,13 @@ function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvand
             <div><label style={labelStyle}>Insumo sugerido</label>
               <input style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })} placeholder="texto livre — informativo" /></div>
             <div><label style={labelStyle}>Dose</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizarEtapa(idx, { dose: ev.target.value ? Number(ev.target.value) : null })} /></div>
-            <div><label style={labelStyle}>Unidade</label><input style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })} placeholder="ml, kg…" /></div>
+            <div><label style={labelStyle}>Unidade</label>
+              <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
+                <option value="">—</option>
+                {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
+                {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
+                {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select></div>
             <div><label style={labelStyle}>Via</label>
               <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
                 <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
