@@ -116,7 +116,9 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
 }
 
 // ── Curativa: aplicação avulsa OU protocolo sanitário ────────────────────────
-function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCurativa; animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[] }) {
+// Exportado para a tela Lançar > Protocolos usar o MESMO formulário de
+// protocolo sanitário (tipo="protocolo") — ver FormProtocolos.
+export function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCurativa; animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[] }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const protocolos = useCache<Protocolo[]>("protocolos_sanitarios", () => fetchProtocolosSanitarios() as Promise<Protocolo[]>, []);
 

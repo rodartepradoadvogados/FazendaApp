@@ -484,7 +484,9 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
 // Lança o D0 do protocolo para uma ou mais matrizes. As etapas seguintes
 // (D7/D9/D11) entram na agenda pelo backend. O protocolo hormonal é fixo no
 // backend — aqui exibimos os hormônios de cada dia para conferência.
-function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+// Exportado para a tela Lançar > Protocolos usar o MESMO formulário — dois
+// caminhos até o mesmo lançamento, uma só implementação (ver FormProtocolos).
+export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const { rotuloDe } = useEstadosReprodutivos();
   const [matrizes, setMatrizes] = useState<string[]>(animalFixado ? [animalFixado] : []);

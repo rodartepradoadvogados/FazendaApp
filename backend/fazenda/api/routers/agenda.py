@@ -37,6 +37,7 @@ from fazenda.rules.protocolo_customizado import (
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
+from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
@@ -509,7 +510,7 @@ def calcular_agenda(
                 hormonios_grupo.append(h)
         eventos_iatf.append({
             "id": chave, "data": data_prevista.isoformat(), "categoria": "Reprodutivo",
-            "descricao": f"{nome_protocolo} — D{dia}",
+            "descricao": f"{nome_curto(nome_protocolo)} — D{dia}",
             "numero_animal": None, "observacao": proxima_etapa,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
@@ -555,7 +556,7 @@ def calcular_agenda(
         animais_grupo = sorted((a.numero_matriz for a in aps), key=chave_numero)
         eventos_inducao.append({
             "id": chave, "data": aps[0].data_prevista.isoformat(), "categoria": "Produção",
-            "descricao": f"{lancamento.nome_protocolo} — D{dia}",
+            "descricao": f"{nome_curto(lancamento.nome_protocolo)} — D{dia}",
             "numero_animal": None, "observacao": aps[0].observacao_manejo,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_inducao", "dia": dia, "animais": animais_grupo,

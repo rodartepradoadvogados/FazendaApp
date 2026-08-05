@@ -17,7 +17,7 @@ import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
-  Milk, FlaskConical, Droplet, Droplets, Scale,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, sincronizar, descartarPendente } from "@/lib/offline";
@@ -46,6 +46,7 @@ import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
+import Protocolos from "@/components/mobile/menu/Protocolos";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
@@ -121,7 +122,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "news" | "assistente" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const [sincronizando, setSincronizando] = useState(false);
@@ -187,6 +188,10 @@ export default function Pagina() {
     return <Recria onVoltar={() => setSecaoAberta(null)} />;
   }
 
+  if (secaoAberta === "protocolos") {
+    return <Protocolos onVoltar={() => setSecaoAberta(null)} />;
+  }
+
   // Qualquer admin (ver ehAdmin()) — mesmo gate do site (/usuarios via AuthShell).
   if (secaoAberta === "controleAcesso") {
     return <ControleAcesso onVoltar={() => setSecaoAberta(null)} />;
@@ -231,6 +236,7 @@ export default function Pagina() {
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
+    { id: "protocolos", label: "Protocolos", icone: <ListChecks size={26} />, cor: "var(--mob-roxo)" },
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
     ...(montado && ehDono() ? [{ id: "painelCowData", label: "Painel CowData", icone: <Building2 size={26} />, cor: "var(--mob-dourado)" }] : []),
     ...(montado && ehAdmin() ? [{ id: "assistente", label: "Assistente Virtual", icone: <Sparkles size={26} />, cor: "var(--mob-dourado)" }] : []),
@@ -256,7 +262,7 @@ export default function Pagina() {
           if (id === "sair") { logout(); return; }
           if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
           if (id === "siteCompleto") { router.push("/"); return; }
-          setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso");
+          setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "protocolos" | "controleAcesso");
         }}
       />
 

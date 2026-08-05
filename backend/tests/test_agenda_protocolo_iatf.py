@@ -58,15 +58,17 @@ class TestEventoAgrupado:
         assert d0["numero_animal"] is None
 
     def test_descricao_tem_nome_do_protocolo_e_dia(self, client):
-        """O campo "protocolo" enviado pelo cliente não é mais usado como nome
-        — o nome do lançamento é sempre gerado automaticamente (Central de
-        Protocolos: nome cadastrado + data D0 + data do último dia)."""
+        """O nome do lançamento é sempre gerado automaticamente (Central de
+        Protocolos: nome cadastrado + data D0 + data do último dia), mas o
+        CARTÃO da Agenda mostra só a parte cadastrada — o intervalo de datas
+        seria redundante num cartão que já está numa data e já termina em
+        "— D7" (ver rules/nomenclatura_protocolo.nome_curto)."""
         c, engine = client
         _lancar(c, ["700"], data_d0="2026-07-03")
 
         eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
         d7 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 7)
-        assert d7["descricao"] == "PROTOCOLO IATF - 03/07/26 A 14/07/26 (D0 A D11 - 12 DIAS) — D7"
+        assert d7["descricao"] == "PROTOCOLO IATF — D7"
 
     def test_observacao_mostra_proxima_etapa(self, client):
         c, engine = client

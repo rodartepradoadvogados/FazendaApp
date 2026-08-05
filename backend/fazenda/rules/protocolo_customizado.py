@@ -18,6 +18,7 @@ from datetime import date, timedelta
 
 from sqlmodel import Session, select
 
+from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.models import ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento
 from fazenda.ordenacao import chave_numero
 
@@ -84,7 +85,7 @@ def eventos_agenda(
             "id": chave,
             "data": aps[0].data_prevista.isoformat(),
             "categoria": lancamento.categoria,
-            "descricao": f"{lancamento.nome_protocolo} — D{dia - lancamento.dia_inicial} — {aps[0].descricao}",
+            "descricao": f"{nome_curto(lancamento.nome_protocolo)} — D{dia - lancamento.dia_inicial} — {aps[0].descricao}",
             "numero_animal": animais_grupo[0] if len(animais_grupo) == 1 else None,
             "observacao": observacao,
             "fonte": "manual",
