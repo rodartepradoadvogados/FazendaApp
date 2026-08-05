@@ -31,6 +31,7 @@ from fazenda.api.routers import (
     baixas,
     cadastro,
     cartao_credito,
+    central_protocolos,
     chamados,
     cobranca,
     cofre_acesso,
@@ -495,6 +496,10 @@ app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
 # exige o módulo "parametros", via cadastro.router.
 app.include_router(protocolos_customizados.router, dependencies=_protegido + _contrato_ativo)
+# Central de Protocolos (Acompanhamento/Histórico) — só lê dados de IATF,
+# Indução, Sanitário e Customizado; mesma regra de acesso deles (protegido +
+# contrato ativo, sem gate de módulo específico).
+app.include_router(central_protocolos.router, dependencies=_protegido + _contrato_ativo)
 # Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
 # comercial próprio, só exige contrato ativo.
 app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)

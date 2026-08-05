@@ -3,7 +3,7 @@ import { Fragment, useEffect, useState } from "react";
 import { ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
 import {
   fetchProtocolosCustomizados, criarProtocoloCustomizado, atualizarProtocoloCustomizado, excluirProtocoloCustomizado,
-  CATEGORIAS_PROTOCOLO_CUSTOM,
+  CATEGORIAS_PROTOCOLO_CUSTOM, TIPOS_PROTOCOLO_CUSTOM,
   type ProtocoloCustomizado, type EtapaProtocoloCustomizado,
 } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -16,13 +16,13 @@ const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(-
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 type ProtocoloForm = {
-  nome: string; categoria: string; dia_inicial: number; observacao: string; ativo: boolean;
+  nome: string; categoria: string; tipo: string; dia_inicial: number; observacao: string; ativo: boolean;
   etapas: EtapaProtocoloCustomizado[];
 };
 const etapaVazia = (dia: number): EtapaProtocoloCustomizado => ({ dia, descricao_evento: "", insumo_padrao: "", dose: null, unidade: "", via: "", observacao: "" });
 // Protocolos novos nascem em D0, mesmo padrão dos demais protocolos do sistema
 // (indução de lactação, IATF, sanitário).
-const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", categoria: "Atividades", dia_inicial: 0, observacao: "", ativo: true, etapas: [etapaVazia(0)] });
+const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", categoria: "Atividades", tipo: "", dia_inicial: 0, observacao: "", ativo: true, etapas: [etapaVazia(0)] });
 
 export default function CadastroProtocolosCustomizados() {
   const [itens, setItens] = useState<ProtocoloCustomizado[] | null>(null);
@@ -39,7 +39,7 @@ export default function CadastroProtocolosCustomizados() {
   const abrirNovo = () => { setForm(protocoloFormVazio()); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: ProtocoloCustomizado) => {
     setForm({
-      nome: p.nome, categoria: p.categoria, dia_inicial: p.dia_inicial, observacao: p.observacao || "", ativo: p.ativo,
+      nome: p.nome, categoria: p.categoria, tipo: p.tipo || "", dia_inicial: p.dia_inicial, observacao: p.observacao || "", ativo: p.ativo,
       etapas: p.etapas.length ? p.etapas.map((e) => ({ ...e })) : [etapaVazia(p.dia_inicial)],
     });
     setEditando(p.id); setMsg(null);
@@ -64,7 +64,7 @@ export default function CadastroProtocolosCustomizados() {
     setSalvando(true); setMsg(null);
     try {
       const dados = {
-        nome: form.nome.trim(), categoria: form.categoria, dia_inicial: form.dia_inicial,
+        nome: form.nome.trim(), categoria: form.categoria, tipo: form.tipo || null, dia_inicial: form.dia_inicial,
         observacao: form.observacao.trim() || undefined, ativo: form.ativo,
         etapas: form.etapas.map((e) => ({
           ...e, dia: Number(e.dia), descricao_evento: e.descricao_evento.trim(),
@@ -122,13 +122,14 @@ export default function CadastroProtocolosCustomizados() {
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Etapas</th><th></th></tr></thead>
+              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Tipo</th><th>Etapas</th><th></th></tr></thead>
               <tbody>
                 {linhasOrdenadas.map((p) => (
                   <Fragment key={p.id}>
                     <tr>
                       <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                       <td style={{ fontSize: "0.78rem" }}>{categoriaLabel(p.categoria)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === p.tipo)?.[1] || p.tipo) : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
                       <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - p.dia_inicial}`).join(", ")}</td>
                       <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
@@ -140,7 +141,7 @@ export default function CadastroProtocolosCustomizados() {
                       </td>
                     </tr>
                     {editando === p.id && (
-                      <tr><td colSpan={4} style={{ padding: 0 }}>
+                      <tr><td colSpan={5} style={{ padding: 0 }}>
                         <FormProtocoloCustomizado
                           form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
                           acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
@@ -149,8 +150,8 @@ export default function CadastroProtocolosCustomizados() {
                     )}
                   </Fragment>
                 ))}
-                {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
+                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -176,6 +177,17 @@ function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvand
           </select></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Tipo (Central de Protocolos)</label>
+          <select style={inputStyle} value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+            <option value="">Sem tipo — fora de Acompanhamento/Histórico</option>
+            {TIPOS_PROTOCOLO_CUSTOM.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
+          </select>
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+            Só entra nos filtros por tipo da Central de Protocolos se isto estiver preenchido.
+          </p>
+        </div>
       </div>
       <div className="mb-3"><label style={labelStyle}>Observação (opcional)</label>
         <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} placeholder="Contexto geral do protocolo" /></div>

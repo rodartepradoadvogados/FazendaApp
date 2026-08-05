@@ -436,13 +436,15 @@ class TestProtocoloIatf:
         # ainda não foi confirmado), não pula direto para D7.
         c, engine = client
         c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": date.today().isoformat(), "protocolo": "Protocolo padrão",
+            "animais": ["500"], "data_d0": date.today().isoformat(),
         })
         r = c.get("/reproducao/protocolo-iatf/ativos")
         assert r.status_code == 200
         ativos = r.json()
         assert len(ativos) == 1
-        assert ativos[0]["nome_protocolo"] == "Protocolo padrão"
+        # Nome é sempre automático agora (Central de Protocolos) — não se
+        # digita mais na hora do lançamento.
+        assert ativos[0]["nome_protocolo"].startswith("PROTOCOLO IATF - ")
         assert ativos[0]["animais"][0]["numero_matriz"] == "500"
         assert ativos[0]["animais"][0]["etapa_atual"] == "D0"
 
@@ -542,12 +544,16 @@ class TestRegistrarServico:
         with Session(engine) as s:
             s.add(Animal(numero="500", raca="Girolando", ativo=True))
             s.commit()
-        c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
-        })
+        criado = c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["500"], "data_d0": "2026-07-08",
+        }).json()
+        nome_protocolo = next(
+            l["nome_protocolo"] for l in c.get("/reproducao/protocolo-iatf/lancamentos").json()
+            if l["lancamento_id"] == criado["lancamento_id"]
+        )
 
         c.post("/reproducao/servico", json={
-            "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": "Protocolo padrão",
+            "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": nome_protocolo,
         })
 
         with Session(engine) as s:

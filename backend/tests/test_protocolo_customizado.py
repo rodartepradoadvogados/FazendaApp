@@ -222,7 +222,7 @@ class TestLancamento:
         with Session(engine) as s:
             lanc = s.exec(select(ProtocoloCustomizadoLancamento)).first()
             ap = s.exec(select(ProtocoloCustomizadoAplicacao)).first()
-        assert lanc.nome_protocolo == "Original"
+        assert lanc.nome_protocolo == "ORIGINAL - 01/03/26 A 01/03/26 (D0 A D0 - 1 DIAS)"
         assert ap.descricao == "Evento original"
 
 
@@ -261,7 +261,9 @@ class TestAgenda:
         r = c.get("/agenda/", params={"data": "2026-03-01", "dias": 30})
         eventos = [e for e in r.json()["eventos"] if e.get("tipo") == "protocolo_customizado"]
         ev_d0 = next(e for e in eventos if e["dia"] == 0)
-        assert criado["nome"] in ev_d0["descricao"]
+        # Nome vira automático (nome cadastrado + data D0 + último dia) — não
+        # digitado mais na hora do lançamento.
+        assert criado["nome"].upper() in ev_d0["descricao"]
         assert "D0" in ev_d0["descricao"]
         assert "Vacina X" in (ev_d0["observacao"] or "")
         assert ev_d0["cor"] == "var(--dourado)"

@@ -31,6 +31,7 @@ from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules import estoque_baixa
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
 from fazenda.rules.unidades import unidades_compativeis
@@ -1307,8 +1308,11 @@ def lancar_inducao_lactacao(
     for e in etapas:
         etapas_por_dia.setdefault(e.dia, []).append(e)
 
+    nome_protocolo = gerar_nome_lancamento(
+        protocolo.nome, dados.data_d0, protocolo.dia_inicial, max(etapas_por_dia.keys()),
+    )
     lancamento = ProtocoloInducaoLancamento(
-        protocolo_id=protocolo.id, nome_protocolo=protocolo.nome, data_d0=dados.data_d0,
+        protocolo_id=protocolo.id, nome_protocolo=nome_protocolo, data_d0=dados.data_d0,
         responsavel=dados.responsavel, observacao=dados.observacao, usuario_id=_usuario_id_seguro(user),
     )
     session.add(lancamento)
