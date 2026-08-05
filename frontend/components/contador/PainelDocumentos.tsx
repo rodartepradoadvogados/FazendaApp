@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { CORES_CONTADOR } from "@/app/contador/layout";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { Dropzone } from "@/components/Dropzone";
 
 const C = CORES_CONTADOR;
 const estiloCard: React.CSSProperties = { background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "4px", padding: "1.3rem" };
@@ -68,8 +69,6 @@ export function PainelDocumentos() {
         descricao: descricao || undefined,
       });
       setArquivo(null); setCategoria(""); setInserirNoBalanco("nao"); setNumeroLancamento(""); setDataDocumento(""); setDescricao("");
-      const input = document.getElementById("input-arquivo-documento") as HTMLInputElement | null;
-      if (input) input.value = "";
       recarregar();
     } catch (e: any) {
       setErro(e.message);
@@ -85,7 +84,12 @@ export function PainelDocumentos() {
         <form onSubmit={enviar} style={{ display: "grid", gap: "0.8rem", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))" }}>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={estiloLabel}>Arquivo (PDF, XML, PNG, JPEG...)</label>
-            <input id="input-arquivo-documento" type="file" onChange={(e) => setArquivo(e.target.files?.[0] || null)} style={estiloInput} />
+            <Dropzone
+              compact
+              label={arquivo ? arquivo.name : "Arraste o arquivo aqui, ou"}
+              onFiles={(files) => setArquivo(files[0])}
+              cores={{ borda: C.borda, bordaAtiva: C.cobre, fundo: C.painelAlt, fundoAtivo: C.painelAlt, texto: C.mudo, destaque: C.cobreClaro }}
+            />
           </div>
           <div>
             <label style={estiloLabel}>Categoria</label>

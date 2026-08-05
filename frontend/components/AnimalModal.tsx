@@ -54,7 +54,6 @@ export function AnimalModal({ title, animais, onClose }: { title: string; animai
   const ord = useOrdenacao(animais);
   return (
     <div
-      onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}
     >
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: temRepro ? "820px" : "640px", maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>

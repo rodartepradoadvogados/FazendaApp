@@ -65,7 +65,7 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
       </button>
 
       {aberto && (
-        <div onClick={() => setAberto(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "620px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0 }}>Escolher produto <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({filtrados.length})</span></div>

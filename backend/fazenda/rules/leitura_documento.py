@@ -47,11 +47,15 @@ _SCHEMA = {
     "properties": {
         "tipo_documento": {
             "type": "string",
-            "enum": ["nota_fiscal", "recibo", "boleto"],
+            "enum": ["nota_fiscal", "recibo", "boleto", "guia_fgts", "guia_dctf"],
             "description": (
                 "'nota_fiscal' quando for uma nota fiscal eletrônica/DANFE (compra ou venda ainda não paga). "
                 "'recibo' quando for um comprovante de pagamento/transferência já efetivado (recibo, comprovante bancário, PIX). "
-                "'boleto' quando for um boleto bancário (código de barras/linha digitável, vencimento, ainda não pago)."
+                "'boleto' quando for um boleto bancário (código de barras/linha digitável, vencimento, ainda não pago). "
+                "'guia_fgts' quando for a guia de recolhimento do FGTS (GRF-e do FGTS Digital, ou DAE de empregador "
+                "doméstico via eSocial) — reconhecível pelo cabeçalho 'FGTS'/'Guia de Recolhimento do FGTS'/'GRF'. "
+                "'guia_dctf' quando for o DARF gerado pela DCTFWeb (Documento de Arrecadação de Receitas Federais, "
+                "com código da receita, período de apuração, valor do principal/multa/juros)."
             ),
         },
         "parcela_num": {
@@ -64,11 +68,31 @@ _SCHEMA = {
         },
         "linha_digitavel": {
             "type": ["string", "null"],
-            "description": "Linha digitável ou código de barras do boleto, se legível. Só se aplica a boleto.",
+            "description": "Linha digitável ou código de barras — do boleto, ou da guia de FGTS/DCTF, se legível.",
         },
         "data_vencimento": {
             "type": ["string", "null"],
-            "description": "Data de vencimento do boleto, formato YYYY-MM-DD. Só se aplica a boleto.",
+            "description": "Data de vencimento, formato YYYY-MM-DD — do boleto, ou da guia de FGTS/DCTF.",
+        },
+        "competencia": {
+            "type": ["string", "null"],
+            "description": "Competência (mês de referência) da guia de FGTS/DCTF, formato YYYY-MM. Só se aplica a guia_fgts/guia_dctf.",
+        },
+        "codigo_receita": {
+            "type": ["string", "null"],
+            "description": "Código da receita do DARF (ex.: '1017' para FGTS/DCTF-relacionados). Só se aplica a guia_dctf.",
+        },
+        "valor_principal": {
+            "type": ["number", "null"],
+            "description": "Valor do principal da guia de FGTS/DCTF, sem multa/juros. Só se aplica a guia_fgts/guia_dctf.",
+        },
+        "valor_multa": {
+            "type": ["number", "null"],
+            "description": "Valor da multa da guia de FGTS/DCTF, se houver. Só se aplica a guia_fgts/guia_dctf.",
+        },
+        "valor_juros": {
+            "type": ["number", "null"],
+            "description": "Valor dos juros/encargos da guia de FGTS/DCTF, se houver. Só se aplica a guia_fgts/guia_dctf.",
         },
         "fornecedor_cliente": {
             "type": ["string", "null"],
@@ -132,7 +156,7 @@ _SCHEMA = {
     "required": [
         "tipo_documento", "fornecedor_cliente", "numero_documento", "data_emissao", "data_pagamento", "valor_total",
         "conta_bancaria", "itens", "observacao", "parcela_num", "parcela_total", "linha_digitavel", "data_vencimento",
-        "parcelas_detectadas",
+        "parcelas_detectadas", "competencia", "codigo_receita", "valor_principal", "valor_multa", "valor_juros",
     ],
     "additionalProperties": False,
 }
@@ -145,8 +169,9 @@ def _montar_prompt(paginas: int | None) -> str:
     )
     return f"""Você está lendo um documento financeiro anexado no sistema da {NOME_FAZENDA} (fazenda leiteira).
 Identifique se é uma NOTA FISCAL (compra ou venda ainda não paga), um RECIBO/COMPROVANTE (pagamento ou \
-transferência já realizado — recibo em papel, comprovante bancário, print de PIX/TED) ou um BOLETO BANCÁRIO \
-(código de barras/linha digitável, com vencimento, ainda não pago).
+transferência já realizado — recibo em papel, comprovante bancário, print de PIX/TED), um BOLETO BANCÁRIO \
+(código de barras/linha digitável, com vencimento, ainda não pago), uma GUIA DE FGTS (GRF-e do FGTS Digital, ou \
+DAE de empregador doméstico) ou um DARF DE DCTFWeb (Documento de Arrecadação de Receitas Federais).
 {contexto_paginas}
 Se for nota fiscal: extraia fornecedor/cliente, número, data de emissão, valor total e os produtos/serviços \
 discriminados (se houver mais de um item).
@@ -167,6 +192,12 @@ depois calcule `valor_total` como a SOMA de todas elas. Nunca copie o valor de u
 quando houver mais de uma parcela: por exemplo, 8 páginas de R$586,25 cada dão parcelas_detectadas com 8 itens \
 de 586.25 e valor_total = 4690.00 (nunca 586.25). Se o documento tiver só uma parcela/página, `parcelas_detectadas` \
 ainda assim recebe 1 item (com os mesmos dados dessa única via) e `valor_total` é igual ao valor dela.
+
+Se for guia de FGTS ou DARF de DCTFWeb: preencha competencia (mês de referência, YYYY-MM), valor_principal, \
+valor_multa e valor_juros separadamente (0 quando o campo existir mas estiver zerado, null só se o campo nem \
+existir no documento), valor_total (principal + multa + juros), data_vencimento e, se houver, linha_digitavel/ \
+código de barras. Só para guia_dctf, preencha também codigo_receita (o código numérico da receita no DARF). \
+fornecedor_cliente fica com o nome da empresa/fazenda que está recolhendo (não com a Receita Federal/Caixa).
 
 Responda só com os campos do schema — não invente valores que não conseguir ler; deixe null."""
 

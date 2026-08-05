@@ -638,6 +638,58 @@ class TestBaixaLote:
         assert r.status_code == 400
 
 
+class TestParcelarDiferencaNoPagamento:
+    def _criar_lancamento(self, c, valor=1000.0):
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "quantidade": 1, "valor_unitario": valor, "valor_total": valor}],
+        })
+        return r.json()["ids"][0]
+
+    def test_parcelar_diferenca_cria_novas_parcelas_e_zera_desconto(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 1000.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+            "parcelas_diferenca": [
+                {"data_vencimento": "2026-08-08", "valor": 100.0},
+                {"data_vencimento": "2026-09-08", "valor": 100.0},
+            ],
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["valor_pago"] == 800.0
+        assert corpo["desconto_acrescimo"] == 0  # a diferença não foi perdoada — virou parcela
+        assert corpo["parcela_total"] == 3  # era 1/1 (não parcelado) + 2 novas parcelas
+        novas = corpo["parcelas_diferenca_criadas"]
+        assert len(novas) == 2
+        assert {n["parcela_num"] for n in novas} == {2, 3}
+        assert all(n["parcela_total"] == 3 for n in novas)
+        assert all(n["numero_lancamento"] == corpo["numero_lancamento"] for n in novas)
+        assert sorted(n["valor_total"] for n in novas) == [100.0, 100.0]
+        # As novas parcelas nascem em aberto (sem data_pagamento).
+        assert all(n["data_pagamento"] is None for n in novas)
+
+    def test_soma_das_parcelas_precisa_bater_com_a_diferenca(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 1000.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+            "parcelas_diferenca": [{"data_vencimento": "2026-08-08", "valor": 150.0}],  # deveria ser 200
+        })
+        assert r.status_code == 400
+
+    def test_sem_parcelas_diferenca_continua_gravando_desconto_normal(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 1000.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+        })
+        assert r.status_code == 200
+        assert r.json()["desconto_acrescimo"] == -200.0
+        assert r.json()["parcelas_diferenca_criadas"] == []
+
+
 class TestRmca:
     def _marcar_contas(self, session):
         session.add(PlanoContaGerencial(codigo="2.01.01.01", nome="Leite indústria", ativa=True, rmca_receita_leite=True))

@@ -3988,6 +3988,10 @@ export async function gerarLancamentoRecorrente(modeloId: number, dados: GerarLa
 export async function marcarPagoFinanceiro(id: number, dados: {
   data_pagamento: string; valor_pago: number; conta_bancaria?: string; numero_documento_pagamento?: string;
   forma_pagamento?: string; data_vencimento_cartao?: string;
+  // Diferença entre valor_pago e o valor do lançamento dividida em novas
+  // parcelas do mesmo lançamento, em vez de virar desconto/acréscimo — ver
+  // PUT /financeiro/lancamentos/{id}/pagar.
+  parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

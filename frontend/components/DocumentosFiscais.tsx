@@ -9,6 +9,7 @@ import {
   fetchCategoriasDocumento, fetchDocumentos, enviarDocumento, baixarDocumento, excluirDocumento,
   type DocumentoArquivado,
 } from "@/lib/api";
+import { Dropzone } from "@/components/Dropzone";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
@@ -60,8 +61,6 @@ export function DocumentosFiscais() {
         descricao: descricao || undefined,
       });
       setArquivo(null); setCategoria(""); setInserirNoBalanco("nao"); setNumeroLancamento(""); setDataDocumento(""); setDescricao("");
-      const input = document.getElementById("input-arquivo-documento-site") as HTMLInputElement | null;
-      if (input) input.value = "";
       recarregar();
     } catch (e: any) {
       setErro(e.message);
@@ -77,7 +76,11 @@ export function DocumentosFiscais() {
         <form onSubmit={enviar} style={{ display: "grid", gap: "0.8rem", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))" }}>
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={labelStyle}>Arquivo (PDF, XML, PNG, JPEG...)</label>
-            <input id="input-arquivo-documento-site" type="file" onChange={(e) => setArquivo(e.target.files?.[0] || null)} style={inputStyle} />
+            <Dropzone
+              compact
+              label={arquivo ? arquivo.name : "Arraste o arquivo aqui, ou"}
+              onFiles={(files) => setArquivo(files[0])}
+            />
           </div>
           <div>
             <label style={labelStyle}>Categoria</label>

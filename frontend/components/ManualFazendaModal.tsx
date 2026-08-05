@@ -55,7 +55,7 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 95, padding: "1rem" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 95, padding: "1rem" }}>
       <div onClick={(e) => e.stopPropagation()} className="card" role="dialog" aria-modal="true"
         style={{ width: "760px", maxWidth: "95vw", maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
 

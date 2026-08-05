@@ -42,7 +42,6 @@ function Calculadora() {
       else if (k === "," ) { press("."); e.preventDefault(); }
       else if (k === "Enter" || k === "=") { press("="); e.preventDefault(); }
       else if (k === "Backspace") { press("←"); e.preventDefault(); }
-      else if (k === "Escape") { /* fecha o modal — tratado fora */ }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -81,13 +80,6 @@ export function TabelaNutricionalBotao({ estilo }: { estilo?: React.CSSPropertie
     if (aberto && !dados) fetchTabelaNutricional().then(setDados).catch(() => setDados({ alimentos: [], linhas: [] }));
   }, [aberto, dados]);
 
-  useEffect(() => {
-    if (!aberto) return;
-    function onEsc(e: KeyboardEvent) { if (e.key === "Escape") setAberto(false); }
-    window.addEventListener("keydown", onEsc);
-    return () => window.removeEventListener("keydown", onEsc);
-  }, [aberto]);
-
   const linhasFiltradas = useMemo(() => {
     if (!dados) return [];
     const q = busca.trim().toLowerCase();
@@ -101,7 +93,7 @@ export function TabelaNutricionalBotao({ estilo }: { estilo?: React.CSSPropertie
       </button>
 
       {aberto && (
-        <div onClick={() => setAberto(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
           <div onClick={(e) => e.stopPropagation()} className="card" style={{ maxWidth: "1100px", width: "100%", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div className="card-header flex items-center justify-between" style={{ marginBottom: "0.6rem" }}>
               <span className="flex items-center gap-2"><Table2 size={16} /> Tabela nutricional dos alimentos</span>
