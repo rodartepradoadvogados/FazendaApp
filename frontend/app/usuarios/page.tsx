@@ -238,7 +238,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "480px", maxWidth: "95vw", maxHeight: "88vh", overflowY: "auto" }}>
         <div className="flex items-center justify-between mb-3">
           <div className="card-header" style={{ margin: 0 }}>Editar usuário</div>

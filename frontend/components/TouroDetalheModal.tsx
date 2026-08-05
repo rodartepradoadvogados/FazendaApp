@@ -11,7 +11,7 @@ export function TouroDetalheModal({ titulo, campos, onFechar, nota }: {
   nota?: string;
 }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onFechar}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
       <div className="card" style={{ maxWidth: 480, width: "90%", maxHeight: "80vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Dna size={16} /> {titulo}</span>

@@ -277,6 +277,11 @@ class LancamentoIn(BaseModel):
 FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
 
 
+class ParcelaDiferencaIn(BaseModel):
+    data_vencimento: date
+    valor: float
+
+
 class PagamentoIn(BaseModel):
     data_pagamento: date
     valor_pago: float
@@ -284,6 +289,14 @@ class PagamentoIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
     forma_pagamento: Optional[str] = None
     data_vencimento_cartao: Optional[date] = None
+    # Diferença entre valor_pago e o valor_total: por padrão vira
+    # desconto_acrescimo, perdoada/cobrada de uma vez (comportamento de
+    # sempre, quando este campo vem vazio). Se o usuário preferir não
+    # resolver a diferença agora, `parcelas_diferenca` a divide em novas
+    # parcelas do MESMO numero_lancamento (mesmo padrão de criar_lancamento)
+    # — a baixa desta parcela grava desconto_acrescimo=0 (a diferença toda
+    # vai para as novas parcelas, nada é perdoado nesta).
+    parcelas_diferenca: Optional[list[ParcelaDiferencaIn]] = None
 
 
 class BaixaLoteIn(BaseModel):
@@ -1890,17 +1903,70 @@ def pagar_lancamento(
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
         raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
 
+    diferenca = round(dados.valor_pago - (registro.valor_total or 0), 2)
+    if dados.parcelas_diferenca:
+        if not registro.numero_lancamento:
+            raise HTTPException(
+                status_code=400,
+                detail="Este lançamento não tem um número de lançamento válido para parcelar a diferença — use desconto/acréscimo.",
+            )
+        soma_parcelas = round(sum(p.valor for p in dados.parcelas_diferenca), 2)
+        if round(soma_parcelas - abs(diferenca), 2) != 0:
+            raise HTTPException(status_code=400, detail="A soma das parcelas precisa bater com a diferença a parcelar")
+
     registro.data_pagamento = dados.data_pagamento
     registro.valor_pago = dados.valor_pago
     registro.conta_bancaria = dados.conta_bancaria
     registro.numero_documento_pagamento = dados.numero_documento_pagamento
     registro.forma_pagamento = dados.forma_pagamento
     registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
-    registro.desconto_acrescimo = round(dados.valor_pago - (registro.valor_total or 0), 2)
+    # Com parcelas_diferenca, a diferença inteira migra para as novas
+    # parcelas abaixo — esta baixa não perdoa nem cobra nada sozinha.
+    registro.desconto_acrescimo = 0 if dados.parcelas_diferenca else diferenca
     session.add(registro)
+
+    novas: list[ContaGerencial] = []
+    if dados.parcelas_diferenca:
+        parcela_total_atual = registro.parcela_total or 1
+        novo_total = parcela_total_atual + len(dados.parcelas_diferenca)
+        # Reabre a contagem de parcelas do lançamento inteiro — todas as
+        # linhas (já existentes e novas) passam a refletir o novo total.
+        query_irmas = select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento)
+        if registro.fazenda_id is not None:
+            query_irmas = query_irmas.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+        for irma in session.exec(query_irmas).all():
+            irma.parcela_total = novo_total
+            session.add(irma)
+        for i, p in enumerate(dados.parcelas_diferenca, start=parcela_total_atual + 1):
+            nova = ContaGerencial(
+                fazenda_id=registro.fazenda_id,
+                numero_lancamento=registro.numero_lancamento,
+                codigo_conta=registro.codigo_conta,
+                descricao=registro.descricao,
+                data_vencimento=p.data_vencimento,
+                data_competencia=registro.data_competencia,
+                data_emissao=registro.data_emissao,
+                fornecedor_cliente=registro.fornecedor_cliente,
+                numero_nota=registro.numero_nota,
+                tipo_documento=registro.tipo_documento,
+                numero_os_orcamento=registro.numero_os_orcamento,
+                valor_total=p.valor,
+                parcela_num=i,
+                parcela_total=novo_total,
+                responsavel=registro.responsavel,
+                centro_custo=registro.centro_custo,
+                tipo=registro.tipo,
+                origem="manual",
+                usuario_id=registro.usuario_id,
+            )
+            novas.append(nova)
+            session.add(nova)
+
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    for nova in novas:
+        session.refresh(nova)
+    return {**registro.model_dump(), "parcelas_diferenca_criadas": [n.model_dump() for n in novas]}
 
 
 @router.put("/lancamentos/baixa-lote")

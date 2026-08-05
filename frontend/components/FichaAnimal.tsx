@@ -596,7 +596,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
       )}
 
       {confirmMae && (
-        <div onClick={() => setConfirmMae(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "440px", maxWidth: "95vw" }}>
             <div className="card-header mb-3 flex items-center gap-2"><AlertTriangle size={15} /> Confirmar mãe informada</div>
             {confirmMae.verificacao.parto_correspondente ? (

@@ -25,6 +25,7 @@ import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
@@ -1090,8 +1091,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtros</span>
-          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
-            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          <button className="btn-ghost" title="Abre um lançamento NOVO a partir de um documento (nota fiscal, boleto ou recibo) — leitura automática, não anexa a nenhuma nota já existente" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Lançar por nota fiscal, boleto ou recibo…
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -2389,7 +2390,6 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [anexos, setAnexos] = useState<AnexoLancamento[] | null>(null);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
   const [categoriaAnexo, setCategoriaAnexo] = useState(lanc.tipo_documento || "");
-  const fileInputAnexoRef = useRef<HTMLInputElement>(null);
   // Vincular esta compra/venda a um item de Patrimônio (entrada/saída de
   // patrimônio) — FK de verdade, editável tanto aqui quanto pela tela de
   // Patrimônio (mesmo endpoint, ver vincularLancamentoPatrimonio).
@@ -2527,12 +2527,14 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
               <option value="">Categoria do anexo…</option>
               {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
             </select>
-            <input ref={fileInputAnexoRef} type="file" accept="application/pdf,image/jpeg,image/png" style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ""; }} />
-            <button type="button" className="btn-ghost" disabled={enviandoAnexo} onClick={() => fileInputAnexoRef.current?.click()}>
-              <Paperclip size={13} /> {enviandoAnexo ? "Enviando…" : "Anexar arquivo (PDF/JPEG/PNG)"}
-            </button>
           </div>
+          <Dropzone
+            compact
+            accept="application/pdf,image/jpeg,image/png"
+            disabled={enviandoAnexo}
+            label={enviandoAnexo ? "Enviando…" : "Arraste o comprovante/nota/boleto aqui, ou"}
+            onFiles={(files) => enviarAnexo(files[0])}
+          />
           {anexos === null ? (
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Carregando anexos…</p>
           ) : anexos.length === 0 ? (
@@ -2725,6 +2727,22 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
 
 const LABEL_FORMA_PAGAMENTO: Record<string, string> = { pix: "Pix", transferencia: "Transferência", boleto: "Boleto", credito: "Crédito", debito: "Débito" };
 
+// Divide a diferença entre valor pago e valor do lançamento em `qtd`
+// parcelas mensais iguais (a última absorve o resto do arredondamento) —
+// mesmo algoritmo de `dividirParcelas` em FormFinanceiro.tsx, para o botão
+// "Parcelar a diferença" do pagamento.
+function dividirDiferenca(valorTotal: number, qtd: number, primeiraData: string): { data_vencimento: string; valor: string }[] {
+  if (qtd <= 0) return [];
+  const base = Math.floor((valorTotal / qtd) * 100) / 100;
+  const resto = Math.round((valorTotal - base * qtd) * 100) / 100;
+  const inicio = primeiraData ? new Date(primeiraData + "T00:00:00") : new Date();
+  return Array.from({ length: qtd }, (_, i) => {
+    const d = new Date(inicio); d.setMonth(d.getMonth() + i + 1);
+    const valor = i === qtd - 1 ? base + resto : base;
+    return { data_vencimento: d.toISOString().slice(0, 10), valor: valor.toFixed(2) };
+  });
+}
+
 /**
  * Pagamento (despesa) ou Recebimento (receita) individual — escolhe UMA nota
  * em aberto (fornecedor/cliente e produto por lista, nunca texto livre) e
@@ -2755,11 +2773,19 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
   const [numeroDocPagamento, setNumeroDocPagamento] = useState("");
-  const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
+  // Diferença entre valor pago e valor do lançamento (item 4 do pedido do
+  // usuário): em vez de sempre virar desconto/acréscimo, o usuário escolhe.
+  const [modoDiferenca, setModoDiferenca] = useState<"desconto" | "parcelar">("desconto");
+  const [qtdParcelasDiferenca, setQtdParcelasDiferenca] = useState(2);
+  const [parcelasDiferenca, setParcelasDiferenca] = useState<{ data_vencimento: string; valor: string }[]>([]);
+  // Comprovante de pagamento anexado à PRÓPRIA nota selecionada (não abre um
+  // novo lançamento) — reaproveita o mesmo mecanismo de FormEditarLancamento.
+  const [anexosPagamento, setAnexosPagamento] = useState<AnexoLancamento[] | null>(null);
+  const [enviandoAnexoPagamento, setEnviandoAnexoPagamento] = useState(false);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -2801,7 +2827,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     setValorPago(String(nota.valor));
     setDataPagamento(new Date().toISOString().slice(0, 10));
     setContaBancaria(""); setFormaPagamento(""); setDataVencimentoCartao(""); setNumeroDocPagamento("");
-    setConfirmando(false); setMsg(null);
+    setModoDiferenca("desconto"); setQtdParcelasDiferenca(2); setParcelasDiferenca([]);
+    setAnexosPagamento(null);
+    setMsg(null);
   }
 
   // Chega da lista de Contas a pagar/receber ou da Agenda com uma nota específica já em mente.
@@ -2815,17 +2843,64 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
 
   const notaSelecionada = useMemo(() => abertas.find((r) => r.id === notaId) || null, [abertas, notaId]);
   const diferenca = notaSelecionada ? Math.round((Number(valorPago) - notaSelecionada.valor) * 100) / 100 : 0;
+  const somaParcelasDiferenca = useMemo(() => parcelasDiferenca.reduce((a, p) => a + (Number(p.valor) || 0), 0), [parcelasDiferenca]);
+  const parcelasDiferencaBatem = Math.round((somaParcelasDiferenca - Math.abs(diferenca)) * 100) / 100 === 0;
+
+  // Carrega os anexos já existentes desta nota (comprovante, boleto, nota
+  // fiscal…) assim que ela é selecionada para pagamento.
+  useEffect(() => {
+    if (!notaSelecionada?.numero_lancamento) { setAnexosPagamento([]); return; }
+    listarAnexosLancamento(notaSelecionada.numero_lancamento).then(setAnexosPagamento).catch(() => setAnexosPagamento([]));
+  }, [notaSelecionada?.numero_lancamento]);
+
+  // Regenera a divisão da diferença (igual, mês a mês) ao ligar "parcelar"
+  // ou mudar a quantidade — não depende do valor da diferença em si para não
+  // apagar edições manuais do usuário a cada tecla digitada em "valor pago"
+  // (mesmo padrão de `dividirParcelas` em FormFinanceiro.tsx).
+  useEffect(() => {
+    if (modoDiferenca !== "parcelar") { setParcelasDiferenca([]); return; }
+    setParcelasDiferenca(dividirDiferenca(Math.abs(diferenca), qtdParcelasDiferenca, dataPagamento));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoDiferenca, qtdParcelasDiferenca, notaId]);
+
+  async function enviarAnexoPagamento(file: File) {
+    if (!notaSelecionada?.numero_lancamento) return;
+    setEnviandoAnexoPagamento(true); setMsg(null);
+    try {
+      const novo = await anexarArquivoLancamento(notaSelecionada.numero_lancamento, file, null);
+      setAnexosPagamento((p) => [...(p || []), novo]);
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao anexar arquivo" });
+    } finally {
+      setEnviandoAnexoPagamento(false);
+    }
+  }
+
+  async function removerAnexoPagamento(id: number) {
+    try {
+      await excluirAnexoLancamento(id);
+      setAnexosPagamento((p) => (p || []).filter((a) => a.id !== id));
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao remover anexo" });
+    }
+  }
 
   async function confirmar() {
     if (!notaSelecionada) return;
-    if (diferenca !== 0 && !confirmando) { setConfirmando(true); return; }
     if (formaPagamento === "credito" && !dataVencimentoCartao) { setMsg({ tipo: "erro", texto: "Informe a data de vencimento do cartão." }); return; }
+    if (diferenca !== 0 && modoDiferenca === "parcelar" && !parcelasDiferencaBatem) {
+      setMsg({ tipo: "erro", texto: "A soma das parcelas precisa bater com a diferença a parcelar." });
+      return;
+    }
     setSalvando(true); setMsg(null);
     try {
       await marcarPagoFinanceiro(notaSelecionada.id, {
         data_pagamento: dataPagamento, valor_pago: Number(valorPago) || 0,
         conta_bancaria: contaBancaria || undefined, numero_documento_pagamento: numeroDocPagamento || undefined,
         forma_pagamento: formaPagamento || undefined, data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
+        parcelas_diferenca: diferenca !== 0 && modoDiferenca === "parcelar"
+          ? parcelasDiferenca.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0 }))
+          : undefined,
       });
       setMsg({ tipo: "sucesso", texto: `${tipo === "receita" ? "Recebimento" : "Pagamento"} registrado com sucesso.` });
       setNotaId(null);
@@ -2834,7 +2909,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao tratar a nota" });
     } finally {
-      setSalvando(false); setConfirmando(false);
+      setSalvando(false);
     }
   }
 
@@ -2847,8 +2922,8 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
-          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
-            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          <button className="btn-ghost" title="Abre um lançamento NOVO a partir de um documento (nota fiscal, boleto ou recibo) — leitura automática, não anexa a nenhuma nota já existente" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Lançar por nota fiscal, boleto ou recibo…
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -2961,18 +3036,82 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             )}
           </div>
           {diferenca !== 0 && (
-            <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
-              {diferenca < 0 ? `Desconto de ${formatBRL(Math.abs(diferenca))}` : `Acréscimo de ${formatBRL(diferenca)}`} em relação ao valor do lançamento.
-            </p>
+            <div style={{ marginTop: "0.7rem", padding: "0.7rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              <p style={{ fontSize: "0.78rem", margin: "0 0 0.5rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
+                {diferenca < 0 ? `Desconto de ${formatBRL(Math.abs(diferenca))}` : `Acréscimo de ${formatBRL(diferenca)}`} em relação ao valor do lançamento. O que fazer com a diferença?
+              </p>
+              <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                  <input type="radio" checked={modoDiferenca === "desconto"} onChange={() => setModoDiferenca("desconto")} />
+                  Lançar {diferenca < 0 ? "desconto" : "acréscimo"}
+                </label>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                  <input type="radio" checked={modoDiferenca === "parcelar"} onChange={() => setModoDiferenca("parcelar")} />
+                  Parcelar a diferença de {formatBRL(Math.abs(diferenca))}
+                </label>
+              </div>
+              {modoDiferenca === "parcelar" && (
+                <div style={{ marginTop: "0.7rem" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <label style={labelStyleLote}>Em quantas parcelas?</label>
+                    <input type="number" min={1} max={36} style={{ ...selStyleLote, width: "5rem" }}
+                      value={qtdParcelasDiferenca} onChange={(e) => setQtdParcelasDiferenca(Math.max(1, Number(e.target.value) || 1))} />
+                  </div>
+                  <table className="fazenda-table" style={{ margin: 0 }}>
+                    <thead><tr><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor (R$)</th></tr></thead>
+                    <tbody>
+                      {parcelasDiferenca.map((p, i) => (
+                        <tr key={i}>
+                          <td><input type="date" style={selStyleLote} value={p.data_vencimento}
+                            onChange={(e) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
+                          <td><input type="number" step="0.01" style={{ ...selStyleLote, textAlign: "right" }} value={p.valor}
+                            onChange={(e) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p style={{ fontSize: "0.74rem", marginTop: "0.4rem", color: parcelasDiferencaBatem ? "var(--text-muted)" : "var(--red)" }}>
+                    Soma das parcelas: {formatBRL(somaParcelasDiferenca)} {parcelasDiferencaBatem ? "" : `(precisa bater com ${formatBRL(Math.abs(diferenca))})`}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
+
+          <div style={{ marginTop: "0.9rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+            <label style={labelStyleLote}>Comprovante de pagamento (opcional)</label>
+            <Dropzone
+              compact
+              accept="application/pdf,image/jpeg,image/png"
+              disabled={enviandoAnexoPagamento || !notaSelecionada.numero_lancamento}
+              label={enviandoAnexoPagamento ? "Enviando…" : "Arraste o comprovante aqui, ou"}
+              onFiles={(files) => enviarAnexoPagamento(files[0])}
+            />
+            {anexosPagamento && anexosPagamento.length > 0 && (
+              <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0" }}>
+                {anexosPagamento.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between" style={{ fontSize: "0.78rem", padding: "0.2rem 0" }}>
+                    <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>
+                      {a.nome_arquivo}{a.categoria ? ` (${a.categoria})` : ""}
+                    </a>
+                    <button className="btn-ghost" title="Remover anexo" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => removerAnexoPagamento(a.id)}>
+                      <Trash2 size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
               painel inteiro some no mesmo clique que confirma (setNotaId(null)
               zera notaSelecionada), então um sucesso mostrado aqui dentro
               nunca chegaria a ser visto. */}
           {msg?.tipo === "erro" && <p style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: "0.6rem" }}>{msg.texto}</p>}
           <div className="flex items-center gap-3 mt-4">
-            <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar} disabled={salvando}>
-              <Check size={14} /> {confirmando ? "Confirmar mesmo com diferença" : salvando ? "Salvando…" : "Confirmar baixa"}
+            <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar}
+              disabled={salvando || (diferenca !== 0 && modoDiferenca === "parcelar" && !parcelasDiferencaBatem)}>
+              <Check size={14} /> {salvando ? "Salvando…" : "Confirmar baixa"}
             </button>
             <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
