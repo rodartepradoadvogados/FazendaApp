@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe } from "lucide-react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe, ChevronDown, ChevronRight } from "lucide-react";
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, formatDate, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -888,6 +888,11 @@ export function RelatoriosBstView() {
   const [fDe, setFDe] = useState("");
   const [fAte, setFAte] = useState("");
   const [ajustarAberto, setAjustarAberto] = useState(false);
+  // Como olhar o histórico: "animal" é a tabela linha-a-linha de sempre;
+  // "data" agrupa num cartão por dia de aplicação (é assim que o BST acontece
+  // na prática — o técnico vem, aplica no lote inteiro e vai embora).
+  const [verPor, setVerPor] = useState<"animal" | "data">("animal");
+  const [diaAberto, setDiaAberto] = useState<string | null>(null);
 
   const carregar = () => {
     fetchRelatorioBst().then((d) => setHistorico(d.aplicacoes)).catch((e) => setErro(e.message));
@@ -910,6 +915,25 @@ export function RelatoriosBstView() {
 
   const vacasDistintas = useMemo(() => new Set(filtrado.map((r) => r.numero_matriz)).size, [filtrado]);
   const nuncaAplicadas: any[] = agenda?.bst_nunca_aplicados ?? [];
+
+  // Um grupo por dia de aplicação, do mais recente para o mais antigo.
+  // Aplicação sem data cai num grupo próprio no fim, em vez de sumir.
+  const porDia = useMemo(() => {
+    const mapa = new Map<string, AplicacaoBst[]>();
+    filtrado.forEach((r) => {
+      const chave = r.data_aplicacao || "";
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave)!.push(r);
+    });
+    return Array.from(mapa.entries())
+      .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+      .map(([data, itens]) => ({
+        data,
+        itens,
+        animais: new Set(itens.map((r) => r.numero_matriz)).size,
+        produtos: Array.from(new Set(itens.map((r) => r.produto).filter(Boolean))),
+      }));
+  }, [filtrado]);
 
   const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
   const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -945,26 +969,96 @@ export function RelatoriosBstView() {
       </div>
 
       <div className="card">
-        <div className="card-header mb-2 flex items-center gap-2"><Syringe size={14} /> Histórico de aplicações ({filtrado.length})</div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead><tr><th style={th}>Data</th><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
-            <tbody>
-              {filtrado.map((r, i) => (
-                <tr key={`${r.numero_matriz}-${r.data_aplicacao}-${i}`}>
-                  <td style={td}>{r.data_aplicacao ? new Date(r.data_aplicacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
-                  <td style={td}>{r.lote || "—"}</td>
-                  <td style={td}>{r.categoria || "—"}</td>
-                  <td style={td}>{r.produto}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
-                  <td style={td}>{r.responsavel || "—"}</td>
-                </tr>
-              ))}
-              {!filtrado.length && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "var(--text-muted)" }}>Nenhuma aplicação no filtro.</td></tr>}
-            </tbody>
-          </table>
+        <div className="card-header mb-2 flex items-center justify-between gap-2" style={{ flexWrap: "wrap" }}>
+          <span className="flex items-center gap-2"><Syringe size={14} /> Histórico de aplicações ({filtrado.length})</span>
+          <span className="flex items-center gap-3" style={{ fontSize: "0.78rem", fontWeight: 400, textTransform: "none" }}>
+            <span style={{ color: "var(--text-muted)" }}>Ver por:</span>
+            {([["animal", "Animal"], ["data", "Data"]] as const).map(([v, rotulo]) => (
+              <label key={v} className="flex items-center gap-1.5" style={{ cursor: "pointer" }}>
+                <input type="radio" name="bst-ver-por" checked={verPor === v}
+                  onChange={() => { setVerPor(v); setDiaAberto(null); }} />
+                {rotulo}
+              </label>
+            ))}
+          </span>
         </div>
+
+        {verPor === "animal" ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead><tr><th style={th}>Data</th><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
+              <tbody>
+                {filtrado.map((r, i) => (
+                  <tr key={`${r.numero_matriz}-${r.data_aplicacao}-${i}`}>
+                    <td style={td}>{r.data_aplicacao ? new Date(r.data_aplicacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
+                    <td style={td}>{r.lote || "—"}</td>
+                    <td style={td}>{r.categoria || "—"}</td>
+                    <td style={td}>{r.produto}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
+                    <td style={td}>{r.responsavel || "—"}</td>
+                  </tr>
+                ))}
+                {!filtrado.length && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "var(--text-muted)" }}>Nenhuma aplicação no filtro.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {porDia.map((g) => {
+              const aberto = diaAberto === g.data;
+              return (
+                <div key={g.data || "sem-data"} style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setDiaAberto(aberto ? null : g.data)}
+                    aria-expanded={aberto}
+                    title={aberto ? "Recolher as aplicações deste dia" : "Ver as aplicações deste dia"}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap",
+                      padding: "0.6rem 0.8rem", background: "none", border: "none", color: "var(--text)",
+                      cursor: "pointer", textAlign: "left", fontSize: "0.85rem",
+                    }}
+                  >
+                    {aberto ? <ChevronDown size={14} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />}
+                    <span style={{ fontWeight: 700 }}>
+                      Data: {g.data ? new Date(g.data + "T00:00:00").toLocaleDateString("pt-BR") : "Sem data"}
+                    </span>
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Qtde: <strong style={{ color: "var(--text)" }}>{g.animais}</strong> {g.animais === 1 ? "animal" : "animais"}
+                    </span>
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Produto: <strong style={{ color: "var(--text)" }}>{g.produtos.join(", ") || "—"}</strong>
+                    </span>
+                  </button>
+
+                  {aberto && (
+                    <div style={{ overflowX: "auto", borderTop: "1px solid var(--border)" }}>
+                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                        <thead><tr><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
+                        <tbody>
+                          {g.itens.map((r, i) => (
+                            <tr key={`${r.numero_matriz}-${i}`}>
+                              <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
+                              <td style={td}>{r.lote || "—"}</td>
+                              <td style={td}>{r.categoria || "—"}</td>
+                              <td style={td}>{r.produto}</td>
+                              <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
+                              <td style={td}>{r.responsavel || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {!porDia.length && (
+              <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: "0.6rem" }}>Nenhuma aplicação no filtro.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {ajustarAberto && (

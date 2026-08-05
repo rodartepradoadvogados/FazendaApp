@@ -4159,6 +4159,25 @@ export async function listarAnexosLancamento(numeroLancamento: string): Promise<
   return res.json();
 }
 
+// Mesmas duas operações, ancoradas no id do lançamento. Necessário porque
+// lançamento importado da planilha nasce sem `numero_lancamento`, e sem ele
+// não havia como anexar comprovante nenhum — o backend emite a numeração na
+// primeira anexação (ver _garantir_numero_lancamento).
+export async function anexarArquivoLancamentoPorId(lancamentoId: number, file: File, categoria?: string | null): Promise<AnexoLancamento> {
+  const form = new FormData();
+  form.append("file", file);
+  if (categoria) form.append("categoria", categoria);
+  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+
+export async function listarAnexosLancamentoPorId(lancamentoId: number): Promise<AnexoLancamento[]> {
+  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos");
+  return res.json();
+}
+
 export function urlAnexoLancamento(anexoId: number): string {
   return `${API}/financeiro/anexos/${anexoId}`;
 }
