@@ -241,6 +241,11 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("link", "VARCHAR"),
         ("usuario_id", "INTEGER"),
     ],
+    # Central de Protocolos (Cadastro/Lançamento/Acompanhamento/Histórico):
+    # molde de IATF (padronizado com Indução/Sanitário/Customizado) e
+    # classificação macro do protocolo customizado.
+    "protocolo_iatf_lancamento": [("protocolo_id", "INTEGER")],
+    "protocolo_customizado": [("tipo", "VARCHAR")],
 }
 
 

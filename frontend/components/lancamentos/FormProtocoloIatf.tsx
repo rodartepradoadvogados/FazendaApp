@@ -1,8 +1,8 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react";
-import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, formatDate, removerAnimalIatf } from "@/lib/api";
-import type { HormonioIatf } from "@/lib/api";
+import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
+import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
@@ -11,11 +11,13 @@ import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForm
 import { SelectAnimal, addDias, IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
-function nomeAutoIatf(d0: string): string {
+// Mesma regra de fazenda/rules/nomenclatura_protocolo.py — só para pré-visualização;
+// o nome de fato é sempre calculado no backend.
+function nomeAutoIatf(d0: string, nomeBase: string): string {
   if (!d0) return "";
   const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
   const d11 = new Date(d0 + "T00:00:00"); d11.setDate(d11.getDate() + 11);
-  return `IATF ${fmt(d0)} A ${fmt(d11.toISOString().slice(0, 10))}`;
+  return `${nomeBase.toUpperCase()} - ${fmt(d0)} A ${fmt(d11.toISOString().slice(0, 10))} (D0 A D11 - 12 DIAS)`;
 }
 const HORMONIOS: Record<string, string[]> = {
   progesterona: ["Sincrogest", "Cidr"],
@@ -135,6 +137,10 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   // Protocolos já lançados (para "existente").
   const [existentes, setExistentes] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number }[]>([]);
   const [existenteId, setExistenteId] = useState("");
+  // Molde cadastrado (Central de Protocolos > Cadastro), opcional — só para
+  // nome/rastreabilidade; os hormônios continuam definidos abaixo, como hoje.
+  const [moldes, setMoldes] = useState<ProtocoloIatfMolde[]>([]);
+  const [moldeId, setMoldeId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -142,7 +148,10 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
-  const nomeProtocolo = nomeAutoIatf(d0);
+  const nomeBase = moldes.find((m) => String(m.id) === moldeId)?.nome || "Protocolo IATF";
+  const nomeProtocolo = nomeAutoIatf(d0, nomeBase);
+
+  useEffect(() => { fetchProtocolosIatfCadastrados().then((ms) => setMoldes(ms.filter((m) => m.ativo))).catch(() => setMoldes([])); }, []);
 
   useEffect(() => {
     if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([]));
@@ -160,7 +169,7 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         setSucesso(`${r.adicionados} animal(is) adicionado(s) ao protocolo "${r.nome_protocolo}".`);
       } else {
         if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
-        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo, hormonios });
+        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios });
         setSucesso(`Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0/D7/D9/D11).`);
       }
       setSel(new Set()); setUm("");
@@ -192,8 +201,14 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         </Campo>
         {modo === "novo" ? (
           <>
+            <Campo label="Protocolo cadastrado (opcional)">
+              <select style={inputStyle} value={moldeId} onChange={(e) => setMoldeId(e.target.value)}>
+                <option value="">Sem molde — informar hormônios abaixo</option>
+                {moldes.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+              </select>
+            </Campo>
             <Campo label="Data do D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
-            <Campo label="Nome do protocolo (automático)" full>
+            <Campo label="Nome do lançamento (automático)" full>
               <input style={{ ...inputStyle, opacity: 0.85 }} readOnly value={nomeProtocolo || "Informe a data do D0…"} />
             </Campo>
           </>

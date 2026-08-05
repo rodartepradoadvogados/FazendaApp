@@ -30,6 +30,12 @@ router = APIRouter()
 # dessa categoria para "Ir para Dieta" em vez do botão normal de realizado.
 CATEGORIAS_PROTOCOLO_CUSTOM = ["Atividades", "Reprodutivo", "Produção", "sanidade", "Rebanho", "Gestão/Financeiro"]
 VIAS_APLICACAO = ["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]
+# Classificação macro exigida pela Central de Protocolos — junto com
+# IATF=reprodutivo, Indução=produtivo e Sanitário=sanitario, é o que permite
+# um protocolo customizado entrar nos filtros de Acompanhamento/Histórico por
+# tipo (ver fazenda/api/routers/central_protocolos.py). Nula = fica de fora
+# desses filtros, mas continua funcionando normalmente na Agenda.
+TIPOS_PROTOCOLO_CUSTOM = ["produtivo", "reprodutivo", "sanitario"]
 
 
 class EtapaCustomizadaIn(BaseModel):
@@ -46,6 +52,7 @@ class EtapaCustomizadaIn(BaseModel):
 class ProtocoloCustomizadoIn(BaseModel):
     nome: str
     categoria: str = "Atividades"
+    tipo: str | None = None  # produtivo | reprodutivo | sanitario — ver TIPOS_PROTOCOLO_CUSTOM
     dia_inicial: int = 0
     observacao: str | None = None
     ativo: bool = True
@@ -55,6 +62,8 @@ class ProtocoloCustomizadoIn(BaseModel):
 def _validar(dados: ProtocoloCustomizadoIn) -> None:
     if dados.categoria not in CATEGORIAS_PROTOCOLO_CUSTOM:
         raise HTTPException(status_code=400, detail=f"Categoria inválida — use uma de: {', '.join(CATEGORIAS_PROTOCOLO_CUSTOM)}")
+    if dados.tipo is not None and dados.tipo not in TIPOS_PROTOCOLO_CUSTOM:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido — use um de: {', '.join(TIPOS_PROTOCOLO_CUSTOM)}")
     if dados.dia_inicial not in (0, 1):
         raise HTTPException(status_code=400, detail="dia_inicial deve ser 0 ou 1")
     if not dados.etapas:
@@ -110,7 +119,7 @@ def criar_protocolo_customizado(
     _validar(dados)
 
     protocolo = ProtocoloCustomizado(
-        nome=nome, categoria=dados.categoria, dia_inicial=dados.dia_inicial,
+        nome=nome, categoria=dados.categoria, tipo=dados.tipo, dia_inicial=dados.dia_inicial,
         observacao=dados.observacao, ativo=dados.ativo, fazenda_id=fazenda_id,
     )
     session.add(protocolo)
@@ -138,6 +147,7 @@ def atualizar_protocolo_customizado(
 
     protocolo.nome = nome
     protocolo.categoria = dados.categoria
+    protocolo.tipo = dados.tipo
     protocolo.dia_inicial = dados.dia_inicial
     protocolo.observacao = dados.observacao
     protocolo.ativo = dados.ativo

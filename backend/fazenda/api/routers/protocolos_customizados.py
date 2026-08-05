@@ -21,6 +21,7 @@ from fazenda.models import (
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 
 router = APIRouter(prefix="/protocolos-customizados", tags=["protocolos-customizados"])
 
@@ -96,8 +97,11 @@ def lancar_protocolo_customizado(
     for e in etapas:
         etapas_por_dia.setdefault(e.dia, []).append(e)
 
+    nome_protocolo = gerar_nome_lancamento(
+        protocolo.nome, dados.data_inicio, protocolo.dia_inicial, max(etapas_por_dia.keys()),
+    )
     lancamento = ProtocoloCustomizadoLancamento(
-        protocolo_id=protocolo.id, nome_protocolo=protocolo.nome, categoria=protocolo.categoria,
+        protocolo_id=protocolo.id, nome_protocolo=nome_protocolo, categoria=protocolo.categoria,
         dia_inicial=protocolo.dia_inicial, data_inicio=dados.data_inicio, lote=dados.lote,
         responsavel=dados.responsavel, observacao=dados.observacao,
         usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,

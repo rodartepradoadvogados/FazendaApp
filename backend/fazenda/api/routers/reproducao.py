@@ -13,7 +13,8 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ControleLeiteiro, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Animal, ControleLeiteiro, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
+    ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
@@ -22,6 +23,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
 from fazenda.rules.genetica import calcular_grau_sangue_cria
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
@@ -905,8 +907,11 @@ class HormonioIatfIn(BaseModel):
 class ProtocoloIatfIn(BaseModel):
     animais: list[str]
     data_d0: date
-    # Vazio/ausente -> nome automático "IATF <D0> A <D11>" (ver _nome_auto_iatf).
-    protocolo: str | None = None
+    # Molde cadastrado (Central de Protocolos > Cadastro), opcional — só para
+    # rastreabilidade/nome; os hormônios efetivamente aplicados continuam
+    # vindo de `hormonios` (o frontend pré-preenche a partir do molde, mas
+    # sempre resolvendo o item de estoque concreto antes de enviar).
+    protocolo_id: int | None = None
     # Medicamentos por dia (ex.: D0 = 1ml SincroCP + 2ml Estron). Opcional —
     # sem eles, o protocolo funciona como antes (sem baixa de estoque).
     hormonios: list[HormonioIatfIn] = []
@@ -928,10 +933,16 @@ def lancar_protocolo_iatf(
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
-    nome_protocolo = (dados.protocolo or "").strip() or _nome_auto_iatf(dados.data_d0)
+    nome_base = "Protocolo IATF"
+    if dados.protocolo_id is not None:
+        molde = session.get(ProtocoloIatf, dados.protocolo_id)
+        if not molde or (fazenda_id is not None and molde.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Protocolo IATF cadastrado não encontrado")
+        nome_base = molde.nome
+    nome_protocolo = gerar_nome_lancamento(nome_base, dados.data_d0, 0, 11)
     lancamento = ProtocoloIatfLancamento(
-        nome_protocolo=nome_protocolo, data_d0=dados.data_d0, usuario_id=usuario_id_seguro(user),
-        fazenda_id=fazenda_id,
+        nome_protocolo=nome_protocolo, data_d0=dados.data_d0, protocolo_id=dados.protocolo_id,
+        usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
     )
     session.add(lancamento)
     session.flush()  # garante lancamento.id antes de criar as aplicações
@@ -1456,9 +1467,9 @@ def registrar_servico(
 
 
 def _nome_auto_iatf(d0: date) -> str:
-    """Nome padrão do protocolo IATF: 'IATF <D0> A <D11>' (datas dd/mm/aa)."""
-    d11 = d0 + timedelta(days=11)
-    return f"IATF {d0.strftime('%d/%m/%y')} A {d11.strftime('%d/%m/%y')}"
+    """Nome padrão de um protocolo IATF lançado retroativamente (sem molde),
+    mesma regra de nomenclatura da Central de Protocolos."""
+    return gerar_nome_lancamento("Protocolo IATF", d0, 0, 11)
 
 
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,

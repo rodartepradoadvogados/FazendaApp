@@ -38,6 +38,10 @@ class ProtocoloCustomizado(SQLModel, table=True):
     # quem não tem permissão.
     categoria: str = Field(default="Atividades")
     dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma
+    # Classificação macro exigida pela Central de Protocolos: só entra nos
+    # filtros de Acompanhamento/Histórico por tipo (junto com IATF=reprodutivo,
+    # Indução=produtivo, Sanitário=sanitario) se isto estiver preenchido.
+    tipo: Optional[str] = None  # "produtivo" | "reprodutivo" | "sanitario"
     observacao: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)

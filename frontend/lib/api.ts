@@ -48,7 +48,7 @@ export function logout() {
 }
 // Mapa rota → módulo (para menu e bloqueio de páginas).
 export const ROTA_MODULO: Record<string, string> = {
-  "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos",
+  "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos", "/protocolos": "lancamentos",
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
   "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
@@ -3463,11 +3463,73 @@ export async function sugestaoLoteEvento(dados: { numero_matriz: string; categor
 
 // ── Serviço/IA: protocolo IATF (só agenda) e inseminação (o evento em si) ──
 export type HormonioIatf = { dia: number; produto: string; dose?: number | null; unidade?: string; via?: string };
-export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo?: string; hormonios?: HormonioIatf[] }) {
+// Nome do lançamento é sempre automático (Central de Protocolos) — não se
+// digita mais; protocolo_id é opcional (molde cadastrado, só para
+// pré-preencher os hormônios e citar no nome).
+export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo_id?: number | null; hormonios?: HormonioIatf[] }) {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao agendar protocolo IATF"); }
+  return res.json();
+}
+
+// ── Molde de IATF (Central de Protocolos > Cadastro) ──
+export type EtapaProtocoloIatf = {
+  dia: number; criterio_tipo: "medicamento" | "principio_ativo" | "classificacao";
+  principio_ativo_id?: number | null; produto: string; dose?: number | null; unidade?: string; via?: string;
+};
+export type ProtocoloIatfMolde = {
+  id: number; nome: string; observacao: string | null; ativo: boolean; etapas: EtapaProtocoloIatf[];
+};
+export async function fetchProtocolosIatfCadastrados(): Promise<ProtocoloIatfMolde[]> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos IATF cadastrados error: ${res.status}`);
+  return res.json();
+}
+export async function criarProtocoloIatfCadastrado(dados: { nome: string; observacao?: string | null; ativo?: boolean; etapas: EtapaProtocoloIatf[] }): Promise<ProtocoloIatfMolde> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar protocolo IATF"); }
+  return res.json();
+}
+export async function atualizarProtocoloIatfCadastrado(id: number, dados: { nome: string; observacao?: string | null; ativo?: boolean; etapas: EtapaProtocoloIatf[] }): Promise<ProtocoloIatfMolde> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo IATF"); }
+  return res.json();
+}
+export async function excluirProtocoloIatfCadastrado(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo IATF"); }
+}
+
+// ── Central de Protocolos — Acompanhamento e Histórico (IATF + Indução +
+// Sanitário + Customizado, juntos e filtráveis por nome/período/tipo) ──
+export type LinhaCentralProtocolos = {
+  tipo: "produtivo" | "reprodutivo" | "sanitario"; origem: "iatf" | "inducao" | "sanitario" | "customizado";
+  origem_id: number; nome: string; data_inicio: string; data_fim: string;
+  etapas_total: number; etapas_realizadas: number; etapas_faltam: number;
+  animais: number; status: "ativo" | "concluido" | "cancelado";
+};
+export async function fetchCentralProtocolosAcompanhamento(params?: { nome?: string; tipo?: string }): Promise<LinhaCentralProtocolos[]> {
+  const qs = new URLSearchParams();
+  if (params?.nome) qs.set("nome", params.nome);
+  if (params?.tipo) qs.set("tipo", params.tipo);
+  const res = await authFetch(`${API}/central-protocolos/acompanhamento?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Central de Protocolos (acompanhamento) error: ${res.status}`);
+  return res.json();
+}
+export async function fetchCentralProtocolosHistorico(params?: { nome?: string; tipo?: string; data_de?: string; data_ate?: string }): Promise<LinhaCentralProtocolos[]> {
+  const qs = new URLSearchParams();
+  if (params?.nome) qs.set("nome", params.nome);
+  if (params?.tipo) qs.set("tipo", params.tipo);
+  if (params?.data_de) qs.set("data_de", params.data_de);
+  if (params?.data_ate) qs.set("data_ate", params.data_ate);
+  const res = await authFetch(`${API}/central-protocolos/historico?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Central de Protocolos (histórico) error: ${res.status}`);
   return res.json();
 }
 export async function fetchProtocolosIatfAtivos() {
@@ -5087,13 +5149,21 @@ export type EtapaProtocoloCustomizado = {
   observacao?: string | null; ordem?: number;
 };
 export type ProtocoloCustomizado = {
-  id: number; nome: string; categoria: string; dia_inicial: number;
+  id: number; nome: string; categoria: string;
+  // Classificação macro exigida pela Central de Protocolos — sem isto, o
+  // protocolo continua funcionando na Agenda mas fica fora dos filtros de
+  // Acompanhamento/Histórico (ver LinhaCentralProtocolos.tipo).
+  tipo: "produtivo" | "reprodutivo" | "sanitario" | null;
+  dia_inicial: number;
   observacao: string | null; ativo: boolean; duracao_dias: number;
   etapas: EtapaProtocoloCustomizado[];
 };
 export const CATEGORIAS_PROTOCOLO_CUSTOM: [string, string][] = [
   ["Atividades", "Atividades (geral)"], ["Reprodutivo", "Reprodutivo"], ["Produção", "Produção"],
   ["sanidade", "Sanidade"], ["Rebanho", "Rebanho"], ["Gestão/Financeiro", "Gestão/Financeiro"],
+];
+export const TIPOS_PROTOCOLO_CUSTOM: [string, string][] = [
+  ["produtivo", "Produtivo"], ["reprodutivo", "Reprodutivo"], ["sanitario", "Sanitário"],
 ];
 
 export async function fetchProtocolosCustomizados(): Promise<ProtocoloCustomizado[]> {
@@ -5102,7 +5172,7 @@ export async function fetchProtocolosCustomizados(): Promise<ProtocoloCustomizad
   return res.json();
 }
 export async function criarProtocoloCustomizado(dados: {
-  nome: string; categoria: string; dia_inicial: number; observacao?: string | null; ativo?: boolean;
+  nome: string; categoria: string; tipo?: string | null; dia_inicial: number; observacao?: string | null; ativo?: boolean;
   etapas: EtapaProtocoloCustomizado[];
 }): Promise<ProtocoloCustomizado> {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados`, {
@@ -5112,7 +5182,7 @@ export async function criarProtocoloCustomizado(dados: {
   return res.json();
 }
 export async function atualizarProtocoloCustomizado(id: number, dados: {
-  nome: string; categoria: string; dia_inicial: number; observacao?: string | null; ativo?: boolean;
+  nome: string; categoria: string; tipo?: string | null; dia_inicial: number; observacao?: string | null; ativo?: boolean;
   etapas: EtapaProtocoloCustomizado[];
 }): Promise<ProtocoloCustomizado> {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, {
