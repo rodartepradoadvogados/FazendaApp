@@ -19,9 +19,9 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaAuditoria, DiariaPagamento,
-    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso,
-    ValeAvulsoAbatimento,
+    AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria, DiariaAuditoria,
+    DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, ParametroDiariaPadrao, Pessoa,
+    Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -36,10 +36,11 @@ def listar_folha_pagamento_unificada(
 ) -> list[dict]:
     """
     Visão consolidada de TODOS os lançamentos de folha — funcionário, empreita,
-    contrato e diária — num único ledger ordenável/filtrável por vencimento,
-    priorizando pendências (destacando as vencidas). `origem_tipo` (=`tipo`) +
-    `origem_id` apontam para o registro de origem só para permitir excluir
-    lançamentos ainda pendentes; a edição continua nas telas específicas.
+    contrato, diária e férias/13º salário — num único ledger ordenável/
+    filtrável por vencimento, priorizando pendências (destacando as vencidas).
+    `origem_tipo` (=`tipo`) + `origem_id` apontam para o registro de origem só
+    para permitir excluir lançamentos ainda pendentes; a edição continua nas
+    telas específicas.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
@@ -155,6 +156,52 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": pg.data_pagamento,
             "status": "pago",
             "pode_excluir": False,
+        })
+
+    # Férias e 13º salário — mesmo padrão de Empreita/Contrato: o vencimento e
+    # o status de pagamento vêm da ContaGerencial gerada junto (numero_
+    # lancamento_gerado), já que os dois modelos não têm data_vencimento
+    # própria. Faltavam neste ledger unificado (item aprovado da proposta de
+    # Folha de Pagamento) — o filtro "Todos"/"Férias / 13º" agora inclui os dois.
+    query_ferias = select(FeriasFuncionario)
+    query_decimo = select(DecimoTerceiro)
+    if fazenda_id is not None:
+        query_ferias = query_ferias.where(FeriasFuncionario.fazenda_id == fazenda_id)
+        query_decimo = query_decimo.where(DecimoTerceiro.fazenda_id == fazenda_id)
+    ferias = session.exec(query_ferias).all()
+    decimos = session.exec(query_decimo).all()
+    numeros_ferias_decimo = [f.numero_lancamento_gerado for f in ferias if f.numero_lancamento_gerado] + [
+        d.numero_lancamento_gerado for d in decimos if d.numero_lancamento_gerado
+    ]
+    contas_ferias_decimo = {
+        c.numero_lancamento: c
+        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros_ferias_decimo))).all()
+    } if numeros_ferias_decimo else {}
+    for f in ferias:
+        conta = contas_ferias_decimo.get(f.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "ferias_decimo", "origem_id": f.id, "origem_subtipo": "ferias",
+            "pessoa_id": f.pessoa_id, "pessoa_nome": pessoas.get(f.pessoa_id, "—"),
+            "descricao": f"Férias — {f.data_inicio_gozo.isoformat()} a {f.data_fim_gozo.isoformat()}",
+            "valor": f.valor_total,
+            "data_vencimento": conta.data_vencimento if conta else None,
+            "data_pagamento": conta.data_pagamento if conta else f.data_pagamento,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": not pago,
+        })
+    for d in decimos:
+        conta = contas_ferias_decimo.get(d.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "ferias_decimo", "origem_id": d.id, "origem_subtipo": "decimo_terceiro",
+            "pessoa_id": d.pessoa_id, "pessoa_nome": pessoas.get(d.pessoa_id, "—"),
+            "descricao": f"13º salário — {d.ano} ({d.parcela})",
+            "valor": d.valor_liquido,
+            "data_vencimento": conta.data_vencimento if conta else None,
+            "data_pagamento": conta.data_pagamento if conta else d.data_pagamento,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": not pago,
         })
 
     hoje = date.today()

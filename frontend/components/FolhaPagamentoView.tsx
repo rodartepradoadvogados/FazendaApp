@@ -7,7 +7,8 @@ import {
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
   fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirVale, ehAdmin, formatBRL,
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
-  fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
+  lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, type GuiaFolhaEncargo,
+  lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
@@ -17,7 +18,8 @@ import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoR
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
-import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
+import { Dropzone } from "@/components/Dropzone";
+import { SecaoRecolhivel, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { RESPONSAVEIS } from "@/lib/constants";
 import EmpreitadaView from "@/components/EmpreitadaView";
@@ -25,7 +27,13 @@ import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
 import FeriasDecimoTerceiroView from "@/components/FeriasDecimoTerceiroView";
 
-const LABEL_TIPO: Record<string, string> = { funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
+const LABEL_TIPO: Record<string, string> = {
+  funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
+};
+// Acentos emprestados da paleta CowData (navy+dourado+verde+vermelho do
+// painel do dono do software) — usados só nos 3 cards de "Lançar" desta
+// tela, não como fundo/base (que continua o tema normal da fazenda).
+const COR_LANCAR = { folha: "#E8C256", vale: "#3ECF8E", guia: "#E05C5C" };
 // Fundo vinho translúcido para destacar lançamentos vencidos e não pagos.
 const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
 
@@ -110,12 +118,6 @@ export default function FolhaPagamentoView() {
   const [valorIr, setValorIr] = useState("");
   const [irManual, setIrManual] = useState(false);
   // FGTS/DCTF — opcionais; em branco, não entram na projeção da guia mensal.
-  const [percentualFgts, setPercentualFgts] = useState("");
-  const [valorFgts, setValorFgts] = useState("");
-  const [fgtsManual, setFgtsManual] = useState(false);
-  const [percentualDctf, setPercentualDctf] = useState("");
-  const [valorDctf, setValorDctf] = useState("");
-  const [dctfManual, setDctfManual] = useState(false);
   const [observacao, setObservacao] = useState("");
   const [recorrente, setRecorrente] = useState(false);
   const [diaVencimento, setDiaVencimento] = useState("5");
@@ -128,7 +130,10 @@ export default function FolhaPagamentoView() {
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
-  const [subaba, setSubaba] = useState<"funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("funcionario");
+  // Seletor único de categoria — antes era uma TabBar que só navegava entre
+  // telas (sem filtrar nada); agora governa TANTO o que aparece em "Lançar"
+  // quanto o filtro de "Consultar" logo abaixo (ver `tipoUnificado`).
+  const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("todos");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
@@ -158,14 +163,17 @@ export default function FolhaPagamentoView() {
   const [editValorLiquidoOriginal, setEditValorLiquidoOriginal] = useState(0);
   const [confirmarDivergenciaFolha, setConfirmarDivergenciaFolha] = useState<RegistroFolha | null>(null);
 
-  // Folha de pagamento unificada — funcionário + empreita + contrato + diária.
+  // Folha de pagamento unificada — funcionário + empreita + contrato + diária + férias/13º.
   const [unificada, setUnificada] = useState<LinhaFolhaUnificada[] | null>(null);
   const [erroUnificada, setErroUnificada] = useState<string | null>(null);
   const [fUniVencDe, setFUniVencDe] = useState("");
   const [fUniVencAte, setFUniVencAte] = useState("");
   const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
   const [fUniPessoa, setFUniPessoa] = useState("");
-  const [fUniTipo, setFUniTipo] = useState<"" | "funcionario" | "empreita" | "contrato" | "diaria">("");
+  // Deriva o filtro de tipo do seletor de categoria do topo — não é mais um
+  // controle à parte, senão o usuário tinha 2 lugares pra "escolher a
+  // categoria" que podiam divergir (o motivo de "não funcionar de verdade").
+  const tipoUnificado = categoria === "todos" ? "" : categoria === "diarias" ? "diaria" : categoria;
   const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
   const [excluirErro, setExcluirErro] = useState<string | null>(null);
 
@@ -230,12 +238,14 @@ export default function FolhaPagamentoView() {
     v: any; valorCalculado: number; valorInformado: number;
   } | null>(null);
 
+  const [guias, setGuias] = useState<GuiaFolhaEncargo[] | null>(null);
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
   const carregarVales = () => fetchVales().then(setVales).catch(() => {});
   const carregarValesAvulsos = () => fetchValesAvulsos().then(setValesAvulsos).catch(() => {});
+  const carregarGuias = () => fetchGuiasFolhaEncargo().then(setGuias).catch(() => {});
   useEffect(() => {
-    carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos();
+    carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos(); carregarGuias();
     fetchPessoas().then(setPessoas).catch(() => {});
     fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
   }, []);
@@ -304,8 +314,8 @@ export default function FolhaPagamentoView() {
     (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
     (!fUniStatus || l.status === fUniStatus) &&
     (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
-    (!fUniTipo || l.tipo === fUniTipo)
-  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, fUniTipo]);
+    (!tipoUnificado || l.tipo === tipoUnificado)
+  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
   const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
   const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
   const somaUniPendente = unificadaFiltrada.filter((l) => l.status === "pendente").reduce((a, l) => a + l.valor, 0);
@@ -523,19 +533,6 @@ export default function FolhaPagamentoView() {
     const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualIr) || 0) / 100);
     setEditValorIr(novo ? String(novo) : "");
   }, [editValorBruto, editPercentualIr, editIrManual]);
-  // FGTS/DCTF — mesmo recálculo automático (percentual × bruto) do INSS/IR,
-  // mas em branco por padrão: sem percentual nem edição manual, o campo
-  // fica vazio e não é enviado (backend recebe None e ignora na projeção).
-  useEffect(() => {
-    if (fgtsManual) return;
-    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualFgts) || 0) / 100);
-    setValorFgts(novo ? String(novo) : "");
-  }, [valorBruto, percentualFgts, fgtsManual]);
-  useEffect(() => {
-    if (dctfManual) return;
-    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualDctf) || 0) / 100);
-    setValorDctf(novo ? String(novo) : "");
-  }, [valorBruto, percentualDctf, dctfManual]);
   useEffect(() => {
     if (editFgtsManual) return;
     const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualFgts) || 0) / 100);
@@ -571,10 +568,6 @@ export default function FolhaPagamentoView() {
         descontos: parseFloat(descontos) || 0,
         percentual_inss: parseFloat(percentualInss) || 0, percentual_ir: parseFloat(percentualIr) || 0,
         valor_inss: parseFloat(valorInss) || 0, valor_ir: parseFloat(valorIr) || 0,
-        percentual_fgts: percentualFgts ? parseFloat(percentualFgts) : undefined,
-        valor_fgts: valorFgts ? parseFloat(valorFgts) : undefined,
-        percentual_dctf: percentualDctf ? parseFloat(percentualDctf) : undefined,
-        valor_dctf: valorDctf ? parseFloat(valorDctf) : undefined,
         observacao: observacao || undefined,
         recorrente, dia_vencimento: recorrente ? Number(diaVencimento) : null,
       });
@@ -587,8 +580,6 @@ export default function FolhaPagamentoView() {
       setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5");
       setPercentualInss(""); setValorInss(""); setInssManual(false);
       setPercentualIr(""); setValorIr(""); setIrManual(false);
-      setPercentualFgts(""); setValorFgts(""); setFgtsManual(false);
-      setPercentualDctf(""); setValorDctf(""); setDctfManual(false);
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
@@ -720,26 +711,35 @@ export default function FolhaPagamentoView() {
   // ReciboModal já usado no financeiro.
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
+  const mostraFormasGerais = categoria === "todos" || categoria === "funcionario";
+
   return (
     <div>
-      <TabBar
-        abas={[
-          { id: "funcionario" as const, label: "Funcionário" },
-          { id: "empreita" as const, label: "Empreita" },
-          { id: "contrato" as const, label: "Contrato" },
-          { id: "diarias" as const, label: "Diárias" },
-          { id: "ferias_decimo" as const, label: "Férias / 13º" },
-        ]}
-        ativa={subaba}
-        onChange={setSubaba}
-      />
+      {/* Seletor único de categoria — troca o que "Lançar" mostra E filtra
+          "Consultar" logo abaixo. "Todos" é a 1ª opção (item aprovado da
+          proposta): antes não existia nenhuma visão que juntasse as 5. */}
+      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+        {(["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"] as const).map((cat) => (
+          <button key={cat} type="button" onClick={() => setCategoria(cat)}
+            style={{ fontSize: "0.82rem", fontWeight: 600, padding: "0.45rem 0.9rem", borderRadius: "999px",
+              border: `1px solid ${categoria === cat ? "var(--dourado)" : "var(--border)"}`,
+              background: categoria === cat ? "var(--dourado)" : "var(--surface)",
+              color: categoria === cat ? "var(--vinho-dark, #2A0D16)" : "var(--text-muted)", cursor: "pointer" }}>
+            {cat === "todos" ? "Todos" : LABEL_TIPO[cat === "diarias" ? "diaria" : cat]}
+          </button>
+        ))}
+      </div>
 
-      {subaba === "empreita" && <EmpreitadaView />}
-      {subaba === "contrato" && <ContratoView />}
-      {subaba === "diarias" && <DiariaView />}
-      {subaba === "ferias_decimo" && <FeriasDecimoTerceiroView />}
+      <div className="flex items-center gap-2 mb-2" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
+        Lançar
+      </div>
 
-      {subaba === "funcionario" && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
+      {categoria === "empreita" && <EmpreitadaView />}
+      {categoria === "contrato" && <ContratoView />}
+      {categoria === "diarias" && <DiariaView />}
+      {categoria === "ferias_decimo" && <FeriasDecimoTerceiroView />}
+
+      {mostraFormasGerais && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
       <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
       {anexarAberto && (
         <ModalDivididoDocumento title="Anexar comprovante — leitura automática (despesa)" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
@@ -748,8 +748,9 @@ export default function FolhaPagamentoView() {
         </ModalDivididoDocumento>
       )}
 
-      {/* 1) Novo lançamento de folha */}
-      <SecaoRecolhivel titulo="Novo lançamento de folha" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
+      {/* 1) Novo lançamento de folha — acento dourado */}
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "8px", marginBottom: "0.9rem" }}>
+      <SecaoRecolhivel titulo="Nova folha — Funcionário" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
         <div className="mb-3" style={{ textAlign: "right" }}>
           <button className="btn-ghost" title="Anexar recibo ou comprovante e preencher por leitura automática" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
             <Paperclip size={13} /> Anexar recibo/comprovante
@@ -783,23 +784,6 @@ export default function FolhaPagamentoView() {
             onChangeValor={(v) => { setValorIr(v); setIrManual(true); }}
           />
         </div>
-        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
-          FGTS/DCTF (abaixo) são opcionais — deixe em branco para lançar só o pagamento do funcionário. Preenchidos,
-          eles não alteram o valor líquido: servem para projetar as guias mensais consolidadas (todos os
-          funcionários) em "Gerar guias de FGTS/DCTF", mais abaixo.
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <CampoRetencao
-            label="FGTS" percentual={percentualFgts} valor={valorFgts}
-            onChangePercentual={(v) => { setPercentualFgts(v); setFgtsManual(false); }}
-            onChangeValor={(v) => { setValorFgts(v); setFgtsManual(true); }}
-          />
-          <CampoRetencao
-            label="DCTF" percentual={percentualDctf} valor={valorDctf}
-            onChangePercentual={(v) => { setPercentualDctf(v); setDctfManual(false); }}
-            onChangeValor={(v) => { setValorDctf(v); setDctfManual(true); }}
-          />
-        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div><label style={labelStyleLote}>Observação</label>
             <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
@@ -826,33 +810,43 @@ export default function FolhaPagamentoView() {
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
         </button>
       </SecaoRecolhivel>
+      </div>
 
-      {/* 2) Vale de funcionário */}
-      <SecaoRecolhivel titulo="Vale de funcionário" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
+      {/* 2) Vale de funcionário — acento verde */}
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "8px", marginBottom: "0.9rem" }}>
+      <SecaoRecolhivel titulo="Novo vale" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
         <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
+      </div>
 
-      {/* 3) Guias consolidadas de FGTS/DCTF — projeção de contas a pagar somando o
-          FGTS/DCTF lançado em todos os funcionários da competência escolhida. */}
+      {/* 3) Lançar guia de FGTS/DCTF — acento vermelho — manual ou por leitura
+          automática do PDF/foto da guia real. */}
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "8px", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel
-        titulo="Gerar guias de FGTS/DCTF" icon={Plus} defaultAberta={false}
-        descricao="Projeta a guia mensal consolidada de FGTS e de DCTF (todos os funcionários) em Contas a Pagar"
+        titulo="Lançar guia de FGTS/DCTF" icon={Plus} defaultAberta={false}
+        descricao="Manual ou por leitura automática do PDF/foto da guia — cria a conta a pagar e guarda os dados para relatório"
       >
-        <GerarGuiasFgtsDctfSection />
+        <LancarGuiaFgtsDctfSection onLancado={() => { carregarUnificada(); carregarGuias(); }} />
       </SecaoRecolhivel>
+      </div>
       </>)}
 
-      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária), refletindo os filtros abaixo */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4 mt-4">
+      <div className="flex items-center gap-2 mb-2 mt-4" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
+        Consultar
+      </div>
+
+      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º), refletindo os filtros abaixo */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
         <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
         <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
         <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
       </div>
 
-      {/* Filtro da folha de pagamento unificada */}
+      {/* Filtro da folha de pagamento unificada — a categoria já vem do
+          seletor do topo; aqui só os filtros complementares. */}
       <div className="card mb-3">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha de pagamento</div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={labelStyleLote}>Vencimento — de</label>
             <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — até</label>
@@ -865,19 +859,14 @@ export default function FolhaPagamentoView() {
             <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
               <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
-          <div><label style={labelStyleLote}>Tipo</label>
-            <select style={selStyleLote} value={fUniTipo} onChange={(e) => setFUniTipo(e.target.value as any)}>
-              <option value="">Todos</option>
-              {Object.entries(LABEL_TIPO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select></div>
         </div>
       </div>
 
-      {/* Folha de pagamento — funcionário, empreita, contrato e diária num único ledger; recolhida por
-          padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
+      {/* Folha de pagamento — funcionário, empreita, contrato, diária e férias/13º num único ledger;
+          recolhida por padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
       <SecaoRecolhivel
         titulo="Folha de pagamento" icon={Filter} defaultAberta={false}
-        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato e diária"
+        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º"
         badge={<span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>}
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
@@ -1189,6 +1178,35 @@ export default function FolhaPagamentoView() {
             </tbody>
           </table>
         </div>
+        )}
+      </SecaoRecolhivel>
+
+      {/* Relatório de guias de FGTS/DCTF já lançadas — dados estruturados
+          (não só o PDF anexado), para acompanhar competência a competência. */}
+      <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter} defaultAberta={false} descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
+        {!guias || !guias.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma guia lançada ainda.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Tipo</th><th>Competência</th><th>Cód. receita</th><th style={{ textAlign: "right" }}>Principal</th><th style={{ textAlign: "right" }}>Multa</th><th style={{ textAlign: "right" }}>Juros</th><th style={{ textAlign: "right" }}>Total</th><th>Vencimento</th><th>Origem</th></tr></thead>
+              <tbody>
+                {guias.map((g) => (
+                  <tr key={g.id}>
+                    <td>{g.tipo === "fgts" ? "FGTS" : "DCTF"}</td>
+                    <td>{mesCompLabel(g.competencia)}</td>
+                    <td>{g.codigo_receita || "—"}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(g.valor_principal)}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(g.valor_multa)}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(g.valor_juros)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(g.valor_total)}</td>
+                    <td>{formatDate(g.data_vencimento)}</td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{g.origem === "leitura_automatica" ? "Leitura automática" : "Manual"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </SecaoRecolhivel>
 
@@ -1636,107 +1654,133 @@ function ValeFuncionarioSection({
 }
 
 /*
- * Guias consolidadas de FGTS/DCTF — só PROJEÇÃO interna de fluxo de caixa:
- * soma o valor_fgts/valor_dctf de TODOS os lançamentos de folha de uma
- * competência e cria duas contas a pagar (Guia FGTS / Guia DCTF), com
- * vencimento no dia 20 do mês seguinte (editável, assim como o valor). Sem
- * fórmula legal real de FGTS/DCTF e sem qualquer integração com sistemas do
- * governo — os valores vêm só do que o usuário/contador lançou na folha.
- * Mostra a soma calculada ANTES de confirmar, e permite ajustar valor/
- * vencimento na hora (o backend também aceita reajuste depois, pela edição
- * normal em Contas a Pagar).
+ * Lançar guia de FGTS/DCTF — manual ou por leitura automática do PDF/foto da
+ * guia real (mesmo leitor que já reconhece boleto, ver POST /financeiro/
+ * ler-documento). Cria a conta a pagar (mesmo padrão de sempre) e grava os
+ * campos estruturados numa tabela própria (GuiaFolhaEncargo), para dar pra
+ * montar relatório em cima disso depois. Substitui o antigo "Gerar guias de
+ * FGTS/DCTF" (soma projetada dos lançamentos de folha, sem vínculo com uma
+ * guia real, sem cálculo de fórmula legal) — decisão do usuário.
  */
-function GerarGuiasFgtsDctfSection() {
+function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
+  const [tipo, setTipo] = useState<"fgts" | "dctf">("fgts");
   const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
-  const [preview, setPreview] = useState<PreviewGuiasFgtsDctf | null>(null);
-  const [valorFgts, setValorFgts] = useState("");
-  const [valorDctf, setValorDctf] = useState("");
+  const [codigoReceita, setCodigoReceita] = useState("");
+  const [valorPrincipal, setValorPrincipal] = useState("");
+  const [valorMulta, setValorMulta] = useState("0");
+  const [valorJuros, setValorJuros] = useState("0");
   const [dataVencimento, setDataVencimento] = useState("");
-  const [buscando, setBuscando] = useState(false);
-  const [gerando, setGerando] = useState(false);
+  const [linhaDigitavel, setLinhaDigitavel] = useState("");
+  const [origem, setOrigem] = useState<"manual" | "leitura_automatica">("manual");
+  const [arquivoLido, setArquivoLido] = useState<File | null>(null);
+  const [lendo, setLendo] = useState(false);
+  const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
-  async function calcularProjecao() {
-    setMsg(null);
-    setPreview(null);
-    if (!competencia) { setMsg({ tipo: "erro", texto: "Informe a competência." }); return; }
-    setBuscando(true);
+  const valorTotal = (parseFloat(valorPrincipal) || 0) + (parseFloat(valorMulta) || 0) + (parseFloat(valorJuros) || 0);
+
+  async function lerGuia(file: File) {
+    setLendo(true); setMsg(null);
     try {
-      const p = await fetchPreviewGuiasFgtsDctf(competencia);
-      setPreview(p);
-      setValorFgts(String(p.valor_fgts));
-      setValorDctf(String(p.valor_dctf));
-      setDataVencimento(p.data_vencimento_sugerida);
-      if (p.quantidade_lancamentos === 0) {
-        setMsg({ tipo: "erro", texto: "Nenhum lançamento de folha encontrado para essa competência." });
-      } else if (p.ja_gerado) {
-        setMsg({ tipo: "erro", texto: "As guias dessa competência já foram geradas — edite os lançamentos existentes em Contas a Pagar em vez de gerar de novo." });
+      const d = await lerDocumentoFinanceiro(file);
+      if (d.tipo_documento === "guia_dctf") setTipo("dctf");
+      else if (d.tipo_documento === "guia_fgts") setTipo("fgts");
+      if (d.competencia) setCompetencia(d.competencia);
+      if (d.codigo_receita) setCodigoReceita(d.codigo_receita);
+      if (d.valor_principal != null) setValorPrincipal(String(d.valor_principal));
+      if (d.valor_multa != null) setValorMulta(String(d.valor_multa));
+      if (d.valor_juros != null) setValorJuros(String(d.valor_juros));
+      if (d.data_vencimento) setDataVencimento(d.data_vencimento);
+      if (d.linha_digitavel) setLinhaDigitavel(d.linha_digitavel);
+      setOrigem("leitura_automatica");
+      setArquivoLido(file);
+      if (d.tipo_documento !== "guia_fgts" && d.tipo_documento !== "guia_dctf") {
+        setMsg({ tipo: "erro", texto: "Este documento não parece uma guia de FGTS/DCTF — confira os campos preenchidos antes de lançar." });
       }
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao calcular a projeção" });
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao ler o documento" });
     } finally {
-      setBuscando(false);
+      setLendo(false);
     }
   }
 
-  async function confirmarGeracao() {
-    if (!preview) return;
+  async function lancar() {
     setMsg(null);
-    setGerando(true);
+    if (!competencia || !dataVencimento || !valorPrincipal) {
+      setMsg({ tipo: "erro", texto: "Informe competência, valor principal e vencimento." });
+      return;
+    }
+    setSalvando(true);
     try {
-      await gerarGuiasFgtsDctf({
-        competencia,
-        valor_fgts: valorFgts ? parseFloat(valorFgts) : undefined,
-        valor_dctf: valorDctf ? parseFloat(valorDctf) : undefined,
-        data_vencimento: dataVencimento || undefined,
+      const guia = await lancarGuiaFolhaEncargo({
+        tipo, competencia, codigo_receita: tipo === "dctf" ? (codigoReceita || undefined) : undefined,
+        valor_principal: parseFloat(valorPrincipal) || 0,
+        valor_multa: parseFloat(valorMulta) || 0, valor_juros: parseFloat(valorJuros) || 0,
+        data_vencimento: dataVencimento, linha_digitavel: linhaDigitavel || undefined, origem,
       });
-      setMsg({ tipo: "sucesso", texto: "Guias de FGTS e DCTF criadas em Contas a Pagar — valor e vencimento continuam editáveis por lá." });
-      setPreview(null);
+      if (arquivoLido && guia.numero_lancamento) {
+        await anexarArquivoLancamento(guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF").catch(() => {});
+      }
+      setMsg({ tipo: "sucesso", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar.` });
+      setValorPrincipal(""); setValorMulta("0"); setValorJuros("0"); setDataVencimento(""); setLinhaDigitavel(""); setCodigoReceita("");
+      setArquivoLido(null); setOrigem("manual");
+      onLancado();
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao gerar as guias" });
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar a guia" });
     } finally {
-      setGerando(false);
+      setSalvando(false);
     }
   }
 
   return (
     <div>
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-        Soma o FGTS e o DCTF lançados (opcionalmente) em CADA lançamento de folha da competência escolhida e cria
-        duas contas a pagar — "Guia FGTS" e "Guia DCTF" — com vencimento sugerido no dia 20 do mês seguinte. É só
-        uma projeção para o fluxo de caixa: ajuste o valor/vencimento antes de confirmar (ou depois, em Contas a
-        Pagar). Só é possível gerar uma vez por competência.
+        Lance a guia de verdade — arraste o PDF ou foto da guia (leitura automática preenche os campos abaixo) ou
+        digite manualmente. Cria a conta a pagar e guarda os dados da guia para relatório.
       </p>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
-        <div><label style={labelStyleLote}>Competência (mês)</label>
-          <input type="month" style={selStyleLote} value={competencia} onChange={(e) => { setCompetencia(e.target.value); setPreview(null); setMsg(null); }} /></div>
-        <button className="btn-ghost" title="Calcular a soma projetada de FGTS/DCTF dessa competência" style={{ fontSize: "0.8rem" }} onClick={calcularProjecao} disabled={buscando}>
-          <RefreshCw size={13} /> {buscando ? "Calculando…" : "Calcular projeção"}
-        </button>
+      <div className="flex items-center gap-2 mb-3">
+        {(["fgts", "dctf"] as const).map((t) => (
+          <button key={t} type="button" onClick={() => setTipo(t)}
+            style={{ fontSize: "0.78rem", fontWeight: 700, padding: "0.35rem 0.9rem", borderRadius: "999px",
+              border: `1px solid ${tipo === t ? COR_LANCAR.guia : "var(--border)"}`,
+              background: tipo === t ? "rgba(224,92,92,0.12)" : "transparent",
+              color: tipo === t ? COR_LANCAR.guia : "var(--text-muted)" }}>
+            {t === "fgts" ? "FGTS" : "DCTF"}
+          </button>
+        ))}
       </div>
-
-      {preview && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label style={labelStyleLote}>Guia FGTS projetada (R$) — {preview.quantidade_lancamentos} lançamento(s)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={valorFgts} onChange={(e) => setValorFgts(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Guia DCTF projetada (R$) — {preview.quantidade_lancamentos} lançamento(s)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={valorDctf} onChange={(e) => setValorDctf(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Vencimento das guias</label>
-            <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
-        </div>
-      )}
-
+      <Dropzone
+        compact
+        accept="application/pdf,image/jpeg,image/png"
+        disabled={lendo}
+        label={lendo ? "Lendo…" : "Arraste a guia aqui (PDF ou foto), ou"}
+        onFiles={(files) => lerGuia(files[0])}
+      />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 mb-3">
+        <div><label style={labelStyleLote}>Competência</label>
+          <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
+        {tipo === "dctf" && (
+          <div><label style={labelStyleLote}>Código da receita</label>
+            <input style={selStyleLote} value={codigoReceita} onChange={(e) => setCodigoReceita(e.target.value)} /></div>
+        )}
+        <div><label style={labelStyleLote}>Valor principal (R$)</label>
+          <input type="number" inputMode="decimal" style={selStyleLote} value={valorPrincipal} onChange={(e) => setValorPrincipal(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Multa (R$)</label>
+          <input type="number" inputMode="decimal" style={selStyleLote} value={valorMulta} onChange={(e) => setValorMulta(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Juros (R$)</label>
+          <input type="number" inputMode="decimal" style={selStyleLote} value={valorJuros} onChange={(e) => setValorJuros(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Vencimento</label>
+          <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
+      </div>
+      <p style={{ fontSize: "0.8rem", marginBottom: "0.75rem" }}>Valor total: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorTotal)}</strong></p>
       {msg?.tipo === "erro" ? (
         <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
       ) : (
-        <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para gerar guias de outra competência." />
+        <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para lançar outra guia." />
       )}
-
-      {preview && !preview.ja_gerado && preview.quantidade_lancamentos > 0 && (
-        <button className="btn-primary" title="Criar as duas contas a pagar (Guia FGTS e Guia DCTF)" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={confirmarGeracao} disabled={gerando}>
-          <Check size={14} /> {gerando ? "Gerando…" : "Gerar guias de FGTS/DCTF"}
-        </button>
-      )}
+      <button className="btn-primary" title="Lançar a guia" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={lancar} disabled={salvando}>
+        <Check size={14} /> {salvando ? "Salvando…" : "Lançar guia"}
+      </button>
     </div>
   );
 }

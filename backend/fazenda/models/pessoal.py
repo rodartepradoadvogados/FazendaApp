@@ -528,3 +528,35 @@ class ParametroDiariaPadrao(SQLModel, table=True):
     intervalo_dias_auditoria: int = 7
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class GuiaFolhaEncargo(SQLModel, table=True):
+    """Guia de FGTS ou DCTF lançada em Folha de Pagamento > Ações > "Lançar
+    guia de FGTS/DCTF" — manual ou pré-preenchida por leitura automática do
+    PDF/foto da guia (ver fazenda.rules.leitura_documento, tipo_documento
+    'guia_fgts'/'guia_dctf'). Guarda os campos estruturados da guia (não só
+    o PDF anexado), para dar pra montar relatório em cima disso depois — o
+    PDF original, se enviado, fica vinculado ao mesmo numero_lancamento via
+    LancamentoAnexo (mesmo mecanismo de qualquer outro anexo financeiro).
+    Substitui o antigo "Gerar guias de FGTS/DCTF" (soma automática projetada
+    dos lançamentos de folha, sem vínculo com uma guia real)."""
+
+    __tablename__ = "guia_folha_encargo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    tipo: str  # "fgts" | "dctf"
+    competencia: str  # "AAAA-MM"
+    codigo_receita: Optional[str] = None  # só DCTF (código da receita do DARF)
+    valor_principal: float
+    valor_multa: float = 0.0
+    valor_juros: float = 0.0
+    valor_total: float
+    data_vencimento: date
+    linha_digitavel: Optional[str] = None
+    # Vínculo com a conta a pagar criada junto (mesmo padrão de LancamentoAnexo)
+    # e, por tabela, com qualquer anexo do PDF/foto da guia original.
+    numero_lancamento: Optional[str] = Field(default=None, index=True)
+    origem: str = "manual"  # "manual" | "leitura_automatica"
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)

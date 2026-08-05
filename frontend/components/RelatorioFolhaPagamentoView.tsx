@@ -7,7 +7,9 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 
-const LABEL_TIPO: Record<string, string> = { funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
+const LABEL_TIPO: Record<string, string> = {
+  funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
+};
 const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
 
 const selStyle: React.CSSProperties = {

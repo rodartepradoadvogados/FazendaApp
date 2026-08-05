@@ -1342,42 +1342,53 @@ export async function excluirFolhaPagamento(id: number) {
   return res.json();
 }
 
-// ── Guias consolidadas de FGTS/DCTF (projeção de contas a pagar somando o
-// valor_fgts/valor_dctf de todos os funcionários de uma competência) ──
-export type PreviewGuiasFgtsDctf = {
+// ── Guia de FGTS/DCTF — lançamento manual ou por leitura automática (ver
+// POST /financeiro/ler-documento, tipo_documento "guia_fgts"/"guia_dctf")
+// — substitui o antigo "gerar guias" (soma projetada sem vínculo com guia
+// real, removido por decisão do usuário) ──
+export type GuiaFolhaEncargo = {
+  id: number;
+  tipo: "fgts" | "dctf";
   competencia: string;
-  quantidade_lancamentos: number;
-  valor_fgts: number;
-  valor_dctf: number;
-  data_vencimento_sugerida: string;
-  ja_gerado: boolean;
+  codigo_receita: string | null;
+  valor_principal: number;
+  valor_multa: number;
+  valor_juros: number;
+  valor_total: number;
+  data_vencimento: string;
+  linha_digitavel: string | null;
+  numero_lancamento: string | null;
+  origem: "manual" | "leitura_automatica";
+  criado_em: string;
 };
-export async function fetchPreviewGuiasFgtsDctf(competencia: string): Promise<PreviewGuiasFgtsDctf> {
-  const res = await authFetch(
-    `${API}/cadastro/folha-pagamento/guias-preview?competencia=${competencia}`,
-    { cache: "no-store" },
-  );
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao pré-visualizar guias de FGTS/DCTF"); }
-  return res.json();
-}
-type GerarGuiasFgtsDctfDados = {
+export type GuiaFolhaEncargoDados = {
+  tipo: "fgts" | "dctf";
   competencia: string;
-  valor_fgts?: number | null;
-  valor_dctf?: number | null;
-  data_vencimento?: string | null;
+  codigo_receita?: string | null;
+  valor_principal: number;
+  valor_multa?: number;
+  valor_juros?: number;
+  data_vencimento: string;
+  linha_digitavel?: string | null;
+  origem?: "manual" | "leitura_automatica";
   centro_custo?: string;
 };
-export async function gerarGuiasFgtsDctf(dados: GerarGuiasFgtsDctfDados) {
-  const res = await authFetch(`${API}/cadastro/folha-pagamento/gerar-guias`, {
+export async function lancarGuiaFolhaEncargo(dados: GuiaFolhaEncargoDados): Promise<GuiaFolhaEncargo & { conta_id: number }> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar guias de FGTS/DCTF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar guia de FGTS/DCTF"); }
+  return res.json();
+}
+export async function fetchGuiasFolhaEncargo(): Promise<GuiaFolhaEncargo[]> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Guias de FGTS/DCTF error: ${res.status}`);
   return res.json();
 }
 
-// ── Folha de pagamento unificada (funcionário + empreita + contrato + diária) ──
+// ── Folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º) ──
 export type LinhaFolhaUnificada = {
-  tipo: "funcionario" | "empreita" | "contrato" | "diaria";
+  tipo: "funcionario" | "empreita" | "contrato" | "diaria" | "ferias_decimo";
   origem_id: number;
   origem_subtipo: string;
   pessoa_id: number;
