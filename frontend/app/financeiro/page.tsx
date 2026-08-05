@@ -16,7 +16,7 @@ import {
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
   fetchItensCenario, criarItemCenario, atualizarItemCenario, excluirItemCenario, fetchProjecaoCenario,
   importarParaPedido, type OrcamentoItemPayload, type CenarioPayload, type PlanejamentoItemPayload,
-  anexarArquivoLancamento, listarAnexosLancamento, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
+  anexarArquivoLancamentoPorId, listarAnexosLancamentoPorId, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
   fetchCartoesCredito, fetchCartaoCredito, criarCartaoCredito, atualizarCartaoCredito, fetchExtratoCartao, fetchFaturasCartao,
   criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
@@ -2404,14 +2404,13 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
   useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
   useEffect(() => {
-    if (lanc.numero_lancamento) listarAnexosLancamento(lanc.numero_lancamento).then(setAnexos).catch(() => setAnexos([]));
-  }, [lanc.numero_lancamento]);
+    listarAnexosLancamentoPorId(lanc.id).then(setAnexos).catch(() => setAnexos([]));
+  }, [lanc.id]);
 
   const enviarAnexo = async (file: File) => {
-    if (!lanc.numero_lancamento) return;
     setEnviandoAnexo(true); setErro("");
     try {
-      const novo = await anexarArquivoLancamento(lanc.numero_lancamento, file, categoriaAnexo || null);
+      const novo = await anexarArquivoLancamentoPorId(lanc.id, file, categoriaAnexo || null);
       setAnexos((p) => [...(p || []), novo]);
     } catch (e: any) { setErro(e.message); }
     finally { setEnviandoAnexo(false); }
@@ -2519,7 +2518,11 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             {patrimonios.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.tipo ? ` — ${p.tipo}` : ""}</option>)}
           </select></div>
       </div>
-      {lanc.numero_lancamento && (
+      {/* Sempre visível: antes o bloco inteiro sumia quando o lançamento não
+          tinha `numero_lancamento` (todo lançamento importado da planilha),
+          e não havia como anexar comprovante nesses. Agora o anexo é pelo id
+          e o backend emite a numeração na primeira anexação. */}
+      {(
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
           <label style={labelStyleLote}>Anexos</label>
           <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
@@ -2849,9 +2852,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   // Carrega os anexos já existentes desta nota (comprovante, boleto, nota
   // fiscal…) assim que ela é selecionada para pagamento.
   useEffect(() => {
-    if (!notaSelecionada?.numero_lancamento) { setAnexosPagamento([]); return; }
-    listarAnexosLancamento(notaSelecionada.numero_lancamento).then(setAnexosPagamento).catch(() => setAnexosPagamento([]));
-  }, [notaSelecionada?.numero_lancamento]);
+    if (!notaSelecionada) { setAnexosPagamento([]); return; }
+    listarAnexosLancamentoPorId(notaSelecionada.id).then(setAnexosPagamento).catch(() => setAnexosPagamento([]));
+  }, [notaSelecionada?.id]);
 
   // Regenera a divisão da diferença (igual, mês a mês) ao ligar "parcelar"
   // ou mudar a quantidade — não depende do valor da diferença em si para não
@@ -2864,10 +2867,10 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   }, [modoDiferenca, qtdParcelasDiferenca, notaId]);
 
   async function enviarAnexoPagamento(file: File) {
-    if (!notaSelecionada?.numero_lancamento) return;
+    if (!notaSelecionada) return;
     setEnviandoAnexoPagamento(true); setMsg(null);
     try {
-      const novo = await anexarArquivoLancamento(notaSelecionada.numero_lancamento, file, null);
+      const novo = await anexarArquivoLancamentoPorId(notaSelecionada.id, file, null);
       setAnexosPagamento((p) => [...(p || []), novo]);
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao anexar arquivo" });
@@ -3083,7 +3086,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <Dropzone
               compact
               accept="application/pdf,image/jpeg,image/png"
-              disabled={enviandoAnexoPagamento || !notaSelecionada.numero_lancamento}
+              disabled={enviandoAnexoPagamento}
               label={enviandoAnexoPagamento ? "Enviando…" : "Arraste o comprovante aqui, ou"}
               onFiles={(files) => enviarAnexoPagamento(files[0])}
             />

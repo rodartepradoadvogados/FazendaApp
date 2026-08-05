@@ -2229,6 +2229,63 @@ async def anexar_arquivo_lancamento(
     }
 
 
+def _garantir_numero_lancamento(session: Session, fazenda_id: int | None, lancamento_id: int) -> ContaGerencial:
+    """Devolve a conta pelo id, garantindo que ela tenha `numero_lancamento`.
+
+    Lançamento importado da planilha Ideagri (ver parsers/conta_gerencial.py)
+    nasce SEM numero_lancamento — e como todo o mecanismo de anexo é ancorado
+    nessa string, esses lançamentos históricos simplesmente não aceitavam
+    comprovante: a área de arrastar aparecia desabilitada, sem explicar nada.
+    Aqui a numeração é emitida sob demanda, na primeira vez que se anexa algo,
+    e a partir daí o lançamento se comporta como qualquer outro (anexo,
+    recibo, vínculo com patrimônio).
+    """
+    conta = session.get(ContaGerencial, lancamento_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if not conta.numero_lancamento:
+        base = conta.data_competencia or conta.data_vencimento or conta.data_emissao or date.today()
+        conta.numero_lancamento = _proximo_numero_lancamento(session, base.year)
+        session.add(conta)
+        session.commit()
+        session.refresh(conta)
+    return conta
+
+
+@router.post("/lancamentos/por-id/{lancamento_id}/anexos", status_code=201)
+async def anexar_arquivo_lancamento_por_id(
+    lancamento_id: int, file: UploadFile, categoria: str | None = Form(None),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Mesma coisa que anexar por numero_lancamento, só que achando o
+    lançamento pelo id — é o caminho usado pelas telas que já têm o registro
+    na mão (baixa de pagamento, edição) e que precisam funcionar mesmo para
+    lançamento importado, que ainda não tem numeração."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    conta = _garantir_numero_lancamento(session, fazenda_id, lancamento_id)
+    return await anexar_arquivo_lancamento(
+        conta.numero_lancamento, file, categoria, session=session, user=user, fazenda_id=fazenda_id,
+    )
+
+
+@router.get("/lancamentos/por-id/{lancamento_id}/anexos")
+def listar_anexos_lancamento_por_id(
+    lancamento_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Anexos do lançamento pelo id. Ao contrário do POST, aqui NÃO se emite
+    numeração: só de abrir a tela não se altera o lançamento — sem número,
+    não há anexo mesmo, e a lista vazia é a resposta certa."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    conta = session.get(ContaGerencial, lancamento_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if not conta.numero_lancamento:
+        return []
+    return listar_anexos_lancamento(conta.numero_lancamento, session=session, fazenda_id=fazenda_id)
+
+
 @router.get("/lancamentos/{numero_lancamento}/anexos")
 def listar_anexos_lancamento(
     numero_lancamento: str, session: Session = Depends(get_session),
