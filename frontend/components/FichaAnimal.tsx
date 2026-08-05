@@ -31,6 +31,8 @@ type Ficha = {
   qualidade_leite: Record<string, unknown>[];
   aplicacoes_sanitarias: Record<string, unknown>[];
   protocolos_sanitarios: Record<string, unknown>[];
+  inducao_lactacao: Record<string, unknown>[];
+  protocolos_customizados: Record<string, unknown>[];
   secagens: Record<string, unknown>[];
   eventos_agenda: Record<string, unknown>[];
   baixa: Record<string, unknown> | null;
@@ -72,6 +74,15 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
   ] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF (D0/D7/D9/D11)", colunas: [
     { header: "Dia", key: "dia" }, { header: "Descrição", key: "descricao" }, { header: "Data prevista", key: "data_previstaFmt" },
+    { header: "Realizada?", key: "realizada" }, { header: "Data realização", key: "data_realizacaoFmt" },
+  ] },
+  { chave: "inducao_lactacao", titulo: "Indução de lactação", colunas: [
+    { header: "Protocolo", key: "nome_protocolo" }, { header: "Dia", key: "dia" }, { header: "Etapa", key: "descricao" },
+    { header: "Data prevista", key: "data_previstaFmt" }, { header: "Realizada?", key: "realizada" }, { header: "Data realização", key: "data_realizacaoFmt" },
+  ] },
+  { chave: "protocolos_customizados", titulo: "Protocolo personalizado", colunas: [
+    { header: "Protocolo", key: "nome_protocolo" }, { header: "Dia", key: "dia" }, { header: "Etapa", key: "descricao" },
+    { header: "Insumo", key: "insumo" }, { header: "Data prevista", key: "data_previstaFmt" },
     { header: "Realizada?", key: "realizada" }, { header: "Data realização", key: "data_realizacaoFmt" },
   ] },
   { chave: "movimentos_lote", titulo: "Movimentação de lote", colunas: [
@@ -120,9 +131,11 @@ const DATA_KEYS: Record<string, string> = {
   controles_leiteiros: "data_controle", pesagens_corporais: "data_pesagem", qualidade_leite: "data_coleta",
   aplicacoes_sanitarias: "data_aplicacao", protocolos_sanitarios: "data_inicio", secagens: "data_secagem", eventos_agenda: "data_evento",
   exames_resultados: "data_exame", ocorrencias_clinicas: "data_ocorrencia",
+  inducao_lactacao: "data_prevista", protocolos_customizados: "data_prevista",
 };
 const DATA_KEYS_EXTRA: Record<string, string[]> = {
   servicos: ["data_diagnostico"], protocolos_iatf: ["data_realizacao"],
+  inducao_lactacao: ["data_realizacao"], protocolos_customizados: ["data_realizacao"],
 };
 
 function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Record<string, unknown>[] {
