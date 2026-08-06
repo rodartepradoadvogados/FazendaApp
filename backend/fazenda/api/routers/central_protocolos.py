@@ -82,10 +82,27 @@ def _linha(*, tipo: str, origem: str, origem_id: int, nome: str, data_inicio: da
     }
 
 
+def _filtro_fazenda(query, coluna, fazenda_id: int | None):
+    """Restringe `query` à fazenda atual, mas tolera `coluna IS NULL`.
+
+    NULL = lançamento feito antes de a rota correspondente carimbar
+    fazenda_id (ou movimento de estoque gerado por um desses lançamentos
+    legados). Um `==` estrito faria essas linhas antigas sumirem da
+    listagem OU — pior, quando a mesma tolerância falta no detalhe/nas
+    ações — aparecerem na lista e dar 404 ao abrir (era exatamente esta
+    assimetria que causava "Lançamento de protocolo não encontrado" ao
+    clicar num protocolo legado que a Central mostrava). A convenção do
+    repo é: linha legada continua visível E operável, nunca vira órfã.
+    Isolamento entre fazendas não afrouxa — só NULL é tolerado, um
+    fazenda_id de OUTRA fazenda continua de fora.
+    """
+    if fazenda_id is None:
+        return query
+    return query.where(or_(coluna == fazenda_id, coluna.is_(None)))
+
+
 def _linhas_iatf(session: Session, fazenda_id: int | None) -> list[dict]:
-    query = select(ProtocoloIatfLancamento)
-    if fazenda_id is not None:
-        query = query.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+    query = _filtro_fazenda(select(ProtocoloIatfLancamento), ProtocoloIatfLancamento.fazenda_id, fazenda_id)
     lancamentos = session.exec(query).all()
     if not lancamentos:
         return []
@@ -112,15 +129,7 @@ def _linhas_iatf(session: Session, fazenda_id: int | None) -> list[dict]:
 
 
 def _linhas_inducao(session: Session, fazenda_id: int | None) -> list[dict]:
-    query = select(ProtocoloInducaoLancamento)
-    if fazenda_id is not None:
-        # fazenda_id IS NULL = lançamento feito antes da rota de lançar
-        # indução carimbar fazenda_id (corrigido em lancar_inducao_lactacao)
-        # — sem isto, esses lançamentos antigos somem para sempre desta aba
-        # (relato: "Acompanhamento não mostra nenhum protocolo ativo" mesmo
-        # com o lançamento existindo e aparecendo em outras telas que não
-        # filtram por fazenda).
-        query = query.where(or_(ProtocoloInducaoLancamento.fazenda_id == fazenda_id, ProtocoloInducaoLancamento.fazenda_id.is_(None)))
+    query = _filtro_fazenda(select(ProtocoloInducaoLancamento), ProtocoloInducaoLancamento.fazenda_id, fazenda_id)
     lancamentos = session.exec(query).all()
     if not lancamentos:
         return []
@@ -147,9 +156,7 @@ def _linhas_inducao(session: Session, fazenda_id: int | None) -> list[dict]:
 
 
 def _linhas_customizado(session: Session, fazenda_id: int | None) -> list[dict]:
-    query = select(ProtocoloCustomizadoLancamento)
-    if fazenda_id is not None:
-        query = query.where(ProtocoloCustomizadoLancamento.fazenda_id == fazenda_id)
+    query = _filtro_fazenda(select(ProtocoloCustomizadoLancamento), ProtocoloCustomizadoLancamento.fazenda_id, fazenda_id)
     lancamentos = session.exec(query).all()
     if not lancamentos:
         return []
@@ -181,9 +188,7 @@ def _linhas_customizado(session: Session, fazenda_id: int | None) -> list[dict]:
 
 
 def _linhas_lida(session: Session, fazenda_id: int | None) -> list[dict]:
-    query = select(LidaLancamento)
-    if fazenda_id is not None:
-        query = query.where(LidaLancamento.fazenda_id == fazenda_id)
+    query = _filtro_fazenda(select(LidaLancamento), LidaLancamento.fazenda_id, fazenda_id)
     lancamentos = session.exec(query).all()
     if not lancamentos:
         return []
@@ -213,9 +218,7 @@ def _linhas_lida(session: Session, fazenda_id: int | None) -> list[dict]:
 
 
 def _linhas_sanitario(session: Session, fazenda_id: int | None) -> list[dict]:
-    query = select(ProtocoloSanitarioLancamento)
-    if fazenda_id is not None:
-        query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    query = _filtro_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento.fazenda_id, fazenda_id)
     lancamentos = session.exec(query).all()
     if not lancamentos:
         return []
@@ -356,7 +359,13 @@ def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id
         "lida": LidaLancamento,
     }[origem]
     lancamento = session.get(modelo, origem_id)
-    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
+    # Mesma tolerância a NULL de `_filtro_fazenda`: um lançamento legado
+    # (fazenda_id IS NULL) passa; um de OUTRA fazenda continua 404.
+    if not lancamento or (
+        fazenda_id is not None
+        and lancamento.fazenda_id is not None
+        and lancamento.fazenda_id != fazenda_id
+    ):
         raise HTTPException(status_code=404, detail="Lançamento de protocolo não encontrado")
     return lancamento
 
@@ -666,8 +675,11 @@ def cancelar(
         MovimentoEstoque.origem_id == origem_id,
         MovimentoEstoque.movimento == "Aplicação",
     )
-    if fazenda_id is not None:
-        query_mov = query_mov.where(MovimentoEstoque.fazenda_id == fazenda_id)
+    # Mesma tolerância a NULL de _filtro_fazenda: um movimento de estoque
+    # legado (fazenda_id IS NULL), gerado por um protocolo legado, também
+    # tem que ser estornado no cancelamento — senão o cancelamento "some"
+    # com uma baixa que de fato aconteceu.
+    query_mov = _filtro_fazenda(query_mov, MovimentoEstoque.fazenda_id, fazenda_id)
     for mov in session.exec(query_mov).all():
         item = session.get(Estoque, mov.estoque_id) if mov.estoque_id else None
         if item is None:
