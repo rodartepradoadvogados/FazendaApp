@@ -214,9 +214,9 @@ def test_bootstrap_popula_catalogo_completo_idempotente():
         bootstrap_farmacia(s)  # roda de novo: não pode duplicar
         pas = s.exec(select(PrincipioAtivo)).all()
         marcas = s.exec(select(MedicamentoComercial)).all()
-        assert len(pas) == 39
+        assert len(pas) == 40
         assert all(p.categoria_software for p in pas)   # todas com característica
-        assert len(marcas) == 112
+        assert len(marcas) == 114
         mel = next(p for p in pas if p.nome == "Meloxicam")
         assert mel.categoria_software == "AINE" and mel.uso_principal
 
@@ -383,3 +383,75 @@ class TestIndicacoesTerapeuticas:
     def test_excluir_indicacao_inexistente_da_404(self, client):
         c, engine = client
         assert c.delete("/farmacia/indicacoes/999999").status_code == 404
+
+
+class TestSomatotropinaBST:
+    """bST (Lactotropin/Boostin) no catálogo da farmácia.
+
+    Os dois itens de estoque nasceram antes de o princípio existir no
+    catálogo, então ficaram com `principio_ativo_id` nulo — e quem faria o
+    vínculo por nome de marca (`compatibilizar_estoque`) é guardada por
+    SeedFlag e já rodou nos bancos em produção. Daí o backfill dirigido
+    `vincular_bst_ao_principio`, que roda em todo start.
+    """
+
+    def test_seed_cria_o_principio_com_as_duas_marcas(self, client):
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST
+        c, engine = client
+        with Session(engine) as s:
+            seed_farmacia(s)
+            pa = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).first()
+            assert pa is not None, "princípio de bST não foi semeado"
+            assert pa.categoria_software == "Hormônio Galactopoiético"
+            assert pa.unidade_base == "dose"
+            marcas = {m.nome_comercial for m in s.exec(
+                select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa.id)
+            ).all()}
+            assert marcas == {"Lactotropin", "Boostin"}
+
+    def test_vincula_item_de_estoque_legado_sem_principio(self, client):
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST, seed_boostin, vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            # Estado do banco em produção: Lactotropin já cadastrado, sem princípio.
+            s.add(Estoque(nome="Lactotropin", unidade="unidade", quantidade=5, principio_ativo_id=None))
+            s.commit()
+            seed_farmacia(s)
+            seed_boostin(s)
+            vincular_bst_ao_principio(s)
+
+            pa = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).one()
+            for nome in ("Lactotropin", "Boostin"):
+                item = s.exec(select(Estoque).where(Estoque.nome == nome)).one()
+                assert item.principio_ativo_id == pa.id, f"{nome} continuou sem princípio"
+                assert item.principio_ativo == NOME_PRINCIPIO_BST
+
+    def test_nao_sobrescreve_vinculo_feito_pelo_usuario(self, client):
+        from fazenda.rules.farmacia import vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            outro = PrincipioAtivo(nome="Outro princípio escolhido à mão")
+            s.add(outro); s.commit(); s.refresh(outro)
+            s.add(Estoque(nome="Lactotropin", unidade="unidade", principio_ativo_id=outro.id))
+            s.commit()
+            seed_farmacia(s)
+            vincular_bst_ao_principio(s)
+
+            item = s.exec(select(Estoque).where(Estoque.nome == "Lactotropin")).one()
+            assert item.principio_ativo_id == outro.id, "backfill não pode sobrescrever escolha do usuário"
+
+    def test_e_idempotente(self, client):
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST, vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Lactotropin", unidade="unidade", principio_ativo_id=None))
+            s.commit()
+            for _ in range(3):
+                seed_farmacia(s)
+                vincular_bst_ao_principio(s)
+            principios = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).all()
+            assert len(principios) == 1
+            marcas = s.exec(select(MedicamentoComercial).where(
+                MedicamentoComercial.principio_ativo_id == principios[0].id
+            )).all()
+            assert len(marcas) == 2

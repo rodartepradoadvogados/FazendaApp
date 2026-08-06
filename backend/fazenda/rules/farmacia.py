@@ -199,6 +199,7 @@ def bootstrap_farmacia(session: Session) -> None:
     backfill_finalidade_estoque(session)
     normalizar_unidades_estoque(session)
     seed_boostin(session)
+    vincular_bst_ao_principio(session)
 
 
 # Sinônimos/abreviações legadas (import de planilha, cadastro antigo) da
@@ -239,6 +240,44 @@ def seed_boostin(session: Session) -> None:
         estoque_inicializado=False,
         quantidade=0,
     ))
+    session.commit()
+
+
+NOME_PRINCIPIO_BST = "Somatotropina Bovina Recombinante (bST)"
+
+
+def vincular_bst_ao_principio(session: Session) -> None:
+    """Liga os itens de estoque de bST (Lactotropin, Boostin) ao princípio
+    ativo "Somatotropina Bovina Recombinante (bST)".
+
+    Os dois itens nasceram no cadastro ANTES de o princípio existir no
+    catálogo da farmácia (ver `seed_boostin` acima e o item Lactotropin, mais
+    antigo ainda), então ficaram com `principio_ativo_id` nulo. Quem faria o
+    vínculo por nome de marca é `compatibilizar_estoque`, mas ela é guardada
+    por SeedFlag e já rodou — um princípio novo no catálogo nunca alcançaria
+    esses itens legados.
+
+    Sem o vínculo, o item não aparece como opção de frasco na hora de
+    confirmar uma aplicação (o seletor "qual medicamento/frasco?" agrupa por
+    princípio ativo — ver `estoque_baixa.opcoes_medicamento`).
+
+    Add-missing e idempotente: só preenche o que está vazio, nunca sobrescreve
+    um vínculo que o usuário já tenha feito à mão.
+    """
+    principio = session.exec(
+        select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)
+    ).first()
+    if not principio:
+        return  # catálogo ainda não semeado nesta sessão — roda no próximo start
+    itens = session.exec(
+        select(Estoque).where(Estoque.principio_ativo_id.is_(None))  # type: ignore[union-attr]
+    ).all()
+    for item in itens:
+        nome = (item.nome or "").strip().lower()
+        if "lactotropin" in nome or "boostin" in nome:
+            item.principio_ativo_id = principio.id
+            item.principio_ativo = item.principio_ativo or principio.nome
+            session.add(item)
     session.commit()
 
 

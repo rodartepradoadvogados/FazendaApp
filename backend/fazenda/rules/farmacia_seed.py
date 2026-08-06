@@ -122,6 +122,11 @@ PRINCIPIOS: list[dict] = [
      "justificativa": "Controle em frascos (ml).",
      "unidade_base": "ml", "unidade_apresentacao": "frasco",
      "marcas": [("Cystorelin", "Boehringer Ingelheim"), ("Sincrorelin", "Ourofino"), ("Conceptase", "Agener")]},
+    {"nome": "Somatotropina Bovina Recombinante (bST)", "categoria": "Fármacos Reprodutivos e Hormônios", "categoria_software": "Hormônio Galactopoiético",
+     "uso_principal": "Aumento e manutenção da persistência da lactação, aplicado a cada 14 dias.",
+     "justificativa": "Controle em seringas/doses. Já existe manejo de bST no rebanho (ver Animal.excluir_bst e aguardando_nova_aplicacao_bst) — o princípio precisa existir na farmácia para o item de estoque poder se vincular a ele e a baixa sair por dose.",
+     "unidade_base": "dose", "unidade_apresentacao": "seringa",
+     "marcas": [("Lactotropin", "Elanco"), ("Boostin", "MSD")]},
     # ── Antiparasitários ────────────────────────────────────────────────────
     {"nome": "Ivermectina", "categoria": "Antiparasitários (Ecto, Endo e Hemoparasiticidas)", "categoria_software": "Endectocida Injetável",
      "uso_principal": "Nematódeos e carrapatos.",
