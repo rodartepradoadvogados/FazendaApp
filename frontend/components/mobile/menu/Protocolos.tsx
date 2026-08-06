@@ -17,6 +17,8 @@ import {
   type LinhaCentralProtocolos, type DetalheCentralProtocolo,
 } from "@/lib/api";
 import { enviarOuEnfileirar } from "@/lib/offline";
+import { exportarFolhaCampoPDF } from "@/lib/folhaProtocolo";
+import { Printer } from "lucide-react";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 
 const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário" };
@@ -212,6 +214,17 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
       )}
       {erro && <MobAviso tipo="erro">{erro}</MobAviso>}
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
+
+      {/* Só PDF no app: no celular, Excel não serve para nada e ocuparia
+          espaço numa tela que é para ser resolvida com o polegar. A folha é
+          para imprimir e o funcionário ir anotando à caneta, no curral. */}
+      {diaBaixa == null && (
+        <button type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.9rem" }}
+                onClick={() => exportarFolhaCampoPDF(d)}>
+          <Printer size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
+          Folha de campo (PDF)
+        </button>
+      )}
 
       {diaBaixa == null ? (
         d.dias.map((dia) => {

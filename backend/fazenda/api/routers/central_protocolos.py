@@ -26,6 +26,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
+    Estoque, MovimentoEstoque,
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
@@ -33,6 +34,7 @@ from fazenda.models import (
     Usuario,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 # A baixa reaproveita, sem duplicar uma linha, exatamente o que a Agenda já
@@ -101,6 +103,7 @@ def _linhas_iatf(session: Session, fazenda_id: int | None) -> list[dict]:
             data_inicio=l.data_d0, data_fim=max(datas) if datas else l.data_d0,
             etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
             animais=len({a.numero_matriz for a in aps}),
+            ativo=l.ativo,
             encerrado_em=l.encerrado_em, encerrado_motivo=l.encerrado_motivo,
         ))
     return linhas
@@ -129,6 +132,7 @@ def _linhas_inducao(session: Session, fazenda_id: int | None) -> list[dict]:
             data_inicio=l.data_d0, data_fim=max(datas) if datas else l.data_d0,
             etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
             animais=len({a.numero_matriz for a in aps}),
+            ativo=l.ativo,
             encerrado_em=l.encerrado_em, encerrado_motivo=l.encerrado_motivo,
         ))
     return linhas
@@ -454,3 +458,67 @@ def reabrir(
     session.add(lancamento)
     session.commit()
     return {"ok": True}
+
+
+@router.post("/{origem}/{origem_id}/cancelar")
+def cancelar(
+    origem: str, origem_id: int, dados: EncerrarProtocoloIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Cancela o lançamento e ESTORNA o estoque que ele consumiu.
+
+    Cancelar ≠ encerrar. Encerrar diz "aconteceu, rendeu o que rendeu e acabou
+    antes do fim" — o consumo foi real e fica. Cancelar diz "este lançamento
+    não deveria ter existido": as aplicações voltam a NÃO realizadas e cada
+    baixa de estoque que ele gerou é devolvida, pelo rastro
+    (origem_tipo, origem_id) que `estoque_baixa` grava em MovimentoEstoque.
+
+    A Sanidade gerada por essas aplicações NÃO é apagada: ela é o registro de
+    que o produto entrou no animal, e apagá-la reescreveria a ficha. O
+    cancelamento é do lançamento, não da história clínica.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    usuario_id = usuario_id_seguro(user)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+
+    # Desfaz as aplicações — o lançamento inteiro passa a valer como não feito.
+    for ap in _aplicacoes_do_lancamento(session, origem, origem_id):
+        if ap.realizada:
+            ap.realizada = False
+            ap.data_realizacao = None
+            session.add(ap)
+
+    # Estorna cada saída de estoque desta origem. Só as SAÍDAS: uma devolução
+    # anterior (entrada) não pode ser estornada de novo, ou o saldo inflaria.
+    avisos: list[str] = []
+    hoje = date.today()
+    query_mov = select(MovimentoEstoque).where(
+        MovimentoEstoque.origem_tipo == origem,
+        MovimentoEstoque.origem_id == origem_id,
+        MovimentoEstoque.movimento == "Aplicação",
+    )
+    if fazenda_id is not None:
+        query_mov = query_mov.where(MovimentoEstoque.fazenda_id == fazenda_id)
+    for mov in session.exec(query_mov).all():
+        item = session.get(Estoque, mov.estoque_id) if mov.estoque_id else None
+        if item is None:
+            item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=mov.nome_item)
+        avisos.extend(estoque_baixa.devolver(
+            session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=hoje,
+            fazenda_id=fazenda_id, usuario_id=usuario_id, produto=mov.nome_item,
+            observacao=f"Estorno — protocolo cancelado ({lancamento.nome_protocolo})",
+            origem_tipo=origem, origem_id=origem_id,
+        ))
+
+    # `ativo=False` é o que marca "cancelado" nas três famílias — `_linha` já
+    # dá precedência a ele sobre encerrado/concluído. `encerrado_em` também é
+    # preenchido porque é ele que a Agenda consulta para parar de cobrar
+    # pendência de IATF e indução; o motivo fica em `encerrado_motivo`, que
+    # aqui vale como "por que este lançamento saiu".
+    lancamento.ativo = False
+    lancamento.encerrado_em = hoje
+    lancamento.encerrado_motivo = (dados.motivo or "").strip() or None
+    session.add(lancamento)
+    session.commit()
+    return {"ok": True, "avisos": avisos}

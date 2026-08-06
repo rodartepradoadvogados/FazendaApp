@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, FileText, FileSpreadsheet } from "lucide-react";
 import {
   fetchAnimais,
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
-  fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo,
+  fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo, cancelarProtocolo,
   fetchPrincipiosAtivos,
   formatDate,
   TIPOS_PROTOCOLO_CUSTOM,
@@ -14,6 +14,7 @@ import {
   type DetalheCentralProtocolo,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { exportarFolhaCampoPDF, exportarFolhaCampoExcel } from "@/lib/folhaProtocolo";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { TabBar } from "@/components/ui";
@@ -314,6 +315,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   const [dataBaixa, setDataBaixa] = useState("");
   const [animaisBaixa, setAnimaisBaixa] = useState<string[]>([]);
   const [encerrando, setEncerrando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
   const [motivo, setMotivo] = useState("");
 
   const carregar = () => fetchDetalheProtocolo(origem, origemId).then(setDet).catch((e) => setErro(e.message));
@@ -357,6 +359,17 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     try {
       await encerrarProtocolo(origem, origemId, motivo);
       setEncerrando(false); setMotivo("");
+      await carregar(); onMudou();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  async function confirmarCancelar() {
+    setSalvando(true); setErro(null);
+    try {
+      const r = await cancelarProtocolo(origem, origemId, motivo);
+      setCancelando(false); setMotivo("");
+      setAviso(r.avisos?.length ? r.avisos.join(" ") : "Protocolo cancelado e estoque estornado.");
       await carregar(); onMudou();
     } catch (e: any) { setErro(e.message); }
     finally { setSalvando(false); }
@@ -478,6 +491,12 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
       )}
 
       <div className="flex gap-2 mt-4" style={{ flexWrap: "wrap" }}>
+        <button className="btn-ghost" onClick={() => exportarFolhaCampoPDF(det)} title="Folha para imprimir e levar ao curral">
+          <FileText size={13} /> Folha de campo (PDF)
+        </button>
+        <button className="btn-ghost" onClick={() => exportarFolhaCampoExcel(det)}>
+          <FileSpreadsheet size={13} /> Excel
+        </button>
         {det.encerrado_em ? (
           <button className="btn-ghost" onClick={confirmarReabrir} disabled={salvando}>Reabrir protocolo</button>
         ) : (
@@ -485,7 +504,32 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
             Encerrar protocolo
           </button>
         )}
+        {det.ativo && (
+          <button className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => setCancelando(true)} disabled={salvando}>
+            Cancelar protocolo
+          </button>
+        )}
       </div>
+
+      {cancelando && (
+        <div className="card mt-2" style={{ background: "var(--surface-2)", border: "1px solid var(--red)" }}>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>
+            Cancelar é para o lançamento que <strong>não deveria ter existido</strong> — diferente de encerrar.
+            As {det.etapas_realizadas} aplicação(ões) já registrada(s) voltam a “não realizadas” e{" "}
+            <strong>o estoque consumido é devolvido</strong>. O registro na ficha do animal permanece:
+            o produto entrou nele, e isso não se reescreve.
+          </p>
+          <label style={labelStyle}>Motivo (opcional)</label>
+          <input style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                 placeholder="ex.: lançado no lote errado, duplicado" />
+          <div className="flex gap-2 mt-2">
+            <button className="btn-primary" style={{ background: "var(--red)" }} onClick={confirmarCancelar} disabled={salvando}>
+              Cancelar protocolo e estornar
+            </button>
+            <button className="btn-ghost" onClick={() => setCancelando(false)}>Voltar</button>
+          </div>
+        </div>
+      )}
 
       {encerrando && (
         <div className="card mt-2" style={{ background: "var(--surface-2)" }}>

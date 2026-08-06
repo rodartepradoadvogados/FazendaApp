@@ -46,6 +46,59 @@ function inicioDaSemana(iso: string): string {
   return maisDias(iso, -dia);
 }
 
+/** "Qual frasco você está usando?" — a mesma pergunta que o site faz ao
+ *  confirmar um dia de protocolo, agora no app. Sem ela, o estoque baixava
+ *  sempre o item cadastrado no molde: se o curral pegou outra marca do mesmo
+ *  princípio ativo, saía do saldo errado e a rastreabilidade ia junto. */
+function SeletorFrasco({ itens, escolhas, onEscolher }: {
+  itens: OpcaoMedicamento[];
+  escolhas: Record<number, number | null>;
+  onEscolher: (idx: number, estoqueId: number | null) => void;
+}) {
+  if (!itens.length) return null;
+  return (
+    <div style={{ marginBottom: "0.7rem", background: "var(--mob-surface-2)", border: "1px solid var(--mob-dourado)", borderRadius: 12, padding: "0.7rem 0.8rem" }}>
+      <div style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--mob-dourado)", marginBottom: "0.5rem" }}>
+        Qual frasco você está usando?
+      </div>
+      {itens.map((m, idx) => {
+        const escolhido = escolhas[idx] ?? (m.opcoes?.length === 1 ? m.opcoes[0].estoque_id : "");
+        return (
+          <div key={idx} style={{ marginBottom: idx === itens.length - 1 ? 0 : "0.6rem" }}>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.25rem" }}>
+              {m.produto}{m.dose ? ` · ${m.dose}${m.unidade || ""}` : ""}
+            </div>
+            {!(m.opcoes?.length) ? (
+              <div style={{ fontSize: "0.78rem", color: "var(--mob-ambar)" }}>
+                Nenhum frasco deste princípio ativo em estoque — será baixado pelo nome cadastrado.
+              </div>
+            ) : (
+              <select className="mob-input" value={escolhido ?? ""}
+                      onChange={(ev) => onEscolher(idx, ev.target.value ? Number(ev.target.value) : null)}>
+                <option value="">Selecione o frasco…</option>
+                {m.opcoes.map((o) => (
+                  <option key={o.estoque_id} value={o.estoque_id}>
+                    {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}
+                    {o.estoque_inicializado === false ? " (sem estoque inicial)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Um medicamento/hormônio previsto para o dia, com os frascos de estoque do
+ *  mesmo princípio ativo entre os quais o funcionário escolhe. */
+type OpcaoMedicamento = {
+  produto: string; dose?: number | null; unidade?: string | null; via?: string | null;
+  principio_ativo_id?: number | null;
+  opcoes?: { estoque_id: number; nome: string; marca?: string | null; saldo: number; unidade?: string | null; estoque_inicializado?: boolean }[];
+};
+
 type Evento = {
   id: string;
   data: string;
@@ -63,6 +116,12 @@ type Evento = {
   dia?: number | null;
   hormonio?: string | null;
   medicamentos?: string | null;
+  // "Qual frasco você está usando?" — o backend já mandava estas opções (o
+  // site as usa desde sempre), mas o app confirmava sem perguntar e o estoque
+  // acabava baixando o item cadastrado no molde, não o que foi para o curral.
+  // `hormonios` vem no IATF; `medicamentos_opcoes`, na indução de lactação.
+  hormonios?: OpcaoMedicamento[] | null;
+  medicamentos_opcoes?: OpcaoMedicamento[] | null;
   protocolo?: string | null;
   grupo?: string | null;
   grupo_titulo?: string | null;
@@ -412,6 +471,32 @@ export default function AgendaMovel() {
     setAviso({ tipo: "ok", msg: `Aplicação confirmada em ${g.itens.length} animal(is).` });
   }
 
+  // ── "Qual frasco?" ────────────────────────────────────────────────────────
+  // Escolha do funcionário por evento → índice do medicamento → estoque_id.
+  // Sem escolha, cai no frasco único (quando só há um) e, na falta de
+  // qualquer opção, no produto cadastrado no molde — que era o comportamento
+  // antigo do app e fazia o estoque baixar a marca errada quando o curral
+  // usava outro frasco do mesmo princípio ativo.
+  const [frascoEscolhido, setFrascoEscolhido] = useState<Record<string, Record<number, number | null>>>({});
+  const escolherFrasco = (eventoId: string, idx: number, estoqueId: number | null) =>
+    setFrascoEscolhido((p) => ({ ...p, [eventoId]: { ...(p[eventoId] || {}), [idx]: estoqueId } }));
+
+  const listaMedicamentos = (e: Evento): OpcaoMedicamento[] =>
+    (e.tipo === "protocolo_iatf" ? e.hormonios : e.medicamentos_opcoes) || [];
+
+  function medicamentosEscolhidos(e: Evento) {
+    const sel = frascoEscolhido[e.id] || {};
+    const medicamentos = listaMedicamentos(e).map((m, idx) => {
+      const estoqueId = sel[idx] ?? (m.opcoes?.length === 1 ? m.opcoes[0].estoque_id : null);
+      const op = (m.opcoes || []).find((o) => o.estoque_id === estoqueId);
+      return { produto: op?.nome || m.produto, estoque_id: estoqueId ?? undefined, dose: m.dose, unidade: m.unidade, via: m.via };
+    }).filter((m) => m.produto);
+    // Lista vazia = "não escolhi nada": o backend usa os medicamentos
+    // cadastrados no lançamento, como sempre fez. Mandar [] explicitamente
+    // seria dizer "nenhum medicamento aplicado", que é outra coisa.
+    return medicamentos.length ? medicamentos : undefined;
+  }
+
   const abrirIatf = (id: string, animais: string[]) => {
     setIatfAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
     setIatfChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
@@ -430,7 +515,7 @@ export default function AgendaMovel() {
     if (!individual) setFeitos((p) => new Set(p).add(e.id));
     try {
       const r = await enviarOuEnfileirar("/agenda/realizados",
-        { evento_id: e.id, animais: animaisSel },
+        { evento_id: e.id, animais: animaisSel, medicamentos: medicamentosEscolhidos(e) },
         `${e.descricao} — ${animaisSel.length} vaca(s)`, "POST");
       if (individual) setIatfVacasFeitas((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
@@ -462,6 +547,8 @@ export default function AgendaMovel() {
         { evento_id: e.id, animais: animaisSel },
         `${e.descricao} — ${animaisSel.length} animal(is)`, "POST");
       if (individual) setProtocoloCustomFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
+      // (protocolo customizado não tem frasco: o insumo dele é texto livre,
+      // informativo, e nunca gerou baixa de estoque — ver rules/protocolo_customizado.py)
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
       else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} animal(is).` });
     } catch (err) {
@@ -872,6 +959,9 @@ export default function AgendaMovel() {
                   </div>
                 )}
 
+                <SeletorFrasco itens={listaMedicamentos(e)} escolhas={frascoEscolhido[e.id] || {}}
+                               onEscolher={(idx, id) => escolherFrasco(e.id, idx, id)} />
+
                 {/* Antes de tudo: aplicação em lote ou individual? */}
                 {!modo ? (
                   <>
@@ -957,6 +1047,9 @@ export default function AgendaMovel() {
             const pendentes = e.animais!.filter((n) => !feitasVaca.has(n));
             return (
               <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+                <SeletorFrasco itens={listaMedicamentos(e)} escolhas={frascoEscolhido[e.id] || {}}
+                               onEscolher={(idx, id) => escolherFrasco(e.id, idx, id)} />
+
                 {/* Antes de tudo: aplicação em lote ou individual? */}
                 {!modo ? (
                   <>

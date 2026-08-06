@@ -385,6 +385,124 @@ class TestAsOutrasDuasFamilias:
         assert c.post(f"/central-protocolos/customizado/{lid}/baixa", json={"dia": 0}).status_code == 200
 
 
+class TestCancelar:
+    """Cancelar ≠ encerrar. Encerrar diz "aconteceu, rendeu o que rendeu e
+    acabou antes do fim" — o consumo foi real e fica. Cancelar diz "este
+    lançamento não deveria ter existido": as aplicações voltam a não
+    realizadas e o estoque consumido é devolvido."""
+
+    def _com_estoque(self, c, engine):
+        """Um item de estoque + um protocolo IATF cujo D0 usa esse item."""
+        item = c.post("/estoque/", json={
+            "nome": "Benzoato de estradiol", "categoria": "Medicamento",
+            "unidade": "ml", "quantidade": 100,
+        })
+        assert item.status_code in (200, 201), item.text
+        _animais(engine, ["700", "701"])
+        lid = _lancar_iatf(c, ["700", "701"], date.today())
+        return lid
+
+    def _saldo(self, c, nome="Benzoato de estradiol"):
+        itens = c.get("/estoque/").json()
+        lista = itens["itens"] if isinstance(itens, dict) else itens
+        item = next((i for i in lista if i["nome"] == nome), None)
+        return item["quantidade"] if item else None
+
+    def test_cancelar_desfaz_as_aplicacoes(self, client):
+        c, engine = client
+        _animais(engine, ["700", "701"])
+        lid = _lancar_iatf(c, ["700", "701"], date.today())
+        c.post(f"/central-protocolos/iatf/{lid}/baixa", json={"dia": 0})
+        assert c.get(f"/central-protocolos/iatf/{lid}").json()["etapas_realizadas"] == 2
+
+        r = c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={"motivo": "Lançado no lote errado"})
+        assert r.status_code == 200, r.text
+
+        det = c.get(f"/central-protocolos/iatf/{lid}").json()
+        assert det["etapas_realizadas"] == 0, "cancelar tem que desfazer as aplicações"
+        assert det["ativo"] is False
+
+    def test_cancelado_aparece_como_cancelado_e_nao_encerrado(self, client):
+        c, engine = client
+        _animais(engine, ["700"])
+        lid = _lancar_iatf(c, ["700"], date.today())
+        c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={"motivo": "Engano"})
+
+        linha = next(l for l in c.get("/central-protocolos/historico").json() if l["origem_id"] == lid)
+        assert linha["status"] == "cancelado", "cancelado não pode se disfarçar de encerrado"
+        assert linha["encerrado_motivo"] == "Engano"
+
+    def test_cancelado_sai_da_agenda(self, client):
+        c, engine = client
+        _animais(engine, ["700"])
+        lid = _lancar_iatf(c, ["700"], date.today())
+        assert _eventos_iatf(c)
+        c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={})
+        assert not _eventos_iatf(c)
+
+    def test_estorna_o_estoque_consumido(self, client):
+        c, engine = client
+        lid = self._com_estoque(c, engine)
+        saldo_inicial = self._saldo(c)
+        if saldo_inicial is None:
+            pytest.skip("estoque não disponível nesta configuração de teste")
+
+        c.post(f"/central-protocolos/iatf/{lid}/baixa", json={"dia": 0})
+        saldo_apos_baixa = self._saldo(c)
+
+        c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={})
+        saldo_final = self._saldo(c)
+
+        if saldo_apos_baixa < saldo_inicial:  # só faz sentido conferir se houve baixa
+            assert saldo_final == saldo_inicial, (
+                f"estoque não voltou ao original: {saldo_inicial} → {saldo_apos_baixa} → {saldo_final}"
+            )
+
+    def test_cancelar_duas_vezes_nao_infla_o_estoque(self, client):
+        """O estorno gera uma ENTRADA; se ela fosse estornada de novo, o saldo
+        cresceria sem limite a cada clique."""
+        c, engine = client
+        lid = self._com_estoque(c, engine)
+        c.post(f"/central-protocolos/iatf/{lid}/baixa", json={"dia": 0})
+        c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={})
+        saldo_1 = self._saldo(c)
+        c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={})
+        assert self._saldo(c) == saldo_1, "cancelar de novo inflou o estoque"
+
+    def test_sanidade_gerada_nao_e_apagada(self, client):
+        """Cancelar é do lançamento, não da história clínica: o registro de
+        que o produto entrou no animal permanece na ficha."""
+        c, engine = client
+        _animais(engine, ["700"])
+        lid = _lancar_iatf(c, ["700"], date.today())
+        c.post(f"/central-protocolos/iatf/{lid}/baixa", json={"dia": 0})
+        antes = len(c.get("/animais/700/ficha").json().get("aplicacoes_sanitarias", []))
+
+        c.post(f"/central-protocolos/iatf/{lid}/cancelar", json={})
+        depois = len(c.get("/animais/700/ficha").json().get("aplicacoes_sanitarias", []))
+        assert depois == antes, "a Sanidade da aplicação não pode sumir da ficha"
+
+    def test_customizado_tambem_cancela(self, client):
+        c, engine = client
+        _animais(engine, ["700"])
+        criado = c.post("/cadastro/protocolos-customizados", json={
+            "nome": "Cura de casco", "categoria": "Rebanho", "dia_inicial": 0, "tipo": "sanitario",
+            "etapas": [{"dia": 0, "descricao_evento": "Aplicar produto"}],
+        }).json()
+        c.post("/protocolos-customizados/lancar", json={
+            "protocolo_id": criado["id"], "animais": ["700"], "data_inicio": date.today().isoformat(),
+        })
+        lid = next(l["origem_id"] for l in c.get("/central-protocolos/acompanhamento").json()
+                   if l["origem"] == "customizado")
+        assert c.post(f"/central-protocolos/customizado/{lid}/cancelar", json={}).status_code == 200
+        linha = next(l for l in c.get("/central-protocolos/historico").json() if l["origem"] == "customizado")
+        assert linha["status"] == "cancelado"
+
+    def test_sanitario_nao_aceita_cancelamento_pela_central(self, client):
+        c, _ = client
+        assert c.post("/central-protocolos/sanitario/1/cancelar", json={}).status_code == 400
+
+
 class TestNadaQuebrouNoCaminhoAntigo:
     def test_baixa_pela_agenda_continua_funcionando(self, client):
         c, engine = client

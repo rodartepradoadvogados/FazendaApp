@@ -3575,6 +3575,17 @@ export async function encerrarProtocolo(origem: string, origemId: number, motivo
   return res.json();
 }
 
+/** Cancelar ≠ encerrar: aqui as aplicações voltam a "não realizadas" e o
+ *  estoque consumido é devolvido. A Sanidade registrada na ficha do animal
+ *  permanece — o produto entrou nele, e isso não se reescreve. */
+export async function cancelarProtocolo(origem: string, origemId: number, motivo?: string): Promise<{ ok: boolean; avisos: string[] }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/cancelar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo: motivo || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cancelar o protocolo"); }
+  return res.json();
+}
+
 export async function reabrirProtocolo(origem: string, origemId: number) {
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao reabrir o protocolo"); }
