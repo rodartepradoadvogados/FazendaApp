@@ -284,6 +284,32 @@ def atualizar_item_estoque(
     return item.model_dump()
 
 
+@router.delete("/{item_id}")
+def excluir_item_estoque(
+    item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Exclui um item de estoque de fato — só permitido quando não há nenhum
+    `MovimentoEstoque` vinculado (409 caso contrário, orientando a desativar
+    em vez de excluir), já que `MovimentoEstoque.estoque_id` é FK real para
+    `estoque.id` (o único FK do repo apontando pra essa tabela)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    total_movimentos = len(session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == item_id)).all())
+    if total_movimentos:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'Não é possível excluir "{item.nome}" — há {total_movimentos} movimento(s) de estoque '
+                'vinculado(s) a ele. Desative o item (campo "Ativo") em vez de excluir.'
+            ),
+        )
+    session.delete(item)
+    session.commit()
+    return {"excluido": True}
+
+
 def _eh_medicamento(e: Estoque) -> bool:
     """Item "candidato a medicamento" — usado quando NENHUM critério (princípio
     ativo/classificação/doença/secagem/vacina) foi passado, para que os

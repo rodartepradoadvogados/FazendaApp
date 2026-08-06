@@ -226,18 +226,18 @@ def seed_racas_grau_sangue(session: Session, fazenda_id: int | None = None) -> N
 
 
 
-_listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome_ativo(MotivoBaixa, com_fazenda=True)
+_listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa, _ = _crud_nome_ativo(MotivoBaixa, com_fazenda=True)
 router.get("/motivos-baixa")(_listar_motivos_baixa)
 router.post("/motivos-baixa")(_criar_motivo_baixa)
 router.put("/motivos-baixa/{item_id}")(_atualizar_motivo_baixa)
 
-_listar_motivos_venda, _criar_motivo_venda, _atualizar_motivo_venda = _crud_nome_ativo(MotivoVenda, com_fazenda=True)
+_listar_motivos_venda, _criar_motivo_venda, _atualizar_motivo_venda, _ = _crud_nome_ativo(MotivoVenda, com_fazenda=True)
 router.get("/motivos-venda")(_listar_motivos_venda)
 router.post("/motivos-venda")(_criar_motivo_venda)
 router.put("/motivos-venda/{item_id}")(_atualizar_motivo_venda)
 
 
-_listar_racas, _criar_raca, _atualizar_raca = _crud_nome_ativo(Raca, com_fazenda=True)
+_listar_racas, _criar_raca, _atualizar_raca, _ = _crud_nome_ativo(Raca, com_fazenda=True)
 router.get("/racas")(_listar_racas)
 router.post("/racas")(_criar_raca)
 router.put("/racas/{item_id}")(_atualizar_raca)

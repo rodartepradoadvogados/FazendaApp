@@ -118,3 +118,20 @@ class TestCrudGenerico:
         c, _ = client
         r = c.put("/cadastro/locais-armazenamento/9999", json={"nome": "X"})
         assert r.status_code == 404
+
+    @pytest.mark.parametrize("rota", [e[0] for e in ENDPOINTS])
+    def test_excluir_remove_de_fato(self, client, rota):
+        c, _ = client
+        item_id = c.post(f"/cadastro/{rota}", json={"nome": "Item para excluir"}).json()["id"]
+
+        r = c.delete(f"/cadastro/{rota}/{item_id}")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"excluido": True}
+
+        itens = c.get(f"/cadastro/{rota}").json()
+        assert not any(i["id"] == item_id for i in itens)
+
+    def test_excluir_inexistente_404(self, client):
+        c, _ = client
+        r = c.delete("/cadastro/locais-armazenamento/9999")
+        assert r.status_code == 404
