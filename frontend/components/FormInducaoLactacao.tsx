@@ -107,7 +107,14 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
         protocolo_id: Number(protocoloId), animais: animaisAlvo, data_d0: dataD0,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
-      setSucesso(`Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
+      // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
+      // protocolo, mesmo D0, mesmos animais) e reaproveitou em vez de duplicar
+      // — acontece em duplo clique ou no retry da fila offline do app. Sem
+      // este ramo a tela dizia "lançado ... — 0 eventos na Agenda", que parece
+      // defeito.
+      setSucesso(r.criado === false
+        ? (r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
+        : `Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
       setSel(new Set()); setLotesSelecionados([]);
       recarregarAtivosRef.current();
     } catch (e: any) {
