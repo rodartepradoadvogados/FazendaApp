@@ -87,6 +87,11 @@ class ProtocoloCustomizadoLancamento(SQLModel, table=True):
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
     ativo: bool = Field(default=True, index=True)  # cancelar = False (histórico preservado)
+    # Ver ProtocoloIatfLancamento.encerrado_em — encerrar ≠ cancelar: cancelar
+    # (ativo=False) diz que o lançamento não deveria ter existido; encerrar diz
+    # que ele existiu, rendeu o que rendeu, e acabou antes do fim.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

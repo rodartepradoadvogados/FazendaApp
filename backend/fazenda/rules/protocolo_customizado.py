@@ -26,6 +26,11 @@ from fazenda.ordenacao import chave_numero
 # precisa saber que perdeu o dia, mas um lançamento abandonado não pode
 # poluir a Agenda para sempre. Mesma ordem de grandeza das janelas de
 # colostragem (30) e confirmação de cura (60) já usadas em calcular_agenda.
+#
+# Vale para as TRÊS famílias com cronograma (customizado, IATF e indução) —
+# a Agenda importa esta constante. Passada a janela, a etapa sai da Agenda mas
+# continua podendo receber baixa pela Central de Protocolos, que é quem fecha
+# o ciclo; sem isso, um protocolo esquecido travava para sempre.
 JANELA_ATRASO_DIAS = 30
 
 PREFIXO_EVENTO = "protocolo_customizado_"
@@ -45,7 +50,10 @@ def eventos_agenda(
     fazenda_id_seguro() — None escopa para todas (token legado)."""
     limite = data - timedelta(days=JANELA_ATRASO_DIAS)
 
-    query_lanc = select(ProtocoloCustomizadoLancamento).where(ProtocoloCustomizadoLancamento.ativo == True)  # noqa: E712
+    query_lanc = select(ProtocoloCustomizadoLancamento).where(
+        ProtocoloCustomizadoLancamento.ativo == True,  # noqa: E712
+        ProtocoloCustomizadoLancamento.encerrado_em.is_(None),  # encerrado para de cobrar pendência
+    )
     if fazenda_id is not None:
         query_lanc = query_lanc.where(ProtocoloCustomizadoLancamento.fazenda_id == fazenda_id)
     lancamentos_por_id = {l.id: l for l in session.exec(query_lanc).all()}
@@ -101,9 +109,17 @@ def eventos_agenda(
     return saida
 
 
-def marcar_realizado(session: Session, evento_id: str, animais: list[str] | None = None) -> None:
+def marcar_realizado(
+    session: Session, evento_id: str, animais: list[str] | None = None,
+    data_realizacao: date | None = None,
+) -> None:
     """Marca as aplicações de um grupo (lançamento, dia) como realizadas.
-    Sem `animais`, marca o grupo inteiro; com `animais`, só esse subconjunto."""
+    Sem `animais`, marca o grupo inteiro; com `animais`, só esse subconjunto.
+
+    `data_realizacao` é o dia em que a aplicação REALMENTE aconteceu — usado
+    pela baixa retroativa da Central de Protocolos, quando o funcionário
+    aplicou no dia certo e só registrou depois. Sem ele, assume hoje (o
+    caminho normal, confirmando pela Agenda no próprio dia)."""
     resto = evento_id.removeprefix(PREFIXO_EVENTO)
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
@@ -119,10 +135,10 @@ def marcar_realizado(session: Session, evento_id: str, animais: list[str] | None
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
 
-    hoje = date.today()
+    quando = data_realizacao or date.today()
     for ap in aplicacoes:
         ap.realizada = True
-        ap.data_realizacao = hoje
+        ap.data_realizacao = quando
         session.add(ap)
     session.commit()
 

@@ -573,6 +573,9 @@ class ProtocoloInducaoLancamento(SQLModel, table=True):
     data_d0: date  # data do dia_inicial do protocolo (D0 ou D1)
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
+    # Ver ProtocoloIatfLancamento.encerrado_em — mesma semântica.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

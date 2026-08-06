@@ -3512,7 +3512,10 @@ export type LinhaCentralProtocolos = {
   tipo: "produtivo" | "reprodutivo" | "sanitario"; origem: "iatf" | "inducao" | "sanitario" | "customizado";
   origem_id: number; nome: string; data_inicio: string; data_fim: string;
   etapas_total: number; etapas_realizadas: number; etapas_faltam: number;
-  animais: number; status: "ativo" | "concluido" | "cancelado";
+  // "encerrado": acabou antes do fim do cronograma. As etapas que sobraram
+  // seguem contadas como NÃO realizadas — encerrar não maquia o progresso.
+  animais: number; status: "ativo" | "concluido" | "encerrado" | "cancelado";
+  encerrado_em?: string | null; encerrado_motivo?: string | null;
 };
 export async function fetchCentralProtocolosAcompanhamento(params?: { nome?: string; tipo?: string }): Promise<LinhaCentralProtocolos[]> {
   const qs = new URLSearchParams();
@@ -3530,6 +3533,51 @@ export async function fetchCentralProtocolosHistorico(params?: { nome?: string; 
   if (params?.data_ate) qs.set("data_ate", params.data_ate);
   const res = await authFetch(`${API}/central-protocolos/historico?${qs.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Central de Protocolos (histórico) error: ${res.status}`);
+  return res.json();
+}
+
+// Detalhe de UM lançamento: a grade animal × dia. É o que permite fechar o
+// ciclo — até 08/2026 a Agenda era o único lugar capaz de marcar uma etapa
+// como realizada, e ela escondia a etapa cujo dia já tinha passado.
+export type CelulaProtocolo = {
+  dia: number; rotulo: string; data_prevista: string; data_realizacao: string | null;
+  realizada: boolean; estado: "realizada" | "atrasada" | "pendente";
+};
+export type DetalheCentralProtocolo = {
+  origem: string; origem_id: number; nome: string; data_inicio: string | null;
+  responsavel: string | null; encerrado_em: string | null; encerrado_motivo: string | null;
+  ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
+  dias: { dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number }[];
+  animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];
+};
+
+export async function fetchDetalheProtocolo(origem: string, origemId: number): Promise<DetalheCentralProtocolo> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao carregar o protocolo"); }
+  return res.json();
+}
+
+export async function darBaixaProtocolo(origem: string, origemId: number, dados: {
+  dia: number; animais?: string[] | null; data_realizacao?: string | null;
+}): Promise<{ ok: boolean; avisos: string[] }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/baixa`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa"); }
+  return res.json();
+}
+
+export async function encerrarProtocolo(origem: string, origemId: number, motivo?: string) {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo: motivo || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar o protocolo"); }
+  return res.json();
+}
+
+export async function reabrirProtocolo(origem: string, origemId: number) {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao reabrir o protocolo"); }
   return res.json();
 }
 export async function fetchProtocolosIatfAtivos() {
