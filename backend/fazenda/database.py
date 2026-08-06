@@ -70,13 +70,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     # ATENÇÃO: chave única por tabela — este dict é um literal, e uma segunda
     # entrada com o mesmo nome de tabela APAGA esta em silêncio (foi o que
     # aconteceu com `retroativo`/`usuario_id` até 08/2026, quando a Central de
-    # Protocolos abriu uma segunda entrada lá embaixo). Colunas novas desta
-    # tabela entram AQUI.
+    # Protocolos abriu uma segunda entrada lá embaixo).
     "protocolo_iatf_lancamento": [
         ("retroativo", "BOOLEAN"), ("usuario_id", "INTEGER"),
-        # Central de Protocolos: molde de IATF + encerramento manual.
         ("protocolo_id", "INTEGER"),
-        ("encerrado_em", "DATE"), ("encerrado_motivo", "VARCHAR"),
     ],
     "sanidade": [
         ("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR"), ("usuario_id", "INTEGER"),
@@ -255,9 +252,6 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     # classificação macro do protocolo customizado. (As colunas de
     # `protocolo_iatf_lancamento` ficam na entrada única lá em cima.)
     "protocolo_customizado": [("tipo", "VARCHAR")],
-    # Encerramento manual do lançamento pela Central de Protocolos.
-    "protocolo_inducao_lancamento": [("encerrado_em", "DATE"), ("encerrado_motivo", "VARCHAR")],
-    "protocolo_customizado_lancamento": [("encerrado_em", "DATE"), ("encerrado_motivo", "VARCHAR")],
     # Curativo x preventivo no protocolo sanitário de etapas. Nulo = curativo
     # (todo protocolo cadastrado antes desta distinção), resolvido na leitura.
     "protocolo_sanitario": [("finalidade", "VARCHAR")],

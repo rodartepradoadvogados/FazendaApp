@@ -184,6 +184,10 @@ class ProtocoloIatfLancamento(SQLModel, table=True):
     # mas param de cobrar pendência na Agenda.
     encerrado_em: Optional[date] = Field(default=None)
     encerrado_motivo: Optional[str] = None
+    # Cancelado: o lançamento não deveria ter existido. Diferente de encerrar —
+    # aqui as aplicações voltam a não realizadas e o estoque é estornado.
+    # Mesmo nome/semântica de ProtocoloCustomizadoLancamento.ativo.
+    ativo: bool = Field(default=True, index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
