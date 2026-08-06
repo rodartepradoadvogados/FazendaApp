@@ -211,6 +211,12 @@ from .protocolo_customizado import (
     ProtocoloCustomizadoLancamento,
     ProtocoloCustomizadoAplicacao,
 )
+from .lida import (
+    Lida,
+    LidaEtapa,
+    LidaLancamento,
+    LidaAplicacao,
+)
 from .idempotencia import (
     IdempotenciaChave,
 )
@@ -263,6 +269,10 @@ __all__ = [
     "ProtocoloCustomizadoLancamento",
     "IdempotenciaChave",
     "ProtocoloCustomizadoAplicacao",
+    "Lida",
+    "LidaEtapa",
+    "LidaLancamento",
+    "LidaAplicacao",
     "Animal",
     "Lote",
     "MovimentoLote",

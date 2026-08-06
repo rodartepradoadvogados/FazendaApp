@@ -3542,7 +3542,7 @@ export async function excluirProtocoloIatfCadastrado(id: number): Promise<void> 
 // ── Central de Protocolos — Acompanhamento e Histórico (IATF + Indução +
 // Sanitário + Customizado, juntos e filtráveis por nome/período/tipo) ──
 export type LinhaCentralProtocolos = {
-  tipo: "produtivo" | "reprodutivo" | "sanitario"; origem: "iatf" | "inducao" | "sanitario" | "customizado";
+  tipo: "produtivo" | "reprodutivo" | "sanitario" | "lida"; origem: "iatf" | "inducao" | "sanitario" | "customizado" | "lida";
   origem_id: number; nome: string; data_inicio: string; data_fim: string;
   etapas_total: number; etapas_realizadas: number; etapas_faltam: number;
   // "encerrado": acabou antes do fim do cronograma. As etapas que sobraram
@@ -5329,4 +5329,80 @@ export async function fetchProtocolosCustomizadosAtivos(): Promise<ProtocoloCust
 export async function cancelarLancamentoProtocoloCustomizado(lancamentoId: number): Promise<void> {
   const res = await authFetch(`${API}/protocolos-customizados/${lancamentoId}/cancelar`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar lançamento"); }
+}
+
+// ── Lida — tarefas gerais da fazenda (não são protocolo de animal) ──────────
+// Sem Tipo produtivo/reprodutivo/sanitário — ver comentário em
+// fazenda/models/lida.py (backend) para a diferença em relação ao Protocolo
+// Customizado. Duas formas de agendar: "periodo" (D0, D1... como os demais
+// protocolos) ou "frequencia" (a cada N dias, entre início e fim).
+export type EtapaLida = {
+  dia_inicio: number; dia_fim?: number | null; descricao_evento: string;
+  insumo_padrao?: string | null; insumo_dose?: number | null; insumo_unidade?: string | null;
+  foto_obrigatoria?: boolean; ordem?: number;
+};
+export type Lida = {
+  id: number; nome: string; modo: "periodo" | "frequencia"; dia_inicial: number;
+  frequencia_dias: number | null; descricao_evento: string | null;
+  insumo_padrao: string | null; insumo_dose: number | null; insumo_unidade: string | null;
+  foto_obrigatoria: boolean; dar_baixa_estoque: boolean; vincular_financeiro: boolean;
+  observacao: string | null; ativo: boolean; etapas: EtapaLida[]; duracao_dias: number | null;
+};
+type LidaPayload = {
+  nome: string; modo: "periodo" | "frequencia"; dia_inicial?: number;
+  frequencia_dias?: number | null; descricao_evento?: string | null;
+  insumo_padrao?: string | null; insumo_dose?: number | null; insumo_unidade?: string | null;
+  foto_obrigatoria?: boolean; dar_baixa_estoque?: boolean; vincular_financeiro?: boolean;
+  observacao?: string | null; ativo?: boolean; etapas?: EtapaLida[];
+};
+
+export async function fetchLidas(): Promise<Lida[]> {
+  const res = await authFetch(`${API}/cadastro/lidas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lida error: ${res.status}`);
+  return res.json();
+}
+export async function criarLida(dados: LidaPayload): Promise<Lida> {
+  const res = await authFetch(`${API}/cadastro/lidas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lida"); }
+  return res.json();
+}
+export async function atualizarLida(id: number, dados: LidaPayload): Promise<Lida> {
+  const res = await authFetch(`${API}/cadastro/lidas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar lida"); }
+  return res.json();
+}
+export async function excluirLida(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/lidas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lida"); }
+}
+
+export async function fetchLidasParaLancar(): Promise<Lida[]> {
+  const res = await authFetch(`${API}/lida`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lida error: ${res.status}`);
+  return res.json();
+}
+export async function lancarLida(dados: {
+  lida_id: number; animais?: string[]; lote?: string | null; data_inicio: string; data_fim?: string | null;
+  responsavel?: string | null; observacao?: string | null;
+}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number }> {
+  const res = await authFetch(`${API}/lida/lancar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar lida"); }
+  return res.json();
+}
+export type LidaAtiva = {
+  lancamento_id: number; nome_protocolo: string; modo: "periodo" | "frequencia"; data_inicio: string;
+  alvo_tipo: "tarefa_fazenda" | "lote" | "animal"; lote: string | null; responsavel: string | null;
+  total_etapas: number; pendentes: number; animais: string[];
+  proxima_etapa: string; proxima_data: string; proxima_foto_obrigatoria: boolean;
+};
+export async function fetchLidasAtivas(): Promise<LidaAtiva[]> {
+  const res = await authFetch(`${API}/lida/ativos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lida ativos error: ${res.status}`);
+  return res.json();
 }

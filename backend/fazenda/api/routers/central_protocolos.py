@@ -27,6 +27,7 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Estoque, MovimentoEstoque,
+    LidaAplicacao, LidaLancamento,
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
@@ -44,6 +45,7 @@ from fazenda.api.routers.agenda import (
     _marcar_protocolo_iatf_realizado,
     _marcar_protocolo_inducao_realizado,
     _marcar_protocolo_custom_realizado,
+    _marcar_lida_realizado,
     PREFIXO_PROTOCOLO_CUSTOM,
 )
 
@@ -178,6 +180,38 @@ def _linhas_customizado(session: Session, fazenda_id: int | None) -> list[dict]:
     return linhas
 
 
+def _linhas_lida(session: Session, fazenda_id: int | None) -> list[dict]:
+    query = select(LidaLancamento)
+    if fazenda_id is not None:
+        query = query.where(LidaLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query).all()
+    if not lancamentos:
+        return []
+    ids = [l.id for l in lancamentos]
+    aplicacoes = session.exec(
+        select(LidaAplicacao).where(LidaAplicacao.lancamento_id.in_(ids))
+    ).all()
+    por_lanc: dict[int, list[LidaAplicacao]] = defaultdict(list)
+    for a in aplicacoes:
+        por_lanc[a.lancamento_id].append(a)
+    linhas = []
+    for l in lancamentos:
+        aps = por_lanc.get(l.id, [])
+        datas = [a.data_prevista for a in aps]
+        linhas.append(_linha(
+            # "lida" não é produtivo/reprodutivo/sanitário — tipo próprio, de
+            # propósito fora dos 3 filtros existentes (é sempre trabalho geral
+            # da fazenda, nunca protocolo de animal).
+            tipo="lida", origem="lida", origem_id=l.id, nome=l.nome_protocolo,
+            data_inicio=l.data_inicio, data_fim=max(datas) if datas else l.data_inicio,
+            etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
+            animais=len({a.numero_matriz for a in aps if a.numero_matriz}),
+            ativo=l.ativo,
+            encerrado_em=l.encerrado_em, encerrado_motivo=l.encerrado_motivo,
+        ))
+    return linhas
+
+
 def _linhas_sanitario(session: Session, fazenda_id: int | None) -> list[dict]:
     query = select(ProtocoloSanitarioLancamento)
     if fazenda_id is not None:
@@ -227,6 +261,7 @@ def _todas_as_linhas(session: Session, fazenda_id: int | None) -> list[dict]:
         + _linhas_inducao(session, fazenda_id)
         + _linhas_sanitario(session, fazenda_id)
         + _linhas_customizado(session, fazenda_id)
+        + _linhas_lida(session, fazenda_id)
     )
 
 
@@ -282,7 +317,7 @@ def historico(
 # cada ProtocoloSanitarioLancamento é POR ANIMAL, e na Central ele já aparece
 # agrupado só para exibição — dar baixa nele exigiria decidir o que fazer com
 # o grupo inteiro, o que é outra discussão. Segue pela Agenda, como sempre.
-_ORIGENS_COM_ACAO = ("iatf", "inducao", "customizado")
+_ORIGENS_COM_ACAO = ("iatf", "inducao", "customizado", "lida")
 
 
 class BaixaProtocoloIn(BaseModel):
@@ -302,13 +337,14 @@ def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id
     if origem not in _ORIGENS_COM_ACAO:
         raise HTTPException(
             status_code=400,
-            detail="Só protocolos de IATF, indução e customizado têm baixa pela Central — "
+            detail="Só protocolos de IATF, indução, customizado e lida têm baixa pela Central — "
                    "o sanitário é lançado por animal e se resolve pela Agenda.",
         )
     modelo = {
         "iatf": ProtocoloIatfLancamento,
         "inducao": ProtocoloInducaoLancamento,
         "customizado": ProtocoloCustomizadoLancamento,
+        "lida": LidaLancamento,
     }[origem]
     lancamento = session.get(modelo, origem_id)
     if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
@@ -321,6 +357,7 @@ def _aplicacoes_do_lancamento(session: Session, origem: str, origem_id: int) -> 
         "iatf": ProtocoloIatfAplicacao,
         "inducao": ProtocoloInducaoAplicacao,
         "customizado": ProtocoloCustomizadoAplicacao,
+        "lida": LidaAplicacao,
     }[origem]
     return list(session.exec(
         select(modelo).where(modelo.lancamento_id == origem_id)
@@ -339,9 +376,10 @@ def detalhe(
     aps = _aplicacoes_do_lancamento(session, origem, origem_id)
     hoje = date.today()
 
-    # `dia` do customizado é absoluto (pode começar em D1); os outros já são
-    # relativos ao D0. O rótulo sempre sai relativo ao início do cronograma.
-    base = getattr(lancamento, "dia_inicial", 0) if origem == "customizado" else 0
+    # `dia` do customizado e da lida é absoluto (pode começar em D1); os
+    # outros já são relativos ao D0. O rótulo sempre sai relativo ao início
+    # do cronograma.
+    base = getattr(lancamento, "dia_inicial", 0) if origem in ("customizado", "lida") else 0
 
     dias: dict[int, dict] = {}
     for a in aps:
@@ -423,6 +461,11 @@ def dar_baixa(
             session, f"protocolo_inducao_{origem_id}_{dados.dia}",
             dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
             data_realizacao=dados.data_realizacao,
+        )
+    elif origem == "lida":
+        avisos = _marcar_lida_realizado(
+            session, f"lida_{origem_id}_{dados.dia}",
+            dados.animais, data_realizacao=dados.data_realizacao, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
     else:
         _marcar_protocolo_custom_realizado(

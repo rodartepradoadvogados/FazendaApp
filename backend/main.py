@@ -48,6 +48,7 @@ from fazenda.api.routers import (
     fotos,
     importar,
     indicadores,
+    lida,
     lotes,
     manual_fazenda,
     movimentacoes,
@@ -496,6 +497,7 @@ app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
 # exige o módulo "parametros", via cadastro.router.
 app.include_router(protocolos_customizados.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(lida.router, dependencies=_protegido + _contrato_ativo)
 # Central de Protocolos (Acompanhamento/Histórico) — só lê dados de IATF,
 # Indução, Sanitário e Customizado; mesma regra de acesso deles (protegido +
 # contrato ativo, sem gate de módulo específico).

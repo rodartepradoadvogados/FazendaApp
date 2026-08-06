@@ -34,6 +34,8 @@ const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/Fo
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
+const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
+const FormLida = dynamic(() => import("@/components/lancamentos/FormLida").then((m) => m.FormLida), { ssr: false });
 
 const inputStyle: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
@@ -41,8 +43,8 @@ const inputStyle: React.CSSProperties = {
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
-const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário" };
-const COR_TIPO: Record<string, string> = { produtivo: "var(--green-light)", reprodutivo: "var(--dourado-light)", sanitario: "var(--red)" };
+const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário", lida: "Lida" };
+const COR_TIPO: Record<string, string> = { produtivo: "var(--green-light)", reprodutivo: "var(--dourado-light)", sanitario: "var(--red)", lida: "var(--blue)" };
 
 function Pill({ children, cor }: { children: React.ReactNode; cor?: string }) {
   return (
@@ -263,6 +265,7 @@ const TIPOS_CADASTRO = [
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
+  { id: "lida", label: "Lida", desc: "Trabalho da fazenda que não é protocolo de animal — por período ou frequência" },
 ] as const;
 type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 
@@ -277,6 +280,7 @@ function CadastroTab() {
       {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
       {tipo === "inducao" && <CadastroProtocolosInducao />}
       {tipo === "customizado" && <CadastroProtocolosCustomizados />}
+      {tipo === "lida" && <CadastroLida />}
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "1rem" }}>
         Regra que <strong>se repete</strong> no tempo (vermífugo a cada 4 meses, Brucelose no nascimento) não é protocolo
@@ -301,6 +305,7 @@ const TIPOS_LANCAMENTO = [
   { id: "iatf", label: "IATF", desc: "Hormônios num lote — molde de dias livres ou digitado na hora" },
   { id: "inducao", label: "Indução de lactação", desc: "Cronograma completo, com baixa de estoque" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre, por matriz(es) ou tarefa da fazenda" },
+  { id: "lida", label: "Lida", desc: "Tarefa geral da fazenda, por período ou por frequência" },
 ] as const;
 type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 
@@ -317,11 +322,12 @@ function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: Es
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
         {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
+        {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-        {tipo === "customizado"
-          ? "Protocolo customizado só é lançado aqui — não existe em Lançamentos."
+        {tipo === "customizado" || tipo === "lida"
+          ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
           : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
@@ -629,6 +635,7 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
           <select style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)}>
             <option value="">Todos os tipos</option>
             {TIPOS_PROTOCOLO_CUSTOM.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            <option value="lida">Lida</option>
           </select></div>
       </div>
 

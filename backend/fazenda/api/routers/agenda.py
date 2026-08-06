@@ -35,6 +35,12 @@ from fazenda.rules.protocolo_customizado import (
     PREFIXO_EVENTO as PREFIXO_PROTOCOLO_CUSTOM,
     JANELA_ATRASO_DIAS as JANELA_ATRASO_PROTOCOLO_DIAS,
 )
+from fazenda.rules.lida import (
+    eventos_agenda as _eventos_lida_agenda,
+    marcar_realizado as _marcar_lida_realizado,
+    desmarcar_realizado as _desmarcar_lida_realizado,
+    PREFIXO_EVENTO as PREFIXO_LIDA,
+)
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
@@ -588,6 +594,11 @@ def calcular_agenda(
     # cálculo já testado dele.
     eventos_protocolo_custom = _eventos_protocolo_custom_agenda(session, data, realizados, fazenda_id)
 
+    # Lida (tarefas gerais da fazenda que não são protocolo de animal — ver
+    # fazenda/models/lida.py) — mesmo espírito do protocolo personalizado
+    # acima: fonte ADITIVA, fora do AgendaEngine de propósito.
+    eventos_lida = _eventos_lida_agenda(session, data, realizados, fazenda_id)
+
     # Cronograma sanitário (regras do calendário sanitário marcadas
     # usa_cronograma=True) — trilha do animal (incluir/excluir) + trilha do
     # agendamento (decidir modo/adiar/aplicar). Fora do AgendaEngine de
@@ -938,7 +949,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom + eventos_cronograma_sanitario
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -1540,6 +1551,11 @@ def marcar_realizado(
     if dados.evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
         _marcar_protocolo_custom_realizado(session, dados.evento_id, dados.animais)
         return {"marcado": True}
+    if dados.evento_id.startswith(PREFIXO_LIDA):
+        avisos = _marcar_lida_realizado(
+            session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
+        )
+        return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
         _decidir_cronograma_animal(session, dados.evento_id, dados.incluir)
         return {"marcado": True}
@@ -1782,6 +1798,9 @@ def desmarcar_realizado(
         return {"desmarcado": True}
     if evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
         _desmarcar_protocolo_custom_realizado(session, evento_id)
+        return {"desmarcado": True}
+    if evento_id.startswith(PREFIXO_LIDA):
+        _desmarcar_lida_realizado(session, evento_id)
         return {"desmarcado": True}
     if evento_id.startswith(_PREFIXO_CRONOGRAMA):
         raise HTTPException(
