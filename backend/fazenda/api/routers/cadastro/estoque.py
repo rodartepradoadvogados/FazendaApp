@@ -18,7 +18,6 @@ from fazenda.models import (
     SeedFlag, UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.api.routers.estoque import _validar_embalagem
 from ._comum import _crud_nome_ativo
 
 router = APIRouter()
@@ -176,7 +175,6 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
         raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
-    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
     item.unidade_embalagem = dados.unidade_embalagem
     item.medida_embalagem = dados.medida_embalagem
     item.quantidade_embalagem = dados.quantidade_embalagem

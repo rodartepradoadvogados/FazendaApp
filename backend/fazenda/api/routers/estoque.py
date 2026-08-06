@@ -121,10 +121,6 @@ def backfill_estoque_semen_generico(session: Session) -> None:
     session.commit()
 
 
-UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"]
-MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"]
-
-
 @router.get("/")
 def listar_estoque(
     fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
@@ -177,13 +173,6 @@ class EstoqueIn(BaseModel):
     tipo_semen: str | None = None
 
 
-def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
-    if unidade_embalagem and unidade_embalagem not in UNIDADES_EMBALAGEM:
-        raise HTTPException(status_code=400, detail=f"Unidade de embalagem inválida — use uma de: {', '.join(UNIDADES_EMBALAGEM)}")
-    if medida_embalagem and medida_embalagem not in MEDIDAS_EMBALAGEM:
-        raise HTTPException(status_code=400, detail=f"Unidade de medida inválida — use uma de: {', '.join(MEDIDAS_EMBALAGEM)}")
-
-
 @router.post("/", status_code=201)
 def criar_item_estoque(
     dados: EstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
@@ -196,8 +185,6 @@ def criar_item_estoque(
     existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe um item de estoque chamado "{dados.nome}"')
-    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
-
     valor_total = (dados.quantidade or 0) * (dados.valor_unitario or 0) if dados.quantidade and dados.valor_unitario else None
     item = Estoque(
         nome=dados.nome,
@@ -257,8 +244,6 @@ def atualizar_item_estoque(
     existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe outro item de estoque chamado "{dados.nome}"')
-    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
-
     item.nome = dados.nome
     item.categoria = dados.categoria
     item.finalidade = dados.finalidade
