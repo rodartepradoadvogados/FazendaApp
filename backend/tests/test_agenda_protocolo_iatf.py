@@ -1,7 +1,8 @@
 """
 Testes do protocolo IATF na Agenda: eventos agrupados por (lançamento, dia)
-em vez de um por animal, retroativo não mostra passos já vencidos, e marcar
-"realizado" (total ou parcial) resolve só as aplicações certas.
+em vez de um por animal, a janela de atraso das etapas vencidas (ver
+TestJanelaDeAtraso), e marcar "realizado" (total ou parcial) resolve só as
+aplicações certas.
 """
 from __future__ import annotations
 
@@ -118,24 +119,50 @@ class TestAdicionarAnimaisExistente:
         assert r.status_code == 404
 
 
-class TestRetroativoSoMostraFuturos:
-    def test_lancamento_retroativo_esconde_etapas_ja_passadas(self, client):
-        c, engine = client
-        # D0 lançado há mais de 11 dias: D0/D7/D9/D11 já passaram, exceto nenhum.
-        _lancar(c, ["700"], data_d0="2026-06-01")
+class TestJanelaDeAtraso:
+    """CONTRATO ALTERADO EM 08/2026.
 
-        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
-        iatf = [e for e in eventos if e.get("tipo") == "protocolo_iatf"]
-        assert iatf == []  # todas as datas (01/06, 08/06, 10/06, 12/06) já passaram
+    Antes, etapa com data já vencida sumia da Agenda na hora. A intenção era
+    não poluir a lista com passos perdidos — mas como a Agenda era o único
+    lugar do sistema capaz de gravar `realizada = True`, o efeito real era
+    que um protocolo que perdesse o dia ficava travado em "em andamento"
+    PARA SEMPRE, sem nenhuma tela capaz de fechá-lo (relato do usuário: três
+    protocolos IATF parados em 18/36, 15/20 e 8/16).
 
-    def test_lancamento_retroativo_mostra_so_etapas_futuras(self, client):
+    Agora a etapa vencida continua cobrando por até JANELA_ATRASO_DIAS (30),
+    a mesma janela que o protocolo customizado já usava. Passada a janela ela
+    some daqui — o que estes testes seguem garantindo —, mas a baixa continua
+    possível pela Central de Protocolos, que é quem fecha o ciclo.
+    """
+
+    def test_etapa_vencida_dentro_da_janela_continua_cobrando(self, client):
         c, engine = client
-        # D0 em 01/07: D0(01/07) e D7(08/07) já passaram/são hoje-1, D9(10/07) e D11(12/07) são futuros.
+        # D0 em 01/07 → D0/D7 vencidos em 09/07, D9/D11 ainda por vir. Todos
+        # dentro da janela (limite = 09/07 - 30 = 09/06).
         _lancar(c, ["700"], data_d0="2026-07-01")
 
         eventos = c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
         dias_presentes = sorted(e["dia"] for e in eventos if e.get("tipo") == "protocolo_iatf")
-        assert dias_presentes == [9, 11]
+        assert dias_presentes == [0, 7, 9, 11], "etapa vencida sumiu — protocolo fica sem como fechar"
+
+    def test_etapa_alem_da_janela_para_de_cobrar(self, client):
+        c, engine = client
+        # D0 em 01/05 → o último passo (D11, 12/05) está a quase 2 meses da
+        # data consultada: fora da janela, não polui mais a Agenda.
+        _lancar(c, ["700"], data_d0="2026-05-01")
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        assert [e for e in eventos if e.get("tipo") == "protocolo_iatf"] == []
+
+    def test_a_janela_corta_etapa_por_etapa(self, client):
+        c, engine = client
+        # D0 em 01/06, consulta em 08/07 → limite = 08/06. D0 (01/06) fica de
+        # fora; D7 (08/06) cai exatamente no limite e entra, junto com D9/D11.
+        _lancar(c, ["700"], data_d0="2026-06-01")
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        dias_presentes = sorted(e["dia"] for e in eventos if e.get("tipo") == "protocolo_iatf")
+        assert dias_presentes == [7, 9, 11]
 
 
 class TestMarcarRealizadoIatf:
