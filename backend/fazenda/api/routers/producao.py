@@ -1456,7 +1456,7 @@ def listar_inducao_lactacao_ativos(
 # aplicadas) já é calculada pela Agenda (GET /agenda/) — este endpoint cobre
 # só o lado histórico/gerencial que falta: quem recebeu, quando e quanto.
 # ---------------------------------------------------------------------------
-MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
 
 @router.get("/relatorio-bst")

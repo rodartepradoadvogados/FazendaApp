@@ -46,6 +46,12 @@ class Sanidade(SQLModel, table=True):
     # permite excluir o lançamento inteiro (protocolo + agenda + Sanidade) de uma vez.
     protocolo_sanitario_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_sanitario_lancamento.id")
     protocolo_iatf_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_iatf_lancamento.id")
+    # Espelha protocolo_iatf_lancamento_id acima, mas para a indução de
+    # lactação — vínculo relacional com o ProtocoloInducaoLancamento que
+    # originou esta Sanidade (antes só existia como texto livre em `obs`).
+    protocolo_inducao_lancamento_id: Optional[int] = Field(
+        default=None, foreign_key="protocolo_inducao_lancamento.id", index=True
+    )
     # Avaliação de cura, pedida na Agenda no dia seguinte a uma aplicação
     # curativa (None = ainda não respondida). Alimenta o relatório Taxa de cura.
     curada: Optional[bool] = None

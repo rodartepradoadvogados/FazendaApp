@@ -269,12 +269,19 @@ def vincular_bst_ao_principio(session: Session) -> None:
     ).first()
     if not principio:
         return  # catálogo ainda não semeado nesta sessão — roda no próximo start
-    itens = session.exec(
-        select(Estoque).where(Estoque.principio_ativo_id.is_(None))  # type: ignore[union-attr]
-    ).all()
-    for item in itens:
+    for item in session.exec(select(Estoque)).all():
         nome = (item.nome or "").strip().lower()
-        if "lactotropin" in nome or "boostin" in nome:
+        # "lactotropim" (com M) é erro de grafia frequente na digitação — o
+        # produto da Elanco é Lactotropin, com N. Casa as duas formas para o
+        # item mal digitado não ficar de fora do vínculo, e corrige a grafia
+        # do cadastro. Renomear é seguro: MovimentoEstoque aponta para o item
+        # por `estoque_id` (FK), não pelo texto do nome, então o histórico de
+        # baixas/entradas continua ligado.
+        if "lactotropim" in nome:
+            item.nome = (item.nome or "").replace("Lactotropim", "Lactotropin").replace("lactotropim", "lactotropin")
+            session.add(item)
+            nome = item.nome.strip().lower()
+        if item.principio_ativo_id is None and ("lactotropin" in nome or "boostin" in nome):
             item.principio_ativo_id = principio.id
             item.principio_ativo = item.principio_ativo or principio.nome
             session.add(item)

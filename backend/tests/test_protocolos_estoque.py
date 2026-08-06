@@ -580,7 +580,11 @@ class TestSanidadeInducao:
         lid = _lancar_inducao(c, pid, ["700", "701"], date.today())
         c.post(f"/central-protocolos/inducao/{lid}/baixa", json={"dia": 0})
         with Session(engine) as s:
-            assert len(s.exec(select(Sanidade)).all()) == 2
+            sans = s.exec(select(Sanidade)).all()
+            assert len(sans) == 2
+            # Vínculo relacional com o lançamento que gerou a aplicação — não
+            # só o texto livre em obs (ver protocolo_inducao_lancamento_id).
+            assert all(sa.protocolo_inducao_lancamento_id == lid for sa in sans)
 
     def test_data_aplicacao_e_a_data_real_nao_hoje(self, client):
         c, engine = client
@@ -591,7 +595,28 @@ class TestSanidadeInducao:
         c.post(f"/central-protocolos/inducao/{lid}/baixa", json={"dia": 0, "data_realizacao": d0.isoformat()})
         with Session(engine) as s:
             san = s.exec(select(Sanidade)).one()
+            # Baixa retroativa: data REAL da aplicação (não "hoje") e o
+            # vínculo relacional gravados juntos, na mesma linha.
             assert san.data_aplicacao == d0
+            assert san.protocolo_inducao_lancamento_id == lid
+
+    def test_etapa_de_manejo_sem_medicamento_nao_gera_sanidade(self, client):
+        """Etapa de manejo/dispositivo (ex.: colocar implante, adaptação na
+        ordenha) não tem medicamento — não pode gerar Sanidade nenhuma.
+        Comportamento pré-existente, preservado pela adição do vínculo."""
+        c, engine = client
+        pid = _cadastrar_inducao(c, etapas=[
+            {"dia": 0, "tipo": "medicamento", "produto": "Benzoato de estradiol", "dose": 1, "unidade": "ml"},
+            {"dia": 1, "tipo": "manejo", "produto": "Adaptação na ordenha"},
+        ])
+        _estoque(engine, nome="Benzoato de estradiol", quantidade=50, unidade="ml")
+        lid = _lancar_inducao(c, pid, ["700"], date.today())
+
+        r = c.post(f"/central-protocolos/inducao/{lid}/baixa", json={"dia": 1})
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            sans = s.exec(select(Sanidade)).all()
+            assert sans == [], "etapa de manejo sem medicamento não pode gerar Sanidade"
 
     def test_cancelar_nao_apaga_sanidade(self, client):
         c, engine = client
@@ -600,13 +625,45 @@ class TestSanidadeInducao:
         lid = _lancar_inducao(c, pid, ["700"], date.today())
         c.post(f"/central-protocolos/inducao/{lid}/baixa", json={"dia": 0})
         with Session(engine) as s:
-            antes = len(s.exec(select(Sanidade)).all())
+            sans_antes = s.exec(select(Sanidade)).all()
+            antes = len(sans_antes)
+            assert all(sa.protocolo_inducao_lancamento_id == lid for sa in sans_antes)
         assert antes == 1
 
         c.post(f"/central-protocolos/inducao/{lid}/cancelar", json={"motivo": "teste"})
         with Session(engine) as s:
-            depois = len(s.exec(select(Sanidade)).all())
+            sans_depois = s.exec(select(Sanidade)).all()
+            depois = len(sans_depois)
         assert depois == antes, "a Sanidade da aplicação não pode sumir da ficha ao cancelar"
+        # Cancelar é o estorno do estoque/agenda — não apaga o registro
+        # clínico nem desfaz o vínculo relacional dele com o lançamento.
+        assert all(sa.protocolo_inducao_lancamento_id == lid for sa in sans_depois), (
+            "cancelar não pode zerar o vínculo relacional da Sanidade — é o registro clínico"
+        )
+
+
+class TestSanidadeInducaoComVinculoAoLancamento:
+    """IATF grava `Sanidade.protocolo_iatf_lancamento_id` (agenda.py ~1367).
+    Indução gera a mesma Sanidade por animal x medicamento (agenda.py
+    ~1481) e agora grava o equivalente `protocolo_inducao_lancamento_id` —
+    vínculo relacional com o `ProtocoloInducaoLancamento` que originou a
+    aplicação, além do texto livre em `obs` ("Indução de lactação — D{dia}"),
+    que continua existindo (é lido em outras telas). Era um bug confirmado
+    por auditoria, coberto por um xfail (test_protocolos_estoque.py — este
+    teste) até a correção do modelo/agenda.py nesta mudança."""
+
+    def test_sanidade_da_inducao_tem_vinculo_relacional_ao_lancamento(self, client):
+        c, engine = client
+        pid = _cadastrar_inducao(c, etapas=[
+            {"dia": 0, "tipo": "medicamento", "produto": "Benzoato de estradiol", "dose": 1, "unidade": "ml"},
+        ])
+        _estoque(engine, nome="Benzoato de estradiol", quantidade=50, unidade="ml")
+        lid = _lancar_inducao(c, pid, ["700"], date.today())
+        c.post(f"/central-protocolos/inducao/{lid}/baixa", json={"dia": 0})
+        with Session(engine) as s:
+            san = s.exec(select(Sanidade)).one()
+            vinculo = getattr(san, "protocolo_inducao_lancamento_id", None)
+            assert vinculo == lid
 
 
 # ════════════════════════ F. Bugs confirmados (fora do escopo) ═════════════
@@ -770,36 +827,3 @@ class TestGrupoMultiLancamentoRateiaBaixaPorLancamento:
         assert len(avisos) == len(set(avisos)), f"avisos duplicados: {avisos}"
         assert any("não está no estoque" in a for a in avisos)
         assert sum("não está no estoque" in a for a in avisos) == 1
-
-
-class TestSanidadeInducaoSemVinculoAoLancamento:
-    """IATF grava `Sanidade.protocolo_iatf_lancamento_id` (agenda.py ~1367).
-    Indução gera a mesma Sanidade por animal x medicamento (agenda.py
-    ~1470), mas o modelo `Sanidade` (fazenda/models/sanidade.py) não tem
-    nenhuma coluna equivalente para indução — o vínculo ao
-    ProtocoloInducaoLancamento existe só como texto livre em `obs`
-    ("Indução de lactação — D{dia}"), não como chave estrangeira. Não há
-    como, a partir de uma linha de Sanidade de indução, achar o lançamento
-    que a gerou por junção relacional.
-
-    Fora do meu escopo de correção: o gap é em agenda.py (proibido) e no
-    modelo compartilhado fazenda/models/sanidade.py."""
-
-    @pytest.mark.xfail(
-        strict=False,
-        reason="fazenda/models/sanidade.py não tem protocolo_inducao_lancamento_id; "
-               "agenda.py:~1470 (_marcar_protocolo_inducao_realizado) não grava nenhum vínculo "
-               "relacional da Sanidade de volta ao ProtocoloInducaoLancamento — só o texto obs.",
-    )
-    def test_sanidade_da_inducao_tem_vinculo_relacional_ao_lancamento(self, client):
-        c, engine = client
-        pid = _cadastrar_inducao(c, etapas=[
-            {"dia": 0, "tipo": "medicamento", "produto": "Benzoato de estradiol", "dose": 1, "unidade": "ml"},
-        ])
-        _estoque(engine, nome="Benzoato de estradiol", quantidade=50, unidade="ml")
-        lid = _lancar_inducao(c, pid, ["700"], date.today())
-        c.post(f"/central-protocolos/inducao/{lid}/baixa", json={"dia": 0})
-        with Session(engine) as s:
-            san = s.exec(select(Sanidade)).one()
-            vinculo = getattr(san, "protocolo_inducao_lancamento_id", None)
-            assert vinculo == lid

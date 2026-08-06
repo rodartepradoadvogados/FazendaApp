@@ -455,3 +455,21 @@ class TestSomatotropinaBST:
                 MedicamentoComercial.principio_ativo_id == principios[0].id
             )).all()
             assert len(marcas) == 2
+
+    def test_corrige_grafia_lactotropim_e_vincula(self, client):
+        # "Lactotropim" (com M) é erro de digitação comum; o produto da Elanco
+        # é Lactotropin. O item mal grafado tem que ser corrigido E vinculado,
+        # senão fica fora do seletor de frasco por causa de uma letra.
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST, vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Lactotropim", unidade="unidade", quantidade=3, principio_ativo_id=None))
+            s.commit()
+            seed_farmacia(s)
+            vincular_bst_ao_principio(s)
+
+            pa = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).one()
+            assert s.exec(select(Estoque).where(Estoque.nome == "Lactotropim")).first() is None
+            item = s.exec(select(Estoque).where(Estoque.nome == "Lactotropin")).one()
+            assert item.principio_ativo_id == pa.id
+            assert item.quantidade == 3, "corrigir a grafia não pode mexer no saldo"
