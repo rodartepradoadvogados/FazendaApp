@@ -680,30 +680,71 @@ export default function FolhaPagamentoView() {
     return m;
   }, [regs]);
 
-  // Imprimir holerite (folha completa do mês, todos os funcionários daquela
-  // competência) — em PDF (identidade visual de relatórios) ou Excel.
+  // Imprimir holerite — em PDF (identidade visual de relatórios) ou Excel.
+  // Base comum: monta 1 seção por funcionário (usada tanto pelo botão por
+  // linha — 1 funcionário só — quanto pelo botão de lote "do mês filtrado").
   const [imprimindoHoleriteChave, setImprimindoHoleriteChave] = useState<string | null>(null);
+  const [imprimindoHoleriteMes, setImprimindoHoleriteMes] = useState(false);
   const [holeriteExportando, setHoleriteExportando] = useState(false);
-  async function imprimirHolerites(r: RegistroFolha, formato: "pdf" | "excel") {
+
+  async function gerarHolerites(lista: RegistroFolha[], subtitulo: string, base: string, formato: "pdf" | "excel") {
+    const secoes: SecaoFicha[] = lista.map((x) => ({
+      titulo: x.pessoa_nome,
+      colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
+      linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
+    }));
+    if (formato === "pdf") {
+      await exportarFichaPDF("Holerite — Folha de pagamento", subtitulo, secoes, base);
+    } else {
+      await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
+    }
+  }
+
+  // Botão POR LINHA — imprime o holerite só daquele funcionário (antes,
+  // apesar de ficar dentro da linha, ele juntava todo mundo da competência).
+  async function imprimirHoleriteLinha(r: RegistroFolha, formato: "pdf" | "excel") {
     setHoleriteExportando(true);
     try {
-      const doMes = (regs || []).filter((x) => x.competencia === r.competencia);
-      const secoes: SecaoFicha[] = doMes.map((x) => ({
-        titulo: x.pessoa_nome,
-        colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
-        linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
-      }));
-      const base = `holerite_${r.competencia}`;
-      if (formato === "pdf") {
-        await exportarFichaPDF("Holerite — Folha de pagamento", mesCompLabel(r.competencia), secoes, base);
-      } else {
-        await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
-      }
+      const base = `holerite_${r.pessoa_nome.replace(/\s+/g, "_")}_${r.competencia}`;
+      await gerarHolerites([r], mesCompLabel(r.competencia), base, formato);
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
       setHoleriteExportando(false);
       setImprimindoHoleriteChave(null);
+    }
+  }
+
+  // Todos os funcionários que aparecem na tabela com os filtros atuais
+  // (Vencimento/Status/Pessoa/Tipo) — base do botão de lote "do mês filtrado".
+  const funcionariosFolhaFiltrados = useMemo(() => {
+    const vistos = new Set<number>();
+    const lista: RegistroFolha[] = [];
+    unificadaFiltrada.forEach((l) => {
+      if (l.tipo !== "funcionario") return;
+      const r = regsPorId[l.origem_id];
+      if (r && !vistos.has(r.id)) { vistos.add(r.id); lista.push(r); }
+    });
+    return lista;
+  }, [unificadaFiltrada, regsPorId]);
+
+  // Botão de LOTE — imprime de uma vez o holerite de todos os funcionários
+  // que estão passando pelo filtro atual da tabela (ex.: um mês específico).
+  async function imprimirHoleritesDoMes(formato: "pdf" | "excel") {
+    if (!funcionariosFolhaFiltrados.length) return;
+    setHoleriteExportando(true);
+    try {
+      const competencias = Array.from(new Set(funcionariosFolhaFiltrados.map((x) => x.competencia))).sort();
+      const subtitulo = competencias.length === 1
+        ? mesCompLabel(competencias[0])
+        : `${competencias.map(mesCompLabel).join(", ")} — filtro atual`;
+      const base = `holerites_${competencias.length === 1 ? competencias[0] : "filtro"}`;
+      await gerarHolerites(funcionariosFolhaFiltrados, subtitulo, base, formato);
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
+    } finally {
+      setHoleriteExportando(false);
+      setImprimindoHoleriteMes(false);
     }
   }
 
@@ -862,12 +903,32 @@ export default function FolhaPagamentoView() {
         </div>
       </div>
 
+      {/* Total filtrado + ação em lote de holerites — fora do cabeçalho clicável
+          da SecaoRecolhivel abaixo (não dá pra aninhar um <button> dentro do
+          <button> do cabeçalho), mas visualmente bem ao lado um do outro. */}
+      <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>
+        <span style={{ position: "relative" }}>
+          <button className="btn-ghost" type="button" title="Imprimir o holerite de todos os funcionários que estão passando pelo filtro atual (ex.: um mês específico)"
+            style={{ fontSize: "0.75rem" }} disabled={!funcionariosFolhaFiltrados.length}
+            onClick={() => setImprimindoHoleriteMes((v) => !v)}>
+            <Printer size={13} /> Imprimir holerite do mês
+          </button>
+          {imprimindoHoleriteMes && (
+            <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 6, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem", whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
+              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleritesDoMes("pdf")}>PDF</button>
+              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleritesDoMes("excel")}>Excel</button>
+            </span>
+          )}
+        </span>
+      </div>
+
       {/* Folha de pagamento — funcionário, empreita, contrato, diária e férias/13º num único ledger;
           recolhida por padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
       <SecaoRecolhivel
         titulo="Folha de pagamento" icon={Filter} defaultAberta={false}
         descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º"
-        badge={<span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>}
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
         <div className="overflow-x-auto">
@@ -1007,15 +1068,15 @@ export default function FolhaPagamentoView() {
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
                           <span style={{ position: "relative" }}>
-                            <button className="btn-ghost" title="Imprimir holerite da folha completa deste mês" style={{ fontSize: "0.72rem" }}
+                            <button className="btn-ghost" title={`Imprimir holerite de ${r.pessoa_nome} (${mesCompLabel(r.competencia)})`} style={{ fontSize: "0.72rem" }}
                               onClick={() => setImprimindoHoleriteChave(imprimindoHoleriteChave === chave ? null : chave)}>
                               <Printer size={13} />
                             </button>
                             {imprimindoHoleriteChave === chave && (
                               <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", whiteSpace: "nowrap" }}>
                                 <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
-                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHolerites(r, "pdf")}>PDF</button>
-                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHolerites(r, "excel")}>Excel</button>
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleriteLinha(r, "pdf")}>PDF</button>
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleriteLinha(r, "excel")}>Excel</button>
                               </span>
                             )}
                           </span>

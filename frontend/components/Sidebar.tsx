@@ -25,6 +25,8 @@ import {
   Search,
   Building2,
   ListChecks,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
@@ -137,6 +139,17 @@ export function Sidebar() {
   // sub-abas (ex.: Financeiro, Lançamentos): em vez de abrir grupo por grupo
   // até achar a sub-aba certa, digita um pedaço do nome e pula direto nela.
   const [buscaSubNav, setBuscaSubNav] = useState("");
+  // Recolhimento manual de sub-menus abertos: cada submenu (identificado
+  // pelo id do nó) pode ser recolhido/expandido de forma independente dos
+  // demais, sem afetar qual sub-aba está selecionada — só esconde os itens
+  // do submenu, mantendo o título visível, para o usuário conseguir ver o
+  // menu inteiro mesmo com um submenu grande selecionado.
+  const [subMenusRecolhidos, setSubMenusRecolhidos] = useState<Set<string>>(new Set());
+  const alternarSubMenuRecolhido = (id: string) => setSubMenusRecolhidos((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   useEffect(() => {
     // Filtra o menu conforme as permissões do usuário logado. "/historico"
@@ -162,8 +175,10 @@ export function Sidebar() {
     };
   }, []);
 
-  // Fecha o menu ao trocar de página (no mobile) e limpa a busca de sub-navegação.
-  useEffect(() => { setAberto(false); setBuscaSubNav(""); }, [path]);
+  // Fecha o menu ao trocar de página (no mobile), limpa a busca de
+  // sub-navegação e reabre qualquer submenu que tivesse sido recolhido
+  // manualmente (a troca de página muda a árvore de sub-navegação exibida).
+  useEffect(() => { setAberto(false); setBuscaSubNav(""); setSubMenusRecolhidos(new Set()); }, [path]);
 
   // Busca só aparece em árvores "pesadas" (muitas sub-abas) — em módulos com
   // poucas sub-abas não vale o espaço extra na tela.
@@ -184,9 +199,17 @@ export function Sidebar() {
     <>
       {/* Barra superior — só no mobile. FIXA no topo (position: fixed) para não
           sumir ao rolar a página; sticky não segura aqui porque os ancestrais
-          têm overflow-x: hidden (que vira scroll-container e quebra o sticky). */}
+          têm overflow-x: hidden (que vira scroll-container e quebra o sticky).
+          paddingTop com safe-area-inset-top evita ficar atrás da barra de
+          status do celular (relógio/bateria/sinal) em telas com notch — sem
+          isso o conteúdo (inclusive o botão de abrir o menu) nascia parcialmente
+          escondido atrás dela. */}
       <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
-        style={{ height: "3.25rem", background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)" }}>
+        style={{
+          height: "calc(3.25rem + env(safe-area-inset-top, 0px))",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)",
+        }}>
         <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu de navegação"
           style={{ background: "none", border: "none", color: "var(--sidebar-fg)", cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
@@ -194,8 +217,9 @@ export function Sidebar() {
         <CowDataWordmark size="0.85rem" cowColor="var(--sidebar-fg)" />
         <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}</span>
       </div>
-      {/* Espaçador: reserva a altura da barra fixa para o conteúdo não ficar por baixo dela. */}
-      <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
+      {/* Espaçador: reserva a altura da barra fixa (incluindo a faixa de segurança
+          do topo) para o conteúdo não ficar por baixo dela. */}
+      <div className="md:hidden" style={{ height: "calc(3.25rem + env(safe-area-inset-top, 0px))" }} aria-hidden="true" />
 
       {/* Fundo escuro atrás do drawer aberto (mobile) */}
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
@@ -280,7 +304,8 @@ export function Sidebar() {
               </div>
             ) : (
               <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect}
-                raiz={subNav.tree} pathname={path} paginaLabel={rotuloDaPagina(path)} />
+                raiz={subNav.tree} pathname={path} paginaLabel={rotuloDaPagina(path)}
+                recolhidos={subMenusRecolhidos} onToggleRecolhido={alternarSubMenuRecolhido} />
             )}
           </div>
         )}
@@ -396,9 +421,10 @@ const normalizarBusca = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}
 
 // Árvore de sub-navegação genérica (N níveis) — usada pela Sidebar no lugar
 // da lista de módulos quando a página atual registra uma (piloto: Lançamentos).
-function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0 }: {
+function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
   nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void;
   raiz: SubNavNode[]; pathname: string; paginaLabel: string; depth?: number;
+  recolhidos: Set<string>; onToggleRecolhido: (id: string) => void;
 }) {
   const caminho = new Set(caminhoAte(nodes, activeId) ?? []);
   return (
@@ -406,6 +432,10 @@ function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, de
       {nodes.map((n) => {
         const temFilhos = !!n.children?.length;
         const ativo = temFilhos ? caminho.has(n.id) : n.id === activeId;
+        // Submenu recolhido manualmente (seta discreta ao lado do título) —
+        // some com os itens do submenu, mas mantém o título e a seleção
+        // atual intactos; independente dos demais submenus.
+        const recolhidoManualmente = temFilhos && recolhidos.has(n.id);
         // Item raiz atualmente aberto/ativo — destaca com uma moldura para
         // deixar claro qual sub-menu está aberto. Vale tanto para grupos com
         // filhos expandidos (ex.: Sanidade > Curativa) quanto para árvores
@@ -419,10 +449,12 @@ function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, de
               padding: "0.3rem", background: "var(--sidebar-subnav-outline-bg)",
             } : undefined}>
             <SubNavItem node={n} depth={depth} ativo={ativo} temFilhos={temFilhos} activeId={activeId}
-              onSelect={onSelect} raiz={raiz} pathname={pathname} paginaLabel={paginaLabel} />
-            {temFilhos && ativo && (
+              onSelect={onSelect} raiz={raiz} pathname={pathname} paginaLabel={paginaLabel}
+              recolhido={recolhidoManualmente} onToggleRecolhido={() => onToggleRecolhido(n.id)} />
+            {temFilhos && ativo && !recolhidoManualmente && (
               <SubNavTree nodes={n.children!} activeId={activeId} onSelect={onSelect}
-                raiz={raiz} pathname={pathname} paginaLabel={paginaLabel} depth={depth + 1} />
+                raiz={raiz} pathname={pathname} paginaLabel={paginaLabel} depth={depth + 1}
+                recolhidos={recolhidos} onToggleRecolhido={onToggleRecolhido} />
             )}
           </div>
         );
@@ -434,9 +466,9 @@ function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, de
 // Um item da sub-navegação: clique simples troca de sub-aba dentro da página
 // atual (como sempre); duplo clique abre a mesma sub-aba numa aba nova (ver
 // TabsShell/abrirNovaAba), já direto no lugar certo via "?sub=" na URL.
-function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, pathname, paginaLabel }: {
+function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, pathname, paginaLabel, recolhido, onToggleRecolhido }: {
   node: SubNavNode; depth: number; ativo: boolean; temFilhos: boolean; activeId: string; onSelect: (id: string) => void;
-  raiz: SubNavNode[]; pathname: string; paginaLabel: string;
+  raiz: SubNavNode[]; pathname: string; paginaLabel: string; recolhido: boolean; onToggleRecolhido: () => void;
 }) {
   const Icon = node.icon;
   const aoClicar = useCliqueOuDuploClique(
@@ -449,18 +481,39 @@ function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, p
       abrirNovaAba(`${pathname}?${params.toString()}`, [paginaLabel, ...labels].join(" › "));
     },
   );
+  // A seta de recolher/expandir só faz sentido enquanto o submenu está
+  // aberto (ativo) e tem itens — clicar nela some/mostra só os itens dele,
+  // sem navegar e sem afetar outros submenus.
+  const mostrarSeta = temFilhos && ativo;
   return (
-    <button onClick={aoClicar}
-      style={{
-        width: "100%", display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
-        padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
-        border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
-        background: ativo ? "var(--sidebar-active-bg)" : "transparent",
-        color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
-        fontSize: "10px", fontWeight: ativo ? 700 : 500,
-      }}>
-      <Icon size={depth ? 13 : 16} /> {node.label}
-    </button>
+    <div style={{ display: "flex", alignItems: "stretch", gap: "2px" }}>
+      <button onClick={aoClicar}
+        style={{
+          flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
+          padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
+          border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
+          background: ativo ? "var(--sidebar-active-bg)" : "transparent",
+          color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
+          fontSize: "10px", fontWeight: ativo ? 700 : 500,
+        }}>
+        <Icon size={depth ? 13 : 16} /> {node.label}
+      </button>
+      {mostrarSeta && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleRecolhido(); }}
+          aria-label={recolhido ? "Expandir sub-menu" : "Recolher sub-menu"}
+          title={recolhido ? "Expandir sub-menu" : "Recolher sub-menu"}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            width: "1.3rem", background: "none", border: "none", borderRadius: "6px",
+            color: "var(--sidebar-muted)", opacity: 0.55, cursor: "pointer",
+          }}
+        >
+          {recolhido ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+        </button>
+      )}
+    </div>
   );
 }
 

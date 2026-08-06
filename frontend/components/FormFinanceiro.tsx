@@ -312,7 +312,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // tipo produto (para serviço não faz sentido "entrada"/"entregue").
   function handleDataEmissaoChange(valor: string) {
     setDataEmissao(valor);
-    if (!valor) return;
+    // O <input type="date"> dispara onChange a cada dígito digitado (não só
+    // quando a data fica completa) — ao digitar o ano dígito a dígito, o
+    // primeiro dígito chega aqui como um ano de 1 dígito só (ex.: "0002-08-05"
+    // ao digitar o "2" de 2026, já com dia/mês prontos). Os campos abaixo só
+    // preenchem se ainda estiverem vazios, então sem esta checagem eles
+    // travavam com esse ano incompleto/errado do primeiro dígito, e nunca
+    // mais eram corrigidos mesmo com a emissão completa depois (bug relatado:
+    // vencimento/previsão de entrada/data do pedido nascendo em "0002").
+    // Só propaga para os campos dependentes com a data de emissão COMPLETA.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(valor)) return;
     setDataVencimento((atual) => atual || valor);
     if (itens.some((i) => i.tipo_item === "produto")) {
       setDataPrevistaEntrada((atual) => atual || valor);
@@ -591,11 +600,23 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   }
 
   function tratarArquivo(file: File) {
-    if (file.type === "application/pdf" || file.type === "image/jpeg" || file.type === "image/png") {
+    // Antes, só passava pela leitura automática (IA) quando file.type fosse
+    // EXATAMENTE "application/pdf"/"image/jpeg"/"image/png" — qualquer outra
+    // coisa (foto salva como "image/jpg" por câmera/app mais antigo, WEBP,
+    // HEIC/HEIF de iPhone, ou MIME vazio, comum em drag-and-drop de alguns
+    // gerenciadores de arquivo) caía no ramo de XML: o binário da imagem era
+    // lido como texto e mandado pro parser de NF-e, que sempre falhava com
+    // 400 "Não foi possível ler o XML" — daí o erro 400 ao anexar/arrastar
+    // documento normal em Contas a pagar. O backend (/financeiro/ler-documento)
+    // já tolera esses formatos (ver MIME_ACEITOS em leitura_documento.py); a
+    // checagem aqui só precisa distinguir XML (rota de texto) do resto
+    // (rota de leitura de documento/imagem via IA).
+    const ehXml = file.type === "text/xml" || file.type === "application/xml" || /\.xml$/i.test(file.name);
+    if (ehXml) {
+      file.text().then(importarXml);
+    } else {
       onArquivoParaLeitura?.(file);
       lerDocumentoAnexado(file);
-    } else {
-      file.text().then(importarXml);
     }
   }
   function onDrop(e: React.DragEvent) {
@@ -766,7 +787,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           <button type="button" className="btn-ghost" title="Colar o código XML da nota fiscal" onClick={() => setXmlAberto((v) => !v)} style={{ fontSize: "0.78rem" }}>colar código XML</button>
           {importando && <Loader2 size={14} className="animate-spin" style={{ color: "var(--dourado-light)" }} />}
         </div>
-        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/png" onChange={onFileSelect} style={{ display: "none" }} />
+        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,image/heic,image/heif" onChange={onFileSelect} style={{ display: "none" }} />
         {xmlAberto && (
           <div style={{ marginTop: "0.6rem", textAlign: "left" }}>
             <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o conteúdo do XML da nota fiscal…"

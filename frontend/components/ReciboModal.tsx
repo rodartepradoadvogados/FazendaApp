@@ -63,7 +63,10 @@ export function ReciboModal({ lanc, onClose }: { lanc: LancamentoRecibo; onClose
       <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {lanc.tipo === "receita" ? "Recebemos de" : "Pagamos a"} <strong>{lanc.fornecedor || "—"}</strong> —{" "}
-          {lanc.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+          {(lanc.valor_pago ?? lanc.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+          {lanc.valor_pago != null && Math.round((lanc.valor - lanc.valor_pago) * 100) / 100 !== 0 && (
+            <> (conta original de {lanc.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} — pagamento parcial)</>
+          )}
         </p>
         <div>
           <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>

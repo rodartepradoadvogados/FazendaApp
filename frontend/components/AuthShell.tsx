@@ -144,17 +144,17 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
       <Sidebar />
-      <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
-        <ThemeSwitcher />
-      </div>
-      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/") — os
-          dois num único container fixed com gap (.site-top-actions, ver
-          globals.css) em vez de cada um calcular sua própria posição. */}
+      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
+          sino de notificações também moram aqui — os quatro num único
+          container fixed com gap (.site-top-actions, ver globals.css) em vez
+          de cada um calcular sua própria posição (era assim que ficavam
+          sobrepostos, ver comentário em globals.css). */}
       <div className="site-top-actions">
         {path === "/" && <ManualFazendaButton />}
         <NewsButton />
+        <ThemeSwitcher />
+        <NotificationBell />
       </div>
-      <NotificationBell />
       <AssistenteClaude />
       <main className="flex-1 md:overflow-y-auto app-main">
         <SectionBackground />

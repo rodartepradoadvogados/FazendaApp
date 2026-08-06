@@ -627,15 +627,48 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .fazenda-table thead th, .fazenda-table tbody td { padding: 0.45rem 0.6rem; }
 }
 
-/* Faixa de botões do topo do site (News + Manual da Fazenda quando presente,
-   ver AuthShell.tsx) — um único container fixed com gap, em vez de cada botão
-   calcular sua própria posição (foi assim que os dois ficaram sobrepostos).
+/* Faixa de botões do topo do site (Manual da Fazenda quando presente, News,
+   tema e sino de notificações — ver AuthShell.tsx) — um ÚNICO container fixed
+   com gap, em vez de cada botão calcular sua própria posição em "right"
+   (era assim que ficavam sobrepostos: tema e sino tinham cada um seu próprio
+   position:fixed com offset fixo, sem saber do tamanho um do outro nem da
+   faixa de News/Manual ao lado — qualquer mudança de largura de um
+   empurrava/cobria o vizinho). env(safe-area-inset-*) evita ficar atrás da
+   barra de status do celular (relógio/bateria) em telas com notch.
    No celular/tablet estreito (abaixo do breakpoint md do Sidebar), desce para
-   ficar abaixo da barra fixa do menu hambúrguer (3.25rem de altura, ver
-   Sidebar.tsx) em vez de sobrepor o logotipo. */
-.site-top-actions { position: fixed; top: 1rem; right: 16rem; z-index: 60; display: inline-flex; align-items: center; gap: 0.6rem; }
+   ficar abaixo da barra fixa do menu hambúrguer (3.25rem de altura + a
+   própria faixa de segurança do topo, ver Sidebar.tsx) em vez de sobrepor o
+   logotipo. */
+.site-top-actions {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 1rem);
+  right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
 @media (max-width: 767px) {
-  .site-top-actions { top: 3.65rem; right: 0.6rem; }
+  .site-top-actions {
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem);
+    right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
+  }
+}
+
+/* Painel do sino (NotificationBell) — mesma lógica de segurança de topo do
+   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões). */
+.notification-panel {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+  right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
+  z-index: 61;
+}
+@media (max-width: 767px) {
+  .notification-panel {
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+    right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

@@ -9,7 +9,6 @@ import {
   fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo, cancelarProtocolo,
   fetchPrincipiosAtivos,
   formatDate,
-  TIPOS_PROTOCOLO_CUSTOM,
   type ProtocoloIatfMolde, type EtapaProtocoloIatf, type LinhaCentralProtocolos,
   type DetalheCentralProtocolo,
 } from "@/lib/api";
@@ -34,6 +33,8 @@ const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/Fo
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
+const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
+const FormLida = dynamic(() => import("@/components/lancamentos/FormLida").then((m) => m.FormLida), { ssr: false });
 
 const inputStyle: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
@@ -41,8 +42,8 @@ const inputStyle: React.CSSProperties = {
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
-const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário" };
-const COR_TIPO: Record<string, string> = { produtivo: "var(--green-light)", reprodutivo: "var(--dourado-light)", sanitario: "var(--red)" };
+const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário", lida: "Lida" };
+const COR_TIPO: Record<string, string> = { produtivo: "var(--green-light)", reprodutivo: "var(--dourado-light)", sanitario: "var(--red)", lida: "var(--blue)" };
 
 function Pill({ children, cor }: { children: React.ReactNode; cor?: string }) {
   return (
@@ -263,6 +264,7 @@ const TIPOS_CADASTRO = [
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
+  { id: "lida", label: "Lida", desc: "Trabalho da fazenda que não é protocolo de animal — por período ou frequência" },
 ] as const;
 type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 
@@ -277,6 +279,7 @@ function CadastroTab() {
       {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
       {tipo === "inducao" && <CadastroProtocolosInducao />}
       {tipo === "customizado" && <CadastroProtocolosCustomizados />}
+      {tipo === "lida" && <CadastroLida />}
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "1rem" }}>
         Regra que <strong>se repete</strong> no tempo (vermífugo a cada 4 meses, Brucelose no nascimento) não é protocolo
@@ -301,6 +304,7 @@ const TIPOS_LANCAMENTO = [
   { id: "iatf", label: "IATF", desc: "Hormônios num lote — molde de dias livres ou digitado na hora" },
   { id: "inducao", label: "Indução de lactação", desc: "Cronograma completo, com baixa de estoque" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre, por matriz(es) ou tarefa da fazenda" },
+  { id: "lida", label: "Lida", desc: "Tarefa geral da fazenda, por período ou por frequência" },
 ] as const;
 type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 
@@ -317,11 +321,12 @@ function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: Es
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
         {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
+        {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-        {tipo === "customizado"
-          ? "Protocolo customizado só é lançado aqui — não existe em Lançamentos."
+        {tipo === "customizado" || tipo === "lida"
+          ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
           : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
@@ -599,44 +604,62 @@ const COLUNAS_EXPORT: ColunaExport[] = [
   { header: "Etapas", key: "etapasLabel" }, { header: "Animais", key: "animais" }, { header: "Status", key: "status" },
 ];
 
+// Cards de origem — mesmo desenho do seletor de Lançamento, para achar
+// visualmente parecido. Filtra por ORIGEM (sanitário/IATF/indução/
+// customizado/lida), não pela categoria produtivo/reprodutivo/sanitário
+// que o backend usa em `tipo` — essa distinção fica só no client, a lista
+// completa já vem do endpoint (o campo de busca por nome ainda vai ao
+// backend, já que esse sim é decidido lá).
+const TIPOS_ACOMPANHAMENTO = [
+  { id: "", label: "Todos", desc: "Todos os protocolos" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo ou preventivo" },
+  { id: "iatf", label: "IATF", desc: "Hormônios em lote" },
+  { id: "inducao", label: "Indução de lactação", desc: "Cronograma com baixa de estoque" },
+  { id: "customizado", label: "Customizado", desc: "Roteiro livre" },
+  { id: "lida", label: "Lida", desc: "Tarefa geral da fazenda" },
+] as const;
+type OrigemAcompanhamento = typeof TIPOS_ACOMPANHAMENTO[number]["id"];
+
 function ListaProtocolos({ historico }: { historico: boolean }) {
   const [linhas, setLinhas] = useState<LinhaCentralProtocolos[] | null>(null);
   const [nome, setNome] = useState("");
-  const [tipo, setTipo] = useState("");
+  const [origem, setOrigem] = useState<OrigemAcompanhamento>("");
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
 
   useEffect(() => {
     const fetcher = historico ? fetchCentralProtocolosHistorico : fetchCentralProtocolosAcompanhamento;
-    fetcher({ nome: nome || undefined, tipo: tipo || undefined })
+    fetcher({ nome: nome || undefined })
       .then(setLinhas).catch((e) => setErro(e.message));
-  }, [nome, tipo, historico, recarga]);
+  }, [nome, historico, recarga]);
 
-  const linhasExport = useMemo(() => (linhas || []).map((l) => ({
+  const linhasFiltradas = useMemo(
+    () => (linhas || []).filter((l) => !origem || l.origem === origem),
+    [linhas, origem],
+  );
+
+  const linhasExport = useMemo(() => linhasFiltradas.map((l) => ({
     nome: l.nome, tipoLabel: LABEL_TIPO[l.tipo] || l.tipo,
     inicioFmt: formatDate(l.data_inicio), fimFmt: formatDate(l.data_fim),
     etapasLabel: `${l.etapas_realizadas}/${l.etapas_total}`, animais: l.animais,
     status: LABEL_STATUS[l.status] || l.status,
-  })), [linhas]);
+  })), [linhasFiltradas]);
 
   return (
     <div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-        <div><label style={labelStyle}>Buscar por nome do protocolo</label>
-          <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" /></div>
-        <div><label style={labelStyle}>Tipo</label>
-          <select style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)}>
-            <option value="">Todos os tipos</option>
-            {TIPOS_PROTOCOLO_CUSTOM.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select></div>
+      <div className="mb-3">
+        <label style={labelStyle}>Buscar por nome do protocolo</label>
+        <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
       </div>
+
+      <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />
 
       {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
       {!linhas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
         <>
           <div className="flex items-center justify-between mb-2">
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhas.length} protocolo(s)</span>
+            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhasFiltradas.length} protocolo(s)</span>
             {historico && <ExportarBotoes titulo="Central de Protocolos — Histórico" nomeArquivoBase="central_protocolos_historico" colunas={COLUNAS_EXPORT} linhas={linhasExport} />}
           </div>
           <div className="overflow-x-auto">
@@ -645,7 +668,7 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
                 <th>Protocolo</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Etapas</th><th>Animais</th><th>Status</th>
               </tr></thead>
               <tbody>
-                {linhas.map((l) => {
+                {linhasFiltradas.map((l) => {
                   // Sanitário é lançado por animal e na Central aparece só
                   // agrupado para exibição — abrir a grade dele exigiria
                   // decidir o que fazer com o grupo inteiro. Segue pela Agenda.
@@ -670,7 +693,7 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
                   </tr>
                   );
                 })}
-                {!linhas.length && (
+                {!linhasFiltradas.length && (
                   <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo {historico ? "concluído" : "ativo"} para os filtros escolhidos.</td></tr>
                 )}
               </tbody>

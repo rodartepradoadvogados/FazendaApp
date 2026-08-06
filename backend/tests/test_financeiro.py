@@ -934,6 +934,75 @@ class TestReciboLancamento:
         assert chamadas == ["alguem@exemplo.com"]
 
 
+class TestDadosDoReciboComPagamentoParcialEReparcelamento:
+    """Bug: o recibo de um pagamento PARCIAL mostrava o valor TOTAL da conta
+    original como se fosse o valor pago (ex.: conta de R$ 40.000, pago
+    R$ 20.000 e reparcelado o restante — o recibo mostrava R$ 40.000).
+
+    O PDF do recibo é gerado no navegador (frontend/lib/export.ts,
+    `gerarReciboPDF`) a partir dos dados que `GET /financeiro/lancamentos`
+    devolve — o backend não formata o recibo em si. Este teste garante que a
+    API expõe corretamente, após a baixa parcial com reparcelamento do
+    restante, os dados que o front agora usa para NÃO repetir o bug:
+    - o valor TOTAL da conta original (`valor`, = valor_total) segue 40000;
+    - o valor EFETIVAMENTE pago nesta baixa (`valor_pago`) é 20000, distinto
+      do total;
+    - a parcela nova do reparcelamento aparece como um lançamento irmão (mesmo
+      numero_lancamento), ainda em aberto, com o valor do restante (20000) e
+      a nova data de vencimento — exatamente os dados que o recibo corrigido
+      lista na seção "Restante reparcelado".
+    """
+
+    def test_pagamento_parcial_reparcelado_expõe_valores_corretos_para_o_recibo(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Cooperativa Agro LTDA",
+            "itens": [{"produto": "Insumos", "quantidade": 1, "valor_unitario": 40000.0, "valor_total": 40000.0}],
+        })
+        assert r.status_code == 201
+        lancamento_id = r.json()["ids"][0]
+        numero = r.json()["numero_lancamento"]
+
+        pag = c.put(f"/financeiro/lancamentos/{lancamento_id}/pagar", json={
+            "data_pagamento": "2026-08-06", "valor_pago": 20000.0, "forma_pagamento": "pix",
+            "parcelas_diferenca": [{"data_vencimento": "2026-09-06", "valor": 20000.0}],
+        })
+        assert pag.status_code == 200
+        corpo_pag = pag.json()
+        # A baixa em si já grava os dois valores separados — a conta original
+        # não muda de valor_total, só ganha um valor_pago menor que ela.
+        assert corpo_pag["valor_total"] == 40000.0
+        assert corpo_pag["valor_pago"] == 20000.0
+        assert corpo_pag["desconto_acrescimo"] == 0  # diferença reparcelada, não perdoada
+        novas = corpo_pag["parcelas_diferenca_criadas"]
+        assert len(novas) == 1
+        assert novas[0]["valor_total"] == 20000.0
+        assert novas[0]["data_vencimento"] == "2026-09-06"
+        assert novas[0]["data_pagamento"] is None
+
+        # É essa mesma lista (GET /financeiro/lancamentos) que o front usa
+        # para montar o recibo — confirma que os dois lançamentos (o pago
+        # parcialmente e a nova parcela reparcelada) aparecem nela com os
+        # campos certos.
+        listagem = c.get("/financeiro/lancamentos").json()["lancamentos"]
+        pago = next(l for l in listagem if l["id"] == lancamento_id)
+        assert pago["valor"] == 40000.0  # valor da conta original — não é o que foi pago
+        assert pago["valor_pago"] == 20000.0  # valor efetivamente pago nesta baixa
+        assert pago["valor"] != pago["valor_pago"]  # a causa raiz do bug: nunca são iguais aqui
+
+        reparcelada = next(
+            l for l in listagem
+            if l["numero_lancamento"] == numero and l["id"] != lancamento_id
+        )
+        assert reparcelada["valor"] == 20000.0  # valor da nova parcela (o restante)
+        assert reparcelada["data_vencimento"] == "2026-09-06"  # nova data de vencimento
+        assert reparcelada["valor_pago"] is None
+        assert reparcelada["data_pagamento"] is None
+
+        # Sanidade: total pago + total reparcelado bate com a conta original.
+        assert round(pago["valor_pago"] + reparcelada["valor"], 2) == pago["valor"]
+
+
 class TestLancamentoRecorrente:
     """Modelo de conta recorrente (energia/internet/telefone/assinatura/
     aluguel) — cadastra os dados fixos uma vez, gera um LancamentoFinanceiro
