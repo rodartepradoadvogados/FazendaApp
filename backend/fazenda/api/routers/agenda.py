@@ -1369,23 +1369,31 @@ def _marcar_protocolo_iatf_realizado(
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
     # Abate do frasco escolhido (estoque_id) ou, na falta, do item pelo nome.
-    # Com medicamento explícito, o grupo inteiro conta como um bloco só; sem
-    # ele (hormônios do lançamento), cada lançamento baixa separado.
+    # Com medicamento explícito, o frasco vale pro grupo inteiro — mas a baixa
+    # em si é sempre lançada POR LANÇAMENTO (uma chamada a `baixar` por
+    # lancamento_id do grupo, com origem_id=lancamento_id), nunca como um
+    # bloco único com origem_id=None. Motivo: `cancelar()` (central_protocolos.py)
+    # estorna filtrando MovimentoEstoque por origem_id == lancamento_id; uma
+    # baixa gravada sem origem_id nunca é encontrada por nenhum cancelamento,
+    # e o estoque que ela consumiu fica órfão pra sempre quando o grupo reúne
+    # mais de um lançamento (mesmo D0, lotes lançados separados). O rateio é
+    # exato porque a dose é a mesma pra todo o grupo: dose × nº de vacas DAQUELE
+    # lançamento, sem dízima nem resto pra ajustar — a soma bate com dose × total.
     if aplicados_fixos is not None:
-        n_vacas = len(aplicacoes)
         for m in aplicados_fixos:
             if not m["dose"]:
                 continue
             estoque_item = estoque_baixa.resolver_item(
                 session, fazenda_id=fazenda_id, produto=m["produto"], estoque_id=m["estoque_id"],
             )
-            total = m["dose"] * n_vacas
-            origem_id = aplicacoes[0].lancamento_id if len(aplicacoes_por_lancamento) == 1 else None
-            avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=total, unidade=m["unidade"], data=hoje,
-                fazenda_id=fazenda_id, observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
-                usuario_id=usuario_id, origem_tipo="iatf", origem_id=origem_id, produto=m["produto"],
-            ))
+            for lancamento_id, aps in aplicacoes_por_lancamento.items():
+                n_vacas_lanc = len(aps)
+                total_lanc = m["dose"] * n_vacas_lanc
+                avisos.extend(estoque_baixa.baixar(
+                    session, item=estoque_item, quantidade=total_lanc, unidade=m["unidade"], data=hoje,
+                    fazenda_id=fazenda_id, observacao=f"Protocolo IATF — D{dia} — {n_vacas_lanc} vaca(s)",
+                    usuario_id=usuario_id, origem_tipo="iatf", origem_id=lancamento_id, produto=m["produto"],
+                ))
     else:
         for lancamento_id, aps in aplicacoes_por_lancamento.items():
             n_vacas = len(aps)
@@ -1402,7 +1410,10 @@ def _marcar_protocolo_iatf_realizado(
                     usuario_id=usuario_id, origem_tipo="iatf", origem_id=lancamento_id, produto=m["produto"],
                 ))
     session.commit()
-    return avisos
+    # Com medicamento explícito e o grupo rateado por lançamento, o mesmo
+    # aviso ("não está no estoque", "ficou negativo" etc.) pode se repetir
+    # uma vez por lançamento — dedup preservando a ordem de aparição.
+    return list(dict.fromkeys(avisos))
 
 
 def _marcar_protocolo_inducao_realizado(
