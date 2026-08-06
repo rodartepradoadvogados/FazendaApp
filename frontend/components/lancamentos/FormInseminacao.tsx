@@ -36,13 +36,15 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [lancamentos, setLancamentos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string }[]>([]);
   const [semen, setSemen] = useState<SemenDisponivel | null>(null);
   // Origem da seleção: avulsa (qualquer matriz apta) ou vinda de um protocolo
-  // IATF em andamento — nesse caso a lista se restringe às matrizes no D11.
+  // IATF em andamento — nesse caso a lista se restringe às matrizes na etapa
+  // de inseminação (`na_inseminacao`, não a string "D11": um molde de dias
+  // livres pode ter a inseminação em outro dia, ex.: D14).
   const [origemSelecao, setOrigemSelecao] = useState<"avulsa" | "protocolo">("avulsa");
-  const [protocolosAtivos, setProtocolosAtivos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null }[] }[]>([]);
+  const [protocolosAtivos, setProtocolosAtivos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; na_inseminacao?: boolean }[] }[]>([]);
   useEffect(() => { fetchProtocolosIatfAtivos().then(setProtocolosAtivos).catch(() => setProtocolosAtivos([])); }, []);
   const protocolosD11 = useMemo(
     () => protocolosAtivos
-      .map((p) => ({ ...p, animaisD11: p.animais.filter((a) => a.etapa_atual === "D11") }))
+      .map((p) => ({ ...p, animaisD11: p.animais.filter((a) => a.na_inseminacao) }))
       .filter((p) => p.animaisD11.length > 0),
     [protocolosAtivos]
   );

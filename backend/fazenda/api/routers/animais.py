@@ -245,9 +245,10 @@ def buscar_animal(
 
 
 def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
-    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as 4 linhas
-    D0/D7/D9/D11 são um único protocolo de IATF. Antes a ficha do animal
-    contava 4 IATFs onde houve 1, distorcendo o histórico reprodutivo."""
+    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as linhas
+    de um mesmo protocolo IATF (D0/D7/D9/D11 clássico, ou os dias livres de
+    um molde) são um único protocolo. Antes a ficha do animal contava um IATF
+    por etapa, distorcendo o histórico reprodutivo."""
     from fazenda.models import ProtocoloIatfLancamento
 
     por_lancamento: dict[int, list] = {}
@@ -259,7 +260,10 @@ def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
         aps = sorted(aps, key=lambda a: a.dia)
         lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
         d0 = next((a.data_prevista for a in aps if a.dia == 0), None)
-        d11 = next((a.data_prevista for a in aps if a.dia == 11), None)
+        # Inseminação = etapa de MAIOR dia deste protocolo — não necessariamente
+        # D11 (molde com dias livres desloca esse número).
+        maior_dia = max((a.dia for a in aps), default=None)
+        d11 = next((a.data_prevista for a in aps if a.dia == maior_dia), None) if maior_dia is not None else None
         linhas.append({
             "lancamento_id": lancamento_id,
             "nome_protocolo": lancamento.nome_protocolo if lancamento else "IATF",

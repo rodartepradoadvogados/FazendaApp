@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Loader2, Milk, Plus, X } from "lucide-react";
-import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros } from "@/lib/api";
+import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros, mensagemErroApi } from "@/lib/api";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 import ManualFazendaParametros from "@/components/ManualFazendaParametros";
 import AlertasIndicador from "@/components/AlertasIndicador";
@@ -185,12 +185,12 @@ async function salvarFaixaBonificacao(id: number | "novo", dados: Record<string,
   const res = await authFetch(url, {
     method: id === "novo" ? "POST" : "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar faixa de bonificação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar faixa de bonificação"); }
   return res.json();
 }
 async function excluirFaixaBonificacao(id: number) {
   const res = await authFetch(`${API}/producao/faixas-bonificacao-qualidade/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir faixa de bonificação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir faixa de bonificação"); }
   return res.json();
 }
 

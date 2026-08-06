@@ -40,7 +40,7 @@
 //     IndexedDB (ver lib/outboxDb.ts), guardando o Blob por referência.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
-import { API, getToken, getFazendaAtual } from "@/lib/api";
+import { API, getToken, getFazendaAtual, mensagemErroApi } from "@/lib/api";
 import {
   garantirPronto, pedirStoragePersistente, idbDisponivel, cabeNoDisco,
   inserirRegistro, lerRegistro, listarResumos, atualizarRegistro, removerRegistro, lerBlob,
@@ -245,7 +245,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
-      throw new Error(detalhe.detail || `Erro ${res.status} ao salvar`);
+      throw new Error(mensagemErroApi(detalhe.detail) || `Erro ${res.status} ao salvar`);
     }
     const resposta = await res.json().catch(() => undefined);
     return { enviado: true, resposta };
@@ -309,7 +309,7 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
-      throw new Error(detalhe.detail || `Erro ${res.status} ao enviar`);
+      throw new Error(mensagemErroApi(detalhe.detail) || `Erro ${res.status} ao enviar`);
     }
     return { enviado: true };
   } catch (e) {
@@ -446,7 +446,7 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           }
           // 4xx "de verdade" (400/404/409/422...) = dado inválido, exige o usuário.
           const detalhe = await res.json().catch(() => ({}));
-          await atualizarItem(atual.id, { status: "erro", erro: detalhe.detail || `Erro ${res.status}` });
+          await atualizarItem(atual.id, { status: "erro", erro: mensagemErroApi(detalhe.detail) || `Erro ${res.status}` });
         } catch (e) {
           // Rede caiu de novo no meio deste grupo — para só este grupo; o
           // próximo (json→form ou form→json) ainda é tentado. Registra a

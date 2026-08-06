@@ -547,14 +547,17 @@ def atualizar_protocolo_inducao(
 
 
 # ---------------------------------------------------------------------------
-# Protocolo IATF — cadastro do molde de hormônios (D0/D7/D9; D11 é sempre a
-# inseminação, nunca faz parte do molde). Padronizado no mesmo formato do
-# protocolo sanitário/indução: mesmo seletor de insumo (medicamento/princípio
-# ativo/classificação). O lançamento em animais continua em /reproducao
-# (POST /reproducao/protocolo-iatf) — escolher um molde aqui só pré-preenche
-# os hormônios; lançar sem molde continua digitando na hora, como sempre foi.
+# Protocolo IATF — cadastro do molde de hormônios. O dia de cada etapa é
+# LIVRE (qualquer inteiro ≥ 0) — antes ficava travado em D0/D7/D9, mas existe
+# protocolo de verdade com outro espaçamento (ex.: D0, D8, D10, D12). A
+# inseminação nunca faz parte do molde (não se cadastra hormônio nela): ela é
+# sempre 2 dias depois da ÚLTIMA etapa cadastrada — D9 → D11 no protocolo
+# clássico, D12 → D14 num protocolo D0/D8/D10/D12 (ver
+# fazenda.rules.protocolo_iatf.dia_inseminacao). Padronizado no mesmo formato
+# do protocolo sanitário/indução: mesmo seletor de insumo (medicamento/
+# princípio ativo/classificação). O lançamento em animais continua em
+# /reproducao (POST /reproducao/protocolo-iatf).
 # ---------------------------------------------------------------------------
-DIAS_VALIDOS_IATF = [0, 7, 9]
 
 
 class EtapaIatfIn(BaseModel):
@@ -576,10 +579,10 @@ class ProtocoloIatfIn(BaseModel):
 
 def _validar_etapas_iatf(etapas: list[EtapaIatfIn]) -> None:
     if not etapas:
-        raise HTTPException(status_code=400, detail="Informe ao menos uma etapa do protocolo (D0, D7 ou D9)")
+        raise HTTPException(status_code=400, detail="Informe ao menos uma etapa do protocolo")
     for e in etapas:
-        if e.dia not in DIAS_VALIDOS_IATF:
-            raise HTTPException(status_code=400, detail="O dia da etapa de IATF deve ser D0, D7 ou D9 (D11 é sempre a inseminação)")
+        if e.dia < 0:
+            raise HTTPException(status_code=400, detail="O dia da etapa não pode ser negativo — o protocolo começa em D0")
         if e.criterio_tipo not in CRITERIOS_MEDICAMENTO:
             raise HTTPException(status_code=400, detail=f"Critério inválido — use um de: {', '.join(CRITERIOS_MEDICAMENTO)}")
         if not (e.produto or "").strip():
