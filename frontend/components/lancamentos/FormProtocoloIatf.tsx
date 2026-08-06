@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react
 import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
 import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
-import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
@@ -157,7 +157,6 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
   const moldeSelecionado = moldes.find((m) => String(m.id) === moldeId) || null;
   const nomeBase = moldeSelecionado?.nome || "Protocolo IATF";
@@ -248,8 +247,9 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       <div className="mt-3">
         <label style={lbl}>Matriz (nº)</label>
         {emLote
-          ? <SelecaoAnimaisTabela
-              animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
+          ? <AnimalPickerModal
+              animais={animais} selecionados={sel} onToggle={toggle}
+              titulo="Escolher animais para o protocolo IATF"
               colunas={[
                 { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                 { header: "Lote", render: (a) => a.grupo_primario || "—" },

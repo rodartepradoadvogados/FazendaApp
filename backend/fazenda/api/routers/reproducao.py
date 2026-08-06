@@ -1026,6 +1026,19 @@ def lancar_protocolo_iatf(
     return {"criado": True, "lancamento_id": lancamento.id, "eventos_criados": eventos_criados, "animais": len(dados.animais)}
 
 
+# Grace period antes de considerar um protocolo IATF sem D11 confirmado como
+# "abandonado" (vira concluido=True). Menor que o JANELA_ATRASO_DIAS (30) das
+# outras famílias de propósito: aqui há um segundo teto mais apertado logo
+# abaixo (proxima_visita + 7 dias, calculada a partir do intervalo entre
+# visitas) que faz o protocolo sumir de vez da lista — uma janela de 30 dias
+# nesta ponta não deixaria espaço nenhum para o card "concluído" aparecer.
+# Sem NENHUMA janela (o bug original), 1-2 dias de atraso — o caso mais
+# comum, ninguém deu baixa ainda — já escondia o protocolo bem na hora em
+# que o usuário precisava achá-lo na tela de Inseminação para registrar o
+# sêmen com atraso.
+GRACA_D11_ATRASADO_DIAS = 7
+
+
 @router.get("/protocolo-iatf/ativos")
 def listar_protocolos_iatf_ativos(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1097,15 +1110,17 @@ def listar_protocolos_iatf_ativos(
         d11s = [a for a in aps if a.dia == maior_dia] if maior_dia is not None else []
 
         # Concluído se todas as etapas já foram marcadas realizada OU se o
-        # próprio calendário já passou do D11 previsto — este segundo caso
-        # cobre o protocolo abandonado (ninguém marcou "realizada" em cada
-        # etapa, mas D0/D7/D9/D11 já ficaram todos no passado); sem isto, o
-        # card "IATF atual" da Agenda ficava mostrando para sempre "D0" de um
-        # protocolo que já devia ter virado "última IATF" há muito tempo. Só
-        # se aplica quando o D11 já está cadastrado — sem ele não há data
-        # prevista pra comparar (protocolo ainda em criação/incompleto).
+        # calendário já passou do D11 previsto por mais que GRACA_D11_ATRASADO_DIAS
+        # — este segundo caso cobre o protocolo abandonado (ninguém marcou
+        # "realizada" em cada etapa, e D0/D7/D9/D11 ficaram no passado por um
+        # bom tempo). Só se aplica quando o D11 já está cadastrado — sem ele
+        # não há data prevista pra comparar (protocolo ainda em
+        # criação/incompleto).
         data_d11_prevista = max((a.data_prevista for a in d11s), default=None)
-        concluido = not pendentes or (data_d11_prevista is not None and hoje > data_d11_prevista)
+        concluido = not pendentes or (
+            data_d11_prevista is not None
+            and hoje > data_d11_prevista + timedelta(days=GRACA_D11_ATRASADO_DIAS)
+        )
         if concluido:
             if not d11s:
                 continue  # protocolo sem etapa D11 cadastrada — nada a projetar

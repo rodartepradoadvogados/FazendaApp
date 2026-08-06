@@ -463,15 +463,29 @@ class TestProtocoloIatf:
         assert ativos[0]["animais"][0]["etapa_atual"] == "D9"
         assert ativos[0]["animais"][0]["data_etapa_atual"] == (d0 + timedelta(days=9)).isoformat()
 
+    def test_protocolo_com_d11_ha_poucos_dias_e_sem_baixa_continua_ativo(self, client):
+        # Um D11 vencido há só alguns dias é o caso mais comum (ninguém deu
+        # baixa ainda) — não pode sumir da tela de Inseminação bem na hora em
+        # que o usuário precisa achá-lo para registrar o sêmen com atraso.
+        c, engine = client
+        d0 = date.today() - timedelta(days=13)  # D11 previsto há 2 dias
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["500"], "data_d0": d0.isoformat()})
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        assert len(ativos) == 1
+        assert ativos[0]["concluido"] is False
+        assert ativos[0]["animais"][0]["etapa_atual"] == "D11"
+        assert ativos[0]["animais"][0]["na_inseminacao"] is True
+
     def test_protocolo_com_d11_no_passado_e_sem_baixa_vira_concluido(self, client):
         # #reformular relatório gerencial de IATF atual: um protocolo cujo
-        # D11 já passou, mas ninguém marcou nenhuma etapa "realizada" (ex.:
-        # a inseminação foi feita mas o checkbox nunca confirmado), não pode
-        # ficar mostrando "D0" pra sempre no card IATF atual — some da lista
-        # ativa e migra para "concluido" (última IATF), como se tivesse sido
-        # baixado normalmente.
+        # D11 já passou HÁ MAIS TEMPO que a janela de tolerância
+        # (GRACA_D11_ATRASADO_DIAS, 7 dias), e ninguém marcou nenhuma etapa
+        # "realizada" (ex.: a inseminação foi feita mas o checkbox nunca
+        # confirmado), não pode ficar mostrando "D0" pra sempre no card IATF
+        # atual — some da lista ativa e migra para "concluido" (última
+        # IATF), como se tivesse sido baixado normalmente.
         c, engine = client
-        d0 = date.today() - timedelta(days=30)
+        d0 = date.today() - timedelta(days=21)  # D11 previsto há 10 dias
         c.post("/reproducao/protocolo-iatf", json={"animais": ["500"], "data_d0": d0.isoformat()})
         ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
         assert len(ativos) == 1
