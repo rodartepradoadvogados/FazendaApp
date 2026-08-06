@@ -402,16 +402,23 @@ export default function FazendasAdmin() {
             <label style={lbl}>Plano</label>
             <div className="flex flex-wrap gap-2 mb-3">
               {(["standard", "silver", "gold", "diamond"] as const).map((p) => (
-                <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", cursor: "pointer",
+                <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === p ? 700 : 400, cursor: "pointer",
                   border: "1px solid " + (planoEscolhido === p ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.35rem 0.6rem",
-                  background: planoEscolhido === p ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                  // Fundo sólido + cor de texto explícita (não hardcoded): --pill-active-bg/--pill-active-fg
+                  // já seguem tema (claro/misto/escuro) E paleta (vinho/verde/azul) — o tom âmbar fixo
+                  // que estava aqui antes não acompanhava a paleta escolhida e deixava a opção
+                  // selecionada com contraste ruim em claro/misto (texto herdado sobre fundo quase
+                  // branco). Mesmo padrão de SeletorTipoProtocolo (app/protocolos/page.tsx).
+                  background: planoEscolhido === p ? "var(--pill-active-bg)" : "transparent",
+                  color: planoEscolhido === p ? "var(--pill-active-fg)" : "var(--text)" }}>
                   <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => setPlanoEscolhido(p)} />
                   {catalogo?.[p]?.nome || p} — R$ {catalogo?.[p]?.preco.toFixed(2) ?? "—"}/mês
                 </label>
               ))}
-              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", cursor: "pointer",
+              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === "custom" ? 700 : 400, cursor: "pointer",
                 border: "1px solid " + (planoEscolhido === "custom" ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.35rem 0.6rem",
-                background: planoEscolhido === "custom" ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                background: planoEscolhido === "custom" ? "var(--pill-active-bg)" : "transparent",
+                color: planoEscolhido === "custom" ? "var(--pill-active-fg)" : "var(--text)" }}>
                 <input type="radio" name="plano" checked={planoEscolhido === "custom"} onChange={() => setPlanoEscolhido("custom")} />
                 Sob medida
               </label>
@@ -426,9 +433,10 @@ export default function FazendasAdmin() {
             <label style={lbl}>Ciclo de pagamento (desconto por adiantamento)</label>
             <div className="flex flex-wrap gap-2 mb-3">
               {(["mensal", "trimestral", "semestral"] as const).map((c) => (
-                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", cursor: "pointer",
+                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", fontWeight: cicloEscolhido === c ? 700 : 400, cursor: "pointer",
                   border: "1px solid " + (cicloEscolhido === c ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.3rem 0.55rem",
-                  background: cicloEscolhido === c ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                  background: cicloEscolhido === c ? "var(--pill-active-bg)" : "transparent",
+                  color: cicloEscolhido === c ? "var(--pill-active-fg)" : "var(--text)" }}>
                   <input type="radio" name="ciclo" checked={cicloEscolhido === c} onChange={() => setCicloEscolhido(c)} />
                   {NOME_CICLO[c]}
                 </label>
