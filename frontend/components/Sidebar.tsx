@@ -184,9 +184,17 @@ export function Sidebar() {
     <>
       {/* Barra superior — só no mobile. FIXA no topo (position: fixed) para não
           sumir ao rolar a página; sticky não segura aqui porque os ancestrais
-          têm overflow-x: hidden (que vira scroll-container e quebra o sticky). */}
+          têm overflow-x: hidden (que vira scroll-container e quebra o sticky).
+          paddingTop com safe-area-inset-top evita ficar atrás da barra de
+          status do celular (relógio/bateria/sinal) em telas com notch — sem
+          isso o conteúdo (inclusive o botão de abrir o menu) nascia parcialmente
+          escondido atrás dela. */}
       <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
-        style={{ height: "3.25rem", background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)" }}>
+        style={{
+          height: "calc(3.25rem + env(safe-area-inset-top, 0px))",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)",
+        }}>
         <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu de navegação"
           style={{ background: "none", border: "none", color: "var(--sidebar-fg)", cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
@@ -194,8 +202,9 @@ export function Sidebar() {
         <CowDataWordmark size="0.85rem" cowColor="var(--sidebar-fg)" />
         <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}</span>
       </div>
-      {/* Espaçador: reserva a altura da barra fixa para o conteúdo não ficar por baixo dela. */}
-      <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
+      {/* Espaçador: reserva a altura da barra fixa (incluindo a faixa de segurança
+          do topo) para o conteúdo não ficar por baixo dela. */}
+      <div className="md:hidden" style={{ height: "calc(3.25rem + env(safe-area-inset-top, 0px))" }} aria-hidden="true" />
 
       {/* Fundo escuro atrás do drawer aberto (mobile) */}
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}

@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
@@ -1289,7 +1289,9 @@ class LancarInducaoLactacaoIn(BaseModel):
 @router.post("/inducao-lactacao", status_code=201)
 def lancar_inducao_lactacao(
     dados: LancarInducaoLactacaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloInducaoLactacao, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo de indução de lactação não encontrado")
@@ -1314,6 +1316,7 @@ def lancar_inducao_lactacao(
     lancamento = ProtocoloInducaoLancamento(
         protocolo_id=protocolo.id, nome_protocolo=nome_protocolo, data_d0=dados.data_d0,
         responsavel=dados.responsavel, observacao=dados.observacao, usuario_id=_usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
     )
     session.add(lancamento)
     session.commit()
@@ -1324,6 +1327,7 @@ def lancar_inducao_lactacao(
             if e.tipo == "medicamento":
                 session.add(ProtocoloInducaoMedicamento(
                     lancamento_id=lancamento.id, dia=dia, produto=e.produto, dose=e.dose, unidade=e.unidade, via=e.via,
+                    fazenda_id=fazenda_id,
                 ))
 
     eventos_criados = 0
@@ -1335,6 +1339,7 @@ def lancar_inducao_lactacao(
                 descricao=_descricao_medicamentos_dia([e for e in etapas_dia if e.tipo == "medicamento"]),
                 observacao_manejo=_observacao_manejo_dia(etapas_dia),
                 data_prevista=data_prevista,
+                fazenda_id=fazenda_id,
             ))
             eventos_criados += 1
 
@@ -1343,11 +1348,26 @@ def lancar_inducao_lactacao(
 
 
 @router.get("/inducao-lactacao/ativos")
-def listar_inducao_lactacao_ativos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_inducao_lactacao_ativos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Lançamentos com pelo menos uma etapa ainda não realizada — para ver de
     relance em qual dia está cada animal em indução."""
-    lancamentos = session.exec(select(ProtocoloInducaoLancamento).order_by(ProtocoloInducaoLancamento.data_d0.desc())).all()
-    aplicacoes = session.exec(select(ProtocoloInducaoAplicacao)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_lancamentos = select(ProtocoloInducaoLancamento).order_by(ProtocoloInducaoLancamento.data_d0.desc())
+    query_aplicacoes = select(ProtocoloInducaoAplicacao)
+    if fazenda_id is not None:
+        # fazenda_id IS NULL = lançamento anterior a esta migração — continua
+        # visível (nunca fica orfão), mesma lógica de fazenda_id_seguro/
+        # get_fazenda_atual_id em toda rota já migrada.
+        query_lancamentos = query_lancamentos.where(
+            or_(ProtocoloInducaoLancamento.fazenda_id == fazenda_id, ProtocoloInducaoLancamento.fazenda_id.is_(None))
+        )
+        query_aplicacoes = query_aplicacoes.where(
+            or_(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id, ProtocoloInducaoAplicacao.fazenda_id.is_(None))
+        )
+    lancamentos = session.exec(query_lancamentos).all()
+    aplicacoes = session.exec(query_aplicacoes).all()
     por_lancamento: dict[int, list[ProtocoloInducaoAplicacao]] = {}
     for ap in aplicacoes:
         por_lancamento.setdefault(ap.lancamento_id, []).append(ap)

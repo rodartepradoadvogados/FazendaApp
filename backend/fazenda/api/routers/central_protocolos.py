@@ -21,7 +21,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
@@ -112,7 +112,13 @@ def _linhas_iatf(session: Session, fazenda_id: int | None) -> list[dict]:
 def _linhas_inducao(session: Session, fazenda_id: int | None) -> list[dict]:
     query = select(ProtocoloInducaoLancamento)
     if fazenda_id is not None:
-        query = query.where(ProtocoloInducaoLancamento.fazenda_id == fazenda_id)
+        # fazenda_id IS NULL = lançamento feito antes da rota de lançar
+        # indução carimbar fazenda_id (corrigido em lancar_inducao_lactacao)
+        # — sem isto, esses lançamentos antigos somem para sempre desta aba
+        # (relato: "Acompanhamento não mostra nenhum protocolo ativo" mesmo
+        # com o lançamento existindo e aparecendo em outras telas que não
+        # filtram por fazenda).
+        query = query.where(or_(ProtocoloInducaoLancamento.fazenda_id == fazenda_id, ProtocoloInducaoLancamento.fazenda_id.is_(None)))
     lancamentos = session.exec(query).all()
     if not lancamentos:
         return []
