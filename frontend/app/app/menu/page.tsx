@@ -126,6 +126,7 @@ export default function Pagina() {
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const [sincronizando, setSincronizando] = useState(false);
+  const [resultadoEnvio, setResultadoEnvio] = useState<{ tipo: "ok" | "parcial"; msg: string } | null>(null);
 
   useEffect(() => { setMontado(true); }, []);
 
@@ -156,7 +157,23 @@ export default function Pagina() {
 
   async function enviarAgora() {
     setSincronizando(true);
-    try { await sincronizar(); } finally { setSincronizando(false); }
+    setResultadoEnvio(null);
+    try {
+      const { enviados, restantes } = await sincronizar();
+      if (restantes === 0) {
+        setResultadoEnvio({ tipo: "ok", msg: enviados > 0 ? `Tudo enviado (${enviados}).` : "Tudo já estava enviado." });
+      } else if (enviados > 0) {
+        setResultadoEnvio({ tipo: "parcial", msg: `${enviados} enviado(s) — ${restantes} ainda aguardando.` });
+      } else {
+        // Nenhum item saiu — provavelmente ainda sem conexão de verdade com
+        // o servidor (mesmo caso do card "Última falha" de cada item, mas
+        // muita gente só olha o botão, não os cards). Sem isso, tocar
+        // "Enviar agora" e falhar parecia não fazer nada (relato recorrente).
+        setResultadoEnvio({ tipo: "parcial", msg: "Não conseguiu enviar agora — sem conexão com o servidor. Vai tentar de novo sozinho." });
+      }
+    } finally {
+      setSincronizando(false);
+    }
   }
 
   const usuario = montado ? getUsuario() : null;
@@ -305,6 +322,14 @@ export default function Pagina() {
           <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={sincronizando} style={{ marginTop: "0.2rem" }}>
             <CloudUpload size={17} /> {sincronizando ? "Enviando…" : "Enviar agora"}
           </button>
+        )}
+        {resultadoEnvio && (
+          <p style={{
+            marginTop: "0.5rem", fontSize: "0.82rem", textAlign: "center",
+            color: resultadoEnvio.tipo === "ok" ? "var(--mob-verde)" : "var(--mob-ambar)",
+          }}>
+            {resultadoEnvio.msg}
+          </p>
         )}
       </div>
 

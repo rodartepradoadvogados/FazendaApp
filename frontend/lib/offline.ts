@@ -209,6 +209,25 @@ function proximaTentativa(tentativas: number): string {
   return new Date(Date.now() + espera).toISOString();
 }
 
+/** Contexto de rede no momento da falha — anexado à mensagem técnica
+ *  (debugUltimoErro) pra separar "sem sinal de verdade" de "tem sinal mas o
+ *  fetch falhou mesmo assim" (ex.: WebView com problema, DNS, certificado) —
+ *  sem isso, "TypeError: Failed to fetch" sozinho não diz qual dos dois é,
+ *  e foi exatamente essa dúvida que travou o diagnóstico de um relato real
+ *  ("app não envia dados", com Wi-Fi supostamente bom). navigator.connection
+ *  só existe em Chrome/WebView Android — undefined em iOS/Safari, ok ficar
+ *  de fora nesse caso. */
+function descreverConectividade(): string {
+  const partes: string[] = [`onLine=${typeof navigator !== "undefined" ? navigator.onLine : "?"}`];
+  const conexao = typeof navigator !== "undefined" ? (navigator as any).connection : undefined;
+  if (conexao) {
+    partes.push(`rede=${conexao.effectiveType ?? "?"}`);
+    if (typeof conexao.downlink === "number") partes.push(`${conexao.downlink}Mbps`);
+    if (conexao.saveData) partes.push("economiaDeDados=on");
+  }
+  return partes.join(" ");
+}
+
 /**
  * Tenta enviar agora; sem internet (ou falha de rede), guarda na fila para
  * sincronizar depois. Erro do servidor (4xx/5xx) com internet É repassado —
@@ -253,7 +272,11 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
     // aborta como erro de rede, não de validação → nos dois casos, enfileira.
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
-      await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
+      const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      await inserirItem({
+        id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente",
+        fazendaId: getFazendaAtual()?.id ?? null, debugUltimoErro: `${motivo} (${descreverConectividade()})`,
+      });
       await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
       return { enviado: false };
     }
@@ -455,9 +478,10 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           // falha que se repete sempre (CORS, DNS, URL de API errada) parece
           // idêntica a "nunca tentou", indistinguível pra quem usa o app.
           const tentativas = (atual.tentativas || 0) + 1;
+          const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
           await atualizarItem(atual.id, {
             tentativas, proximaTentativaEm: proximaTentativa(tentativas),
-            debugUltimoErro: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+            debugUltimoErro: `${motivo} (${descreverConectividade()})`,
           });
           break;
         }
