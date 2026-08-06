@@ -29,7 +29,7 @@ from fazenda.rules.indicadores import calcular_indicadores
 from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, intervalo_visita_reprodutiva
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
-MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+MARCADORES_BST = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
 # Métricas mensais elegíveis para virar "insight" — subconjunto de
 # agregar_mensal().series, com rótulo humano e categoria de exibição.

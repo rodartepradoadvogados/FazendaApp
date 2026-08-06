@@ -56,7 +56,7 @@ router = APIRouter(prefix="/agenda", tags=["agenda"])
 # produtos como "carboidrato" ou "substância". Usado tanto para ancorar a
 # "próxima visita BST" na última aplicação real quanto para saber quando uma
 # aplicação confirmada deve limpar Animal.aguardando_nova_aplicacao_bst.
-MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+MARCADORES_BST = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
 # Categoria do evento -> módulo cujo acesso o usuário precisa ter para ver o
 # evento na Agenda (e no sininho de notificações, ver notificacoes.py).
@@ -1482,6 +1482,7 @@ def _marcar_protocolo_inducao_realizado(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Indução de lactação — D{dia}",
+                protocolo_inducao_lancamento_id=lancamento_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
