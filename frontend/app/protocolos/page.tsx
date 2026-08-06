@@ -6,11 +6,14 @@ import {
   fetchAnimais,
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
+  fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo,
   fetchPrincipiosAtivos,
   formatDate,
   TIPOS_PROTOCOLO_CUSTOM,
   type ProtocoloIatfMolde, type EtapaProtocoloIatf, type LinhaCentralProtocolos,
+  type DetalheCentralProtocolo,
 } from "@/lib/api";
+import { Modal } from "@/components/Modal";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { TabBar } from "@/components/ui";
@@ -283,6 +286,227 @@ function LancamentoTab({ animais }: { animais: AnimalRow[] }) {
   );
 }
 
+// ───────────────── Detalhe de um lançamento: a grade animal × dia ─────────────────
+//
+// É esta tela que fecha o ciclo do protocolo. Até 08/2026 a Agenda era o
+// ÚNICO lugar do sistema capaz de gravar "etapa realizada", e ela escondia a
+// etapa cujo dia já tinha passado — protocolo que perdia o dia travava em "em
+// andamento" para sempre. Aqui a baixa é possível a qualquer momento, com a
+// data REAL da aplicação, e o que acabou antes do fim pode ser encerrado.
+const COR_ESTADO: Record<string, string> = {
+  realizada: "var(--green-light)", atrasada: "var(--red)", pendente: "var(--text-muted)",
+};
+const LABEL_STATUS: Record<string, string> = {
+  concluido: "Concluído", encerrado: "Encerrado", cancelado: "Cancelado", ativo: "Ativo",
+};
+
+function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
+  origem: string; origemId: number; onFechar: () => void; onMudou: () => void;
+}) {
+  const [det, setDet] = useState<DetalheCentralProtocolo | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  // Dia escolhido para dar baixa + a data real da aplicação. A data começa na
+  // data PREVISTA do dia, não em hoje: quem aplicou no dia certo e só está
+  // registrando agora só precisa confirmar.
+  const [diaBaixa, setDiaBaixa] = useState<number | null>(null);
+  const [dataBaixa, setDataBaixa] = useState("");
+  const [animaisBaixa, setAnimaisBaixa] = useState<string[]>([]);
+  const [encerrando, setEncerrando] = useState(false);
+  const [motivo, setMotivo] = useState("");
+
+  const carregar = () => fetchDetalheProtocolo(origem, origemId).then(setDet).catch((e) => setErro(e.message));
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [origem, origemId]);
+
+  function abrirBaixa(dia: number) {
+    const d = det?.dias.find((x) => x.dia === dia);
+    const hoje = new Date().toISOString().slice(0, 10);
+    setDiaBaixa(dia);
+    // Nunca propõe data futura: protocolo em dia sugere hoje, atrasado sugere
+    // o dia previsto.
+    setDataBaixa(d && d.data_prevista < hoje ? d.data_prevista : hoje);
+    setAnimaisBaixa(
+      (det?.animais || [])
+        .filter((a) => a.celulas.some((c) => c.dia === dia && !c.realizada))
+        .map((a) => a.numero_matriz),
+    );
+    setAviso(null);
+  }
+
+  async function confirmarBaixa() {
+    if (diaBaixa == null) return;
+    setSalvando(true); setErro(null);
+    try {
+      const pendentes = (det?.animais || []).filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
+      const todos = animaisBaixa.length === pendentes.length;
+      const r = await darBaixaProtocolo(origem, origemId, {
+        dia: diaBaixa,
+        animais: todos ? null : animaisBaixa,
+        data_realizacao: dataBaixa || null,
+      });
+      setDiaBaixa(null);
+      setAviso(r.avisos?.length ? r.avisos.join(" ") : "Baixa registrada.");
+      await carregar(); onMudou();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  async function confirmarEncerrar() {
+    setSalvando(true); setErro(null);
+    try {
+      await encerrarProtocolo(origem, origemId, motivo);
+      setEncerrando(false); setMotivo("");
+      await carregar(); onMudou();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  async function confirmarReabrir() {
+    setSalvando(true); setErro(null);
+    try { await reabrirProtocolo(origem, origemId); await carregar(); onMudou(); }
+    catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  if (erro && !det) return <Modal title="Protocolo" onClose={onFechar}><p style={{ color: "var(--red)" }}>{erro}</p></Modal>;
+  if (!det) return <Modal title="Protocolo" onClose={onFechar}><p style={{ color: "var(--text-muted)" }}>Carregando…</p></Modal>;
+
+  const pendentesDoDia = diaBaixa == null ? [] :
+    det.animais.filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
+
+  return (
+    <Modal title={det.nome} onClose={onFechar} width="960px">
+      <div className="flex items-center gap-4 mb-3" style={{ flexWrap: "wrap", fontSize: "0.82rem" }}>
+        <span><strong>{det.etapas_realizadas}</strong> de {det.etapas_total} etapas</span>
+        {det.etapas_atrasadas > 0 && <span style={{ color: "var(--red)", fontWeight: 600 }}>{det.etapas_atrasadas} atrasada(s)</span>}
+        <span style={{ color: "var(--text-muted)" }}>{det.animais.length} animal(is)</span>
+        {det.responsavel && <span style={{ color: "var(--text-muted)" }}>Responsável: {det.responsavel}</span>}
+        {det.encerrado_em && (
+          <span style={{ color: "var(--amber)", fontWeight: 600 }}>
+            Encerrado em {formatDate(det.encerrado_em)}{det.encerrado_motivo ? ` — ${det.encerrado_motivo}` : ""}
+          </span>
+        )}
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+      {aviso && (
+        <p className="mb-3" style={{ color: "var(--green-light)", fontSize: "0.82rem", fontWeight: 600 }}>{aviso}</p>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="fazenda-table">
+          <thead><tr>
+            <th>Animal</th>
+            {det.dias.map((d) => (
+              <th key={d.dia} style={{ textAlign: "center", whiteSpace: "nowrap" }}>
+                {d.rotulo}<br />
+                <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{formatDate(d.data_prevista)}</span>
+              </th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {det.animais.map((a) => (
+              <tr key={a.numero_matriz}>
+                <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{a.numero_matriz}</td>
+                {a.celulas.map((c) => (
+                  <td key={c.dia} style={{ textAlign: "center" }}
+                      title={c.realizada && c.data_realizacao ? `Aplicada em ${formatDate(c.data_realizacao)}` : `Prevista para ${formatDate(c.data_prevista)}`}>
+                    <span style={{ color: COR_ESTADO[c.estado], fontWeight: 700 }}>
+                      {c.realizada ? "✓" : c.estado === "atrasada" ? "!" : "·"}
+                    </span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+        <span style={{ color: "var(--green-light)", fontWeight: 700 }}>✓</span> aplicada ·{" "}
+        <span style={{ color: "var(--red)", fontWeight: 700 }}>!</span> atrasada ·{" "}
+        <span style={{ fontWeight: 700 }}>·</span> a vencer
+      </p>
+
+      {!det.encerrado_em && det.etapas_realizadas < det.etapas_total && (
+        <div className="mt-3">
+          <label style={labelStyle}>Dar baixa de um dia</label>
+          <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+            {det.dias.filter((d) => d.realizadas < d.total).map((d) => (
+              <button key={d.dia} type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }}
+                      onClick={() => abrirBaixa(d.dia)}>
+                {d.rotulo} — faltam {d.total - d.realizadas}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {diaBaixa != null && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label style={labelStyle}>Em que dia foi aplicado?</label>
+              <input type="date" style={inputStyle} value={dataBaixa} max={new Date().toISOString().slice(0, 10)}
+                     onChange={(e) => setDataBaixa(e.target.value)} />
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                A data real da aplicação — é ela que vai para a ficha do animal, não a data de hoje.
+              </p>
+            </div>
+            <div>
+              <label style={labelStyle}>Animais ({animaisBaixa.length} de {pendentesDoDia.length})</label>
+              <div style={{ maxHeight: 140, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: "0.4rem" }}>
+                {pendentesDoDia.map((a) => (
+                  <label key={a.numero_matriz} className="flex items-center gap-2" style={{ fontSize: "0.8rem", padding: "0.1rem 0" }}>
+                    <input type="checkbox" checked={animaisBaixa.includes(a.numero_matriz)}
+                           onChange={(e) => setAnimaisBaixa((p) => e.target.checked
+                             ? [...p, a.numero_matriz] : p.filter((n) => n !== a.numero_matriz))} />
+                    {a.numero_matriz}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button className="btn-primary" onClick={confirmarBaixa} disabled={salvando || !animaisBaixa.length}>
+              {salvando ? "Salvando…" : "Confirmar baixa"}
+            </button>
+            <button className="btn-ghost" onClick={() => setDiaBaixa(null)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-4" style={{ flexWrap: "wrap" }}>
+        {det.encerrado_em ? (
+          <button className="btn-ghost" onClick={confirmarReabrir} disabled={salvando}>Reabrir protocolo</button>
+        ) : (
+          <button className="btn-ghost" style={{ color: "var(--amber)" }} onClick={() => setEncerrando(true)} disabled={salvando}>
+            Encerrar protocolo
+          </button>
+        )}
+      </div>
+
+      {encerrando && (
+        <div className="card mt-2" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>
+            Encerrar tira o protocolo da Agenda e do Acompanhamento. As{" "}
+            <strong>{det.etapas_total - det.etapas_realizadas} etapa(s) que faltam continuam registradas como não aplicadas</strong> —
+            encerrar não é dar por feito o que não foi feito.
+          </p>
+          <label style={labelStyle}>Motivo (opcional)</label>
+          <input style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+                 placeholder="ex.: lote vendido, vaca morreu, protocolo interrompido" />
+          <div className="flex gap-2 mt-2">
+            <button className="btn-primary" onClick={confirmarEncerrar} disabled={salvando}>Encerrar</button>
+            <button className="btn-ghost" onClick={() => setEncerrando(false)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ─────────────────────────── Abas Acompanhamento / Histórico ───────────────────────────
 const COLUNAS_EXPORT: ColunaExport[] = [
   { header: "Protocolo", key: "nome" }, { header: "Tipo", key: "tipoLabel" },
@@ -295,18 +519,20 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
   const [nome, setNome] = useState("");
   const [tipo, setTipo] = useState("");
   const [erro, setErro] = useState<string | null>(null);
+  const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
+  const [recarga, setRecarga] = useState(0);
 
   useEffect(() => {
     const fetcher = historico ? fetchCentralProtocolosHistorico : fetchCentralProtocolosAcompanhamento;
     fetcher({ nome: nome || undefined, tipo: tipo || undefined })
       .then(setLinhas).catch((e) => setErro(e.message));
-  }, [nome, tipo, historico]);
+  }, [nome, tipo, historico, recarga]);
 
   const linhasExport = useMemo(() => (linhas || []).map((l) => ({
     nome: l.nome, tipoLabel: LABEL_TIPO[l.tipo] || l.tipo,
     inicioFmt: formatDate(l.data_inicio), fimFmt: formatDate(l.data_fim),
     etapasLabel: `${l.etapas_realizadas}/${l.etapas_total}`, animais: l.animais,
-    status: l.status === "concluido" ? "Concluído" : l.status === "cancelado" ? "Cancelado" : "Ativo",
+    status: LABEL_STATUS[l.status] || l.status,
   })), [linhas]);
 
   return (
@@ -334,8 +560,16 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
                 <th>Protocolo</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Etapas</th><th>Animais</th><th>Status</th>
               </tr></thead>
               <tbody>
-                {linhas.map((l) => (
-                  <tr key={`${l.origem}-${l.origem_id}`}>
+                {linhas.map((l) => {
+                  // Sanitário é lançado por animal e na Central aparece só
+                  // agrupado para exibição — abrir a grade dele exigiria
+                  // decidir o que fazer com o grupo inteiro. Segue pela Agenda.
+                  const abrivel = l.origem !== "sanitario";
+                  return (
+                  <tr key={`${l.origem}-${l.origem_id}`}
+                      onClick={abrivel ? () => setAberto({ origem: l.origem, id: l.origem_id }) : undefined}
+                      style={abrivel ? { cursor: "pointer" } : undefined}
+                      title={abrivel ? "Abrir a grade animal × dia, dar baixa e encerrar" : "Protocolo sanitário: baixa pela Agenda"}>
                     <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{l.nome}</td>
                     <td><Pill cor={COR_TIPO[l.tipo]}>{LABEL_TIPO[l.tipo] || l.tipo}</Pill></td>
                     <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_inicio)}</td>
@@ -345,10 +579,12 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
                     <td>
                       {l.status === "concluido" ? <span style={{ color: "var(--green-light)" }}>Concluído</span>
                         : l.status === "cancelado" ? <span style={{ color: "var(--red)" }}>Cancelado</span>
+                        : l.status === "encerrado" ? <span style={{ color: "var(--amber)" }} title={l.encerrado_motivo || undefined}>Encerrado</span>
                         : <span style={{ color: "var(--dourado-light)" }}>Ativo</span>}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {!linhas.length && (
                   <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo {historico ? "concluído" : "ativo"} para os filtros escolhidos.</td></tr>
                 )}
@@ -356,6 +592,11 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
             </table>
           </div>
         </>
+      )}
+
+      {aberto && (
+        <DetalheProtocolo origem={aberto.origem} origemId={aberto.id}
+                          onFechar={() => setAberto(null)} onMudou={() => setRecarga((n) => n + 1)} />
       )}
     </div>
   );

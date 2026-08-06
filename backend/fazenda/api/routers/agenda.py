@@ -33,6 +33,7 @@ from fazenda.rules.protocolo_customizado import (
     marcar_realizado as _marcar_protocolo_custom_realizado,
     desmarcar_realizado as _desmarcar_protocolo_custom_realizado,
     PREFIXO_EVENTO as PREFIXO_PROTOCOLO_CUSTOM,
+    JANELA_ATRASO_DIAS as JANELA_ATRASO_PROTOCOLO_DIAS,
 )
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
@@ -422,16 +423,26 @@ def calcular_agenda(
     # em vez de "em lote") continuam caindo na mesma etapa/data e têm que
     # aparecer juntos; agrupar por lancamento_id fragmentava esse caso em N
     # cards de 1 animal cada (relato: 9 animais em D11, só 1 aparecendo na
-    # Agenda). Em protocolos normais só entram etapas de hoje em diante
-    # (retroativo não spamma passos já vencidos); em protocolos lançados
-    # RETROATIVAMENTE (IATF sem protocolo, D0 no passado), as etapas vencidas
-    # aparecem como pendência.
+    # Agenda).
+    #
+    # Etapa VENCIDA continua cobrando por até JANELA_ATRASO_DIAS — mesma regra
+    # do protocolo customizado. Antes, a etapa cujo dia passou simplesmente
+    # sumia daqui; e como a Agenda era o único lugar do sistema que gravava
+    # `realizada = True`, o protocolo ficava travado em "em andamento" para
+    # sempre, sem nenhuma tela capaz de fechá-lo (relato do usuário: três
+    # protocolos IATF parados em 18/36, 15/20 e 8/16). Lançamento RETROATIVO
+    # (IATF sem protocolo, D0 no passado) segue sem janela nenhuma: as etapas
+    # vencidas dele são justamente o que se quer ver. Passada a janela, a
+    # baixa continua possível pela Central de Protocolos.
+    limite_atraso = data - timedelta(days=JANELA_ATRASO_PROTOCOLO_DIAS)
     lancamentos_iatf_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
     aplicacoes_iatf = [
         a for a in session.exec(
             select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == False)  # noqa: E712
         ).all()
-        if a.data_prevista >= data or getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "retroativo", False)
+        if not getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "encerrado_em", None)
+        and (a.data_prevista >= limite_atraso
+             or getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "retroativo", False))
     ]
     grupos_iatf: dict[tuple[date, int], list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes_iatf:
@@ -522,12 +533,14 @@ def calcular_agenda(
     # ao protocolo IATF: uma linha por dia mostrando todos os animais daquele
     # passo, com a observação de manejo (implante, adaptação na ordenha,
     # iniciar a ordenha) bem visível para o funcionário.
+    # Mesma janela de atraso do IATF/customizado — ver o comentário lá em cima.
     lancamentos_inducao_por_id = {l.id: l for l in session.exec(select(ProtocoloInducaoLancamento)).all()}
     aplicacoes_inducao = [
         a for a in session.exec(
             select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False)  # noqa: E712
         ).all()
-        if a.data_prevista >= data
+        if a.data_prevista >= limite_atraso
+        and not getattr(lancamentos_inducao_por_id.get(a.lancamento_id), "encerrado_em", None)
     ]
     grupos_inducao: dict[tuple[int, int], list[ProtocoloInducaoAplicacao]] = {}
     for ap in aplicacoes_inducao:
@@ -1258,6 +1271,7 @@ def _marcar_protocolo_iatf_realizado(
     session: Session, evento_id: str, animais: list[str] | None,
     medicamentos: list["MedicamentoIatfIn"] | None = None,
     fazenda_id: int | None = None, usuario_id: int | None = None,
+    data_realizacao: date | None = None, lancamento_id: int | None = None,
 ) -> list[str]:
     """
     Marca a(s) aplicação(ões) de um grupo (DATA PREVISTA, dia) do protocolo
@@ -1274,6 +1288,16 @@ def _marcar_protocolo_iatf_realizado(
     diferentes do mesmo grupo podem ter hormônios cadastrados diferentes, a
     baixa de estoque nesse caso é calculada por lançamento, não pro grupo
     inteiro de uma vez.
+
+    `data_realizacao` (opcional): o dia em que a aplicação REALMENTE
+    aconteceu. É o que a baixa retroativa da Central de Protocolos usa para
+    não carimbar "hoje" numa aplicação feita há três semanas. Sem ele, hoje.
+
+    `lancamento_id` (opcional): restringe a baixa a UM lançamento. Pela
+    Agenda não se passa — o grupo (data, dia) é justamente o que se quer
+    confirmar de uma vez. Pela Central, sim: lá se está olhando um lançamento
+    específico, e confirmar por tabela arrastaria junto outro lote que por
+    acaso tem o mesmo D0.
     """
     resto = evento_id.removeprefix("protocolo_iatf_")
     data_str, dia_str = resto.rsplit("_", 1)
@@ -1286,6 +1310,8 @@ def _marcar_protocolo_iatf_realizado(
             ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
         )
     ).all()
+    if lancamento_id is not None:
+        aplicacoes = [a for a in aplicacoes if a.lancamento_id == lancamento_id]
     if animais is not None:
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
@@ -1294,7 +1320,7 @@ def _marcar_protocolo_iatf_realizado(
     if not aplicacoes:
         return avisos
 
-    hoje = date.today()
+    hoje = data_realizacao or date.today()
 
     # Aplicados: o que o usuário escolheu ao confirmar (com o frasco) vale
     # pro grupo inteiro, OU, na falta disso, os hormônios cadastrados em CADA
@@ -1379,6 +1405,7 @@ def _marcar_protocolo_inducao_realizado(
     session: Session, evento_id: str, animais: list[str] | None,
     medicamentos: list["MedicamentoIatfIn"] | None = None,
     fazenda_id: int | None = None, usuario_id: int | None = None,
+    data_realizacao: date | None = None,
 ) -> list[str]:
     """
     Marca a(s) aplicação(ões) de um grupo (lançamento, dia) da indução de
@@ -1391,6 +1418,9 @@ def _marcar_protocolo_inducao_realizado(
     Quando vem, é ele que gera a aplicação em Sanidade e a baixa (abatendo do
     frasco pelo estoque_id); sem ele, usa os medicamentos cadastrados no
     lançamento e resolve o item de estoque só pelo nome (comportamento antigo).
+
+    `data_realizacao` (opcional): o dia real da aplicação, para a baixa
+    retroativa da Central de Protocolos — ver _marcar_protocolo_iatf_realizado.
     """
     resto = evento_id.removeprefix("protocolo_inducao_")
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
@@ -1407,7 +1437,7 @@ def _marcar_protocolo_inducao_realizado(
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
 
-    hoje = date.today()
+    hoje = data_realizacao or date.today()
     lancamento = session.get(ProtocoloInducaoLancamento, lancamento_id)
     responsavel = getattr(lancamento, "responsavel", None)
 

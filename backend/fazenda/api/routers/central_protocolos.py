@@ -19,27 +19,51 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
+    Usuario,
 )
-from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.ordenacao import chave_numero
+from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+# A baixa reaproveita, sem duplicar uma linha, exatamente o que a Agenda já
+# faz: gerar a Sanidade da aplicação e abater o estoque com rastreio de origem.
+from fazenda.api.routers.agenda import (
+    MedicamentoIatfIn,
+    _marcar_protocolo_iatf_realizado,
+    _marcar_protocolo_inducao_realizado,
+    _marcar_protocolo_custom_realizado,
+    PREFIXO_PROTOCOLO_CUSTOM,
+)
 
 router = APIRouter(prefix="/central-protocolos", tags=["central-protocolos"])
 
 
 def _linha(*, tipo: str, origem: str, origem_id: int, nome: str, data_inicio: date, data_fim: date,
-           etapas_total: int, etapas_realizadas: int, animais: int, ativo: bool = True) -> dict:
+           etapas_total: int, etapas_realizadas: int, animais: int, ativo: bool = True,
+           encerrado_em: date | None = None, encerrado_motivo: str | None = None) -> dict:
+    """Uma linha do painel. `status` é derivado, nunca gravado:
+
+    - `cancelado`  — o lançamento não deveria ter existido (ativo=False).
+    - `encerrado`  — existiu, acabou antes do fim do cronograma. As etapas que
+                     sobraram continuam contadas como NÃO realizadas: encerrar
+                     não maquia o progresso, só para de cobrar pendência.
+    - `concluido`  — todas as etapas aplicadas.
+    - `ativo`      — em andamento.
+    """
     if not ativo:
         status = "cancelado"
+    elif encerrado_em is not None:
+        status = "encerrado"
     elif etapas_total and etapas_realizadas == etapas_total:
         status = "concluido"
     else:
@@ -50,6 +74,7 @@ def _linha(*, tipo: str, origem: str, origem_id: int, nome: str, data_inicio: da
         "etapas_total": etapas_total, "etapas_realizadas": etapas_realizadas,
         "etapas_faltam": max(etapas_total - etapas_realizadas, 0),
         "animais": animais, "status": status,
+        "encerrado_em": encerrado_em, "encerrado_motivo": encerrado_motivo,
     }
 
 
@@ -76,6 +101,7 @@ def _linhas_iatf(session: Session, fazenda_id: int | None) -> list[dict]:
             data_inicio=l.data_d0, data_fim=max(datas) if datas else l.data_d0,
             etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
             animais=len({a.numero_matriz for a in aps}),
+            encerrado_em=l.encerrado_em, encerrado_motivo=l.encerrado_motivo,
         ))
     return linhas
 
@@ -103,6 +129,7 @@ def _linhas_inducao(session: Session, fazenda_id: int | None) -> list[dict]:
             data_inicio=l.data_d0, data_fim=max(datas) if datas else l.data_d0,
             etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
             animais=len({a.numero_matriz for a in aps}),
+            encerrado_em=l.encerrado_em, encerrado_motivo=l.encerrado_motivo,
         ))
     return linhas
 
@@ -136,6 +163,7 @@ def _linhas_customizado(session: Session, fazenda_id: int | None) -> list[dict]:
             etapas_total=len(aps), etapas_realizadas=sum(1 for a in aps if a.realizada),
             animais=len({a.numero_matriz for a in aps if a.numero_matriz}),
             ativo=l.ativo,
+            encerrado_em=l.encerrado_em, encerrado_motivo=l.encerrado_motivo,
         ))
     return linhas
 
@@ -224,8 +252,205 @@ def historico(
     data_de: date | None = None, data_ate: date | None = None,
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
-    """Concluídos e cancelados dos 4 tipos, juntos — para consulta/exportação."""
+    """Concluídos, encerrados e cancelados dos 4 tipos — consulta/exportação."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     linhas = _todas_as_linhas(session, fazenda_id)
-    linhas = [l for l in linhas if l["status"] in ("concluido", "cancelado")]
+    linhas = [l for l in linhas if l["status"] in ("concluido", "encerrado", "cancelado")]
     return _filtrar(linhas, nome=nome, tipo=tipo, data_de=data_de, data_ate=data_ate)
+
+
+# ─────────────────────── Detalhe e ações de um lançamento ───────────────────
+#
+# Até aqui a Central era só leitura, e a Agenda era o ÚNICO lugar do sistema
+# capaz de gravar `realizada = True`. Como a Agenda esconde a etapa cujo dia
+# passou, um protocolo que perdeu o dia ficava travado em "em andamento" para
+# sempre. Estes três endpoints fecham o ciclo: ver a grade animal × dia, dar
+# baixa (inclusive retroativa, com a data REAL da aplicação) e encerrar o que
+# acabou antes do fim.
+
+# Origens com cabeçalho de lote próprio. Sanitário fica de fora de propósito:
+# cada ProtocoloSanitarioLancamento é POR ANIMAL, e na Central ele já aparece
+# agrupado só para exibição — dar baixa nele exigiria decidir o que fazer com
+# o grupo inteiro, o que é outra discussão. Segue pela Agenda, como sempre.
+_ORIGENS_COM_ACAO = ("iatf", "inducao", "customizado")
+
+
+class BaixaProtocoloIn(BaseModel):
+    dia: int
+    # Sem `animais`, dá baixa no dia inteiro; com, só nesse subconjunto.
+    animais: list[str] | None = None
+    # Dia em que a aplicação REALMENTE aconteceu. Sem ele, hoje.
+    data_realizacao: date | None = None
+    medicamentos: list[MedicamentoIatfIn] | None = None
+
+
+class EncerrarProtocoloIn(BaseModel):
+    motivo: str | None = None
+
+
+def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id: int | None):
+    if origem not in _ORIGENS_COM_ACAO:
+        raise HTTPException(
+            status_code=400,
+            detail="Só protocolos de IATF, indução e customizado têm baixa pela Central — "
+                   "o sanitário é lançado por animal e se resolve pela Agenda.",
+        )
+    modelo = {
+        "iatf": ProtocoloIatfLancamento,
+        "inducao": ProtocoloInducaoLancamento,
+        "customizado": ProtocoloCustomizadoLancamento,
+    }[origem]
+    lancamento = session.get(modelo, origem_id)
+    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento de protocolo não encontrado")
+    return lancamento
+
+
+def _aplicacoes_do_lancamento(session: Session, origem: str, origem_id: int) -> list:
+    modelo = {
+        "iatf": ProtocoloIatfAplicacao,
+        "inducao": ProtocoloInducaoAplicacao,
+        "customizado": ProtocoloCustomizadoAplicacao,
+    }[origem]
+    return list(session.exec(
+        select(modelo).where(modelo.lancamento_id == origem_id)
+    ).all())
+
+
+@router.get("/{origem}/{origem_id}")
+def detalhe(
+    origem: str, origem_id: int,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """A grade animal × dia de um lançamento: uma linha por animal, uma coluna
+    por dia do cronograma, cada célula com o estado daquela aplicação."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+    aps = _aplicacoes_do_lancamento(session, origem, origem_id)
+    hoje = date.today()
+
+    # `dia` do customizado é absoluto (pode começar em D1); os outros já são
+    # relativos ao D0. O rótulo sempre sai relativo ao início do cronograma.
+    base = getattr(lancamento, "dia_inicial", 0) if origem == "customizado" else 0
+
+    dias: dict[int, dict] = {}
+    for a in aps:
+        d = dias.setdefault(a.dia, {
+            "dia": a.dia, "rotulo": f"D{a.dia - base}", "data_prevista": a.data_prevista,
+            "descricao": getattr(a, "descricao", None), "total": 0, "realizadas": 0,
+        })
+        d["total"] += 1
+        if a.realizada:
+            d["realizadas"] += 1
+
+    animais: dict[str, dict] = {}
+    for a in aps:
+        numero = a.numero_matriz or "—"  # customizado aceita tarefa sem animal
+        linha = animais.setdefault(numero, {"numero_matriz": numero, "celulas": []})
+        atrasada = (not a.realizada) and a.data_prevista < hoje
+        linha["celulas"].append({
+            "dia": a.dia, "rotulo": f"D{a.dia - base}",
+            "data_prevista": a.data_prevista, "data_realizacao": a.data_realizacao,
+            "realizada": a.realizada,
+            "estado": "realizada" if a.realizada else ("atrasada" if atrasada else "pendente"),
+        })
+    for linha in animais.values():
+        linha["celulas"].sort(key=lambda c: c["dia"])
+
+    total = len(aps)
+    feitas = sum(1 for a in aps if a.realizada)
+    return {
+        "origem": origem, "origem_id": origem_id,
+        "nome": lancamento.nome_protocolo,
+        "data_inicio": getattr(lancamento, "data_d0", None) or getattr(lancamento, "data_inicio", None),
+        "responsavel": lancamento.responsavel,
+        "encerrado_em": lancamento.encerrado_em, "encerrado_motivo": lancamento.encerrado_motivo,
+        "ativo": getattr(lancamento, "ativo", True),
+        "etapas_total": total, "etapas_realizadas": feitas,
+        "etapas_atrasadas": sum(
+            1 for a in aps if not a.realizada and a.data_prevista < hoje
+        ),
+        "dias": sorted(dias.values(), key=lambda d: d["dia"]),
+        "animais": sorted(animais.values(), key=lambda l: chave_numero(l["numero_matriz"])),
+    }
+
+
+@router.post("/{origem}/{origem_id}/baixa")
+def dar_baixa(
+    origem: str, origem_id: int, dados: BaixaProtocoloIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Dá baixa num dia do protocolo — o dia inteiro ou só alguns animais —
+    com a data REAL da aplicação. Reaproveita exatamente as mesmas funções que
+    a Agenda usa (Sanidade gerada, baixa de estoque com rastreio); a diferença
+    é que aqui a data não é obrigatoriamente hoje e o dia pode já ter passado.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    usuario_id = usuario_id_seguro(user)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+    if lancamento.encerrado_em:
+        raise HTTPException(status_code=400, detail="Protocolo encerrado — reabra antes de dar baixa.")
+    if dados.data_realizacao and dados.data_realizacao > date.today():
+        raise HTTPException(status_code=400, detail="A data da aplicação não pode ser no futuro.")
+
+    if origem == "iatf":
+        alvo = next(
+            (a for a in _aplicacoes_do_lancamento(session, origem, origem_id) if a.dia == dados.dia),
+            None,
+        )
+        if alvo is None:
+            raise HTTPException(status_code=404, detail="Este dia não existe neste lançamento.")
+        # O evento IATF é chaveado por (data prevista, dia); `lancamento_id`
+        # impede que a baixa atinja outro lote com o mesmo D0.
+        avisos = _marcar_protocolo_iatf_realizado(
+            session, f"protocolo_iatf_{alvo.data_prevista.isoformat()}_{dados.dia}",
+            dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
+            data_realizacao=dados.data_realizacao, lancamento_id=origem_id,
+        )
+    elif origem == "inducao":
+        avisos = _marcar_protocolo_inducao_realizado(
+            session, f"protocolo_inducao_{origem_id}_{dados.dia}",
+            dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
+            data_realizacao=dados.data_realizacao,
+        )
+    else:
+        _marcar_protocolo_custom_realizado(
+            session, f"{PREFIXO_PROTOCOLO_CUSTOM}{origem_id}_{dados.dia}",
+            dados.animais, data_realizacao=dados.data_realizacao,
+        )
+        avisos = []
+    return {"ok": True, "avisos": avisos}
+
+
+@router.post("/{origem}/{origem_id}/encerrar")
+def encerrar(
+    origem: str, origem_id: int, dados: EncerrarProtocoloIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Encerra o lançamento: ele para de cobrar pendência na Agenda e sai do
+    Acompanhamento para o Histórico. As etapas que sobraram continuam gravadas
+    como NÃO realizadas — encerrar não é dar por feito o que não foi feito, e
+    o progresso mostrado segue sendo o verdadeiro (ex.: 18 de 36)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+    lancamento.encerrado_em = date.today()
+    lancamento.encerrado_motivo = (dados.motivo or "").strip() or None
+    session.add(lancamento)
+    session.commit()
+    return {"ok": True, "encerrado_em": lancamento.encerrado_em}
+
+
+@router.delete("/{origem}/{origem_id}/encerrar")
+def reabrir(
+    origem: str, origem_id: int,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Desfaz o encerramento — o protocolo volta a cobrar as etapas que faltam."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+    lancamento.encerrado_em = None
+    lancamento.encerrado_motivo = None
+    session.add(lancamento)
+    session.commit()
+    return {"ok": True}

@@ -178,6 +178,12 @@ class ProtocoloIatfLancamento(SQLModel, table=True):
     # sem protocolo). As etapas vencidas destes aparecem como PENDÊNCIA na
     # agenda; nos protocolos normais, etapas já passadas ficam escondidas.
     retroativo: bool = Field(default=False)
+    # Encerrado manualmente pela Central de Protocolos: o lote acabou antes do
+    # fim do cronograma. As etapas que sobraram continuam gravadas como NÃO
+    # realizadas — encerrar não é o mesmo que dar por feito o que não foi —,
+    # mas param de cobrar pendência na Agenda.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
