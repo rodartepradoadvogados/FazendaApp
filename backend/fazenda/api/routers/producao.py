@@ -1288,8 +1288,8 @@ class LancarInducaoLactacaoIn(BaseModel):
 
 @router.post("/inducao-lactacao", status_code=201)
 def lancar_inducao_lactacao(
-    dados: LancarInducaoLactacaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: LancarInducaoLactacaoIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloInducaoLactacao, dados.protocolo_id)
@@ -1305,6 +1305,48 @@ def lancar_inducao_lactacao(
     animais = [n.strip() for n in dados.animais if n.strip()]
     if not animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+
+    # Idempotência: nada aqui impede que a MESMA indução chegue duas vezes —
+    # duplo clique no botão "Lançar", ou o retry da fila offline do app móvel
+    # reenviando um POST cujo 2xx de confirmação nunca voltou ao aparelho (ver
+    # auditoria: nenhuma das 5 famílias de protocolo tem proteção equivalente
+    # — IATF em reproducao.py, sanitário em cadastro/protocolos_sanitarios.py
+    # + agenda.py, customizado em protocolos_customizados.py e lida em
+    # lida.py também criam um lançamento novo a cada chamada, sem checar se
+    # já existe um igual; é bug de arquitetura, não desta rota isolada — mas
+    # só esta rota está no escopo desta correção). Sem isso, cada retry criava
+    # um SEGUNDO ProtocoloInducaoLancamento (mesmo molde, mesma data_d0, mesmo
+    # conjunto de animais) e os dois conviviam "Ativos" na Central de
+    # Protocolos — exatamente os pares de linha quase idênticas do relato
+    # (uma com baixas já dadas, a outra "órfã", 0 etapas realizadas).
+    # Em vez de duplicar silenciosamente, reaproveita o lançamento
+    # equivalente já ativo: mesmo protocolo_id + mesma data_d0 + mesmo
+    # conjunto de animais + ainda ativo e não encerrado.
+    animais_set = set(animais)
+    candidatos = session.exec(
+        select(ProtocoloInducaoLancamento)
+        .where(ProtocoloInducaoLancamento.protocolo_id == protocolo.id)
+        .where(ProtocoloInducaoLancamento.data_d0 == dados.data_d0)
+        .where(ProtocoloInducaoLancamento.ativo == True)  # noqa: E712
+        .where(ProtocoloInducaoLancamento.encerrado_em.is_(None))
+    ).all()
+    for candidato in candidatos:
+        if fazenda_id is not None and candidato.fazenda_id not in (fazenda_id, None):
+            continue
+        animais_candidato = set(session.exec(
+            select(ProtocoloInducaoAplicacao.numero_matriz)
+            .where(ProtocoloInducaoAplicacao.lancamento_id == candidato.id)
+        ).all())
+        if animais_candidato == animais_set:
+            response.status_code = 200
+            return {
+                "criado": False, "lancamento_id": candidato.id, "eventos_criados": 0,
+                "animais": len(animais_set),
+                "aviso": (
+                    "Já existe um lançamento ativo idêntico deste protocolo (mesma data D0 "
+                    "e mesmo(s) animal(is)) — reaproveitado em vez de criar um duplicado."
+                ),
+            }
 
     etapas_por_dia: dict[int, list[ProtocoloInducaoLactacaoEtapa]] = {}
     for e in etapas:
@@ -1374,6 +1416,16 @@ def listar_inducao_lactacao_ativos(
 
     ativos = []
     for lanc in lancamentos:
+        # Cancelado (ativo=False) ou encerrado sai da lista. Sem isto o
+        # cancelamento tinha o efeito INVERSO do esperado: ele devolve todas
+        # as aplicações para `realizada=False` (é o que significa "não
+        # deveria ter existido"), então um protocolo cancelado voltava aqui
+        # como 100% PENDENTE — mais "ativo" do que antes de ser cancelado.
+        # A Agenda já excluía encerrado (ver o filtro de aplicações em
+        # calcular_agenda); aqui não excluía nem um nem outro, e as duas
+        # telas discordavam sobre o que ainda está em andamento.
+        if not getattr(lanc, "ativo", True) or lanc.encerrado_em:
+            continue
         aps = por_lancamento.get(lanc.id, [])
         pendentes = [a for a in aps if not a.realizada]
         if not pendentes:
