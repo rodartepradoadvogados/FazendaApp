@@ -3576,11 +3576,26 @@ export type CelulaProtocolo = {
   dia: number; rotulo: string; data_prevista: string; data_realizacao: string | null;
   realizada: boolean; estado: "realizada" | "atrasada" | "pendente";
 };
+// Opção de frasco em estoque para um hormônio do dia (mesmo formato que a
+// Agenda já usa em `hormonios`/`medicamentos_opcoes`, ver agenda/page.tsx).
+export type OpcaoMedicamento = {
+  estoque_id: number; nome: string; marca: string | null; saldo: number;
+  unidade: string | null; estoque_inicializado: boolean;
+};
+export type HormonioProtocolo = {
+  produto: string; dose: number | null; unidade: string | null; via: string | null;
+  opcoes: OpcaoMedicamento[];
+};
 export type DetalheCentralProtocolo = {
   origem: string; origem_id: number; nome: string; data_inicio: string | null;
   responsavel: string | null; encerrado_em: string | null; encerrado_motivo: string | null;
   ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
-  dias: { dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number }[];
+  dias: {
+    dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number;
+    // Só vem preenchido para origem === "iatf" — o "qual medicamento/frasco?"
+    // que a Agenda já pergunta, agora também na Central.
+    hormonios?: HormonioProtocolo[];
+  }[];
   animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];
 };
 
@@ -3591,12 +3606,32 @@ export async function fetchDetalheProtocolo(origem: string, origemId: number): P
 }
 
 export async function darBaixaProtocolo(origem: string, origemId: number, dados: {
-  dia: number; animais?: string[] | null; data_realizacao?: string | null;
+  dia: number; animais?: string[] | null; data_realizacao?: string | null; medicamentos?: MedicamentoIatf[] | null;
 }): Promise<{ ok: boolean; avisos: string[] }> {
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/baixa`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
+  return res.json();
+}
+
+/** Desfaz UMA aplicação já confirmada (um animal, um dia) — diferente de
+ *  cancelar, que desfaz o lançamento inteiro. Só IATF estorna estoque (o
+ *  backend documenta o motivo do escopo). */
+export async function desfazerAplicacao(origem: string, origemId: number, dia: number, numeroMatriz: string): Promise<{ ok: boolean; avisos: string[] }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/baixa`, {
+    method: "DELETE", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dia, numero_matriz: numeroMatriz }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desfazer a aplicação"); }
+  return res.json();
+}
+
+export async function renomearProtocolo(origem: string, origemId: number, nome: string): Promise<{ ok: boolean; nome: string }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/renomear`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao renomear o protocolo"); }
   return res.json();
 }
 

@@ -7,10 +7,11 @@ import {
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
   fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo, cancelarProtocolo,
+  renomearProtocolo, desfazerAplicacao,
   fetchPrincipiosAtivos,
   formatDate,
   type ProtocoloIatfMolde, type EtapaProtocoloIatf, type LinhaCentralProtocolos,
-  type DetalheCentralProtocolo,
+  type DetalheCentralProtocolo, type MedicamentoIatf,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { exportarFolhaCampoPDF, exportarFolhaCampoExcel } from "@/lib/folhaProtocolo";
@@ -363,6 +364,14 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   const [encerrando, setEncerrando] = useState(false);
   const [cancelando, setCancelando] = useState(false);
   const [motivo, setMotivo] = useState("");
+  // IATF: qual medicamento/frasco foi escolhido em cada hormônio do dia em
+  // baixa — dia → índice do hormônio → estoque_id escolhido. Mesma lógica da
+  // Agenda (ver medIatf em app/agenda/page.tsx).
+  const [medIatf, setMedIatf] = useState<Record<number, Record<number, number | "">>>({});
+  const [renomeando, setRenomeando] = useState(false);
+  const [novoNome, setNovoNome] = useState("");
+  const [desfazerAlvo, setDesfazerAlvo] = useState<{ dia: number; numero_matriz: string; rotulo: string } | null>(null);
+  const [desfazendo, setDesfazendo] = useState(false);
 
   const carregar = () => fetchDetalheProtocolo(origem, origemId).then(setDet).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [origem, origemId]);
@@ -379,8 +388,13 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         .filter((a) => a.celulas.some((c) => c.dia === dia && !c.realizada))
         .map((a) => a.numero_matriz),
     );
+    setMedIatf((p) => ({ ...p, [dia]: {} }));
     setAviso(null);
   }
+
+  const hormoniosDoDiaBaixa = origem === "iatf" && diaBaixa != null
+    ? det?.dias.find((d) => d.dia === diaBaixa)?.hormonios || []
+    : [];
 
   async function confirmarBaixa() {
     if (diaBaixa == null) return;
@@ -388,16 +402,57 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     try {
       const pendentes = (det?.animais || []).filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
       const todos = animaisBaixa.length === pendentes.length;
+      // IATF: monta `medicamentos` a partir dos hormônios do dia + o frasco
+      // escolhido em medIatf — mesmo mapeamento que a Agenda já faz
+      // (marcarRealizado em app/agenda/page.tsx). Sem hormônios cadastrados
+      // (protocolo ad-hoc, ou D11/inseminação), não manda nada — mesmo
+      // comportamento de antes (backend cai nos hormônios do lançamento).
+      let medicamentos: MedicamentoIatf[] | undefined;
+      if (origem === "iatf" && hormoniosDoDiaBaixa.length) {
+        const sel = medIatf[diaBaixa] || {};
+        medicamentos = hormoniosDoDiaBaixa.map((h, idx) => {
+          const estoqueId = sel[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
+          const opcao = h.opcoes?.find((o) => o.estoque_id === estoqueId);
+          return {
+            produto: opcao?.nome ?? h.produto, estoque_id: estoqueId === "" ? undefined : estoqueId,
+            dose: h.dose, unidade: h.unidade, via: h.via,
+          };
+        }).filter((m) => m.produto);
+      }
       const r = await darBaixaProtocolo(origem, origemId, {
         dia: diaBaixa,
         animais: todos ? null : animaisBaixa,
         data_realizacao: dataBaixa || null,
+        medicamentos,
       });
       setDiaBaixa(null);
       setAviso(r.avisos?.length ? r.avisos.join(" ") : "Baixa registrada.");
       await carregar(); onMudou();
     } catch (e: any) { setErro(e.message); }
     finally { setSalvando(false); }
+  }
+
+  async function confirmarRenomear() {
+    if (!novoNome.trim()) return;
+    setSalvando(true); setErro(null);
+    try {
+      await renomearProtocolo(origem, origemId, novoNome.trim());
+      setRenomeando(false); setNovoNome("");
+      await carregar(); onMudou();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  async function confirmarDesfazer() {
+    if (!desfazerAlvo) return;
+    setDesfazendo(true); setErro(null);
+    try {
+      const r = await desfazerAplicacao(origem, origemId, desfazerAlvo.dia, desfazerAlvo.numero_matriz);
+      setAviso(r.avisos?.length ? r.avisos.join(" ") : "Aplicação desfeita.");
+      setDesfazerAlvo(null);
+      await carregar(); onMudou();
+    } catch (e: any) { setErro(e.message); }
+    finally { setDesfazendo(false); }
   }
 
   async function confirmarEncerrar() {
@@ -453,6 +508,22 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         <p className="mb-3" style={{ color: "var(--green-light)", fontSize: "0.82rem", fontWeight: 600 }}>{aviso}</p>
       )}
 
+      {renomeando ? (
+        <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+          <input style={{ ...inputStyle, width: "auto", minWidth: 260, flex: 1 }} value={novoNome}
+                 onChange={(e) => setNovoNome(e.target.value)} placeholder="Nome do protocolo" autoFocus />
+          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={confirmarRenomear} disabled={salvando || !novoNome.trim()}>
+            Salvar
+          </button>
+          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setRenomeando(false)}>Cancelar</button>
+        </div>
+      ) : (
+        <button className="btn-ghost mb-2" style={{ fontSize: "0.74rem" }}
+                onClick={() => { setNovoNome(det.nome); setRenomeando(true); }}>
+          Renomear
+        </button>
+      )}
+
       <div className="overflow-x-auto">
         <table className="fazenda-table">
           <thead><tr>
@@ -469,8 +540,11 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
               <tr key={a.numero_matriz}>
                 <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{a.numero_matriz}</td>
                 {a.celulas.map((c) => (
-                  <td key={c.dia} style={{ textAlign: "center" }}
-                      title={c.realizada && c.data_realizacao ? `Aplicada em ${formatDate(c.data_realizacao)}` : `Prevista para ${formatDate(c.data_prevista)}`}>
+                  <td key={c.dia} style={{ textAlign: "center", cursor: c.realizada ? "pointer" : "default" }}
+                      onClick={c.realizada ? () => setDesfazerAlvo({ dia: c.dia, numero_matriz: a.numero_matriz, rotulo: c.rotulo }) : undefined}
+                      title={c.realizada
+                        ? `Aplicada em ${c.data_realizacao ? formatDate(c.data_realizacao) : "?"} — clique para desfazer só esta aplicação`
+                        : `Prevista para ${formatDate(c.data_prevista)}`}>
                     <span style={{ color: COR_ESTADO[c.estado], fontWeight: 700 }}>
                       {c.realizada ? "✓" : c.estado === "atrasada" ? "!" : "·"}
                     </span>
@@ -483,10 +557,25 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
       </div>
 
       <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-        <span style={{ color: "var(--green-light)", fontWeight: 700 }}>✓</span> aplicada ·{" "}
+        <span style={{ color: "var(--green-light)", fontWeight: 700 }}>✓</span> aplicada (clique para desfazer) ·{" "}
         <span style={{ color: "var(--red)", fontWeight: 700 }}>!</span> atrasada ·{" "}
         <span style={{ fontWeight: 700 }}>·</span> a vencer
       </p>
+
+      {desfazerAlvo && (
+        <div className="card mt-2" style={{ background: "var(--surface-2)", border: "1px solid var(--red)" }}>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>
+            Desfazer a aplicação de <strong>{desfazerAlvo.numero_matriz}</strong> em <strong>{desfazerAlvo.rotulo}</strong>?
+            {origem === "iatf" && " O estoque consumido por esta vaca é estornado; a Sanidade já registrada na ficha permanece."}
+          </p>
+          <div className="flex gap-2">
+            <button className="btn-primary" style={{ background: "var(--red)" }} onClick={confirmarDesfazer} disabled={desfazendo}>
+              {desfazendo ? "Desfazendo…" : "Sim, desfazer"}
+            </button>
+            <button className="btn-ghost" onClick={() => setDesfazerAlvo(null)} disabled={desfazendo}>Não</button>
+          </div>
+        </div>
+      )}
 
       {!det.encerrado_em && det.etapas_realizadas < det.etapas_total && (
         <div className="mt-3">
@@ -527,6 +616,39 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
               </div>
             </div>
           </div>
+          {hormoniosDoDiaBaixa.length > 0 && (
+            <div style={{ marginTop: "0.6rem", background: "var(--surface)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+              <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.35rem" }}>
+                Qual medicamento/frasco você está usando?
+              </div>
+              {hormoniosDoDiaBaixa.map((h, idx) => {
+                const sel = medIatf[diaBaixa!]?.[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
+                return (
+                  <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
+                      {h.produto}{h.dose ? ` · ${h.dose}${h.unidade || ""}` : ""}
+                    </span>
+                    {(h.opcoes?.length ?? 0) === 0 ? (
+                      <span style={{ fontSize: "0.72rem", color: "var(--amber)" }}>Sem medicamento em estoque para este princípio.</span>
+                    ) : (
+                      <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
+                              value={sel}
+                              onChange={(ev) => setMedIatf((p) => ({
+                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value ? Number(ev.target.value) : "" },
+                              }))}>
+                        <option value="">Selecione o frasco…</option>
+                        {h.opcoes.map((o) => (
+                          <option key={o.estoque_id} value={o.estoque_id}>
+                            {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}{!o.estoque_inicializado ? " (sem estoque inicial)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div className="flex gap-2 mt-3">
             <button className="btn-primary" onClick={confirmarBaixa} disabled={salvando || !animaisBaixa.length}>
               {salvando ? "Salvando…" : "Confirmar baixa"}

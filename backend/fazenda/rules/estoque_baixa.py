@@ -23,7 +23,7 @@ from datetime import date, datetime
 
 from sqlmodel import Session, select
 
-from fazenda.models import Estoque, EstoqueSemen, MovimentoEstoque
+from fazenda.models import Estoque, EstoqueSemen, MovimentoEstoque, PrincipioAtivo
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.unidades import pode_dar_baixa_direta
 
@@ -46,6 +46,50 @@ def resolver_item(
             query = query.where(Estoque.fazenda_id == fazenda_id)
         item = session.exec(query).first()
     return item
+
+
+def opcoes_medicamento(
+    session: Session, *, fazenda_id: int | None, produto: str | None,
+    todos_estoque: list[Estoque] | None = None,
+    principios_por_nome: dict[str, PrincipioAtivo] | None = None,
+) -> tuple[int | None, list[dict]]:
+    """Dado o produto/princípio ativo de um hormônio/medicamento de protocolo,
+    resolve o princípio ativo e lista os frascos em estoque (DA FAZENDA) para
+    o usuário escolher qual está usando — o "qual medicamento/frasco?" da
+    Agenda e da Central de Protocolos.
+
+    `todos_estoque`/`principios_por_nome` são pré-carregados opcionalmente
+    pelo chamador (Agenda e Central chamam isto uma vez por hormônio/dia — sem
+    isso cada chamada faria duas consultas extras ao banco).
+    """
+    if todos_estoque is None:
+        query = select(Estoque)
+        if fazenda_id is not None:
+            query = query.where(Estoque.fazenda_id == fazenda_id)
+        todos_estoque = session.exec(query).all()
+    if principios_por_nome is None:
+        query_pa = select(PrincipioAtivo)
+        if fazenda_id is not None:
+            query_pa = query_pa.where(PrincipioAtivo.fazenda_id == fazenda_id)
+        principios_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(query_pa).all()}
+
+    item = next((e for e in todos_estoque if (e.nome or "").strip().lower() == (produto or "").strip().lower()), None)
+    pa_id = item.principio_ativo_id if item else None
+    if pa_id is None:
+        pa = principios_por_nome.get((produto or "").strip().lower())
+        pa_id = pa.id if pa else None
+    opcoes = []
+    for e in todos_estoque:
+        if pa_id is not None and e.principio_ativo_id == pa_id:
+            opcoes.append({"estoque_id": e.id, "nome": e.nome, "marca": e.laboratorio,
+                           "saldo": e.quantidade or 0, "unidade": e.unidade,
+                           "estoque_inicializado": e.estoque_inicializado is not False})
+    # Se o próprio produto é um item de estoque (sem princípio), ele é a opção.
+    if not opcoes and item is not None:
+        opcoes.append({"estoque_id": item.id, "nome": item.nome, "marca": item.laboratorio,
+                       "saldo": item.quantidade or 0, "unidade": item.unidade,
+                       "estoque_inicializado": item.estoque_inicializado is not False})
+    return pa_id, opcoes
 
 
 def movimentar(
