@@ -232,7 +232,10 @@ export default function FinanceiroPage() {
   // Pagamento/Recebimento vindo da lista de Contas a pagar/receber ou da Agenda.
   const [notaAlvoRef, setNotaAlvoRef] = useState<string | null>(null);
   const [editando, setEditando] = useState<Lanc | null>(null);
-  const [recibo, setRecibo] = useState<Lanc | null>(null);
+  // #— bug do recibo: além do Lanc em si, carrega a(s) parcela(s) nova(s)
+  // criada(s) pelo reparcelamento do restante não pago nesta baixa (quando
+  // houver) — ver `reparcelamentoDoRecibo` logo abaixo.
+  const [recibo, setRecibo] = useState<(Lanc & { reparcelamento?: { valor: number; data_vencimento: string | null; parcela_num: number | null }[] }) | null>(null);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [visaoFluxo, setVisaoFluxo] = useState<"mensal" | "diario">("mensal");
   // Opções de fornecedor/cliente e produto/serviço para os filtros dos relatórios.
@@ -266,6 +269,28 @@ export default function FinanceiroPage() {
     if ("relDocumento" in f) setRelDocumento(f.relDocumento || "");
     if ("relConta" in f) setRelConta(f.relConta || "");
     if ("relContaNome" in f) setRelContaNome(f.relContaNome || "");
+  }
+
+  // Acha, entre TODOS os lançamentos carregados (`regs`), a(s) parcela(s)
+  // nova(s) que nasceram do reparcelamento do restante desta baixa parcial —
+  // ver PUT /financeiro/lancamentos/{id}/pagar (`parcelas_diferenca`): elas
+  // compartilham numero_lancamento, ainda não têm data_pagamento e a soma
+  // delas bate com a diferença (valor da conta − valor pago). Sem essa soma
+  // bater, não arrisca mostrar parcelas de outro reparcelamento/pendência
+  // não relacionada — o recibo simplesmente não exibe a seção.
+  function reparcelamentoDoRecibo(l: Lanc): { valor: number; data_vencimento: string | null; parcela_num: number | null }[] {
+    if (l.valor_pago == null) return [];
+    const restante = Math.round((l.valor - l.valor_pago) * 100) / 100;
+    // desconto_acrescimo != 0 nesta baixa significa que a diferença foi
+    // absorvida como desconto/acréscimo, não reparcelada — nada a mostrar.
+    if (restante <= 0 || Math.round((l.desconto_acrescimo || 0) * 100) !== 0 || !l.numero_lancamento || !regs) return [];
+    const candidatas = regs.filter((s) =>
+      s.numero_lancamento === l.numero_lancamento && s.id !== l.id &&
+      !s.data_pagamento && s.valor_pago == null && (s.parcela_num ?? 0) > (l.parcela_num ?? 0),
+    );
+    const soma = Math.round(candidatas.reduce((acc, s) => acc + (s.valor || 0), 0) * 100) / 100;
+    if (!candidatas.length || soma !== restante) return [];
+    return candidatas.map((s) => ({ valor: s.valor, data_vencimento: s.data_vencimento, parcela_num: s.parcela_num }));
   }
 
   const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
@@ -386,9 +411,15 @@ export default function FinanceiroPage() {
         const d = campoData(r);
         // Início e fim funcionam como limites independentes — só um dos dois
         // já filtra (ex.: só "início" = "a partir desta data em diante").
-        // Lançamento sem data nesse campo não some por um filtro que ele não
-        // tem como satisfazer.
-        const dentroPeriodo = (!inicio || !d || d >= inicio) && (!fim || !d || d <= fim);
+        // BUG corrigido: antes, um lançamento sem data nesse campo passava
+        // SEMPRE, mesmo com início/fim escolhidos pelo usuário — o filtro de
+        // período (e, por tabela, o de centro de custo junto dele) parecia
+        // simplesmente não fazer nada, porque a maioria das contas em aberto
+        // não tem "data de pagamento" preenchida. Agora esse "não filtra por
+        // falta de dado" só vale quando NENHUM período foi definido (início E
+        // fim vazios) — que é o caso que a regra original queria cobrir.
+        const semPeriodoDefinido = !inicio && !fim;
+        const dentroPeriodo = semPeriodoDefinido || (d != null && d !== "" && (!inicio || d >= inicio) && (!fim || d <= fim));
         return dentroPeriodo && (!centro || r.centro_custo === centro) && (!contaBanco || r.conta_bancaria === contaBanco);
       });
     }
@@ -635,7 +666,7 @@ export default function FinanceiroPage() {
           <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
             onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
             onEditar={(l) => setEditando(l)}
-            onRecibo={(l) => setRecibo(l)} />
+            onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })} />
         ) : <>
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
