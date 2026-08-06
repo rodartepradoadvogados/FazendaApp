@@ -1416,6 +1416,16 @@ def listar_inducao_lactacao_ativos(
 
     ativos = []
     for lanc in lancamentos:
+        # Cancelado (ativo=False) ou encerrado sai da lista. Sem isto o
+        # cancelamento tinha o efeito INVERSO do esperado: ele devolve todas
+        # as aplicações para `realizada=False` (é o que significa "não
+        # deveria ter existido"), então um protocolo cancelado voltava aqui
+        # como 100% PENDENTE — mais "ativo" do que antes de ser cancelado.
+        # A Agenda já excluía encerrado (ver o filtro de aplicações em
+        # calcular_agenda); aqui não excluía nem um nem outro, e as duas
+        # telas discordavam sobre o que ainda está em andamento.
+        if not getattr(lanc, "ativo", True) or lanc.encerrado_em:
+            continue
         aps = por_lancamento.get(lanc.id, [])
         pendentes = [a for a in aps if not a.realizada]
         if not pendentes:

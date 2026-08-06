@@ -498,13 +498,21 @@ def dar_baixa(
     if dados.data_realizacao and dados.data_realizacao > date.today():
         raise HTTPException(status_code=400, detail="A data da aplicação não pode ser no futuro.")
 
+    # O dia precisa existir NESTE lançamento. Sem esta checagem, as origens
+    # `inducao`/`customizado`/`lida` caíam direto em `_marcar_*_realizado`,
+    # que filtra as aplicações por `dia`, não encontrava nenhuma e devolvia
+    # {"ok": True, "avisos": []} com HTTP 200 — como se a baixa tivesse
+    # funcionado, sem gravar nada. Antes só o ramo `iatf` checava (ele já
+    # precisava da aplicação em mãos para montar a chave do evento, que é
+    # por data prevista); agora vale para as quatro.
+    alvo = next(
+        (a for a in _aplicacoes_do_lancamento(session, origem, origem_id) if a.dia == dados.dia),
+        None,
+    )
+    if alvo is None:
+        raise HTTPException(status_code=404, detail="Este dia não existe neste lançamento.")
+
     if origem == "iatf":
-        alvo = next(
-            (a for a in _aplicacoes_do_lancamento(session, origem, origem_id) if a.dia == dados.dia),
-            None,
-        )
-        if alvo is None:
-            raise HTTPException(status_code=404, detail="Este dia não existe neste lançamento.")
         # O evento IATF é chaveado por (data prevista, dia); `lancamento_id`
         # impede que a baixa atinja outro lote com o mesmo D0.
         avisos = _marcar_protocolo_iatf_realizado(
@@ -658,6 +666,17 @@ def cancelar(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     usuario_id = usuario_id_seguro(user)
     lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+
+    # Cancelar é IRREPETÍVEL. O estorno abaixo procura os MovimentoEstoque de
+    # movimento "Aplicação" desta origem e devolve a quantidade de cada um —
+    # mas o estorno grava uma linha NOVA ("Entrada de ajuste"), sem marcar a
+    # "Aplicação" original como já estornada. Sem esta guarda, cancelar duas
+    # vezes reencontrava as MESMAS aplicações e devolvia o estoque de novo,
+    # inflando o saldo (reproduzido: 20 L -> baixa 19,5 L -> cancelar 20 L
+    # (certo) -> cancelar de novo 20,5 L). Mesmo espírito da guarda que
+    # `desfazer_aplicacao` já tinha.
+    if not getattr(lancamento, "ativo", True):
+        raise HTTPException(status_code=400, detail="Este protocolo já está cancelado.")
 
     # Desfaz as aplicações — o lançamento inteiro passa a valer como não feito.
     for ap in _aplicacoes_do_lancamento(session, origem, origem_id):
