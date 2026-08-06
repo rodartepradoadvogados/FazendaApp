@@ -29,7 +29,7 @@ from fazenda.models import (
     Estoque, MovimentoEstoque,
     LidaAplicacao, LidaLancamento,
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
-    ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
+    ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
     Usuario,
@@ -333,6 +333,15 @@ class EncerrarProtocoloIn(BaseModel):
     motivo: str | None = None
 
 
+class RenomearProtocoloIn(BaseModel):
+    nome: str
+
+
+class DesfazerAplicacaoIn(BaseModel):
+    dia: int
+    numero_matriz: str
+
+
 def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id: int | None):
     if origem not in _ORIGENS_COM_ACAO:
         raise HTTPException(
@@ -405,6 +414,26 @@ def detalhe(
     for linha in animais.values():
         linha["celulas"].sort(key=lambda c: c["dia"])
 
+    # IATF: os hormônios cadastrados por dia + as opções de frasco em estoque
+    # do mesmo princípio ativo — mesmo campo "qual medicamento/frasco?" que a
+    # Agenda já mostra (ver fazenda.rules.estoque_baixa.opcoes_medicamento).
+    # Só IATF: é o único caso relatado onde a Central dava baixa sem deixar o
+    # usuário escolher o frasco quando há mais de um do mesmo princípio ativo.
+    if origem == "iatf":
+        hormonios_por_dia: dict[int, list] = defaultdict(list)
+        for h in session.exec(
+            select(ProtocoloIatfHormonio).where(ProtocoloIatfHormonio.lancamento_id == origem_id)
+        ).all():
+            hormonios_por_dia[h.dia].append(h)
+        for d in dias.values():
+            d["hormonios"] = [
+                {
+                    "produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via,
+                    "opcoes": estoque_baixa.opcoes_medicamento(session, fazenda_id=fazenda_id, produto=h.produto)[1],
+                }
+                for h in hormonios_por_dia.get(d["dia"], [])
+            ]
+
     total = len(aps)
     feitas = sum(1 for a in aps if a.realizada)
     return {
@@ -421,6 +450,24 @@ def detalhe(
         "dias": sorted(dias.values(), key=lambda d: d["dia"]),
         "animais": sorted(animais.values(), key=lambda l: chave_numero(l["numero_matriz"])),
     }
+
+
+@router.patch("/{origem}/{origem_id}/renomear")
+def renomear(
+    origem: str, origem_id: int, dados: RenomearProtocoloIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Renomeia o `nome_protocolo` do lançamento — o título mostrado no
+    detalhe e nas listas de Acompanhamento/Histórico."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+    nome = (dados.nome or "").strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Informe um nome para o protocolo.")
+    lancamento.nome_protocolo = nome
+    session.add(lancamento)
+    session.commit()
+    return {"ok": True, "nome": lancamento.nome_protocolo}
 
 
 @router.post("/{origem}/{origem_id}/baixa")
@@ -473,6 +520,78 @@ def dar_baixa(
             dados.animais, data_realizacao=dados.data_realizacao,
         )
         avisos = []
+    return {"ok": True, "avisos": avisos}
+
+
+@router.delete("/{origem}/{origem_id}/baixa")
+def desfazer_aplicacao(
+    origem: str, origem_id: int, dados: DesfazerAplicacaoIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Desfaz a aplicação de UM animal em UM dia — diferente de cancelar (que
+    desfaz o lançamento inteiro). Volta `realizada=False`/`data_realizacao=None`
+    só naquela célula da grade.
+
+    Estoque: só estorna para origem=="iatf" — é o único caso relatado (o
+    usuário quer desfazer uma aplicação IATF puxada errado, sem cancelar o
+    lote inteiro). Indução/customizado/lida ficam de fora por ora: não é
+    esquecimento, é escopo — cada um tem uma forma diferente de registrar o
+    medicamento aplicado (indução por lançamento/dia, customizado e lida às
+    vezes sem medicamento nenhum) e estornar direito exigiria replicar a
+    mesma lógica de "uma dose, não a batelada" três vezes sem um pedido
+    concreto ainda para isso.
+
+    A Sanidade gerada permanece — mesma filosofia de `cancelar()`: é o
+    registro clínico de que o produto entrou no animal, e desfazer a baixa
+    do protocolo não reescreve a ficha.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    usuario_id = usuario_id_seguro(user)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+
+    modelo = {
+        "iatf": ProtocoloIatfAplicacao,
+        "inducao": ProtocoloInducaoAplicacao,
+        "customizado": ProtocoloCustomizadoAplicacao,
+        "lida": LidaAplicacao,
+    }[origem]
+    aplicacao = session.exec(
+        select(modelo).where(
+            modelo.lancamento_id == origem_id,
+            modelo.dia == dados.dia,
+            modelo.numero_matriz == dados.numero_matriz,
+        )
+    ).first()
+    if aplicacao is None:
+        raise HTTPException(status_code=404, detail="Aplicação não encontrada para este animal/dia.")
+    if not aplicacao.realizada:
+        raise HTTPException(status_code=400, detail="Esta aplicação já está pendente — nada a desfazer.")
+
+    aplicacao.realizada = False
+    aplicacao.data_realizacao = None
+    session.add(aplicacao)
+
+    avisos: list[str] = []
+    if origem == "iatf":
+        hoje = date.today()
+        for h in session.exec(
+            select(ProtocoloIatfHormonio).where(
+                ProtocoloIatfHormonio.lancamento_id == origem_id,
+                ProtocoloIatfHormonio.dia == dados.dia,
+            )
+        ).all():
+            if not h.dose:
+                continue
+            item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=h.produto)
+            avisos.extend(estoque_baixa.devolver(
+                session, item=item, quantidade=h.dose, unidade=h.unidade, data=hoje,
+                fazenda_id=fazenda_id, usuario_id=usuario_id, produto=h.produto,
+                observacao=f"Estorno — aplicação desfeita: {dados.numero_matriz}, D{dados.dia}",
+                origem_tipo="iatf", origem_id=origem_id,
+            ))
+
+    session.commit()
     return {"ok": True, "avisos": avisos}
 
 

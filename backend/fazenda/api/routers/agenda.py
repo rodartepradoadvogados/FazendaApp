@@ -17,7 +17,7 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, DietaLancamento, Diaria,
     DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, Lote, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pessoa, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     SeedFlag, Servico,
@@ -457,30 +457,23 @@ def calcular_agenda(
     # Hormônios cadastrados por (lançamento, dia) + as opções de medicamento
     # (frascos em estoque) do princípio ativo de cada um, para o "qual
     # medicamento/frasco?" na hora de confirmar o dia (ex.: D9).
-    from fazenda.models import MedicamentoComercial, PrincipioAtivo
-    _todos_estoque = session.exec(select(Estoque)).all()
-    _pa_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(select(PrincipioAtivo)).all()}
+    # `_opcoes_medicamento` pré-carrega estoque/princípios uma vez e reusa em
+    # cada chamada — mesmo mecanismo compartilhado com a Central de
+    # Protocolos, ver fazenda.rules.estoque_baixa.opcoes_medicamento.
+    _query_estoque_agenda = select(Estoque)
+    if fazenda_id is not None:
+        _query_estoque_agenda = _query_estoque_agenda.where(Estoque.fazenda_id == fazenda_id)
+    _todos_estoque = session.exec(_query_estoque_agenda).all()
+    _query_pa_agenda = select(PrincipioAtivo)
+    if fazenda_id is not None:
+        _query_pa_agenda = _query_pa_agenda.where(PrincipioAtivo.fazenda_id == fazenda_id)
+    _pa_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(_query_pa_agenda).all()}
 
     def _opcoes_medicamento(produto: str) -> tuple[int | None, list[dict]]:
-        """Dado o produto/princípio de um hormônio, resolve o princípio ativo e
-        lista os frascos em estoque para o usuário escolher qual está usando."""
-        item = next((e for e in _todos_estoque if (e.nome or "").strip().lower() == (produto or "").strip().lower()), None)
-        pa_id = item.principio_ativo_id if item else None
-        if pa_id is None:
-            pa = _pa_por_nome.get((produto or "").strip().lower())
-            pa_id = pa.id if pa else None
-        opcoes = []
-        for e in _todos_estoque:
-            if pa_id is not None and e.principio_ativo_id == pa_id:
-                opcoes.append({"estoque_id": e.id, "nome": e.nome, "marca": e.laboratorio,
-                               "saldo": e.quantidade or 0, "unidade": e.unidade,
-                               "estoque_inicializado": e.estoque_inicializado is not False})
-        # Se o próprio produto é um item de estoque (sem princípio), ele é a opção.
-        if not opcoes and item is not None:
-            opcoes.append({"estoque_id": item.id, "nome": item.nome, "marca": item.laboratorio,
-                           "saldo": item.quantidade or 0, "unidade": item.unidade,
-                           "estoque_inicializado": item.estoque_inicializado is not False})
-        return pa_id, opcoes
+        return estoque_baixa.opcoes_medicamento(
+            session, fazenda_id=fazenda_id, produto=produto,
+            todos_estoque=_todos_estoque, principios_por_nome=_pa_por_nome,
+        )
 
     hormonios_por_grupo: dict[tuple[int, int], list[dict]] = {}
     for h in session.exec(select(ProtocoloIatfHormonio)).all():

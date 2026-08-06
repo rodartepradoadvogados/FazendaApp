@@ -46,10 +46,15 @@ type Item = {
   codigo_conta_gerencial: string; nome_conta_gerencial: string;
   tipo_item: TipoItem; produto: string; descricao: string;
   quantidade: string; valor_unitario: string; valor_total: string; modoValor: ModoValor;
+  // "estoque" escolhe de um item já cadastrado (EstoquePicker); "livre" digita
+  // qualquer nome — compra de algo que não está (e não precisa estar) no
+  // catálogo de estoque, ex.: "Supermercado", "Material de escritório". Some
+  // não tem por que travar o lançamento a um cadastro prévio.
+  modoProduto: "estoque" | "livre";
 };
 const itemVazio = (): Item => ({
   codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto", produto: "", descricao: "",
-  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario",
+  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario", modoProduto: "estoque",
 });
 
 type Opcoes = {
@@ -460,6 +465,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         valor_total: it.valor_total != null ? String(it.valor_total) : "",
         // Preserva o total informado na nota (não recalcula por quantidade × unitário).
         modoValor: it.valor_total != null ? "total" : "unitario",
+        // Nome extraído da nota, não necessariamente igual a um item já
+        // cadastrado no estoque — começa em texto livre pra não forçar o
+        // usuário a bater o nome exato antes de poder editar.
+        modoProduto: "livre",
       })));
     } else if (dados.valor_total != null) {
       setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), modoValor: "total" }]);
@@ -833,16 +842,42 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   </select>
                 </Campo>
               ) : (
-                <Campo label="Produto">
-                  <EstoquePicker itens={produtosEstoque} value={it.produto} finalidades={FINALIDADES_ESTOQUE} onChange={(nomeProduto) => {
-                    const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                    const patch: Partial<Item> = { produto: nomeProduto };
-                    const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
-                    if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                    atualizarItem(idx, patch);
-                    if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
-                  }} />
-                </Campo>
+                <div>
+                  <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
+                    <label style={lbl}>Produto</label>
+                    <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                      value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
+                      title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro — não entra automaticamente no estoque.">
+                      <option value="estoque">do estoque</option>
+                      <option value="livre">texto livre</option>
+                    </select>
+                  </div>
+                  {it.modoProduto === "estoque" ? (
+                    // incluirNaoEstocaveis: aqui é lançamento financeiro, não
+                    // consumo de estoque — um item cadastrado só para
+                    // organização financeira (sem controle de saldo) tem que
+                    // aparecer igual a um estocável.
+                    <EstoquePicker itens={produtosEstoque} value={it.produto} finalidades={FINALIDADES_ESTOQUE} incluirNaoEstocaveis onChange={(nomeProduto) => {
+                      const match = produtosEstoque.find((p) => p.nome === nomeProduto);
+                      const patch: Partial<Item> = { produto: nomeProduto };
+                      const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+                      if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+                      atualizarItem(idx, patch);
+                      if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
+                    }} />
+                  ) : (
+                    <>
+                      <input list={`produtos-financeiro-${idx}`} style={inputStyle} value={it.produto}
+                        onChange={(e) => atualizarItem(idx, { produto: e.target.value })}
+                        placeholder="ex.: Supermercado, Material de escritório…" />
+                      {/* Histórico de nomes já usados em lançamentos — não precisa
+                          estar no estoque pra sugerir aqui (ver Opcoes.produtos). */}
+                      <datalist id={`produtos-financeiro-${idx}`}>
+                        {opcoes.produtos.map((p) => <option key={p} value={p} />)}
+                      </datalist>
+                    </>
+                  )}
+                </div>
               )}
               <Campo label="Conta gerencial">
                 <SeletorContaGerencial
