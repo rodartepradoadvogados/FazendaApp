@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Package, Pencil, AlertTriangle, Plus, Search } from "lucide-react";
-import { fetchItensEstoqueCadastro, fetchFornecedores, fetchPlanoContas } from "@/lib/api";
+import { Package, Pencil, Trash2, AlertTriangle, Plus, Search } from "lucide-react";
+import { fetchItensEstoqueCadastro, fetchFornecedores, fetchPlanoContas, excluirItemEstoque } from "@/lib/api";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "./NovoItemEstoque";
 import { Modal } from "./Modal";
 import { onPedidoCadastroDeEstoque, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
@@ -43,6 +43,7 @@ export default function CadastroEstoqueMeta() {
   const [novoAberto, setNovoAberto] = useState(false);
   const [prefillNovo, setPrefillNovo] = useState<PrefillNovoEstoque | null>(null);
   const [busca, setBusca] = useState("");
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
 
   const carregar = () => fetchItensEstoqueCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -51,6 +52,17 @@ export default function CadastroEstoqueMeta() {
     fetchPlanoContas().then(setContas).catch(() => {});
   }, []);
   useEffect(() => onPedidoCadastroDeEstoque((dados) => { setPrefillNovo(dados); setNovoAberto(true); }), []);
+
+  const excluir = async (it: Item) => {
+    if (!window.confirm(`Excluir o item de estoque "${it.nome}"? Isso não pode ser desfeito.`)) return;
+    setErroExclusao(null);
+    try {
+      await excluirItemEstoque(it.id);
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir item de estoque");
+    }
+  };
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((it) => {
@@ -91,6 +103,7 @@ export default function CadastroEstoqueMeta() {
       )}
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {erroExclusao && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erroExclusao}</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {itens && (
@@ -128,9 +141,14 @@ export default function CadastroEstoqueMeta() {
                   <td>{it.estocavel === false ? "Não" : "Sim"}</td>
                   <td>{entraNoRmca(it) ? "Sim" : "Não"}</td>
                   <td style={{ textAlign: "right" }}>
-                    <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setEditando(it)}>
-                      <Pencil size={13} /> Editar
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setEditando(it)}>
+                        <Pencil size={13} /> Editar
+                      </button>
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem", color: "var(--red)" }} onClick={() => excluir(it)}>
+                        <Trash2 size={13} /> Excluir
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

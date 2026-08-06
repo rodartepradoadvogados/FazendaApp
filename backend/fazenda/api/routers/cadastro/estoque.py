@@ -18,7 +18,6 @@ from fazenda.models import (
     SeedFlag, UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.api.routers.estoque import _validar_embalagem
 from ._comum import _crud_nome_ativo
 
 router = APIRouter()
@@ -176,7 +175,6 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
         raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
-    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
     item.unidade_embalagem = dados.unidade_embalagem
     item.medida_embalagem = dados.medida_embalagem
     item.quantidade_embalagem = dados.quantidade_embalagem
@@ -243,32 +241,38 @@ def seed_cadastros_estoque(session: Session) -> None:
     session.commit()
 
 
-_listar_locais_armazenamento, _criar_local_armazenamento, _atualizar_local_armazenamento = _crud_nome_ativo(LocalArmazenamento, com_fazenda=True)
+_listar_locais_armazenamento, _criar_local_armazenamento, _atualizar_local_armazenamento, _excluir_local_armazenamento = _crud_nome_ativo(LocalArmazenamento, com_fazenda=True)
 router.get("/locais-armazenamento")(_listar_locais_armazenamento)
 router.post("/locais-armazenamento")(_criar_local_armazenamento)
 router.put("/locais-armazenamento/{item_id}")(_atualizar_local_armazenamento)
+router.delete("/locais-armazenamento/{item_id}")(_excluir_local_armazenamento)
 
-_listar_categorias_estoque, _criar_categoria_estoque, _atualizar_categoria_estoque = _crud_nome_ativo(CategoriaEstoque, com_fazenda=True)
+_listar_categorias_estoque, _criar_categoria_estoque, _atualizar_categoria_estoque, _excluir_categoria_estoque = _crud_nome_ativo(CategoriaEstoque, com_fazenda=True)
 router.get("/categorias-estoque")(_listar_categorias_estoque)
 router.post("/categorias-estoque")(_criar_categoria_estoque)
 router.put("/categorias-estoque/{item_id}")(_atualizar_categoria_estoque)
+router.delete("/categorias-estoque/{item_id}")(_excluir_categoria_estoque)
 
-_listar_finalidades_estoque, _criar_finalidade_estoque, _atualizar_finalidade_estoque = _crud_nome_ativo(FinalidadeEstoque, com_fazenda=True)
+_listar_finalidades_estoque, _criar_finalidade_estoque, _atualizar_finalidade_estoque, _excluir_finalidade_estoque = _crud_nome_ativo(FinalidadeEstoque, com_fazenda=True)
 router.get("/finalidades-estoque")(_listar_finalidades_estoque)
 router.post("/finalidades-estoque")(_criar_finalidade_estoque)
 router.put("/finalidades-estoque/{item_id}")(_atualizar_finalidade_estoque)
+router.delete("/finalidades-estoque/{item_id}")(_excluir_finalidade_estoque)
 
-_listar_unidades_estoque, _criar_unidade_estoque, _atualizar_unidade_estoque = _crud_nome_ativo(UnidadeEstoque, com_fazenda=True)
+_listar_unidades_estoque, _criar_unidade_estoque, _atualizar_unidade_estoque, _excluir_unidade_estoque = _crud_nome_ativo(UnidadeEstoque, com_fazenda=True)
 router.get("/unidades-estoque")(_listar_unidades_estoque)
 router.post("/unidades-estoque")(_criar_unidade_estoque)
 router.put("/unidades-estoque/{item_id}")(_atualizar_unidade_estoque)
+router.delete("/unidades-estoque/{item_id}")(_excluir_unidade_estoque)
 
-_listar_unidades_embalagem_estoque, _criar_unidade_embalagem_estoque, _atualizar_unidade_embalagem_estoque = _crud_nome_ativo(UnidadeEmbalagemEstoque, com_fazenda=True)
+_listar_unidades_embalagem_estoque, _criar_unidade_embalagem_estoque, _atualizar_unidade_embalagem_estoque, _excluir_unidade_embalagem_estoque = _crud_nome_ativo(UnidadeEmbalagemEstoque, com_fazenda=True)
 router.get("/unidades-embalagem-estoque")(_listar_unidades_embalagem_estoque)
 router.post("/unidades-embalagem-estoque")(_criar_unidade_embalagem_estoque)
 router.put("/unidades-embalagem-estoque/{item_id}")(_atualizar_unidade_embalagem_estoque)
+router.delete("/unidades-embalagem-estoque/{item_id}")(_excluir_unidade_embalagem_estoque)
 
-_listar_unidades_medida_embalagem_estoque, _criar_unidade_medida_embalagem_estoque, _atualizar_unidade_medida_embalagem_estoque = _crud_nome_ativo(UnidadeMedidaEmbalagemEstoque, com_fazenda=True)
+_listar_unidades_medida_embalagem_estoque, _criar_unidade_medida_embalagem_estoque, _atualizar_unidade_medida_embalagem_estoque, _excluir_unidade_medida_embalagem_estoque = _crud_nome_ativo(UnidadeMedidaEmbalagemEstoque, com_fazenda=True)
 router.get("/unidades-medida-embalagem-estoque")(_listar_unidades_medida_embalagem_estoque)
 router.post("/unidades-medida-embalagem-estoque")(_criar_unidade_medida_embalagem_estoque)
 router.put("/unidades-medida-embalagem-estoque/{item_id}")(_atualizar_unidade_medida_embalagem_estoque)
+router.delete("/unidades-medida-embalagem-estoque/{item_id}")(_excluir_unidade_medida_embalagem_estoque)

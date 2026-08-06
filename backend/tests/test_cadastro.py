@@ -138,14 +138,23 @@ class TestMetaEstoque:
         assert r.json()["medida_embalagem"] == "kg/saca"
         assert r.json()["quantidade_embalagem"] == 40.0
 
-    def test_unidade_embalagem_invalida_rejeitada(self, client):
+    def test_unidade_embalagem_fora_da_lista_padrao_e_aceita(self, client):
+        # unidade_embalagem/medida_embalagem viraram cadastro dinâmico
+        # (Configurações > Cadastro > Estoque > Unidade (embalagem) / Unidade
+        # de Medida) — o backend não tem mais lista fixa pra validar contra,
+        # mesmo tratamento que categoria/finalidade/unidade já recebem (o
+        # cadastro só alimenta o seletor, sem whitelist aqui). Um nome
+        # cadastrado pelo usuário (ex.: "Caminhão", "doses/frasco") tem que
+        # ser aceito mesmo sem estar entre os valores semeados por padrão.
         c, engine = client
         with Session(engine) as s:
             s.add(Estoque(nome="Concentrado XYZ", categoria="alimento", quantidade=10))
             s.commit()
         item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
-        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"unidade_embalagem": "Caminhão"})
-        assert r.status_code == 400
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"unidade_embalagem": "Caminhão", "medida_embalagem": "doses/frasco"})
+        assert r.status_code == 200, r.text
+        assert r.json()["unidade_embalagem"] == "Caminhão"
+        assert r.json()["medida_embalagem"] == "doses/frasco"
 
     def test_fornecedor_inexistente_rejeitado(self, client):
         c, engine = client

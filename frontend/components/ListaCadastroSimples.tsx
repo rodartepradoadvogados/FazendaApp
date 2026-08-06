@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
+import { Plus, Pencil, Trash2, AlertTriangle, Check, X } from "lucide-react";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import type { ItemCadastroSimples } from "@/lib/api";
 
@@ -11,19 +11,23 @@ type Form = { nome: string; ativo: boolean };
 const formVazio: Form = { nome: "", ativo: true };
 
 /**
- * Lista genérica "nome + ativo" com criar/editar/desativar — mesmo padrão de
- * CadastroRacas.tsx, reusado pelos 6 cadastros de apoio ao item de estoque
- * (Local de Armazenamento, Categoria, Finalidade, Unidade, Unidade de
- * embalagem, Unidade de medida) para não repetir a mesma tela 6 vezes.
- * Sem exclusão física — "excluir" é desmarcar "Ativo" (mesmo padrão de
- * Raça/Motivo de baixa), pra não quebrar item de estoque que já usa o valor.
+ * Lista genérica "nome + ativo" com criar/editar/desativar (e, quando
+ * `excluirFn` é passado, excluir de fato) — mesmo padrão de CadastroRacas.tsx,
+ * reusado pelos 6 cadastros de apoio ao item de estoque (Local de
+ * Armazenamento, Categoria, Finalidade, Unidade, Unidade de embalagem,
+ * Unidade de medida) para não repetir a mesma tela 6 vezes.
+ * "Desativar" (desmarcar "Ativo") continua a forma recomendada de tirar um
+ * valor de uso sem apagar o histórico; "Excluir" apaga o registro de fato —
+ * seguro aqui porque esses 6 cadastros são só texto livre sugerido (sem FK):
+ * um item de estoque que já usa o nome mantém o texto normalmente.
  */
 export function ListaCadastroSimples({
-  fetchFn, criarFn, atualizarFn, nomeNovo, placeholderNome, semRegistros,
+  fetchFn, criarFn, atualizarFn, excluirFn, nomeNovo, placeholderNome, semRegistros,
 }: {
   fetchFn: () => Promise<ItemCadastroSimples[]>;
   criarFn: (dados: { nome: string; ativo?: boolean }) => Promise<ItemCadastroSimples>;
   atualizarFn: (id: number, dados: { nome: string; ativo: boolean }) => Promise<ItemCadastroSimples>;
+  excluirFn?: (id: number) => Promise<any>;
   nomeNovo: string;
   placeholderNome?: string;
   semRegistros: string;
@@ -59,6 +63,18 @@ export function ListaCadastroSimples({
     }
   };
 
+  const excluir = async (r: ItemCadastroSimples) => {
+    if (!excluirFn) return;
+    if (!window.confirm(`Excluir "${r.nome}"? Isso não pode ser desfeito.`)) return;
+    setError(null);
+    try {
+      await excluirFn(r.id);
+      await carregar();
+    } catch (e: any) {
+      setError(e.message || "Erro ao excluir");
+    }
+  };
+
   return (
     <>
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
@@ -79,9 +95,16 @@ export function ListaCadastroSimples({
                 <tr>
                   <td style={{ fontWeight: 700 }}>{r.nome}{!r.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                   <td style={{ textAlign: "right" }}>
-                    <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(r)}>
-                      <Pencil size={13} /> Editar
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(r)}>
+                        <Pencil size={13} /> Editar
+                      </button>
+                      {excluirFn && (
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem", color: "var(--red)" }} onClick={() => excluir(r)}>
+                          <Trash2 size={13} /> Excluir
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 {editando === r.id && (

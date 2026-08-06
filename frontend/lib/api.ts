@@ -1858,6 +1858,11 @@ export async function atualizarMetaEstoque(id: number, dados: { unidade_embalage
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item"); }
   return res.json();
 }
+export async function excluirItemEstoque(id: number): Promise<{ excluido: boolean }> {
+  const res = await authFetch(`${API}/estoque/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir item de estoque"); }
+  return res.json();
+}
 
 export async function fetchParametros() {
   const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
@@ -2171,6 +2176,11 @@ function criarApiCadastroSimples(rota: string, rotulo: string) {
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
+    excluir: async (id: number): Promise<{ excluido: boolean }> => {
+      const res = await authFetch(`${API}/cadastro/${rota}/${id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao excluir ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
   };
 }
 
@@ -2182,31 +2192,37 @@ const apiLocaisArmazenamento = criarApiCadastroSimples("locais-armazenamento", "
 export const fetchLocaisArmazenamento = apiLocaisArmazenamento.fetch;
 export const criarLocalArmazenamento = apiLocaisArmazenamento.criar;
 export const atualizarLocalArmazenamento = apiLocaisArmazenamento.atualizar;
+export const excluirLocalArmazenamento = apiLocaisArmazenamento.excluir;
 
 const apiCategoriasEstoque = criarApiCadastroSimples("categorias-estoque", "Categoria de estoque");
 export const fetchCategoriasEstoqueCadastro = apiCategoriasEstoque.fetch;
 export const criarCategoriaEstoque = apiCategoriasEstoque.criar;
 export const atualizarCategoriaEstoque = apiCategoriasEstoque.atualizar;
+export const excluirCategoriaEstoque = apiCategoriasEstoque.excluir;
 
 const apiFinalidadesEstoque = criarApiCadastroSimples("finalidades-estoque", "Finalidade de estoque");
 export const fetchFinalidadesEstoqueCadastro = apiFinalidadesEstoque.fetch;
 export const criarFinalidadeEstoque = apiFinalidadesEstoque.criar;
 export const atualizarFinalidadeEstoque = apiFinalidadesEstoque.atualizar;
+export const excluirFinalidadeEstoque = apiFinalidadesEstoque.excluir;
 
 const apiUnidadesEstoque = criarApiCadastroSimples("unidades-estoque", "Unidade de estoque");
 export const fetchUnidadesEstoqueCadastro = apiUnidadesEstoque.fetch;
 export const criarUnidadeEstoque = apiUnidadesEstoque.criar;
 export const atualizarUnidadeEstoque = apiUnidadesEstoque.atualizar;
+export const excluirUnidadeEstoque = apiUnidadesEstoque.excluir;
 
 const apiUnidadesEmbalagemEstoque = criarApiCadastroSimples("unidades-embalagem-estoque", "Unidade de embalagem");
 export const fetchUnidadesEmbalagemEstoqueCadastro = apiUnidadesEmbalagemEstoque.fetch;
 export const criarUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.criar;
 export const atualizarUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.atualizar;
+export const excluirUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.excluir;
 
 const apiUnidadesMedidaEmbalagemEstoque = criarApiCadastroSimples("unidades-medida-embalagem-estoque", "Unidade de medida");
 export const fetchUnidadesMedidaEmbalagemEstoqueCadastro = apiUnidadesMedidaEmbalagemEstoque.fetch;
 export const criarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.criar;
 export const atualizarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.atualizar;
+export const excluirUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.excluir;
 
 // ── Graus de sangue (Configurações > Cadastro) ──
 export async function fetchGrausSangue() {

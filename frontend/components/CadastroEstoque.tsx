@@ -4,12 +4,12 @@ import { Package, MapPin, Tag, Target, Ruler, Box, Scale } from "lucide-react";
 import CadastroEstoqueMeta from "./CadastroEstoqueMeta";
 import { ListaCadastroSimples } from "./ListaCadastroSimples";
 import {
-  fetchLocaisArmazenamento, criarLocalArmazenamento, atualizarLocalArmazenamento,
-  fetchCategoriasEstoqueCadastro, criarCategoriaEstoque, atualizarCategoriaEstoque,
-  fetchFinalidadesEstoqueCadastro, criarFinalidadeEstoque, atualizarFinalidadeEstoque,
-  fetchUnidadesEstoqueCadastro, criarUnidadeEstoque, atualizarUnidadeEstoque,
-  fetchUnidadesEmbalagemEstoqueCadastro, criarUnidadeEmbalagemEstoque, atualizarUnidadeEmbalagemEstoque,
-  fetchUnidadesMedidaEmbalagemEstoqueCadastro, criarUnidadeMedidaEmbalagemEstoque, atualizarUnidadeMedidaEmbalagemEstoque,
+  fetchLocaisArmazenamento, criarLocalArmazenamento, atualizarLocalArmazenamento, excluirLocalArmazenamento,
+  fetchCategoriasEstoqueCadastro, criarCategoriaEstoque, atualizarCategoriaEstoque, excluirCategoriaEstoque,
+  fetchFinalidadesEstoqueCadastro, criarFinalidadeEstoque, atualizarFinalidadeEstoque, excluirFinalidadeEstoque,
+  fetchUnidadesEstoqueCadastro, criarUnidadeEstoque, atualizarUnidadeEstoque, excluirUnidadeEstoque,
+  fetchUnidadesEmbalagemEstoqueCadastro, criarUnidadeEmbalagemEstoque, atualizarUnidadeEmbalagemEstoque, excluirUnidadeEmbalagemEstoque,
+  fetchUnidadesMedidaEmbalagemEstoqueCadastro, criarUnidadeMedidaEmbalagemEstoque, atualizarUnidadeMedidaEmbalagemEstoque, excluirUnidadeMedidaEmbalagemEstoque,
 } from "@/lib/api";
 
 const ABAS = [
@@ -44,7 +44,7 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
             cadastro/edição do item.
           </p>
           <ListaCadastroSimples
-            fetchFn={fetchLocaisArmazenamento} criarFn={criarLocalArmazenamento} atualizarFn={atualizarLocalArmazenamento}
+            fetchFn={fetchLocaisArmazenamento} criarFn={criarLocalArmazenamento} atualizarFn={atualizarLocalArmazenamento} excluirFn={excluirLocalArmazenamento}
             nomeNovo="Novo local" placeholderNome='ex.: "Farmácia 1"' semRegistros="Nenhum local de armazenamento cadastrado ainda."
           />
         </div>
@@ -58,7 +58,7 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
             lista usada no cadastro de fornecedores.
           </p>
           <ListaCadastroSimples
-            fetchFn={fetchCategoriasEstoqueCadastro} criarFn={criarCategoriaEstoque} atualizarFn={atualizarCategoriaEstoque}
+            fetchFn={fetchCategoriasEstoqueCadastro} criarFn={criarCategoriaEstoque} atualizarFn={atualizarCategoriaEstoque} excluirFn={excluirCategoriaEstoque}
             nomeNovo="Nova categoria" placeholderNome='ex.: "Equipamentos e manutenção"' semRegistros="Nenhuma categoria cadastrada ainda."
           />
         </div>
@@ -72,7 +72,7 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
             nesses seletores.
           </p>
           <ListaCadastroSimples
-            fetchFn={fetchFinalidadesEstoqueCadastro} criarFn={criarFinalidadeEstoque} atualizarFn={atualizarFinalidadeEstoque}
+            fetchFn={fetchFinalidadesEstoqueCadastro} criarFn={criarFinalidadeEstoque} atualizarFn={atualizarFinalidadeEstoque} excluirFn={excluirFinalidadeEstoque}
             nomeNovo="Nova finalidade" placeholderNome='ex.: "Material/Insumo"' semRegistros="Nenhuma finalidade cadastrada ainda."
           />
         </div>
@@ -85,7 +85,7 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
             Unidade de estoque usada em toda baixa/consumo do item (ex.: "ml", "kg", "dose", "saca 30kg").
           </p>
           <ListaCadastroSimples
-            fetchFn={fetchUnidadesEstoqueCadastro} criarFn={criarUnidadeEstoque} atualizarFn={atualizarUnidadeEstoque}
+            fetchFn={fetchUnidadesEstoqueCadastro} criarFn={criarUnidadeEstoque} atualizarFn={atualizarUnidadeEstoque} excluirFn={excluirUnidadeEstoque}
             nomeNovo="Nova unidade" placeholderNome='ex.: "saca 30kg"' semRegistros="Nenhuma unidade cadastrada ainda."
           />
         </div>
@@ -99,7 +99,7 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
             necessários em número de embalagens a comprar.
           </p>
           <ListaCadastroSimples
-            fetchFn={fetchUnidadesEmbalagemEstoqueCadastro} criarFn={criarUnidadeEmbalagemEstoque} atualizarFn={atualizarUnidadeEmbalagemEstoque}
+            fetchFn={fetchUnidadesEmbalagemEstoqueCadastro} criarFn={criarUnidadeEmbalagemEstoque} atualizarFn={atualizarUnidadeEmbalagemEstoque} excluirFn={excluirUnidadeEmbalagemEstoque}
             nomeNovo="Nova unidade de embalagem" placeholderNome='ex.: "Pacote"' semRegistros="Nenhuma unidade de embalagem cadastrada ainda."
           />
         </div>
@@ -113,7 +113,7 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
             quanto cabe em cada unidade de embalagem.
           </p>
           <ListaCadastroSimples
-            fetchFn={fetchUnidadesMedidaEmbalagemEstoqueCadastro} criarFn={criarUnidadeMedidaEmbalagemEstoque} atualizarFn={atualizarUnidadeMedidaEmbalagemEstoque}
+            fetchFn={fetchUnidadesMedidaEmbalagemEstoqueCadastro} criarFn={criarUnidadeMedidaEmbalagemEstoque} atualizarFn={atualizarUnidadeMedidaEmbalagemEstoque} excluirFn={excluirUnidadeMedidaEmbalagemEstoque}
             nomeNovo="Nova unidade de medida" placeholderNome='ex.: "litros/garrafa"' semRegistros="Nenhuma unidade de medida cadastrada ainda."
           />
         </div>
