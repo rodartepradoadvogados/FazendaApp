@@ -26,14 +26,26 @@ ACHADOS (evidência em código, ver resumo passado ao orquestrador):
    (HTTP 200) em vez de duplicar. Ver `TestIdempotenciaInducaoLactacao`
    abaixo.
 
-2. As outras famílias de protocolo (IATF em reproducao.py, sanitário via
-   agenda.py/protocolos_sanitarios.py, customizado em
-   protocolos_customizados.py, lida em lida.py) têm o MESMO buraco de
-   idempotência — nenhuma delas verifica se já existe um lançamento
-   equivalente antes de criar um novo. É bug de ARQUITETURA, não específico
-   da indução de lactação. Fora do escopo desta rodada (só `producao.py` e
-   `nomenclatura_protocolo.py` podiam ser corrigidos aqui) — documentado
-   abaixo com `xfail` em vez de corrigido.
+2. ATUALIZAÇÃO — as outras 4 famílias de protocolo (IATF em reproducao.py,
+   sanitário em sanidade.py, customizado em protocolos_customizados.py, lida
+   em lida.py) tinham o MESMO buraco de idempotência — nenhuma verificava se
+   já existia um lançamento equivalente antes de criar um novo. Isto ERA
+   documentado como bug de arquitetura fora do escopo (item xfail abaixo);
+   nesta rodada seguinte, as 4 ganharam a MESMA proteção da indução —
+   `TestIdempotenciaIatf`, `TestIdempotenciaCustomizado`, `TestIdempotenciaLida`
+   e `TestIdempotenciaSanitario` abaixo. Duas particularidades por família:
+   - IATF sem molde (`protocolo_id is None`, hormônios digitados na hora): a
+     equivalência usa data_d0 + animais + o CONJUNTO DE HORMÔNIOS aplicados
+     (não só data_d0 + animais), porque dois lançamentos ad-hoc distintos
+     podem legitimamente coincidir em animal/data com um hormônio diferente
+     — ver comentário em `lancar_protocolo_iatf`.
+   - Sanitário é estruturalmente diferente: `ProtocoloSanitarioLancamento` é
+     POR ANIMAL (sem cabeçalho de lote) e não tem `ativo`/`encerrado_em` (a
+     Central de Protocolos nem oferece cancelar/encerrar essa origem). A
+     proteção aqui é PARCIAL, não tudo-ou-nada: pula, animal a animal, quem
+     já tem (protocolo_id, data_inicio, numero_matriz) idêntico e cria
+     normalmente o resto, informando quantos foram pulados em `pulados` — ver
+     comentário em `lancar_protocolo` (sanidade.py).
 
 3. O nome "cru" do molde (sem o sufixo "- {D0} A {fim} (D.. A D.. - N DIAS)")
    que aparece numa das duas linhas do print NÃO é produzido por nenhum
@@ -89,14 +101,18 @@ def client():
         ativo = True
         username = "teste"
 
-    # /producao e /cadastro exigem contrato ativo (+ módulo "produtivo" no
-    # caso de /producao) — sem isso todo POST cai em 403 antes mesmo de
-    # chegar na lógica que este arquivo testa (mesmo padrão de
-    # test_inducao_fazenda_id.py).
+    # /producao, /reproducao, /sanidade e /cadastro exigem contrato ativo (+
+    # módulo comercial específico — "produtivo"/"reprodutivo"/"sanitario",
+    # ver main.py) — sem isso todo POST cai em 403 antes mesmo de chegar na
+    # lógica que este arquivo testa (mesmo padrão de test_inducao_fazenda_id.
+    # py). /protocolos-customizados e /lida só exigem contrato ativo (sem
+    # módulo comercial próprio), mas conceder os três módulos aqui não
+    # atrapalha esses testes.
     with Session(engine) as s:
         for fid in (1, 2):
             s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
-            s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="produtivo", ativo=True))
+            for modulo in ("produtivo", "reprodutivo", "sanitario"):
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, ativo=True))
         s.commit()
 
     estado = {"fazenda_id": 1}
@@ -232,39 +248,428 @@ class TestIdempotenciaInducaoLactacao:
         assert r2.json()["criado"] is True
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Bug de arquitetura confirmado também em IATF (reproducao.py "
-        "lancar_protocolo_iatf) — mesma falta de proteção contra chamada "
-        "repetida. Fora do escopo desta auditoria (só producao.py e "
-        "nomenclatura_protocolo.py podiam ser corrigidos aqui); descrito no "
-        "resumo para o orquestrador. Este teste documenta o comportamento "
-        "ATUAL (duplica) e falhará sozinho quando reproducao.py ganhar a "
-        "mesma proteção — nesse momento é só remover o xfail."
-    ),
-    strict=False,
-)
-def test_iatf_tem_o_mesmo_buraco_de_idempotencia_que_a_inducao_tinha(client):
-    c, engine, estado = client
-    r_molde = c.post("/cadastro/protocolos-iatf", json={
-        "nome": "Protocolo IATF padrão",
+def _criar_molde_iatf(c, nome="Protocolo IATF padrão"):
+    r = c.post("/cadastro/protocolos-iatf", json={
+        "nome": nome,
         "etapas": [{"dia": 0, "produto": "Sincrodiol", "dose": 2.0, "unidade": "ml", "via": "Intramuscular"}],
     })
-    assert r_molde.status_code == 200, r_molde.text
-    pid = r_molde.json()["id"]
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
 
-    payload = {"protocolo_id": pid, "animais": ["422"], "data_d0": "2026-08-04", "hormonios": []}
-    r1 = c.post("/reproducao/protocolo-iatf", json=payload)
-    r2 = c.post("/reproducao/protocolo-iatf", json=payload)
-    assert r1.status_code == 201, r1.text
-    assert r2.status_code == 201, r2.text
 
-    from fazenda.models import ProtocoloIatfLancamento
-    with Session(engine) as s:
-        total = len(s.exec(select(ProtocoloIatfLancamento)).all())
-    # Comportamento hoje: 2 chamadas idênticas -> 2 lançamentos. Esperamos
-    # que um dia isso vire 1 (mesma proteção que ganhamos em indução).
-    assert total == 1, f"esperado 1 lançamento (idempotente), encontrado {total} — mesmo bug da indução, sem correção em reproducao.py"
+def _lancar_iatf(c, animais, data_d0="2026-08-04", protocolo_id=None, hormonios=None):
+    return c.post("/reproducao/protocolo-iatf", json={
+        "protocolo_id": protocolo_id, "animais": animais, "data_d0": data_d0,
+        "hormonios": hormonios or [],
+    })
+
+
+class TestIdempotenciaIatf:
+    """IATF ganhou a MESMA proteção que a indução de lactação (ver
+    lancar_protocolo_iatf em reproducao.py) — este teste antes documentava o
+    buraco (`xfail`, "test_iatf_tem_o_mesmo_buraco_de_idempotencia_que_a_
+    inducao_tinha"); agora que reproducao.py está corrigido, vira teste
+    normal do comportamento esperado."""
+
+    def test_chamada_repetida_nao_duplica_o_lancamento(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_iatf(c)
+
+        # A rota nunca teve status_code=201 (sempre devolveu 200, criado ou
+        # não) — diferente de indução/customizado/lida/sanitário, que ganharam
+        # 201 na criação quando esta auditoria criou aquelas rotas do zero ou
+        # as tocou. Mudar o status agora quebraria os testes existentes desta
+        # rota (test_protocolos_ciclo_vida.py, test_central_protocolos.py)
+        # que já esperam 200; por isso aqui a distinção "criado" é só pelo
+        # campo `criado` do corpo, não pelo HTTP status.
+        r1 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        assert r1.status_code == 200, r1.text
+        corpo1 = r1.json()
+        assert corpo1["criado"] is True
+
+        r2 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        assert r2.status_code == 200, r2.text
+        corpo2 = r2.json()
+        assert corpo2["criado"] is False
+        assert corpo2["lancamento_id"] == corpo1["lancamento_id"]
+        assert corpo2["eventos_criados"] == 0
+        assert "aviso" in corpo2
+
+        from fazenda.models import ProtocoloIatfLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloIatfLancamento)).all()) == 1
+
+    def test_animais_diferentes_nao_sao_bloqueados(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_iatf(c)
+
+        r1 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        r2 = _lancar_iatf(c, ["500"], protocolo_id=pid)
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert r1.json()["criado"] is True and r2.json()["criado"] is True
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+        from fazenda.models import ProtocoloIatfLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloIatfLancamento)).all()) == 2
+
+    def test_data_d0_diferente_nao_e_bloqueada(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_iatf(c)
+
+        r1 = _lancar_iatf(c, ["422"], data_d0="2026-08-04", protocolo_id=pid)
+        r2 = _lancar_iatf(c, ["422"], data_d0="2026-08-05", protocolo_id=pid)
+        assert r1.json()["criado"] is True and r2.json()["criado"] is True
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+    def test_lancamento_cancelado_nao_bloqueia_um_novo_igual(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_iatf(c)
+
+        r1 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        lancamento_id = r1.json()["lancamento_id"]
+        from fazenda.models import ProtocoloIatfLancamento
+        with Session(engine) as s:
+            lanc = s.get(ProtocoloIatfLancamento, lancamento_id)
+            lanc.ativo = False
+            s.add(lanc)
+            s.commit()
+
+        r2 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["criado"] is True
+        assert r2.json()["lancamento_id"] != lancamento_id
+
+    def test_lancamento_encerrado_nao_bloqueia_um_novo_igual(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_iatf(c)
+
+        r1 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        lancamento_id = r1.json()["lancamento_id"]
+        r_encerrar = c.post(f"/central-protocolos/iatf/{lancamento_id}/encerrar", json={"motivo": "teste"})
+        assert r_encerrar.status_code == 200, r_encerrar.text
+
+        r2 = _lancar_iatf(c, ["422"], protocolo_id=pid)
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["criado"] is True
+
+    def test_ad_hoc_sem_molde_chamada_repetida_nao_duplica(self, client):
+        """Lançamento sem `protocolo_id` (hormônios digitados na hora, sem
+        molde cadastrado) — a equivalência aqui usa data_d0 + animais +
+        hormônios (ver comentário em lancar_protocolo_iatf)."""
+        c, engine, estado = client
+        hormonios = [{"dia": 0, "produto": "SincroCP", "dose": 1.0, "unidade": "ml", "via": "Intramuscular"}]
+
+        r1 = _lancar_iatf(c, ["422"], hormonios=hormonios)
+        assert r1.status_code == 200, r1.text
+        corpo1 = r1.json()
+        assert corpo1["criado"] is True
+
+        r2 = _lancar_iatf(c, ["422"], hormonios=hormonios)
+        assert r2.status_code == 200, r2.text
+        corpo2 = r2.json()
+        assert corpo2["criado"] is False
+        assert corpo2["lancamento_id"] == corpo1["lancamento_id"]
+
+        from fazenda.models import ProtocoloIatfLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloIatfLancamento)).all()) == 1
+
+    def test_ad_hoc_hormonios_diferentes_nao_sao_bloqueados(self, client):
+        """Dois lançamentos ad-hoc LEGÍTIMOS e distintos (mesmo animal/data,
+        hormônio diferente) não se confundem com um retry."""
+        c, engine, estado = client
+        h1 = [{"dia": 0, "produto": "SincroCP", "dose": 1.0, "unidade": "ml", "via": "Intramuscular"}]
+        h2 = [{"dia": 0, "produto": "Estron", "dose": 2.0, "unidade": "ml", "via": "Intramuscular"}]
+
+        r1 = _lancar_iatf(c, ["422"], hormonios=h1)
+        r2 = _lancar_iatf(c, ["422"], hormonios=h2)
+        assert r1.json()["criado"] is True and r2.json()["criado"] is True
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+
+def _criar_molde_customizado(c, nome="Vacina Rebanho"):
+    r = c.post("/cadastro/protocolos-customizados", json={
+        "nome": nome, "categoria": "Rebanho", "dia_inicial": 0,
+        "etapas": [
+            {"dia": 0, "descricao_evento": "Aplicar vacina", "insumo_padrao": "Vacina X", "dose": 2, "unidade": "ml"},
+            {"dia": 21, "descricao_evento": "Reforço"},
+        ],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _lancar_customizado(c, pid, animais, data_inicio="2026-08-04", lote=None):
+    return c.post("/protocolos-customizados/lancar", json={
+        "protocolo_id": pid, "animais": animais, "lote": lote, "data_inicio": data_inicio,
+    })
+
+
+class TestIdempotenciaCustomizado:
+    """Mesma proteção replicada em protocolos_customizados.lancar_protocolo_
+    customizado — ver o comentário "Idempotência:" lá."""
+
+    def test_chamada_repetida_nao_duplica_o_lancamento(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+
+        r1 = _lancar_customizado(c, pid, ["422"])
+        assert r1.status_code == 201, r1.text
+        corpo1 = r1.json()
+        assert corpo1["criado"] is True
+
+        r2 = _lancar_customizado(c, pid, ["422"])
+        assert r2.status_code == 200, r2.text
+        corpo2 = r2.json()
+        assert corpo2["criado"] is False
+        assert corpo2["lancamento_id"] == corpo1["lancamento_id"]
+        assert corpo2["eventos_criados"] == 0
+        assert "aviso" in corpo2
+
+        from fazenda.models import ProtocoloCustomizadoLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloCustomizadoLancamento)).all()) == 1
+
+    def test_animais_diferentes_nao_sao_bloqueados(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+
+        r1 = _lancar_customizado(c, pid, ["422"])
+        r2 = _lancar_customizado(c, pid, ["500"])
+        assert r1.status_code == 201 and r2.status_code == 201
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+    def test_data_diferente_nao_e_bloqueada(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+
+        r1 = _lancar_customizado(c, pid, ["422"], data_inicio="2026-08-04")
+        r2 = _lancar_customizado(c, pid, ["422"], data_inicio="2026-08-05")
+        assert r1.status_code == 201 and r2.status_code == 201
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+    def test_lancamento_cancelado_nao_bloqueia_um_novo_igual(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+
+        r1 = _lancar_customizado(c, pid, ["422"])
+        lancamento_id = r1.json()["lancamento_id"]
+        r_cancelar = c.post(f"/protocolos-customizados/{lancamento_id}/cancelar")
+        assert r_cancelar.status_code == 200, r_cancelar.text
+
+        r2 = _lancar_customizado(c, pid, ["422"])
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["criado"] is True
+
+    def test_lancamento_encerrado_nao_bloqueia_um_novo_igual(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+
+        r1 = _lancar_customizado(c, pid, ["422"])
+        lancamento_id = r1.json()["lancamento_id"]
+        r_encerrar = c.post(f"/central-protocolos/customizado/{lancamento_id}/encerrar", json={"motivo": "teste"})
+        assert r_encerrar.status_code == 200, r_encerrar.text
+
+        r2 = _lancar_customizado(c, pid, ["422"])
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["criado"] is True
+
+    def test_tarefa_da_fazenda_sem_animal_chamada_repetida_nao_duplica(self, client):
+        """`animais=[]` (tarefa da fazenda, sem animal específico) também é
+        protegida — o conjunto vazio compara certo com outro vazio."""
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+
+        r1 = _lancar_customizado(c, pid, [])
+        assert r1.status_code == 201, r1.text
+        r2 = _lancar_customizado(c, pid, [])
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["criado"] is False
+        assert r2.json()["lancamento_id"] == r1.json()["lancamento_id"]
+
+
+def _criar_molde_lida(c, nome="Limpar cocho"):
+    r = c.post("/cadastro/lidas", json={
+        "nome": nome, "modo": "periodo", "dia_inicial": 0,
+        "etapas": [{"dia_inicio": 0, "descricao_evento": "Limpar cocho"}],
+    })
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _lancar_lida(c, lida_id, animais, data_inicio="2026-08-04"):
+    return c.post("/lida/lancar", json={
+        "lida_id": lida_id, "animais": animais, "data_inicio": data_inicio,
+    })
+
+
+class TestIdempotenciaLida:
+    """Mesma proteção replicada em lida.lancar_lida — ver o comentário
+    "Idempotência:" lá."""
+
+    def test_chamada_repetida_nao_duplica_o_lancamento(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+
+        r1 = _lancar_lida(c, lid, ["422"])
+        assert r1.status_code == 201, r1.text
+        corpo1 = r1.json()
+        assert corpo1["criado"] is True
+
+        r2 = _lancar_lida(c, lid, ["422"])
+        assert r2.status_code == 200, r2.text
+        corpo2 = r2.json()
+        assert corpo2["criado"] is False
+        assert corpo2["lancamento_id"] == corpo1["lancamento_id"]
+        assert corpo2["eventos_criados"] == 0
+        assert "aviso" in corpo2
+
+        from fazenda.models import LidaLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(LidaLancamento)).all()) == 1
+
+    def test_animais_diferentes_nao_sao_bloqueados(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+
+        r1 = _lancar_lida(c, lid, ["422"])
+        r2 = _lancar_lida(c, lid, ["500"])
+        assert r1.status_code == 201 and r2.status_code == 201
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+    def test_data_diferente_nao_e_bloqueada(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+
+        r1 = _lancar_lida(c, lid, ["422"], data_inicio="2026-08-04")
+        r2 = _lancar_lida(c, lid, ["422"], data_inicio="2026-08-05")
+        assert r1.status_code == 201 and r2.status_code == 201
+        assert r1.json()["lancamento_id"] != r2.json()["lancamento_id"]
+
+    def test_lancamento_cancelado_nao_bloqueia_um_novo_igual(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+
+        r1 = _lancar_lida(c, lid, ["422"])
+        from fazenda.models import LidaLancamento
+        with Session(engine) as s:
+            lanc = s.get(LidaLancamento, r1.json()["lancamento_id"])
+            lanc.ativo = False
+            s.add(lanc)
+            s.commit()
+
+        r2 = _lancar_lida(c, lid, ["422"])
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["criado"] is True
+
+    def test_lancamento_encerrado_nao_bloqueia_um_novo_igual(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+
+        r1 = _lancar_lida(c, lid, ["422"])
+        lancamento_id = r1.json()["lancamento_id"]
+        r_encerrar = c.post(f"/central-protocolos/lida/{lancamento_id}/encerrar", json={"motivo": "teste"})
+        assert r_encerrar.status_code == 200, r_encerrar.text
+
+        r2 = _lancar_lida(c, lid, ["422"])
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["criado"] is True
+
+    def test_tarefa_da_fazenda_sem_animal_chamada_repetida_nao_duplica(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+
+        r1 = _lancar_lida(c, lid, [])
+        assert r1.status_code == 201, r1.text
+        r2 = _lancar_lida(c, lid, [])
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["criado"] is False
+        assert r2.json()["lancamento_id"] == r1.json()["lancamento_id"]
+
+
+def _criar_molde_sanitario(c, nome="Protocolo Mastite Clínica"):
+    r = c.post("/cadastro/protocolos-sanitarios", json={
+        "nome": nome, "dia_inicial": 0,
+        "etapas": [{"dia": 0, "produto": "Antibiótico X", "dosagem": 5.0, "unidade": "ml"}],
+    })
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _lancar_sanitario(c, pid, numeros, data_inicio="2026-08-04"):
+    return c.post("/sanidade/protocolos/lancamentos", json={
+        "protocolo_id": pid, "numeros_matriz": numeros, "data_inicio": data_inicio,
+    })
+
+
+class TestIdempotenciaSanitario:
+    """`ProtocoloSanitarioLancamento` é POR ANIMAL (sem cabeçalho de lote) —
+    a proteção replicada em sanidade.lancar_protocolo pula, animal a animal,
+    quem já tem (protocolo_id, data_inicio, numero_matriz) idêntico, em vez
+    de recusar a chamada inteira (ver comentário "Idempotência:" lá)."""
+
+    def test_chamada_repetida_nao_duplica(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_sanitario(c)
+
+        r1 = _lancar_sanitario(c, pid, ["422"])
+        assert r1.status_code == 201, r1.text
+        assert r1.json()["criados"] == 1
+        assert r1.json()["pulados"] == 0
+
+        r2 = _lancar_sanitario(c, pid, ["422"])
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["criados"] == 0
+        assert r2.json()["pulados"] == 1
+
+        from fazenda.models import ProtocoloSanitarioLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloSanitarioLancamento)).all()) == 1
+
+    def test_animais_diferentes_nao_sao_bloqueados(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_sanitario(c)
+
+        r1 = _lancar_sanitario(c, pid, ["422"])
+        r2 = _lancar_sanitario(c, pid, ["500"])
+        assert r1.status_code == 201 and r2.status_code == 201
+        assert r1.json()["criados"] == 1 and r2.json()["criados"] == 1
+
+        from fazenda.models import ProtocoloSanitarioLancamento
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloSanitarioLancamento)).all()) == 2
+
+    def test_data_diferente_nao_e_bloqueada(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_sanitario(c)
+
+        r1 = _lancar_sanitario(c, pid, ["422"], data_inicio="2026-08-04")
+        r2 = _lancar_sanitario(c, pid, ["422"], data_inicio="2026-08-05")
+        assert r1.status_code == 201 and r2.status_code == 201
+        assert r1.json()["criados"] == 1 and r2.json()["criados"] == 1
+
+    def test_relancar_mesmos_3_mais_1_novo_so_o_novo_e_criado(self, client):
+        """3 animais lançados, depois relançados junto com um 4º novo — só o
+        novo entra; os 3 repetidos são pulados, não duplicados."""
+        c, engine, estado = client
+        pid = _criar_molde_sanitario(c)
+
+        r1 = _lancar_sanitario(c, pid, ["100", "200", "300"])
+        assert r1.status_code == 201, r1.text
+        assert r1.json()["criados"] == 3
+
+        r2 = _lancar_sanitario(c, pid, ["100", "200", "300", "400"])
+        assert r2.status_code == 201, r2.text  # ainda cria 1 novo -> 201
+        assert r2.json()["criados"] == 1
+        assert r2.json()["pulados"] == 3
+        assert len(r2.json()["avisos"]) >= 1
+
+        from fazenda.models import ProtocoloSanitarioLancamento
+        with Session(engine) as s:
+            todos = s.exec(select(ProtocoloSanitarioLancamento)).all()
+            assert len(todos) == 4
+            assert {l.numero_matriz for l in todos} == {"100", "200", "300", "400"}
 
 
 class TestNomeGravadoNaCriacao:

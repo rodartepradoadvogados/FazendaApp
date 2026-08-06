@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -958,8 +958,8 @@ class ProtocoloIatfIn(BaseModel):
 
 @router.post("/protocolo-iatf")
 def lancar_protocolo_iatf(
-    dados: ProtocoloIatfIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloIatfIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11 clássico, ou os dias livres
@@ -979,6 +979,66 @@ def lancar_protocolo_iatf(
         if not molde or (fazenda_id is not None and molde.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Protocolo IATF cadastrado não encontrado")
         nome_base = molde.nome
+
+    # Idempotência (mesmo padrão de producao.lancar_inducao_lactacao — ver o
+    # comentário "Idempotência:" lá): duplo clique ou retry da fila offline
+    # reenviando este POST não pode criar um segundo ProtocoloIatfLancamento
+    # "Ativo" com o mesmo molde/data/animais.
+    #
+    # Com molde (`protocolo_id` informado): mesmo protocolo_id + mesma data_d0
+    # + mesmo conjunto de animais + ainda ativo e não encerrado — igual à
+    # indução de lactação.
+    #
+    # Sem molde (lançamento ad-hoc, `protocolo_id is None`, hormônios
+    # digitados na hora): não dá para usar só data_d0 + animais, porque dois
+    # lançamentos ad-hoc LEGÍTIMOS e distintos podem coincidir nisso (mesma
+    # vaca, mesmo D0, mas um protocolo hormonal diferente do outro — ex.:
+    # usuário lança errado, cancela, relança com outra dose no mesmo dia).
+    # Por isso a equivalência ad-hoc inclui também o conjunto de hormônios
+    # (dia+produto+dose+unidade+via): um retry de verdade reenvia o MESMO
+    # payload, hormônios inclusive, então continua batendo; já dois
+    # lançamentos ad-hoc com hormônios diferentes não se confundem mais.
+    animais_set = set(dados.animais)
+    hormonios_set = {
+        (h.dia, h.produto.strip(), h.dose, h.unidade, h.via)
+        for h in dados.hormonios if (h.produto or "").strip()
+    }
+    candidatos = session.exec(
+        select(ProtocoloIatfLancamento)
+        .where(ProtocoloIatfLancamento.protocolo_id == dados.protocolo_id)
+        .where(ProtocoloIatfLancamento.data_d0 == dados.data_d0)
+        .where(ProtocoloIatfLancamento.ativo == True)  # noqa: E712
+        .where(ProtocoloIatfLancamento.encerrado_em.is_(None))
+    ).all()
+    for candidato in candidatos:
+        if fazenda_id is not None and candidato.fazenda_id not in (fazenda_id, None):
+            continue
+        animais_candidato = set(session.exec(
+            select(ProtocoloIatfAplicacao.numero_matriz)
+            .where(ProtocoloIatfAplicacao.lancamento_id == candidato.id)
+        ).all())
+        if animais_candidato != animais_set:
+            continue
+        if dados.protocolo_id is None:
+            hormonios_candidato = {
+                (h.dia, h.produto, h.dose, h.unidade, h.via)
+                for h in session.exec(
+                    select(ProtocoloIatfHormonio)
+                    .where(ProtocoloIatfHormonio.lancamento_id == candidato.id)
+                ).all()
+            }
+            if hormonios_candidato != hormonios_set:
+                continue
+        response.status_code = 200
+        return {
+            "criado": False, "lancamento_id": candidato.id, "eventos_criados": 0,
+            "animais": len(animais_set),
+            "aviso": (
+                "Já existe um lançamento ativo idêntico deste protocolo (mesma data D0 "
+                "e mesmo(s) animal(is)) — reaproveitado em vez de criar um duplicado."
+            ),
+        }
+
     # Os passos deste lançamento — dias do molde (livres, com dia de
     # inseminação calculado) quando um molde foi escolhido; D0/D7/D9/D11
     # clássico quando não (hormônios digitados na hora).

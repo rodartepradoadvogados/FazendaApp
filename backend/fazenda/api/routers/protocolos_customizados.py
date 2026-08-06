@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -73,7 +73,7 @@ class LancarProtocoloCustomizadoIn(BaseModel):
 
 @router.post("/lancar", status_code=201)
 def lancar_protocolo_customizado(
-    dados: LancarProtocoloCustomizadoIn, session: Session = Depends(get_session),
+    dados: LancarProtocoloCustomizadoIn, response: Response, session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
@@ -92,6 +92,42 @@ def lancar_protocolo_customizado(
         raise HTTPException(status_code=400, detail="Este protocolo não tem etapas cadastradas")
 
     animais = [n.strip() for n in dados.animais if n.strip()]
+
+    # Idempotência (mesmo padrão de producao.lancar_inducao_lactacao): duplo
+    # clique ou retry da fila offline não pode criar um segundo lançamento
+    # "Ativo" do mesmo molde/data/alvo. `animais` pode ser [] (tarefa da
+    # fazenda, sem animal específico — `numero_matriz` fica None em toda
+    # aplicação) — o conjunto vazio já compara certo com outro conjunto
+    # vazio, então não precisa de tratamento especial além do set() normal.
+    animais_set = set(animais)
+    candidatos = session.exec(
+        select(ProtocoloCustomizadoLancamento)
+        .where(ProtocoloCustomizadoLancamento.protocolo_id == protocolo.id)
+        .where(ProtocoloCustomizadoLancamento.data_inicio == dados.data_inicio)
+        .where(ProtocoloCustomizadoLancamento.ativo == True)  # noqa: E712
+        .where(ProtocoloCustomizadoLancamento.encerrado_em.is_(None))
+    ).all()
+    for candidato in candidatos:
+        if fazenda_id is not None and candidato.fazenda_id not in (fazenda_id, None):
+            continue
+        animais_candidato = {
+            n for n in session.exec(
+                select(ProtocoloCustomizadoAplicacao.numero_matriz)
+                .where(ProtocoloCustomizadoAplicacao.lancamento_id == candidato.id)
+            ).all()
+            if n is not None
+        }
+        if animais_candidato == animais_set:
+            response.status_code = 200
+            return {
+                "criado": False, "lancamento_id": candidato.id, "eventos_criados": 0,
+                "animais": len(animais_set),
+                "aviso": (
+                    "Já existe um lançamento ativo idêntico deste protocolo (mesma data "
+                    "e mesmo(s) animal(is), ou mesma tarefa da fazenda) — reaproveitado em "
+                    "vez de criar um duplicado."
+                ),
+            }
 
     etapas_por_dia: dict[int, list[ProtocoloCustomizadoEtapa]] = {}
     for e in etapas:

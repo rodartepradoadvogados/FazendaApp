@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -70,8 +70,8 @@ def _dias_periodo(etapas: list[LidaEtapa]) -> dict[int, LidaEtapa]:
 
 @router.post("/lancar", status_code=201)
 def lancar_lida(
-    dados: LancarLidaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: LancarLidaIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     lida = session.get(Lida, dados.lida_id)
@@ -116,6 +116,47 @@ def lancar_lida(
 
     if not passos:
         raise HTTPException(status_code=400, detail="Nenhuma ocorrência gerada neste intervalo")
+
+    # Idempotência (mesmo padrão de producao.lancar_inducao_lactacao): duplo
+    # clique ou retry da fila offline não pode criar um segundo lançamento
+    # "Ativo" da mesma lida/data/alvo. `animais` pode ser [] (tarefa da
+    # fazenda ou lote sem lista nominal — `numero_matriz` fica None em toda
+    # aplicação); o set() vazio compara certo com outro vazio sem tratamento
+    # especial. No modo "frequencia" `data_fim` não é uma coluna gravada em
+    # LidaLancamento (só molda os passos), então dois lançamentos com o
+    # mesmo início mas fins diferentes teriam o mesmo (lida_id, data_inicio,
+    # animais) — para não confundi-los com um retry de verdade, a
+    # equivalência compara também o CONJUNTO DE DIAS gerados (`dia` de cada
+    # passo), que muda com data_fim/frequência/edição do molde; um retry
+    # genuíno reenvia o mesmo payload e gera exatamente os mesmos dias.
+    animais_set = set(animais)
+    dias_set = {p[0] for p in passos}
+    candidatos = session.exec(
+        select(LidaLancamento)
+        .where(LidaLancamento.lida_id == lida.id)
+        .where(LidaLancamento.data_inicio == dados.data_inicio)
+        .where(LidaLancamento.ativo == True)  # noqa: E712
+        .where(LidaLancamento.encerrado_em.is_(None))
+    ).all()
+    for candidato in candidatos:
+        if fazenda_id is not None and candidato.fazenda_id not in (fazenda_id, None):
+            continue
+        aplicacoes_candidato = session.exec(
+            select(LidaAplicacao).where(LidaAplicacao.lancamento_id == candidato.id)
+        ).all()
+        animais_candidato = {a.numero_matriz for a in aplicacoes_candidato if a.numero_matriz is not None}
+        dias_candidato = {a.dia for a in aplicacoes_candidato}
+        if animais_candidato == animais_set and dias_candidato == dias_set:
+            response.status_code = 200
+            return {
+                "criado": False, "lancamento_id": candidato.id, "eventos_criados": 0,
+                "animais": len(animais_set),
+                "aviso": (
+                    "Já existe um lançamento ativo idêntico desta lida (mesma data, mesmo "
+                    "período gerado e mesmo(s) animal(is), ou mesma tarefa/lote) — "
+                    "reaproveitado em vez de criar um duplicado."
+                ),
+            }
 
     dia_final = max(p[0] for p in passos)
     nome_protocolo = gerar_nome_lancamento(lida.nome, dados.data_inicio, lida.dia_inicial if lida.modo == "periodo" else 0, dia_final)

@@ -129,8 +129,14 @@ export function FormProtocoloCustomizado({ animais }: { animais: AnimalRow[] }) 
         protocolo_id: Number(protocoloId), animais: animaisAlvo, lote, data_inicio: dataInicio,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
-      setSucesso(
-        vinculo === "fazenda"
+      // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
+      // protocolo, mesma data, mesmo(s) animal(is) ou mesma tarefa da fazenda)
+      // e reaproveitou em vez de duplicar — duplo clique ou retry da fila
+      // offline. Sem este ramo a tela dizia "lançado ... — 0 eventos na
+      // Agenda", que parece defeito (mesmo padrão de FormInducaoLactacao).
+      setSucesso(r.criado === false
+        ? (r.aviso || "Este protocolo já estava lançado para este alvo nesta data — nada foi duplicado.")
+        : vinculo === "fazenda"
           ? `Protocolo "${protocolo?.nome}" lançado como tarefa da fazenda — ${r.eventos_criados} eventos na Agenda.`
           : `Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`
       );
