@@ -1,6 +1,39 @@
 // Funções de comunicação com o backend FastAPI
 export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/**
+ * Extrai uma mensagem legível do `detail` de um erro da API.
+ *
+ * O FastAPI devolve `detail` como STRING quando é um `HTTPException` de
+ * negócio (ex.: "Selecione ao menos um animal"), mas como uma LISTA DE
+ * OBJETOS `[{loc, msg, type}, ...]` quando é um erro de validação do
+ * Pydantic (422) — e todo `throw new Error(mensagemErroApi(d.detail) || "…")` do projeto
+ * (280+ ocorrências) assumia string. `Error()` converte o valor recebido com
+ * `String()`; `String([{...}])` vira exatamente o texto "[object Object]"
+ * que aparecia na tela sem explicar nada ao usuário.
+ *
+ * Retorna `null` quando não há nada aproveitável, para o chamador continuar
+ * caindo no `|| "mensagem padrão"` de sempre — só troca `d.detail` por
+ * `mensagemErroApi(d.detail)` no lugar de sempre.
+ */
+export function mensagemErroApi(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const partes = detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "msg" in item) return String((item as any).msg);
+        return null;
+      })
+      .filter((s): s is string => !!s);
+    if (partes.length) return partes.join("; ");
+  }
+  if (detail && typeof detail === "object" && "msg" in (detail as any)) {
+    return String((detail as any).msg);
+  }
+  return null;
+}
+
 // ── Autenticação ──
 export function getToken(): string | null {
   return typeof window === "undefined" ? null : localStorage.getItem("token");
@@ -129,7 +162,7 @@ export async function criarUsuario(dados: {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar usuário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar usuário"); }
   return res.json();
 }
 export async function atualizarUsuario(id: number, dados: any) {
@@ -137,7 +170,7 @@ export async function atualizarUsuario(id: number, dados: any) {
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar"); }
   return res.json();
 }
 
@@ -148,7 +181,7 @@ export async function login(username: string, senha: string, manterConectado = f
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Usuário ou senha inválidos");
+    throw new Error(mensagemErroApi(d.detail) || "Usuário ou senha inválidos");
   }
   const data = await res.json();
   localStorage.setItem("token", data.token);
@@ -184,7 +217,7 @@ export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify({ fazenda_id: fazendaId }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao selecionar fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao selecionar fazenda"); }
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
@@ -240,7 +273,7 @@ export async function fetchFazendas(): Promise<Fazenda[]> {
 }
 export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: string }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar fazenda"); }
   return res.json();
 }
 export async function atualizarFazenda(fazendaId: number, dados: {
@@ -249,7 +282,7 @@ export async function atualizarFazenda(fazendaId: number, dados: {
   representante_nome?: string; representante_cpf?: string; exige_aprovacao_suporte?: boolean;
 }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar fazenda"); }
   return res.json();
 }
 export async function fetchContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
@@ -262,17 +295,17 @@ export async function definirContratoFazenda(
   dados: { plano: PlanoNome | null; modulos: { modulo: ModuloComercial; preco: number }[]; ciclo_pagamento?: CicloPagamento },
 ): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao definir contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir contrato"); }
   return res.json();
 }
 export async function aprovarContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar contrato"); }
   return res.json();
 }
 export async function suspenderContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/suspender`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao suspender contrato"); }
   return res.json();
 }
 export async function fetchPlanosCatalogo(): Promise<Record<PlanoNome, PlanoCatalogo>> {
@@ -299,7 +332,7 @@ export async function atualizarPrecoModulo(modulo: ModuloComercial, preco: numbe
   const res = await authFetch(`${API}/fazendas/catalogo/precos-modulo/${modulo}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modulo, preco }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar preço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar preço"); }
   return res.json();
 }
 export async function fetchAnexosContrato(fazendaId: number): Promise<AnexoContrato[]> {
@@ -311,12 +344,12 @@ export async function anexarContrato(fazendaId: number, file: File): Promise<Ane
   const fd = new FormData();
   fd.append("file", file);
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/anexos`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar contrato"); }
   return res.json();
 }
 export async function excluirAnexoContrato(anexoId: number): Promise<void> {
   const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
 }
 // Antes era um <a href> direto pro endpoint — mas ele exige Bearer token
 // (backend/fazenda/api/routers/fazendas.py), então abrir a URL crua sem
@@ -324,7 +357,7 @@ export async function excluirAnexoContrato(anexoId: number): Promise<void> {
 // (definida mais abaixo neste arquivo).
 export async function baixarAnexoContrato(anexoId: number, nomeArquivoFallback: string): Promise<void> {
   const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao baixar anexo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar anexo"); }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -378,7 +411,7 @@ async function _pcSend(path: string, method: string, body?: any) {
   const res = await authFetch(`${API}/painel-cowdata${path}`, {
     method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro (${res.status})`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro (${res.status})`); }
   return res.json();
 }
 
@@ -459,7 +492,7 @@ export async function baixarModeloContrato(fazendaId: number, dados?: {
 }): Promise<void> {
   const params = new URLSearchParams(Object.entries(dados || {}).filter(([, v]) => v) as [string, string][]);
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/modelo${params.toString() ? `?${params}` : ""}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar o contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar o contrato"); }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -470,7 +503,7 @@ export async function baixarModeloContrato(fazendaId: number, dados?: {
 }
 export async function assinarContratoZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/assinar-zapsign`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar assinatura no ZapSign"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar assinatura no ZapSign"); }
   return res.json();
 }
 export async function fetchStatusAssinaturaZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
@@ -487,7 +520,7 @@ export type CobrancaAsaas = {
 };
 async function _postAsaas(path: string, dados: CobrancaAsaasIn): Promise<any> {
   const res = await authFetch(`${API}/asaas/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cobrança no Asaas"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cobrança no Asaas"); }
   return res.json();
 }
 export const criarAssinaturaAsaas = (fazendaId: number, dados: CobrancaAsaasIn) => _postAsaas(`${fazendaId}/assinatura`, dados);
@@ -517,12 +550,12 @@ export async function vincularUsuarioFazenda(
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular usuário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular usuário"); }
   return res.json();
 }
 export async function desvincularUsuarioFazenda(fazendaId: number, usuarioId: number): Promise<void> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario/${usuarioId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desvincular usuário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desvincular usuário"); }
 }
 
 // ── Consultor independente (Fase 2C) — assinatura própria (fora de qualquer
@@ -559,7 +592,7 @@ export async function solicitarPlanoConsultor(plano: PlanoConsultorNome): Promis
   const res = await authFetch(`${API}/consultor/solicitar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plano }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao solicitar plano"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao solicitar plano"); }
   return res.json();
 }
 export async function fetchMeuContratoConsultor(): Promise<ContratoConsultor> {
@@ -574,12 +607,12 @@ export async function fetchContratosConsultor(): Promise<ContratoConsultorAdmin[
 }
 export async function aprovarContratoConsultor(usuarioId: number): Promise<ContratoConsultor> {
   const res = await authFetch(`${API}/consultor/${usuarioId}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar contrato"); }
   return res.json();
 }
 export async function suspenderContratoConsultor(usuarioId: number): Promise<ContratoConsultor> {
   const res = await authFetch(`${API}/consultor/${usuarioId}/suspender`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao suspender contrato"); }
   return res.json();
 }
 
@@ -594,12 +627,12 @@ export async function criarFazendaGerenciada(dados: {
   const res = await authFetch(`${API}/consultor/fazendas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar fazenda gerenciada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar fazenda gerenciada"); }
   return res.json();
 }
 export async function excluirFazendaGerenciada(fazendaGerenciadaId: number): Promise<void> {
   const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir fazenda gerenciada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir fazenda gerenciada"); }
 }
 export async function importarPlanilhaGerenciada(
   fazendaGerenciadaId: number, categoria: CategoriaImportacao, file: File,
@@ -608,7 +641,7 @@ export async function importarPlanilhaGerenciada(
   fd.append("file", file);
   fd.append("categoria", categoria);
   const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/importar`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 export async function fetchIndicadoresGerenciados(
@@ -621,7 +654,7 @@ export async function fetchIndicadoresGerenciados(
 }
 export async function excluirRegistroImportado(fazendaGerenciadaId: number, registroId: number): Promise<void> {
   const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/importacoes/${registroId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir registro importado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir registro importado"); }
 }
 
 export type SimulacaoIn = {
@@ -637,7 +670,7 @@ export async function calcularSimulacaoConsultor(dados: SimulacaoIn): Promise<Si
   const res = await authFetch(`${API}/consultor/simulacao/calcular`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular simulação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular simulação"); }
   return res.json();
 }
 
@@ -662,7 +695,7 @@ export async function enviarResetSenha(username: string): Promise<void> {
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Não foi possível enviar o e-mail de redefinição.");
+    throw new Error(mensagemErroApi(d.detail) || "Não foi possível enviar o e-mail de redefinição.");
   }
 }
 
@@ -673,7 +706,7 @@ export async function redefinirSenha(token: string, novaSenha: string): Promise<
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Não foi possível redefinir a senha.");
+    throw new Error(mensagemErroApi(d.detail) || "Não foi possível redefinir a senha.");
   }
 }
 
@@ -697,7 +730,7 @@ async function salvarPreferencias(dados: { paleta?: "vinho" | "verde" | "azul"; 
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar preferência"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar preferência"); }
   const usuario = await res.json();
   try {
     const atual = getUsuario();
@@ -775,7 +808,7 @@ export async function marcarEventoRealizado(eventoId: string, animais?: string[]
       ...(extras || {}),
     }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar como realizado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar como realizado"); }
   return res.json();
 }
 
@@ -791,7 +824,7 @@ export async function aplicarBstLote(dados: {
   const res = await authFetch(`${API}/agenda/bst/aplicar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de BST"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar aplicação de BST"); }
   return res.json();
 }
 
@@ -799,7 +832,7 @@ export async function marcarInaptaBst(dados: { numeros_matriz: string[]; inapta?
   const res = await authFetch(`${API}/agenda/bst/marcar-inapta`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar animal como inapto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar animal como inapto"); }
   return res.json();
 }
 
@@ -827,7 +860,7 @@ export async function lancarInducaoLactacao(dados: {
   const res = await authFetch(`${API}/producao/inducao-lactacao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar indução de lactação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar indução de lactação"); }
   return res.json();
 }
 export async function fetchInducaoLactacaoAtivos() {
@@ -869,14 +902,14 @@ export async function criarProtocoloInducaoLactacao(dados: ProtocoloInducaoLacta
   const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo de indução de lactação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar protocolo de indução de lactação"); }
   return res.json();
 }
 export async function atualizarProtocoloInducaoLactacao(id: number, dados: ProtocoloInducaoLactacaoPayload) {
   const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo de indução de lactação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo de indução de lactação"); }
   return res.json();
 }
 
@@ -892,7 +925,7 @@ export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; 
 
 export async function fetchFichaAnimal(numero: string) {
   const res = await authFetch(`${API}/animais/${encodeURIComponent(numero)}/ficha`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Ficha do animal error: ${res.status}`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Ficha do animal error: ${res.status}`); }
   return res.json();
 }
 
@@ -946,7 +979,7 @@ export async function atualizarServico(id: number, dados: ServicoEditPayload) {
   const res = await authFetch(`${API}/reproducao/servicos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar serviço"); }
   return res.json();
 }
 export async function atualizarParto(id: number, dados: {
@@ -958,7 +991,7 @@ export async function atualizarParto(id: number, dados: {
   const res = await authFetch(`${API}/reproducao/partos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar parto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar parto"); }
   return res.json();
 }
 
@@ -974,14 +1007,14 @@ export async function verificarMaeParto(maeNumero: string, animalNumero?: string
   const params = new URLSearchParams({ mae_numero: maeNumero });
   if (animalNumero) params.set("animal_numero", animalNumero);
   const res = await authFetch(`${API}/reproducao/verificar-mae?${params.toString()}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao verificar mãe"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao verificar mãe"); }
   return res.json();
 }
 export async function atualizarSecagem(id: number, dados: { data_secagem?: string; motivo?: string; escore_condicao_corporal?: number | null; observacao?: string }) {
   const res = await authFetch(`${API}/reproducao/secagens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar secagem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar secagem"); }
   return res.json();
 }
 
@@ -1030,7 +1063,7 @@ export async function gerarRelatorioPersonalizado(dados: { parametros: string[];
   const res = await authFetch(`${API}/indicadores/relatorio-personalizado`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar relatório personalizado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar relatório personalizado"); }
   return res.json() as Promise<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[]; resumo: ResumoRelatorioPersonalizado }>;
 }
 
@@ -1089,7 +1122,7 @@ export async function fetchSugestaoAcasalamento(numeroMatriz: string): Promise<S
   const res = await authFetch(`${API}/reproducao/acasalamento/sugestao?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || `Sugestão de acasalamento error: ${res.status}`);
+    throw new Error(mensagemErroApi(d.detail) || `Sugestão de acasalamento error: ${res.status}`);
   }
   return res.json() as Promise<SugestaoAcasalamento>;
 }
@@ -1101,7 +1134,7 @@ export async function criarServicoLote(dados: {
   const res = await authFetch(`${API}/reproducao/servico-lote`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar inseminação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar inseminação"); }
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
 }
 type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; valor_unitario?: number | null; local_armazenamento?: string | null; observacao?: string | null; ativo?: boolean };
@@ -1109,19 +1142,19 @@ export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar sêmen"); }
   return res.json();
 }
 export async function atualizarEstoqueSemen(id: number, dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar sêmen"); }
   return res.json();
 }
 export async function excluirEstoqueSemen(id: number) {
   const res = await authFetch(`${API}/cadastro/estoque-semen/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir sêmen"); }
   return res.json();
 }
 
@@ -1131,7 +1164,7 @@ export async function salvarDiagnostico(dados: {
   const res = await authFetch(`${API}/reproducao/diagnostico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar diagnóstico"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar diagnóstico"); }
   return res.json();
 }
 
@@ -1179,7 +1212,7 @@ export async function registrarReconfirmacao(dados: {
   const res = await authFetch(`${API}/reproducao/reconfirmacao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar reconfirmação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar reconfirmação"); }
   return res.json();
 }
 
@@ -1193,7 +1226,7 @@ export async function enviarDiagnosticoEmail(numeroMatriz: string, destinatario:
   const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/diagnostico/enviar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destinatario }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar diagnóstico por e-mail"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao enviar diagnóstico por e-mail"); }
   return res.json();
 }
 
@@ -1215,7 +1248,7 @@ export async function registrarPerdaPrenhez(dados: {
   const res = await authFetch(`${API}/reproducao/perda-prenhez`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar perda de prenhez"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar perda de prenhez"); }
   return res.json();
 }
 
@@ -1225,7 +1258,7 @@ export async function abrirLactacao(numeroMatriz: string) {
   const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/abrir-lactacao`, {
     method: "POST",
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao abrir lactação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir lactação"); }
   return res.json();
 }
 
@@ -1238,14 +1271,14 @@ export async function criarFornecedor(dados: { nome: string; tipo: string; categ
   const res = await authFetch(`${API}/cadastro/fornecedores`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fornecedor"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar fornecedor"); }
   return res.json();
 }
 export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/fornecedores/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fornecedor"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar fornecedor"); }
   return res.json();
 }
 
@@ -1265,14 +1298,14 @@ export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pessoa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar pessoa"); }
   return res.json();
 }
 export async function atualizarPessoa(id: number, dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pessoa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar pessoa"); }
   return res.json();
 }
 export async function fetchInseminadores(): Promise<string[]> {
@@ -1291,7 +1324,7 @@ export async function criarTipoPessoa(nome: string) {
   const res = await authFetch(`${API}/cadastro/pessoas/tipos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de pessoa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar tipo de pessoa"); }
   return res.json();
 }
 
@@ -1326,19 +1359,19 @@ export async function criarFolhaPagamento(dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar folha de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar folha de pagamento"); }
   return res.json();
 }
 export async function atualizarFolhaPagamento(id: number, dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar folha de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar folha de pagamento"); }
   return res.json();
 }
 export async function excluirFolhaPagamento(id: number) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir lançamento de folha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lançamento de folha"); }
   return res.json();
 }
 
@@ -1377,7 +1410,7 @@ export async function lancarGuiaFolhaEncargo(dados: GuiaFolhaEncargoDados): Prom
   const res = await authFetch(`${API}/cadastro/folha-pagamento/guias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar guia de FGTS/DCTF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar guia de FGTS/DCTF"); }
   return res.json();
 }
 export async function fetchGuiasFolhaEncargo(): Promise<GuiaFolhaEncargo[]> {
@@ -1408,36 +1441,36 @@ export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificad
 }
 export async function excluirParcelaEmpreitada(id: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de empreitada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir parcela de empreitada"); }
   return res.json();
 }
 export async function excluirParcelaContrato(id: number) {
   const res = await authFetch(`${API}/cadastro/contratos/parcelas/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir parcela de contrato"); }
   return res.json();
 }
 export async function atualizarParcelaEmpreitada(id: number, dados: { data_vencimento: string; valor: number }) {
   const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar parcela de empreitada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar parcela de empreitada"); }
   return res.json();
 }
 export async function atualizarParcelaContrato(id: number, dados: { data_vencimento: string; valor: number }) {
   const res = await authFetch(`${API}/cadastro/contratos/parcelas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar parcela de contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar parcela de contrato"); }
   return res.json();
 }
 export async function redistribuirParcelasEmpreitada(empreitadaId: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/${empreitadaId}/parcelas/redistribuir`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao redistribuir parcelas"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao redistribuir parcelas"); }
   return res.json();
 }
 export async function redistribuirParcelasContrato(contratoId: number) {
   const res = await authFetch(`${API}/cadastro/contratos/${contratoId}/parcelas/redistribuir`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao redistribuir parcelas"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao redistribuir parcelas"); }
   return res.json();
 }
 
@@ -1485,7 +1518,7 @@ export async function atualizarVale(valeId: number, dados: {
 }
 export async function excluirVale(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
   return res.json();
 }
 /** Edita UMA parcela do vale (sem recriar as demais) — se o valor divergir do
@@ -1524,12 +1557,12 @@ export async function criarEmpreitada(dados: {
   const res = await authFetch(`${API}/cadastro/empreitadas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar empreitada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar empreitada"); }
   return res.json();
 }
 export async function concluirEtapaEmpreitada(empreitadaId: number, etapaId: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/${empreitadaId}/etapas/${etapaId}/concluir`, { method: "PUT" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao concluir etapa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao concluir etapa"); }
   return res.json();
 }
 
@@ -1546,12 +1579,12 @@ export async function criarContrato(dados: {
   const res = await authFetch(`${API}/cadastro/contratos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar contrato"); }
   return res.json();
 }
 export async function encerrarContrato(id: number) {
   const res = await authFetch(`${API}/cadastro/contratos/${id}/encerrar`, { method: "PUT" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar contrato"); }
   return res.json();
 }
 
@@ -1569,21 +1602,21 @@ export async function criarDiaria(dados: {
   const res = await authFetch(`${API}/cadastro/diarias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar diária"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar diária"); }
   return res.json();
 }
 export async function atualizarDiaria(diariaId: number, dados: { data_inicio: string; data_fim?: string | null; ajuste_numero_diarias?: number | null }) {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar diária"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar diária"); }
   return res.json();
 }
 export async function registrarPagamentoDiaria(diariaId: number, dados: { data_pagamento: string; valor: number; observacao?: string }) {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar pagamento"); }
   return res.json();
 }
 
@@ -1600,14 +1633,14 @@ export async function salvarParametroDiariaPadrao(dados: ParametroDiariaPadrao) 
   const res = await authFetch(`${API}/cadastro/diarias/parametro-padrao`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro padrão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetro padrão"); }
   return res.json();
 }
 export async function responderAuditoriaDiaria(auditoriaId: number, diasTrabalhados: number) {
   const res = await authFetch(`${API}/cadastro/diarias/auditorias/${auditoriaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dias_trabalhados: diasTrabalhados }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao responder auditoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao responder auditoria"); }
   return res.json();
 }
 
@@ -1634,19 +1667,19 @@ export async function criarFerias(dados: FeriasDados) {
   const res = await authFetch(`${API}/cadastro/ferias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar férias"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar férias"); }
   return res.json();
 }
 export async function atualizarFerias(id: number, dados: FeriasDados) {
   const res = await authFetch(`${API}/cadastro/ferias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar férias"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar férias"); }
   return res.json();
 }
 export async function excluirFerias(id: number) {
   const res = await authFetch(`${API}/cadastro/ferias/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir férias"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir férias"); }
   return res.json();
 }
 
@@ -1669,19 +1702,19 @@ export async function criarDecimoTerceiro(dados: DecimoTerceiroDados) {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar 13º salário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar 13º salário"); }
   return res.json();
 }
 export async function atualizarDecimoTerceiro(id: number, dados: DecimoTerceiroDados) {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar 13º salário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar 13º salário"); }
   return res.json();
 }
 export async function excluirDecimoTerceiro(id: number) {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir 13º salário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir 13º salário"); }
   return res.json();
 }
 
@@ -1720,14 +1753,14 @@ export async function simularRescisao(dados: RescisaoDados): Promise<CalculoResc
   const res = await authFetch(`${API}/cadastro/rescisao/calcular`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular rescisão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular rescisão"); }
   return res.json();
 }
 export async function criarRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
   const res = await authFetch(`${API}/cadastro/rescisao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar rescisão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar rescisão"); }
   return res.json();
 }
 export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
@@ -1746,7 +1779,7 @@ export async function criarValeAvulso(dados: {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar vale"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar vale"); }
   return res.json();
 }
 export async function fetchValesAvulsos() {
@@ -1780,7 +1813,7 @@ export async function atualizarValeAvulso(valeId: number, dados: {
 }
 export async function excluirValeAvulso(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
   return res.json();
 }
 
@@ -1788,14 +1821,14 @@ export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar animal"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar animal"); }
   return res.json();
 }
 export async function atualizarAnimalFicha(numero: string, dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais/${numero}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar ficha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar ficha"); }
   return res.json();
 }
 
@@ -1808,21 +1841,21 @@ export async function criarItemEstoque(dados: Record<string, unknown>) {
   const res = await authFetch(`${API}/estoque/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar item de estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar item de estoque"); }
   return res.json();
 }
 export async function atualizarItemEstoque(id: number, dados: Record<string, unknown>) {
   const res = await authFetch(`${API}/estoque/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item de estoque"); }
   return res.json();
 }
 export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; conta_gerencial_despesa_padrao?: string | null; estocavel?: boolean | null }) {
   const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item"); }
   return res.json();
 }
 
@@ -1838,7 +1871,7 @@ export async function atualizarParametro(chave: string, valor: number | string |
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ valor }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetro"); }
   return res.json();
 }
 
@@ -1895,14 +1928,14 @@ export async function atualizarParametrosManualFazenda(dados: {
   const res = await authFetch(`${API}/manual-fazenda/parametros`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetros do Manual da Fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetros do Manual da Fazenda"); }
   return res.json() as Promise<ParametroManualFazenda>;
 }
 export async function anexarContratoManejo(arquivo: File) {
   const form = new FormData();
   form.append("arquivo", arquivo);
   const res = await authFetch(`${API}/manual-fazenda/contrato-anexo`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar contrato"); }
   return res.json() as Promise<ParametroManualFazenda>;
 }
 export async function fetchSugestoesManualFazenda() {
@@ -1914,19 +1947,19 @@ export async function criarSugestaoManualFazenda(dados: { texto: string; categor
   const res = await authFetch(`${API}/manual-fazenda/sugestoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar sugestão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar sugestão"); }
   return res.json() as Promise<SugestaoManualFazenda>;
 }
 export async function atualizarSugestaoManualFazenda(id: number, dados: { texto: string; categoria: string; ativo: boolean; ordem: number }) {
   const res = await authFetch(`${API}/manual-fazenda/sugestoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar sugestão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar sugestão"); }
   return res.json() as Promise<SugestaoManualFazenda>;
 }
 export async function excluirSugestaoManualFazenda(id: number) {
   const res = await authFetch(`${API}/manual-fazenda/sugestoes/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir sugestão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir sugestão"); }
   return res.json();
 }
 
@@ -1946,14 +1979,14 @@ export async function criarLote(dados: Record<string, any>) {
   const res = await authFetch(`${API}/lotes/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lote"); }
   return res.json();
 }
 export async function atualizarLote(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/lotes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar lote"); }
   return res.json();
 }
 export async function previewCriteriosLote(dados: Record<string, any>) {
@@ -1976,14 +2009,14 @@ export async function criarSafra(dados: Record<string, any>) {
   const res = await authFetch(`${API}/safras/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar safra"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar safra"); }
   return res.json();
 }
 export async function atualizarSafra(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/safras/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar safra"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar safra"); }
   return res.json();
 }
 
@@ -2024,7 +2057,7 @@ export async function criarMovimentacao(dados: {
   const res = await authFetch(`${API}/movimentacoes/mover`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao mover animais"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao mover animais"); }
   return res.json();
 }
 
@@ -2039,7 +2072,7 @@ export async function salvarParametroAgendamentoMovimentacao(dados: ParametroAge
   const res = await authFetch(`${API}/movimentacoes/parametro-agendamento`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetro"); }
   return res.json();
 }
 
@@ -2058,14 +2091,14 @@ export async function criarMotivoMovimentacao(dados: { nome: string; ativo?: boo
   const res = await authFetch(`${API}/movimentacoes/motivos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar motivo"); }
   return res.json();
 }
 export async function atualizarMotivoMovimentacao(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/movimentacoes/motivos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar motivo"); }
   return res.json();
 }
 
@@ -2079,14 +2112,14 @@ export async function criarMotivoBaixa(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/cadastro/motivos-baixa`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo de baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar motivo de baixa"); }
   return res.json();
 }
 export async function atualizarMotivoBaixa(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/motivos-baixa/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo de baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar motivo de baixa"); }
   return res.json();
 }
 
@@ -2100,14 +2133,14 @@ export async function criarRaca(dados: { nome: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar raça"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar raça"); }
   return res.json();
 }
 export async function atualizarRaca(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar raça"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar raça"); }
   return res.json();
 }
 
@@ -2128,14 +2161,14 @@ function criarApiCadastroSimples(rota: string, rotulo: string) {
       const res = await authFetch(`${API}/cadastro/${rota}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
     atualizar: async (id: number, dados: { nome: string; ativo: boolean }): Promise<ItemCadastroSimples> => {
       const res = await authFetch(`${API}/cadastro/${rota}/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
   };
@@ -2185,14 +2218,14 @@ export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: n
   const res = await authFetch(`${API}/cadastro/graus-sangue`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar grau de sangue"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar grau de sangue"); }
   return res.json();
 }
 export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/graus-sangue/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar grau de sangue"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar grau de sangue"); }
   return res.json();
 }
 
@@ -2206,14 +2239,14 @@ export async function criarMotivoVenda(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/cadastro/motivos-venda`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo de venda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar motivo de venda"); }
   return res.json();
 }
 export async function atualizarMotivoVenda(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/motivos-venda/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo de venda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar motivo de venda"); }
   return res.json();
 }
 
@@ -2227,14 +2260,14 @@ export async function criarServicoCadastro(dados: { nome: string; ativo?: boolea
   const res = await authFetch(`${API}/cadastro/servicos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar serviço"); }
   return res.json();
 }
 export async function atualizarServicoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/servicos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar serviço"); }
   return res.json();
 }
 
@@ -2248,14 +2281,14 @@ export async function criarTipoServico(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/cadastro/tipos-servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar tipo de serviço"); }
   return res.json();
 }
 export async function atualizarTipoServico(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/tipos-servico/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar tipo de serviço"); }
   return res.json();
 }
 export type MetodoServico = { id: number; nome: string; tipo_servico_id: number; tipo_servico_nome?: string | null; codigo_interno: string | null; ativo: boolean };
@@ -2268,14 +2301,14 @@ export async function criarMetodoServico(dados: { nome: string; tipo_servico_id:
   const res = await authFetch(`${API}/cadastro/metodos-servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar método"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar método"); }
   return res.json();
 }
 export async function atualizarMetodoServico(id: number, dados: { nome: string; tipo_servico_id: number; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/metodos-servico/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar método"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar método"); }
   return res.json();
 }
 
@@ -2298,7 +2331,7 @@ export async function criarBaixaAnimal(dados: {
   const res = await authFetch(`${API}/baixas/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar baixa"); }
   return res.json();
 }
 
@@ -2306,7 +2339,7 @@ export async function marcarADescartar(dados: { animais: string[]; descartar?: b
   const res = await authFetch(`${API}/baixas/a-descartar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar A descartar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar A descartar"); }
   return res.json();
 }
 
@@ -2338,7 +2371,7 @@ export async function criarCompraAnimal(dados: CompraVendaCamposComuns & {
   const res = await authFetch(`${API}/compras-animais/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar compra"); }
   return res.json();
 }
 
@@ -2354,7 +2387,7 @@ export async function criarVendaAnimal(dados: CompraVendaCamposComuns & {
   const res = await authFetch(`${API}/vendas-animais/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar venda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar venda"); }
   return res.json();
 }
 
@@ -2438,7 +2471,7 @@ export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
   const res = await authFetch(`${API}/compras-semen/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra de sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar compra de sêmen"); }
   return res.json();
 }
 
@@ -2457,7 +2490,7 @@ export async function registrarColostragem(dados: {
   const res = await authFetch(`${API}/sanidade/colostragem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar colostragem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar colostragem"); }
   return res.json();
 }
 
@@ -2486,7 +2519,7 @@ export async function criarAplicacaoSanidade(dados: {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de sanidade"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar aplicação de sanidade"); }
   return res.json();
 }
 
@@ -2497,13 +2530,13 @@ export async function editarAplicacaoSanidade(id: number, dados: {
   const res = await authFetch(`${API}/sanidade/aplicacoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar aplicação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar aplicação"); }
   return res.json();
 }
 
 export async function excluirAplicacaoSanidade(id: number) {
   const res = await authFetch(`${API}/sanidade/aplicacoes/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir aplicação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir aplicação"); }
   return res.json();
 }
 
@@ -2511,7 +2544,7 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
   const res = await authFetch(`${API}/sanidade/aplicacoes/${id}/cura`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ curada }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar cura"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
   return res.json();
 }
 
@@ -2519,7 +2552,7 @@ export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean)
   const res = await authFetch(`${API}/sanidade/mastite/cura`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lancamento_id: lancamentoId, curada }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar cura"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
   return res.json();
 }
 
@@ -2545,14 +2578,14 @@ function _crudNomeAtivo(caminho: string, rotulo: string) {
       const res = await authFetch(`${API}/cadastro/${caminho}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
     atualizar: async (id: number, dados: { nome: string; ativo: boolean }) => {
       const res = await authFetch(`${API}/cadastro/${caminho}/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
   };
@@ -2563,7 +2596,7 @@ export const criarPrincipioAtivo = _principiosAtivos.criar;
 export const atualizarPrincipioAtivo = _principiosAtivos.atualizar;
 export async function restaurarCatalogoPrincipios(): Promise<{ criados: number; total: number }> {
   const res = await authFetch(`${API}/cadastro/principios-ativos/restaurar-catalogo`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao restaurar catálogo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao restaurar catálogo"); }
   return res.json();
 }
 
@@ -2601,14 +2634,14 @@ export async function criarEventoSanitario(dados: EventoSanitarioPayload) {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar evento sanitário"); }
   return res.json();
 }
 export async function atualizarEventoSanitario(id: number, dados: EventoSanitarioPayload) {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar evento sanitário"); }
   return res.json();
 }
 
@@ -2633,19 +2666,19 @@ export async function criarExame(dados: ExameDefinicaoPayload) {
   const res = await authFetch(`${API}/cadastro/exames`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar exame"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar exame"); }
   return res.json();
 }
 export async function atualizarExame(id: number, dados: ExameDefinicaoPayload) {
   const res = await authFetch(`${API}/cadastro/exames/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar exame"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar exame"); }
   return res.json();
 }
 export async function excluirExame(id: number) {
   const res = await authFetch(`${API}/cadastro/exames/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir exame"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir exame"); }
   return res.json();
 }
 
@@ -2722,19 +2755,19 @@ export async function criarAgendamentoPesagem(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/agendamentos-pesagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar agendamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar agendamento"); }
   return res.json();
 }
 export async function atualizarAgendamentoPesagem(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/agendamentos-pesagem/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar agendamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar agendamento"); }
   return res.json();
 }
 export async function excluirAgendamentoPesagem(id: number) {
   const res = await authFetch(`${API}/cadastro/agendamentos-pesagem/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir"); }
   return res.json();
 }
 
@@ -2751,26 +2784,26 @@ export async function importarProtocoloSanitarioExcel(file: File) {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; finalidade?: string | null; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar protocolo sanitário"); }
   return res.json();
 }
 export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; finalidade?: string | null; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo sanitário"); }
   return res.json();
 }
 export async function excluirProtocoloSanitario(id: number): Promise<void> {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo sanitário"); }
 }
 export async function fetchLancamentosProtocolo() {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, { cache: "no-store" });
@@ -2785,7 +2818,7 @@ export async function lancarProtocoloSanitario(dados: {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar protocolo sanitário"); }
   return res.json();
 }
 
@@ -2824,19 +2857,19 @@ export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload
   const res = await authFetch(`${API}/sanidade/calendario`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar regra do calendário sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar regra do calendário sanitário"); }
   return res.json();
 }
 export async function atualizarCalendarioSanitario(id: number, dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar regra do calendário sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar regra do calendário sanitário"); }
   return res.json();
 }
 export async function excluirCalendarioSanitario(id: number) {
   const res = await authFetch(`${API}/sanidade/calendario/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir regra do calendário sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir regra do calendário sanitário"); }
   return res.json();
 }
 
@@ -2859,7 +2892,7 @@ export async function criarCronogramaSanitario(calendarioSanitarioId: number) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ calendario_sanitario_id: calendarioSanitarioId }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cronograma"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cronograma"); }
   return res.json();
 }
 
@@ -2903,7 +2936,7 @@ export async function fetchRelatorioEventosVida(filtros: {
   if (filtros.dataInicio) params.set("data_inicio", filtros.dataInicio);
   if (filtros.dataFim) params.set("data_fim", filtros.dataFim);
   const res = await authFetch(`${API}/sanidade/calendario/relatorio-eventos-vida?${params.toString()}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Relatório de eventos de vida error: ${res.status}`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Relatório de eventos de vida error: ${res.status}`); }
   return res.json();
 }
 
@@ -2931,7 +2964,7 @@ export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar preventivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar preventivo"); }
   return res.json();
 }
 
@@ -2948,7 +2981,7 @@ export async function movimentarEstoque(dados: {
   const res = await authFetch(`${API}/estoque/movimentar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar movimento de estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar movimento de estoque"); }
   return res.json();
 }
 
@@ -2992,19 +3025,19 @@ export async function criarCategoriaAlimento(dados: { nome: string; ativo?: bool
   const res = await authFetch(`${API}/alimentacao/categorias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar categoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
   return res.json();
 }
 export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar categoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar categoria"); }
   return res.json();
 }
 export async function excluirCategoriaAlimento(id: number) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir categoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir categoria"); }
   return res.json();
 }
 
@@ -3024,19 +3057,19 @@ export async function criarAlimento(dados: AlimentoIn): Promise<Alimento> {
   const res = await authFetch(`${API}/alimentacao/alimentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar alimento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar alimento"); }
   return res.json();
 }
 export async function atualizarAlimento(id: number, dados: AlimentoIn): Promise<Alimento> {
   const res = await authFetch(`${API}/alimentacao/alimentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar alimento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar alimento"); }
   return res.json();
 }
 export async function excluirAlimento(id: number) {
   const res = await authFetch(`${API}/alimentacao/alimentos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir alimento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir alimento"); }
   return res.json();
 }
 
@@ -3055,26 +3088,26 @@ export async function criarProdutoTabelaNutricional(nome: string) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar produto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar produto"); }
   return res.json();
 }
 export async function renomearProdutoTabelaNutricional(id: number, nome: string) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao renomear produto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao renomear produto"); }
   return res.json();
 }
 export async function excluirProdutoTabelaNutricional(id: number) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir produto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir produto"); }
   return res.json();
 }
 export async function salvarValoresTabelaNutricional(itens: { produto_id: number; nutriente: string; valor: string }[]) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/valores`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar tabela nutricional"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar tabela nutricional"); }
   return res.json();
 }
 export function baixarModeloTabelaNutricional() {
@@ -3084,7 +3117,7 @@ export async function importarTabelaNutricional(file: File) {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 
@@ -3106,7 +3139,7 @@ export async function salvarMateriaSeca(dados: { nome: string; ms_pct: number | 
   const res = await authFetch(`${API}/alimentacao/materia-seca`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar matéria seca"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar matéria seca"); }
   return res.json();
 }
 
@@ -3130,7 +3163,7 @@ export async function criarAnaliseBromatologica(dados: {
   const res = await authFetch(`${API}/alimentacao/analise-bromatologica`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar análise bromatológica"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar análise bromatológica"); }
   return res.json();
 }
 export async function criarDieta(dados: {
@@ -3141,7 +3174,7 @@ export async function criarDieta(dados: {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar dieta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar dieta"); }
   return res.json();
 }
 export type ContextoDieta = {
@@ -3169,7 +3202,7 @@ export async function encerrarDieta(id: number, dataEfetivoEncerramento: string)
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/encerrar`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data_efetivo_encerramento: dataEfetivoEncerramento }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar dieta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar dieta"); }
   return res.json();
 }
 
@@ -3177,7 +3210,7 @@ export async function registrarRealDieta(id: number, dados: { data: string; iten
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/real`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar o real oferecido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar o real oferecido"); }
   return res.json();
 }
 
@@ -3215,26 +3248,26 @@ export async function atualizarPrincipioFarmacia(id: number, dados: Record<strin
   const res = await authFetch(`${API}/farmacia/principios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar princípio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar princípio"); }
   return res.json();
 }
 export async function criarPrincipioFarmacia(dados: Record<string, any>) {
   const res = await authFetch(`${API}/farmacia/principios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar princípio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar princípio"); }
   return res.json();
 }
 export async function criarMarcaFarmacia(dados: { principio_ativo_id: number; nome_comercial: string; laboratorio?: string }) {
   const res = await authFetch(`${API}/farmacia/medicamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar marca"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar marca"); }
   return res.json();
 }
 export async function excluirMarcaFarmacia(id: number) {
   const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir marca"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir marca"); }
   return res.json();
 }
 export async function fetchApresentacoesFarmacia(params: { principio_ativo_id?: number; produto?: string }) {
@@ -3249,7 +3282,7 @@ export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { qua
   const res = await authFetch(`${API}/farmacia/estoque/${estoqueId}/inicializar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao inicializar estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao inicializar estoque"); }
   return res.json();
 }
 
@@ -3269,12 +3302,12 @@ export async function criarIndicacao(dados: { principio_ativo_id: number; doenca
   const res = await authFetch(`${API}/farmacia/indicacoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao indicar princípio para a doença"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao indicar princípio para a doença"); }
   return res.json() as Promise<IndicacaoTerapeutica>;
 }
 export async function excluirIndicacao(id: number) {
   const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir indicação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir indicação"); }
   return res.json();
 }
 export async function fetchIndicacoesDoenca(doencaId: number) {
@@ -3302,7 +3335,7 @@ export async function criarControlesLeiteiros(dados: {
   const res = await authFetch(`${API}/producao/controles`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar controle leiteiro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar controle leiteiro"); }
   return res.json();
 }
 
@@ -3310,7 +3343,7 @@ export async function criarControlesLeiteiros(dados: {
 // dá pra usar um <a href> direto) — dispara o download no navegador via blob.
 async function baixarArquivoAutenticado(path: string, nomeArquivoFallback: string) {
   const res = await authFetch(`${API}${path}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao baixar arquivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar arquivo"); }
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") || "";
   const nome = /filename="?([^"]+)"?/.exec(cd)?.[1] || nomeArquivoFallback;
@@ -3332,7 +3365,7 @@ export async function importarControleLeiteiroPlanilha(file: File): Promise<{ cr
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/producao/controle-leiteiro/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 
@@ -3344,7 +3377,7 @@ export async function criarPesagensCorporais(dados: {
   const res = await authFetch(`${API}/producao/pesagens`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar pesagem corporal"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar pesagem corporal"); }
   return res.json();
 }
 
@@ -3356,7 +3389,7 @@ export async function importarPesagemCorporalPlanilha(file: File): Promise<{ cri
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/producao/pesagens/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 // ── Qualidade do leite ──
@@ -3373,7 +3406,7 @@ export async function criarQualidadeLeite(dados: {
   const res = await authFetch(`${API}/producao/qualidade-leite`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar qualidade do leite"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar qualidade do leite"); }
   return res.json();
 }
 
@@ -3385,7 +3418,7 @@ export async function importarQualidadeLeitePlanilha(file: File): Promise<{ cria
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/producao/qualidade-leite/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 
@@ -3399,7 +3432,7 @@ export async function criarEntregaLeiteMensal(dados: { competencia: string; quan
   const res = await authFetch(`${API}/producao/entrega-leite`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar entrega mensal do leite"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar entrega mensal do leite"); }
   return res.json();
 }
 
@@ -3428,7 +3461,7 @@ export async function ajustarProximaAplicacaoBst(novaData: string, modo: "interv
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Não foi possível ajustar a próxima aplicação de BST.");
+    throw new Error(mensagemErroApi(d.detail) || "Não foi possível ajustar a próxima aplicação de BST.");
   }
   return res.json();
 }
@@ -3436,7 +3469,7 @@ export async function ajustarProximaAplicacaoBst(novaData: string, modo: "interv
 // ── Secagem ──
 export async function fetchSecagemInfo(numeroMatriz: string) {
   const res = await authFetch(`${API}/producao/secagem-info?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao buscar dados de secagem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar dados de secagem"); }
   return res.json();
 }
 export async function criarSecagem(dados: {
@@ -3449,7 +3482,7 @@ export async function criarSecagem(dados: {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar secagem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar secagem"); }
   return res.json();
 }
 export type LoteSugeridoEvento = { codigo: string; nome: string; rotulo: string };
@@ -3457,7 +3490,7 @@ export async function sugestaoLoteEvento(dados: { numero_matriz: string; categor
   const res = await authFetch(`${API}/producao/sugestao-lote-evento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao buscar sugestão de lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar sugestão de lote"); }
   return res.json();
 }
 
@@ -3470,7 +3503,7 @@ export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: st
   const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao agendar protocolo IATF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao agendar protocolo IATF"); }
   return res.json();
 }
 
@@ -3491,19 +3524,19 @@ export async function criarProtocoloIatfCadastrado(dados: { nome: string; observ
   const res = await authFetch(`${API}/cadastro/protocolos-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar protocolo IATF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar protocolo IATF"); }
   return res.json();
 }
 export async function atualizarProtocoloIatfCadastrado(id: number, dados: { nome: string; observacao?: string | null; ativo?: boolean; etapas: EtapaProtocoloIatf[] }): Promise<ProtocoloIatfMolde> {
   const res = await authFetch(`${API}/cadastro/protocolos-iatf/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo IATF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo IATF"); }
   return res.json();
 }
 export async function excluirProtocoloIatfCadastrado(id: number): Promise<void> {
   const res = await authFetch(`${API}/cadastro/protocolos-iatf/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo IATF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo IATF"); }
 }
 
 // ── Central de Protocolos — Acompanhamento e Histórico (IATF + Indução +
@@ -3553,7 +3586,7 @@ export type DetalheCentralProtocolo = {
 
 export async function fetchDetalheProtocolo(origem: string, origemId: number): Promise<DetalheCentralProtocolo> {
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao carregar o protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao carregar o protocolo"); }
   return res.json();
 }
 
@@ -3563,7 +3596,7 @@ export async function darBaixaProtocolo(origem: string, origemId: number, dados:
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/baixa`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
 
@@ -3571,7 +3604,7 @@ export async function encerrarProtocolo(origem: string, origemId: number, motivo
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo: motivo || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar o protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar o protocolo"); }
   return res.json();
 }
 
@@ -3582,13 +3615,13 @@ export async function cancelarProtocolo(origem: string, origemId: number, motivo
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/cancelar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo: motivo || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cancelar o protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar o protocolo"); }
   return res.json();
 }
 
 export async function reabrirProtocolo(origem: string, origemId: number) {
   const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao reabrir o protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reabrir o protocolo"); }
   return res.json();
 }
 export async function fetchProtocolosIatfAtivos() {
@@ -3614,7 +3647,7 @@ export async function adicionarAnimaisIatf(lancamentoId: number, animais: string
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ animais }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar animais ao protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao adicionar animais ao protocolo"); }
   return res.json();
 }
 // Corrige uma inclusão por engano num lançamento ativo — só permite remover
@@ -3623,7 +3656,7 @@ export async function removerAnimalIatf(lancamentoId: number, numeroMatriz: stri
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais/${encodeURIComponent(numeroMatriz)}`, {
     method: "DELETE",
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover animal do protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover animal do protocolo"); }
 }
 export async function criarServico(dados: {
   numero_matriz: string; data_servico: string; tipo_servico?: string;
@@ -3633,7 +3666,7 @@ export async function criarServico(dados: {
   const res = await authFetch(`${API}/reproducao/servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar serviço/inseminação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar serviço/inseminação"); }
   return res.json();
 }
 
@@ -3646,7 +3679,7 @@ export async function criarParto(dados: {
   const res = await authFetch(`${API}/reproducao/parto`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar parto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar parto"); }
   return res.json();
 }
 
@@ -3693,7 +3726,7 @@ export async function criarPatrimonio(dados: PatrimonioPayload) {
   const res = await authFetch(`${API}/financeiro/patrimonio`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar patrimônio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar patrimônio"); }
   return res.json();
 }
 
@@ -3701,7 +3734,7 @@ export async function atualizarPatrimonio(itemId: number, dados: PatrimonioPaylo
   const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar patrimônio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar patrimônio"); }
   return res.json();
 }
 
@@ -3710,7 +3743,7 @@ export async function atualizarValorMercadoPatrimonio(itemId: number, valorMerca
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ valor_mercado_atual: valorMercadoAtual, data: data || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar valor de mercado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar valor de mercado"); }
   return res.json();
 }
 
@@ -3718,7 +3751,7 @@ export async function vincularLancamentoPatrimonio(numeroLancamento: string, pat
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patrimonio_id: patrimonioId }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular patrimônio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular patrimônio"); }
   return res.json();
 }
 
@@ -3729,7 +3762,7 @@ export async function atualizarPlanoManutencaoPatrimonio(itemId: number, dados: 
   const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao-plano`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar o plano de manutenção"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o plano de manutenção"); }
   return res.json();
 }
 
@@ -3777,7 +3810,7 @@ export async function criarCartaoCredito(dados: CartaoCreditoPayload): Promise<C
   const res = await authFetch(`${API}/financeiro/cartoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar cartão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar cartão"); }
   return res.json();
 }
 
@@ -3785,7 +3818,7 @@ export async function atualizarCartaoCredito(cartaoId: number, dados: CartaoCred
   const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar cartão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar cartão"); }
   return res.json();
 }
 
@@ -3806,13 +3839,13 @@ export async function criarLancamentoCartao(cartaoId: number, dados: LancamentoC
   const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar compra no cartão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar compra no cartão"); }
   return res.json();
 }
 
 export async function fecharFaturaCartao(faturaId: number): Promise<FaturaCartao> {
   const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/fechar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao fechar fatura"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao fechar fatura"); }
   return res.json();
 }
 
@@ -3822,7 +3855,7 @@ export async function pagarFaturaCartao(faturaId: number, dados: {
   const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/pagar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao pagar fatura"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao pagar fatura"); }
   return res.json();
 }
 
@@ -3840,7 +3873,7 @@ export async function registrarManutencaoPatrimonio(itemId: number, dados: {
   const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar a manutenção"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar a manutenção"); }
   return res.json();
 }
 
@@ -3873,14 +3906,14 @@ export async function criarContaGerencial(dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta gerencial"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar conta gerencial"); }
   return res.json();
 }
 export async function atualizarContaGerencial(id: number, dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta gerencial"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar conta gerencial"); }
   return res.json();
 }
 
@@ -3900,7 +3933,7 @@ export async function vincularEventoSanitarioReprodutivo(dados: { tipo: string; 
   const res = await authFetch(`${API}/financeiro/vincular-evento-sanitario-reprodutivo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular evento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular evento"); }
   return res.json();
 }
 export async function fetchLancamentosPorData(data: string, tipo: "despesa" | "receita" = "despesa") {
@@ -3939,7 +3972,7 @@ export async function fetchCustoVacaLote(dataInicio: string, dataFim: string, ce
 
 export async function fetchCustoSafra(safraId: number) {
   const res = await authFetch(`${API}/financeiro/custo-safra?safra_id=${safraId}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Custo por safra error: ${res.status}`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Custo por safra error: ${res.status}`); }
   return res.json();
 }
 
@@ -3960,14 +3993,14 @@ export async function criarContaCorrente(dados: { banco: string; agencia: string
   const res = await authFetch(`${API}/financeiro/contas-correntes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta corrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar conta corrente"); }
   return res.json();
 }
 export async function atualizarContaCorrente(id: number, dados: { banco: string; agencia: string; numero_conta: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/contas-correntes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta corrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar conta corrente"); }
   return res.json();
 }
 
@@ -3981,14 +4014,14 @@ export async function criarCentroCusto(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/financeiro/centros-custo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar centro de custo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar centro de custo"); }
   return res.json();
 }
 export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/centros-custo/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar centro de custo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar centro de custo"); }
   return res.json();
 }
 
@@ -4002,14 +4035,14 @@ export async function criarTipoDocumento(dados: { nome: string; ativo?: boolean 
   const res = await authFetch(`${API}/financeiro/tipos-documento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar tipo de documento"); }
   return res.json();
 }
 export async function atualizarTipoDocumento(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/tipos-documento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar tipo de documento"); }
   return res.json();
 }
 
@@ -4023,14 +4056,14 @@ export async function criarFormaPagamentoCadastro(dados: { nome: string; ativo?:
   const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar forma de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar forma de pagamento"); }
   return res.json();
 }
 export async function atualizarFormaPagamentoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar forma de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar forma de pagamento"); }
   return res.json();
 }
 
@@ -4038,7 +4071,7 @@ export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lançamento"); }
   return res.json();
 }
 
@@ -4085,14 +4118,14 @@ export async function criarLancamentoRecorrente(dados: LancamentoRecorrentePaylo
   const res = await authFetch(`${API}/financeiro/recorrentes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento recorrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lançamento recorrente"); }
   return res.json();
 }
 export async function atualizarLancamentoRecorrente(id: number, dados: LancamentoRecorrentePayload) {
   const res = await authFetch(`${API}/financeiro/recorrentes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lançamento recorrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar lançamento recorrente"); }
   return res.json();
 }
 export type GerarLancamentoRecorrentePayload = {
@@ -4113,7 +4146,7 @@ export async function gerarLancamentoRecorrente(modeloId: number, dados: GerarLa
   const res = await authFetch(`${API}/financeiro/recorrentes/${modeloId}/gerar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar o lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar o lançamento"); }
   return res.json();
 }
 
@@ -4128,7 +4161,7 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
 
@@ -4139,7 +4172,7 @@ export async function criarBaixaLote(dados: {
   const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa em lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
 
@@ -4152,7 +4185,7 @@ export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
   const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa em lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
 
@@ -4168,7 +4201,7 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar o lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento"); }
   return res.json();
 }
 
@@ -4187,7 +4220,7 @@ export async function importarXmlFinanceiro(xml: string) {
   const res = await authFetch(`${API}/financeiro/importar-xml`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o XML"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o XML"); }
   return res.json();
 }
 
@@ -4195,7 +4228,7 @@ export async function lerDocumentoFinanceiro(file: File) {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o documento"); }
   return res.json();
 }
 
@@ -4208,7 +4241,7 @@ export async function anexarArquivoLancamento(numeroLancamento: string, file: Fi
   form.append("file", file);
   if (categoria) form.append("categoria", categoria);
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar o arquivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
 
@@ -4227,7 +4260,7 @@ export async function anexarArquivoLancamentoPorId(lancamentoId: number, file: F
   form.append("file", file);
   if (categoria) form.append("categoria", categoria);
   const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar o arquivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
 
@@ -4252,12 +4285,12 @@ export async function enviarReciboEmail(numeroLancamento: string, destinatario: 
   form.append("destinatario", destinatario);
   form.append("arquivo", arquivo, `recibo_${numeroLancamento}.pdf`);
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/recibo/enviar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar o recibo por e-mail"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao enviar o recibo por e-mail"); }
 }
 
 export async function excluirAnexoLancamento(anexoId: number) {
   const res = await authFetch(`${API}/financeiro/anexos/${anexoId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
   return res.json();
 }
 
@@ -4309,19 +4342,19 @@ export async function criarItemOrcamento(dados: OrcamentoItemPayload) {
   const res = await authFetch(`${API}/planejamento/orcamento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar item de orçamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar item de orçamento"); }
   return res.json();
 }
 export async function atualizarItemOrcamento(id: number, dados: OrcamentoItemPayload) {
   const res = await authFetch(`${API}/planejamento/orcamento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de orçamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item de orçamento"); }
   return res.json();
 }
 export async function excluirItemOrcamento(id: number) {
   const res = await authFetch(`${API}/planejamento/orcamento/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir item de orçamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir item de orçamento"); }
 }
 export async function fetchComparativoOrcado(params: { ano: number; mes_inicio?: number; mes_fim?: number; centro_custo?: string }) {
   const qs = new URLSearchParams({ ano: String(params.ano) });
@@ -4343,19 +4376,19 @@ export async function criarCenario(dados: CenarioPayload) {
   const res = await authFetch(`${API}/planejamento/cenarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cenário"); }
   return res.json();
 }
 export async function atualizarCenario(id: number, dados: CenarioPayload) {
   const res = await authFetch(`${API}/planejamento/cenarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar cenário"); }
   return res.json();
 }
 export async function excluirCenario(id: number) {
   const res = await authFetch(`${API}/planejamento/cenarios/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir cenário"); }
 }
 
 export type PlanejamentoItemPayload = {
@@ -4371,19 +4404,19 @@ export async function criarItemCenario(cenarioId: number, dados: PlanejamentoIte
   const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/itens`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar item do cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar item do cenário"); }
   return res.json();
 }
 export async function atualizarItemCenario(id: number, dados: PlanejamentoItemPayload) {
   const res = await authFetch(`${API}/planejamento/itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item do cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item do cenário"); }
   return res.json();
 }
 export async function excluirItemCenario(id: number) {
   const res = await authFetch(`${API}/planejamento/itens/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir item do cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir item do cenário"); }
 }
 export async function fetchProjecaoCenario(cenarioId: number) {
   const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/projecao`, { cache: "no-store" });
@@ -4398,7 +4431,7 @@ export async function importarParaPedido(dados: {
   const res = await authFetch(`${API}/planejamento/importar-para-pedido`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar para pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar para pedido"); }
   return res.json();
 }
 
@@ -4434,26 +4467,26 @@ export async function criarPedido(dados: PedidoPayload) {
   const res = await authFetch(`${API}/pedidos/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar pedido"); }
   return res.json();
 }
 export async function atualizarPedido(id: number, dados: PedidoPayload) {
   const res = await authFetch(`${API}/pedidos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar pedido"); }
   return res.json();
 }
 export async function atualizarStatusPedido(id: number, status: string) {
   const res = await authFetch(`${API}/pedidos/${id}/status`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar status do pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar status do pedido"); }
   return res.json();
 }
 export async function excluirPedido(id: number) {
   const res = await authFetch(`${API}/pedidos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pedido"); }
 }
 
 export async function fetchModelosImportar() {
@@ -4467,13 +4500,13 @@ export async function importarCSV(categoria: string, file: File, extra?: Record<
   form.append("file", file);
   Object.entries(extra || {}).forEach(([k, v]) => form.append(k, v));
   const res = await authFetch(`${API}/importar/${categoria}`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar"); }
   return res.json();
 }
 
 export async function backfillFornecedoresEstoque() {
   const res = await authFetch(`${API}/importar/backfill`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao rodar o backfill"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rodar o backfill"); }
   return res.json();
 }
 
@@ -4491,7 +4524,7 @@ export async function uploadCSV(tipo: string, file: File) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Erro no upload");
+    throw new Error(mensagemErroApi(err.detail) || "Erro no upload");
   }
   return res.json();
 }
@@ -4523,7 +4556,7 @@ export async function addEventoManual(data: {
       intervalo_meses: data.intervalo_meses || null,
     }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar evento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao adicionar evento"); }
   return res.json();
 }
 
@@ -4539,24 +4572,18 @@ export async function buscarExclusao(tipo: string, termo: string, dataInicio = "
   if (!res.ok) throw new Error(`Busca de exclusão error: ${res.status}`);
   return res.json();
 }
-// FastAPI 422 traz "detail" como lista de erros de validação, não string — normaliza para texto.
-function detalheErro(d: any, fallback: string): string {
-  if (typeof d?.detail === "string") return d.detail;
-  if (Array.isArray(d?.detail)) return d.detail.map((e: any) => e.msg || JSON.stringify(e)).join("; ");
-  return fallback;
-}
 export async function impactoExclusao(tipo: string, id: string) {
   const res = await authFetch(`${API}/exclusoes/impacto`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao calcular impacto")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular impacto"); }
   return res.json();
 }
 export async function confirmarExclusao(tipo: string, id: string) {
   const res = await authFetch(`${API}/exclusoes/confirmar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao excluir")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir"); }
   return res.json();
 }
 export async function fetchPendentesExclusao() {
@@ -4566,14 +4593,14 @@ export async function fetchPendentesExclusao() {
 }
 export async function aprovarExclusao(id: number) {
   const res = await authFetch(`${API}/exclusoes/pendentes/${id}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao aprovar")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar"); }
   return res.json();
 }
 export async function rejeitarExclusao(id: number, motivo?: string) {
   const res = await authFetch(`${API}/exclusoes/pendentes/${id}/rejeitar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao rejeitar")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rejeitar"); }
   return res.json();
 }
 
@@ -4595,7 +4622,7 @@ export async function subscribePush(dados: { endpoint: string; keys: { p256dh: s
   const res = await authFetch(`${API}/push/subscribe`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ativar notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ativar notificações"); }
   return res.json();
 }
 
@@ -4603,7 +4630,7 @@ export async function unsubscribePush(endpoint?: string) {
   const res = await authFetch(`${API}/push/subscribe`, {
     method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: endpoint || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desativar notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desativar notificações"); }
   return res.json();
 }
 
@@ -4617,7 +4644,7 @@ export async function registrarTokenFcm(dados: {
   const res = await authFetch(`${API}/push/registrar-fcm`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar notificações"); }
   return res.json();
 }
 
@@ -4625,7 +4652,7 @@ export async function removerTokenFcm(token?: string): Promise<{ ok: boolean }> 
   const res = await authFetch(`${API}/push/registrar-fcm`, {
     method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover notificações"); }
   return res.json();
 }
 
@@ -4652,19 +4679,19 @@ export async function editarLancamentoPendente(id: number, dados: Record<string,
   const res = await authFetch(`${API}/aprovacoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dados }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar"); }
   return res.json();
 }
 
 export async function aprovarLancamento(id: number) {
   const res = await authFetch(`${API}/aprovacoes/${id}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar"); }
   return res.json();
 }
 
 export async function rejeitarLancamento(id: number) {
   const res = await authFetch(`${API}/aprovacoes/${id}/rejeitar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao rejeitar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rejeitar"); }
   return res.json();
 }
 
@@ -4700,7 +4727,7 @@ async function _rGet(path: string) {
 }
 async function _rSend(path: string, method: string, body?: any) {
   const res = await fetch(`${API}${path}`, { method, headers: _rHead(), ...(body ? { body: JSON.stringify(body) } : {}) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro (${res.status})`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro (${res.status})`); }
   return res.json();
 }
 
@@ -4776,7 +4803,7 @@ export async function importarCochoPlanilha(file: File): Promise<{ criados: numb
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/recria/cocho/importar`, { method: "POST", body: form });
-  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || "Erro ao importar planilha");
+  if (!res.ok) throw new Error(mensagemErroApi((await res.json().catch(() => null))?.detail) || "Erro ao importar planilha");
   return res.json();
 }
 
@@ -5000,7 +5027,7 @@ export async function enviarDocumento(dados: {
   if (dados.dataDocumento) fd.append("data_documento", dados.dataDocumento);
   if (dados.descricao) fd.append("descricao", dados.descricao);
   const res = await authFetch(`${API}/documentos/upload`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao arquivar documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao arquivar documento"); }
   return res.json();
 }
 
@@ -5019,7 +5046,7 @@ export async function baixarDocumento(id: number, nomeArquivo: string): Promise<
 
 export async function excluirDocumento(id: number): Promise<void> {
   const res = await authFetch(`${API}/documentos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir documento"); }
 }
 
 // ── Fotos do campo (app móvel) ──
@@ -5058,7 +5085,7 @@ export async function fetchFotoCampoUrl(id: number): Promise<string> {
 
 export async function excluirFotoCampo(id: number): Promise<void> {
   const res = await authFetch(`${API}/fotos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir foto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir foto"); }
 }
 
 // ── Cadeado do Painel do Contador ──
@@ -5071,7 +5098,7 @@ export async function desbloquearContador(senha: string): Promise<{ token_desblo
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify({ senha }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Senha incorreta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Senha incorreta"); }
   return res.json();
 }
 
@@ -5096,7 +5123,7 @@ export async function abrirChamado(dados: { assunto: string; descricao: string }
     method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao abrir chamado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir chamado"); }
   return res.json();
 }
 
@@ -5111,7 +5138,7 @@ export async function calcularJuros(
     method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular juros"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular juros"); }
   return res.json();
 }
 
@@ -5122,7 +5149,7 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
     method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lançamento"); }
   return res.json();
 }
 
@@ -5152,7 +5179,7 @@ export async function criarAlertaIndicador(dados: { indicador_chave: string; ope
   const res = await authFetch(`${API}/alertas-indicador`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar alerta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar alerta"); }
   return res.json();
 }
 
@@ -5160,13 +5187,13 @@ export async function editarAlertaIndicador(id: number, dados: { operador?: stri
   const res = await authFetch(`${API}/alertas-indicador/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar alerta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar alerta"); }
   return res.json();
 }
 
 export async function excluirAlertaIndicador(id: number): Promise<void> {
   const res = await authFetch(`${API}/alertas-indicador/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir alerta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir alerta"); }
 }
 
 // ── Onboarding (checklist guiado de primeiro acesso) ──
@@ -5209,13 +5236,13 @@ export async function criarFiltroSalvo(dados: { tela: string; nome: string; filt
   const res = await authFetch(`${API}/filtros-salvos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar filtro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar filtro"); }
   return res.json();
 }
 
 export async function excluirFiltroSalvo(id: number): Promise<void> {
   const res = await authFetch(`${API}/filtros-salvos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir filtro salvo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir filtro salvo"); }
 }
 
 // ── Protocolos personalizados (motor de protocolos configurável) ──
@@ -5256,7 +5283,7 @@ export async function criarProtocoloCustomizado(dados: {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar protocolo"); }
   return res.json();
 }
 export async function atualizarProtocoloCustomizado(id: number, dados: {
@@ -5266,12 +5293,12 @@ export async function atualizarProtocoloCustomizado(id: number, dados: {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo"); }
   return res.json();
 }
 export async function excluirProtocoloCustomizado(id: number): Promise<void> {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo"); }
 }
 
 export async function fetchProtocolosCustomizadosParaLancar(): Promise<ProtocoloCustomizado[]> {
@@ -5286,7 +5313,7 @@ export async function lancarProtocoloCustomizado(dados: {
   const res = await authFetch(`${API}/protocolos-customizados/lancar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar protocolo"); }
   return res.json();
 }
 export type ProtocoloCustomizadoAtivo = {
@@ -5301,5 +5328,5 @@ export async function fetchProtocolosCustomizadosAtivos(): Promise<ProtocoloCust
 }
 export async function cancelarLancamentoProtocoloCustomizado(lancamentoId: number): Promise<void> {
   const res = await authFetch(`${API}/protocolos-customizados/${lancamentoId}/cancelar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cancelar lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar lançamento"); }
 }

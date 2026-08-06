@@ -24,6 +24,11 @@ from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.protocolo_iatf import (
+    PASSOS_PROTOCOLO_IATF_PADRAO as PASSOS_PROTOCOLO_IATF,
+    DIA_INSEMINACAO_PADRAO,
+    dia_inseminacao,
+)
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
@@ -115,14 +120,30 @@ def backfill_numero_cria_partos(session: Session) -> None:
     session.add(SeedFlag(chave=chave))
     session.commit()
 
-# Passos do protocolo IATF — mesmo cronograma já usado no rascunho do front
-# (D0/D7/D9/D11); aqui viram eventos reais na Agenda em vez de só um desenho.
-PASSOS_PROTOCOLO_IATF = [
-    (0, "Implante de progesterona + Benzoato de estradiol + Acetato de buserelina (D0)"),
-    (7, "Cloprostenol (D7)"),
-    (9, "Retirar implante + Cipionato de estradiol + Cloprostenol (D9)"),
-    (11, "Inseminação (IATF) — D11"),
-]
+# Cronograma padrão (D0/D7/D9 de hormônio + D11 de inseminação) — importado de
+# fazenda.rules.protocolo_iatf, que também sabe calcular o cronograma de um
+# molde com dias livres (ver _passos_do_lancamento abaixo). Usado quando o
+# lançamento NÃO referencia um molde (hormônios digitados na hora) e no
+# retroativo automático da inseminação avulsa — os dois únicos casos sem
+# etapas de molde das quais derivar os dias.
+
+
+def _passos_do_lancamento(session: Session, protocolo_id: int | None) -> list[tuple[int, str]]:
+    """Os passos (dia, descrição-padrão) deste lançamento: do MOLDE cadastrado,
+    se um foi escolhido — respeitando os dias livres que o usuário definiu —,
+    ou o cronograma clássico D0/D7/D9/D11, se o lançamento for ad-hoc (sem
+    molde, hormônios digitados na hora)."""
+    if protocolo_id is None:
+        return PASSOS_PROTOCOLO_IATF
+    etapas = session.exec(
+        select(ProtocoloIatfEtapa).where(ProtocoloIatfEtapa.protocolo_id == protocolo_id)
+    ).all()
+    if not etapas:
+        return PASSOS_PROTOCOLO_IATF
+    dias_hormonio = sorted({e.dia for e in etapas})
+    passos = [(d, f"Hormônio(s) do dia D{d}") for d in dias_hormonio]
+    passos.append((dia_inseminacao(dias_hormonio), "Inseminação (IATF)"))
+    return passos
 
 
 @router.get("/agenda-veterinario")
@@ -319,22 +340,40 @@ def listar_servicos_analise(
 def _mapa_data_d0_por_servico(session: Session, fazenda_id: int | None) -> dict[tuple[str, str], str]:
     """(numero_matriz, data_servico ISO) -> data_d0 (ISO) do protocolo IATF que
     originou aquele serviço — mesma chave que registrar_servico usa para
-    resolver a ProtocoloIatfAplicacao (dia 11) na hora de registrar
+    resolver a ProtocoloIatfAplicacao da INSEMINAÇÃO na hora de registrar
     (numero_matriz + data_realizacao == data_servico), então funciona igual
     para qualquer serviço já lançado, não só os novos. Sem isso a tela
     agrupava "ciclo" numa janela de calendário arbitrária, sem nenhuma relação
     com o D0 real de cada protocolo (bug relatado — datas de ciclo não
-    batiam com os D0 verdadeiros)."""
+    batiam com os D0 verdadeiros).
+
+    A etapa de inseminação é a de MAIOR dia dentro de cada lançamento — não
+    necessariamente D11 (molde com dias livres desloca esse número, ver
+    fazenda.rules.protocolo_iatf) —, por isso o maior dia é calculado por
+    lançamento em Python em vez de filtrar por um número fixo em SQL.
+    """
     query = (
-        select(ProtocoloIatfAplicacao.numero_matriz, ProtocoloIatfAplicacao.data_realizacao, ProtocoloIatfLancamento.data_d0)
+        select(
+            ProtocoloIatfAplicacao.lancamento_id, ProtocoloIatfAplicacao.numero_matriz,
+            ProtocoloIatfAplicacao.dia, ProtocoloIatfAplicacao.data_realizacao,
+            ProtocoloIatfLancamento.data_d0,
+        )
         .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
-        .where(ProtocoloIatfAplicacao.dia == 11, ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
+        .where(ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
     )
     if fazenda_id is not None:
         query = query.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+
+    maior_dia_por_lancamento: dict[int, int] = {}
+    linhas = session.exec(query).all()
+    for lancamento_id, _numero, dia, _realizacao, _d0 in linhas:
+        if dia > maior_dia_por_lancamento.get(lancamento_id, -1):
+            maior_dia_por_lancamento[lancamento_id] = dia
+
     return {
         (numero, realizacao.isoformat()): d0.isoformat()
-        for numero, realizacao, d0 in session.exec(query).all() if realizacao is not None
+        for lancamento_id, numero, dia, realizacao, d0 in linhas
+        if realizacao is not None and dia == maior_dia_por_lancamento.get(lancamento_id)
     }
 
 
@@ -923,8 +962,9 @@ def lancar_protocolo_iatf(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
-    Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11) — não cria o serviço em si.
-    A inseminação de fato (D11) é lançada à parte em POST /reproducao/servico,
+    Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11 clássico, ou os dias livres
+    do molde escolhido — ver `_passos_do_lancamento`) — não cria o serviço em
+    si. A inseminação de fato é lançada à parte em POST /reproducao/servico,
     para separar "marcar o protocolo" de "a vaca foi inseminada". Cada etapa de
     cada animal vira uma ProtocoloIatfAplicacao rastreável — a Agenda agrupa
     por (lançamento, dia) em vez de mostrar uma linha por animal.
@@ -939,7 +979,12 @@ def lancar_protocolo_iatf(
         if not molde or (fazenda_id is not None and molde.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Protocolo IATF cadastrado não encontrado")
         nome_base = molde.nome
-    nome_protocolo = gerar_nome_lancamento(nome_base, dados.data_d0, 0, 11)
+    # Os passos deste lançamento — dias do molde (livres, com dia de
+    # inseminação calculado) quando um molde foi escolhido; D0/D7/D9/D11
+    # clássico quando não (hormônios digitados na hora).
+    passos = _passos_do_lancamento(session, dados.protocolo_id)
+    dia_final = max(dias for dias, _ in passos)
+    nome_protocolo = gerar_nome_lancamento(nome_base, dados.data_d0, 0, dia_final)
     lancamento = ProtocoloIatfLancamento(
         nome_protocolo=nome_protocolo, data_d0=dados.data_d0, protocolo_id=dados.protocolo_id,
         usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
@@ -966,7 +1011,7 @@ def lancar_protocolo_iatf(
 
     eventos_criados = 0
     for numero in dados.animais:
-        for dias, descricao in PASSOS_PROTOCOLO_IATF:
+        for dias, descricao in passos:
             session.add(ProtocoloIatfAplicacao(
                 lancamento_id=lancamento.id,
                 numero_matriz=numero,
@@ -1046,7 +1091,10 @@ def listar_protocolos_iatf_ativos(
     for lanc in lancamentos:
         aps = por_lancamento.get(lanc.id, [])
         pendentes = [a for a in aps if not a.realizada]
-        d11s = [a for a in aps if a.dia == 11]
+        # A etapa de inseminação é a de MAIOR dia deste lançamento — não
+        # necessariamente D11 (molde com dias livres desloca esse número).
+        maior_dia = max((a.dia for a in aps), default=None)
+        d11s = [a for a in aps if a.dia == maior_dia] if maior_dia is not None else []
 
         # Concluído se todas as etapas já foram marcadas realizada OU se o
         # próprio calendário já passou do D11 previsto — este segundo caso
@@ -1108,20 +1156,33 @@ def listar_protocolos_iatf_ativos(
             # ultrapassar data_d11_prevista, quando o grupo inteiro entra no
             # ramo "concluído" acima.
             by_dia = {a.dia: a for a in aps_animal}
-            d0, d7, d9, d11 = by_dia.get(0), by_dia.get(7), by_dia.get(9), by_dia.get(11)
-            if d0 and hoje <= d0.data_prevista:
-                proxima = d0
-            elif d7 and hoje <= d7.data_prevista:
-                proxima = d7
-            elif d9 and hoje <= d9.data_prevista:
-                proxima = d9
-            else:
-                proxima = d11 or min(pendentes_animal, key=lambda a: a.dia)
+            # Etapa de inseminação = a de MAIOR dia deste animal — não
+            # necessariamente D11 (molde com dias livres desloca esse número).
+            maior_dia_animal = max(a.dia for a in aps_animal)
+            d0 = by_dia.get(0)
+            d_insem = by_dia.get(maior_dia_animal)
+            # Percorre as etapas pendentes anteriores à inseminação, em ordem
+            # de dia — não mais só D0/D7/D9 fixos, pois um molde de dias
+            # livres pode ter qualquer sequência (ex.: D0/D8/D10/D12). A
+            # primeira ainda não vencida é a "próxima"; se todas já venceram,
+            # cai na inseminação (ou na pendente mais antiga, se a
+            # inseminação já foi confirmada mas sobrou alguma etapa anterior).
+            pendentes_ordenados = sorted(pendentes_animal, key=lambda a: a.dia)
+            proxima = next(
+                (a for a in pendentes_ordenados if a.dia != maior_dia_animal and hoje <= a.data_prevista), None
+            )
+            if proxima is None:
+                proxima = d_insem or pendentes_ordenados[0]
             animais_status.append({
                 "numero_matriz": numero,
                 "etapa_atual": f"D{proxima.dia}",
                 "data_etapa_atual": proxima.data_prevista.isoformat(),
                 "d0_confirmado": bool(d0 and d0.realizada),
+                # A "sub-aba Inseminação" usa este flag para filtrar as
+                # matrizes prontas para a IA — não pode comparar etapa_atual
+                # com a string "D11", porque o dia de inseminação varia
+                # conforme o molde (ver fazenda.rules.protocolo_iatf).
+                "na_inseminacao": proxima.dia == maior_dia_animal,
             })
         ativos.append({
             "lancamento_id": lanc.id,
@@ -1238,11 +1299,21 @@ def adicionar_animais_iatf(
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
-    ja_no_protocolo = {
-        a.numero_matriz for a in session.exec(
-            select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento_id)
-        ).all()
-    }
+    aplicacoes_existentes = session.exec(
+        select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento_id)
+    ).all()
+    ja_no_protocolo = {a.numero_matriz for a in aplicacoes_existentes}
+    # Os dias deste lançamento são os que ELE JÁ TEM — não o cronograma padrão
+    # nem o molde reconsultado (que pode ter sido editado depois). Um animal
+    # incluído depois entra exatamente nos mesmos dias que os que já estavam,
+    # seja o lançamento clássico ou de um molde com dias livres (D0/D8/D10/D12).
+    dias_do_lancamento = sorted({a.dia for a in aplicacoes_existentes})
+    # Dia que bate com o cronograma clássico mantém a descrição de sempre
+    # ("Implante de progesterona…"); dia livre de molde usa o rótulo genérico
+    # — o mesmo comportamento de _passos_do_lancamento, para não regredir a
+    # descrição do caso comum (D0/D7/D9/D11 sem molde).
+    _padrao_classico = dict(PASSOS_PROTOCOLO_IATF)
+    passos = [(d, _padrao_classico.get(d, f"Hormônio(s) do dia D{d}")) for d in dias_do_lancamento] or PASSOS_PROTOCOLO_IATF
     # Hormônios por dia deste lançamento → mesma descrição das etapas.
     hormonios = session.exec(
         select(ProtocoloIatfHormonio).where(ProtocoloIatfHormonio.lancamento_id == lancamento_id)
@@ -1261,7 +1332,7 @@ def adicionar_animais_iatf(
     for numero in dados.animais:
         if numero in ja_no_protocolo:
             continue
-        for dias, descricao in PASSOS_PROTOCOLO_IATF:
+        for dias, descricao in passos:
             session.add(ProtocoloIatfAplicacao(
                 lancamento_id=lancamento_id,
                 numero_matriz=numero,
@@ -1439,31 +1510,56 @@ def registrar_servico(
             usuario_id=usuario_id_seguro(user), data=dados.data_servico, origem_id=servico.id,
         )
 
-    # Veio de um protocolo IATF: resolve automaticamente a aplicação D11 em
-    # aberto correspondente — a Agenda para de lembrar essa etapa sozinha,
-    # sem exigir um segundo clique de "marcar realizado" separado.
+    # Veio de um protocolo IATF: resolve automaticamente a aplicação de
+    # inseminação em aberto correspondente — a Agenda para de lembrar essa
+    # etapa sozinha, sem exigir um segundo clique de "marcar realizado" separado.
     if dados.protocolo:
-        query_ap_d11 = (
-            select(ProtocoloIatfAplicacao)
-            .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
-            .where(
-                ProtocoloIatfAplicacao.numero_matriz == dados.numero_matriz,
-                ProtocoloIatfAplicacao.dia == 11,
-                ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
-                ProtocoloIatfLancamento.nome_protocolo == dados.protocolo,
-            )
-        )
-        if fazenda_id is not None:
-            query_ap_d11 = query_ap_d11.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
-        aplicacao_d11 = session.exec(query_ap_d11).first()
-        if aplicacao_d11:
-            aplicacao_d11.realizada = True
-            aplicacao_d11.data_realizacao = dados.data_servico
-            session.add(aplicacao_d11)
+        aplicacao_insem = _aplicacao_inseminacao_pendente(session, dados.numero_matriz, dados.protocolo, fazenda_id)
+        if aplicacao_insem:
+            aplicacao_insem.realizada = True
+            aplicacao_insem.data_realizacao = dados.data_servico
+            session.add(aplicacao_insem)
 
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
+
+
+def _aplicacao_inseminacao_pendente(
+    session: Session, numero_matriz: str, nome_protocolo: str, fazenda_id: int | None,
+) -> ProtocoloIatfAplicacao | None:
+    """A aplicação de inseminação ainda pendente de um protocolo IATF, pelo
+    nome do lançamento — usado ao registrar o serviço para fechar
+    automaticamente essa etapa. Não é necessariamente D11: um molde com dias
+    livres desloca esse número (ver fazenda.rules.protocolo_iatf); por isso o
+    dia de inseminação é resolvido como "o maior dia DESTE lançamento",
+    olhando TODAS as aplicações dele (realizadas ou não) — e só então checa
+    se essa etapa específica ainda está pendente. Filtrar direto por
+    `realizada == False` e pegar a de maior dia entre as pendentes seria
+    errado: se a inseminação já tiver sido confirmada e uma etapa anterior
+    (ex.: D9) por algum motivo ainda estiver pendente, isso marcaria a etapa
+    errada como feita."""
+    query_lanc = select(ProtocoloIatfLancamento).where(ProtocoloIatfLancamento.nome_protocolo == nome_protocolo)
+    if fazenda_id is not None:
+        query_lanc = query_lanc.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+    lancamento_ids = [l.id for l in session.exec(query_lanc).all()]
+    if not lancamento_ids:
+        return None
+    aps = session.exec(
+        select(ProtocoloIatfAplicacao).where(
+            ProtocoloIatfAplicacao.lancamento_id.in_(lancamento_ids),
+            ProtocoloIatfAplicacao.numero_matriz == numero_matriz,
+        )
+    ).all()
+    por_lancamento: dict[int, list[ProtocoloIatfAplicacao]] = {}
+    for a in aps:
+        por_lancamento.setdefault(a.lancamento_id, []).append(a)
+    for aps_lancamento in por_lancamento.values():
+        dia_insem = max(a.dia for a in aps_lancamento)
+        candidata = next((a for a in aps_lancamento if a.dia == dia_insem and not a.realizada), None)
+        if candidata:
+            return candidata
+    return None
 
 
 def _nome_auto_iatf(d0: date) -> str:
@@ -1477,7 +1573,7 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
                           inseminador: str | None = None, usuario_id: int | None = None,
                           tipo_semen: str | None = None, fazenda_id: int | None = None) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
-    commit) — resolve o D11 do protocolo IATF vinculado, se houver."""
+    commit) — resolve a inseminação do protocolo IATF vinculado, se houver."""
     query_animal = select(Animal).where(Animal.numero == numero_matriz)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
@@ -1505,23 +1601,11 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     )
     session.add(servico)
     if protocolo:
-        query_ap_d11 = (
-            select(ProtocoloIatfAplicacao)
-            .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
-            .where(
-                ProtocoloIatfAplicacao.numero_matriz == numero_matriz,
-                ProtocoloIatfAplicacao.dia == 11,
-                ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
-                ProtocoloIatfLancamento.nome_protocolo == protocolo,
-            )
-        )
-        if fazenda_id is not None:
-            query_ap_d11 = query_ap_d11.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
-        ap_d11 = session.exec(query_ap_d11).first()
-        if ap_d11:
-            ap_d11.realizada = True
-            ap_d11.data_realizacao = data_servico
-            session.add(ap_d11)
+        aplicacao_insem = _aplicacao_inseminacao_pendente(session, numero_matriz, protocolo, fazenda_id)
+        if aplicacao_insem:
+            aplicacao_insem.realizada = True
+            aplicacao_insem.data_realizacao = data_servico
+            session.add(aplicacao_insem)
     return servico
 
 

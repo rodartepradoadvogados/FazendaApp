@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus, Trash2, FileText, FileSpreadsheet } from "lucide-react";
 import {
-  fetchAnimais,
+  fetchAnimais, fetchEstoque,
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
   fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo, cancelarProtocolo,
@@ -16,12 +16,19 @@ import {
 import { Modal } from "@/components/Modal";
 import { exportarFolhaCampoPDF, exportarFolhaCampoExcel } from "@/lib/folhaProtocolo";
 import type { AnimalRow } from "@/components/AnimalModal";
+import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { TabBar } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
+// Os mesmos formulários já usados em Lançamentos — reaproveitados aqui, na
+// aba Lançamento, para IATF/Indução/Sanitário poderem ser lançados também
+// pela Central (ver comentário em TIPOS_LANCAMENTO).
+const FormProtocoloIatf = dynamic(() => import("@/components/lancamentos/FormProtocoloIatf").then((m) => m.FormProtocoloIatf), { ssr: false });
+const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
+const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
@@ -47,8 +54,6 @@ function Pill({ children, cor }: { children: React.ReactNode; cor?: string }) {
 }
 
 // ─────────────────────────── Aba Cadastro ───────────────────────────
-const DIAS_IATF = [0, 7, 9] as const;
-
 function novaEtapaIatf(dia: number): EtapaProtocoloIatf {
   return { dia, criterio_tipo: "medicamento", produto: "", dose: null, unidade: "", via: "" };
 }
@@ -96,14 +101,17 @@ function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfM
           <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="Opcional" /></div>
       </div>
       <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-        Hormônios de D0/D7/D9 — D11 é sempre a inseminação, nunca entra no molde.
+        O dia de cada hormônio é livre — o clássico é D0/D7/D9, mas há protocolo com outro espaçamento (ex.: D0/D8/D10/D12).
+        A inseminação nunca entra no molde: ela é sempre 2 dias depois da última etapa cadastrada.
       </p>
       {etapas.map((e, i) => (
         <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto auto auto", gap: "0.4rem", alignItems: "end", marginBottom: "0.5rem" }}>
           <div><label style={labelStyle}>Dia</label>
-            <select style={inputStyle} value={e.dia} onChange={(ev) => atualizar(i, { dia: Number(ev.target.value) })}>
-              {DIAS_IATF.map((d) => <option key={d} value={d}>D{d}</option>)}
-            </select>
+            <div className="flex items-center gap-1">
+              <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>D</span>
+              <input type="number" min={0} step={1} style={inputStyle} value={e.dia}
+                     onChange={(ev) => atualizar(i, { dia: Math.max(0, Number(ev.target.value) || 0) })} />
+            </div>
           </div>
           <div><label style={labelStyle}>Definir por</label>
             <select style={inputStyle} value={e.criterio_tipo} onChange={(ev) => atualizar(i, { criterio_tipo: ev.target.value as any, produto: "" })}>
@@ -175,8 +183,9 @@ function CadastroIatf() {
         )}
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Define os hormônios de D0/D7/D9 — D11 é sempre a inseminação e nunca faz parte do molde.
-        Lançar sem escolher um molde continua funcionando (hormônios digitados na hora), como sempre foi.
+        Define os hormônios em dias livres (o clássico é D0/D7/D9, mas aceita outro espaçamento, ex.: D0/D8/D10/D12).
+        A inseminação nunca faz parte do molde — é sempre 2 dias depois da última etapa cadastrada.
+        Lançar sem escolher um molde continua funcionando (hormônios digitados na hora, cronograma clássico D0/D7/D9/D11), como sempre foi.
       </p>
       {editando !== null && (
         <EditorMoldeIatf
@@ -207,6 +216,43 @@ function CadastroIatf() {
   );
 }
 
+// Seletor visual "de que tipo é o protocolo?" — mesmo desenho nas abas
+// Cadastro e Lançamento (o usuário achou bonito o de Cadastro e pediu para
+// repetir). Genérico o bastante para os dois conjuntos de tipos, que não são
+// os mesmos: Cadastro tem 4 tipos (não inclui nada que não se cadastra por
+// aqui); Lançamento também tem 4, na mesma ordem, por familiaridade.
+function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange }: {
+  titulo: string;
+  tipos: readonly { id: T; label: string; desc: string }[];
+  tipo: T;
+  onChange: (t: T) => void;
+}) {
+  return (
+    <div className="card mb-3">
+      <div className="card-header mb-2">{titulo}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {tipos.map((t) => {
+          const ativo = t.id === tipo;
+          return (
+            <button
+              key={t.id} type="button" onClick={() => onChange(t.id)} title={t.desc}
+              style={{
+                textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "8px", cursor: "pointer",
+                border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+                background: ativo ? "var(--pill-active-bg)" : "transparent",
+                color: ativo ? "var(--dourado-light)" : "var(--text)",
+              }}
+            >
+              <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{t.label}</span>
+              <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{t.desc}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Cadastro único: escolhe-se DE QUE protocolo se trata e abre-se o editor
 // daquele tipo. Os três já existentes (sanitário, indução, customizado) são
 // os MESMOS componentes usados em Configurações > Cadastro — mesmo formulário,
@@ -214,7 +260,7 @@ function CadastroIatf() {
 // paralela: cadastrar aqui ou lá é indiferente.
 const TIPOS_CADASTRO = [
   { id: "sanitario", label: "Sanitário", desc: "Curativo ou preventivo — cronograma de dias (D0/D1/D2…)" },
-  { id: "iatf", label: "IATF", desc: "Hormônios de D0/D7/D9" },
+  { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
 ] as const;
@@ -225,28 +271,7 @@ function CadastroTab() {
 
   return (
     <div>
-      <div className="card mb-3">
-        <div className="card-header mb-2">Do que se trata o protocolo?</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {TIPOS_CADASTRO.map((t) => {
-            const ativo = t.id === tipo;
-            return (
-              <button
-                key={t.id} type="button" onClick={() => setTipo(t.id)} title={t.desc}
-                style={{
-                  textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "8px", cursor: "pointer",
-                  border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
-                  background: ativo ? "var(--pill-active-bg)" : "transparent",
-                  color: ativo ? "var(--dourado-light)" : "var(--text)",
-                }}
-              >
-                <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{t.label}</span>
-                <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{t.desc}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <SeletorTipoProtocolo titulo="Do que se trata o protocolo?" tipos={TIPOS_CADASTRO} tipo={tipo} onChange={setTipo} />
 
       {tipo === "iatf" && <CadastroIatf />}
       {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
@@ -261,28 +286,44 @@ function CadastroTab() {
   );
 }
 
-// ─────────────────────────── Aba Lançamento (só Customizado) ───────────────────────────
-function LancamentoTab({ animais }: { animais: AnimalRow[] }) {
+// ─────────────────────────── Aba Lançamento ───────────────────────────
+// Os 4 tipos lançam AQUI também — não só em Lançamentos. É redundância
+// proposital (o mesmo pedido que já valeu para os cards do app: IATF em
+// Reprodutivo E em Protocolos, Sanitário em Sanidade E em Protocolos): a
+// Central de Protocolos deve resolver o dia a dia sozinha, sem o usuário
+// precisar saber que IATF "mora" em outra tela. Os TRÊS que já existiam em
+// Lançamentos são os MESMOS COMPONENTES usados lá — mesmo formulário, mesmo
+// endpoint; lançar aqui ou lá é o idêntico lançamento, só muda o caminho até
+// a tela. Só o Customizado nasce exclusivamente aqui (nunca existiu em
+// Lançamentos, e não faz sentido duplicar essa é a única exceção).
+const TIPOS_LANCAMENTO = [
+  { id: "sanitario", label: "Sanitário", desc: "Aplicar um protocolo cadastrado a um animal" },
+  { id: "iatf", label: "IATF", desc: "Hormônios num lote — molde de dias livres ou digitado na hora" },
+  { id: "inducao", label: "Indução de lactação", desc: "Cronograma completo, com baixa de estoque" },
+  { id: "customizado", label: "Customizado", desc: "Roteiro livre, por matriz(es) ou tarefa da fazenda" },
+] as const;
+type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
+
+function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
+  const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
+
   return (
     <div>
+      <SeletorTipoProtocolo titulo="Qual protocolo você quer lançar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
+
       <div className="card mb-3">
-        <div className="card-header mb-2">Lançar protocolo customizado</div>
-        <FormProtocoloCustomizado animais={animais as any} />
+        <div className="card-header mb-2">Lançar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
+        {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
+        {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
+        {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+        {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <a href="/lancamentos" className="card" style={{ textDecoration: "none" }}>
-          <div style={{ fontWeight: 700, color: "var(--dourado-light)", fontSize: "0.85rem" }}>IATF</div>
-          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>lançar em Lançamentos →</div>
-        </a>
-        <a href="/lancamentos" className="card" style={{ textDecoration: "none" }}>
-          <div style={{ fontWeight: 700, color: "var(--dourado-light)", fontSize: "0.85rem" }}>Indução de lactação</div>
-          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>lançar em Lançamentos →</div>
-        </a>
-        <a href="/lancamentos" className="card" style={{ textDecoration: "none" }}>
-          <div style={{ fontWeight: 700, color: "var(--dourado-light)", fontSize: "0.85rem" }}>Protocolo Sanitário</div>
-          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>lançar em Lançamentos →</div>
-        </a>
-      </div>
+
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+        {tipo === "customizado"
+          ? "Protocolo customizado só é lançado aqui — não existe em Lançamentos."
+          : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
+      </p>
     </div>
   );
 }
@@ -650,20 +691,24 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
 export default function ProtocolosPage() {
   const [aba, setAba] = useState<"cadastro" | "lancamento" | "acompanhamento" | "historico">("acompanhamento");
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
-  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
+  const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
+  useEffect(() => {
+    fetchAnimais().then(setAnimais).catch(() => {});
+    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+  }, []);
 
   return (
     <div className="p-6">
       <h1 className="text-xl font-bold mb-1" style={{ color: "var(--dourado-light)" }}>Central de Protocolos</h1>
       <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.2rem" }}>
         IATF, Sanitário, Indução de Lactação e Customizado — cadastro, lançamento, acompanhamento e histórico num só lugar.
-        IATF, Indução e Sanitário continuam lançados normalmente em Lançamentos; o Customizado lança só aqui.
+        Os 4 tipos podem ser lançados por aqui; IATF, Indução e Sanitário continuam também disponíveis em Lançamentos — é o mesmo lançamento, dois caminhos.
       </p>
 
       <TabBar<"cadastro" | "lancamento" | "acompanhamento" | "historico">
         abas={[
           { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo" },
-          { id: "lancamento", label: "Lançamento", title: "Lançar protocolo customizado" },
+          { id: "lancamento", label: "Lançamento", title: "Lançar IATF, indução, sanitário ou customizado" },
           { id: "acompanhamento", label: "Acompanhamento", title: "Protocolos em andamento, dos 4 tipos" },
           { id: "historico", label: "Histórico", title: "Concluídos e cancelados, com exportação" },
         ]}
@@ -672,7 +717,7 @@ export default function ProtocolosPage() {
       />
 
       {aba === "cadastro" && <CadastroTab />}
-      {aba === "lancamento" && <LancamentoTab animais={animais} />}
+      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} />}
       {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
       {aba === "historico" && <ListaProtocolos historico />}
     </div>

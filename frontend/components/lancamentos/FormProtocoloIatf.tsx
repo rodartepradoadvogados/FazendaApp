@@ -13,11 +13,19 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 // Mesma regra de fazenda/rules/nomenclatura_protocolo.py — só para pré-visualização;
 // o nome de fato é sempre calculado no backend.
-function nomeAutoIatf(d0: string, nomeBase: string): string {
+function nomeAutoIatf(d0: string, nomeBase: string, diaFinal: number): string {
   if (!d0) return "";
   const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
-  const d11 = new Date(d0 + "T00:00:00"); d11.setDate(d11.getDate() + 11);
-  return `${nomeBase.toUpperCase()} - ${fmt(d0)} A ${fmt(d11.toISOString().slice(0, 10))} (D0 A D11 - 12 DIAS)`;
+  const dFinal = new Date(d0 + "T00:00:00"); dFinal.setDate(dFinal.getDate() + diaFinal);
+  return `${nomeBase.toUpperCase()} - ${fmt(d0)} A ${fmt(dFinal.toISOString().slice(0, 10))} (D0 A D${diaFinal} - ${diaFinal + 1} DIAS)`;
+}
+
+// A inseminação acontece 2 dias depois da ÚLTIMA etapa de hormônio do
+// protocolo — D9 → D11 no clássico (sem molde), D12 → D14 num molde
+// D0/D8/D10/D12. Mesma regra de fazenda.rules.protocolo_iatf.dia_inseminacao.
+const DIA_INSEMINACAO_PADRAO = 11;
+function diaInseminacao(diasHormonio: number[]): number {
+  return diasHormonio.length ? Math.max(...diasHormonio) + 2 : DIA_INSEMINACAO_PADRAO;
 }
 const HORMONIOS: Record<string, string[]> = {
   progesterona: ["Sincrogest", "Cidr"],
@@ -137,8 +145,11 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   // Protocolos já lançados (para "existente").
   const [existentes, setExistentes] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number }[]>([]);
   const [existenteId, setExistenteId] = useState("");
-  // Molde cadastrado (Central de Protocolos > Cadastro), opcional — só para
-  // nome/rastreabilidade; os hormônios continuam definidos abaixo, como hoje.
+  // Molde cadastrado (Central de Protocolos > Cadastro), opcional. Escolhido,
+  // ele passa a MANDAR nos dias e nos hormônios — os dias são livres (um
+  // molde pode ser D0/D8/D10/D12, não só D0/D7/D9), então o cronograma do
+  // lançamento é o do molde, não mais o clássico fixo. Sem molde, nada muda:
+  // hormônios digitados na hora, cronograma clássico D0/D7/D9/D11.
   const [moldes, setMoldes] = useState<ProtocoloIatfMolde[]>([]);
   const [moldeId, setMoldeId] = useState("");
   const [salvando, setSalvando] = useState(false);
@@ -148,8 +159,20 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
-  const nomeBase = moldes.find((m) => String(m.id) === moldeId)?.nome || "Protocolo IATF";
-  const nomeProtocolo = nomeAutoIatf(d0, nomeBase);
+  const moldeSelecionado = moldes.find((m) => String(m.id) === moldeId) || null;
+  const nomeBase = moldeSelecionado?.nome || "Protocolo IATF";
+  const diasHormonioMolde = moldeSelecionado
+    ? Array.from(new Set(moldeSelecionado.etapas.map((e) => e.dia))).sort((a, b) => a - b)
+    : [];
+  const diaFinal = moldeSelecionado ? diaInseminacao(diasHormonioMolde) : DIA_INSEMINACAO_PADRAO;
+  const nomeProtocolo = nomeAutoIatf(d0, nomeBase, diaFinal);
+  // Hormônios efetivamente enviados: do molde (etapa por etapa, direto —
+  // mesma resolução de estoque por princípio ativo que já acontece na Agenda
+  // ao confirmar o dia) quando um molde foi escolhido; digitados na hora
+  // (EditorHormoniosIatf), como sempre, quando não.
+  const hormoniosEfetivos = moldeSelecionado
+    ? moldeSelecionado.etapas.map((e) => ({ dia: e.dia, produto: e.produto, dose: e.dose, unidade: e.unidade, via: e.via }))
+    : hormonios;
 
   useEffect(() => { fetchProtocolosIatfCadastrados().then((ms) => setMoldes(ms.filter((m) => m.ativo))).catch(() => setMoldes([])); }, []);
 
@@ -169,8 +192,8 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         setSucesso(`${r.adicionados} animal(is) adicionado(s) ao protocolo "${r.nome_protocolo}".`);
       } else {
         if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
-        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios });
-        setSucesso(`Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0/D7/D9/D11).`);
+        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos });
+        setSucesso(`Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0 a D${diaFinal}).`);
       }
       setSel(new Set()); setUm("");
       recarregarAtivosRef.current();
@@ -234,7 +257,7 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
             />
           : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
       </div>
-      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D11) é lançada à parte, na sub-aba Inseminação.</p>
+      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D{diaFinal}) é lançada à parte, na sub-aba Inseminação.</p>
 
       {modo === "novo" && (
         <>
@@ -246,16 +269,42 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
               <table className="fazenda-table">
                 <thead><tr><th>Dia</th><th>Data</th><th>Ação / hormônio</th></tr></thead>
                 <tbody>
-                  <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona + Benzoato de estradiol + Acetato de buserelina</td></tr>
-                  <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol</td></tr>
-                  <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante + Cipionato de estradiol + Cloprostenol</td></tr>
-                  <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
+                  {moldeSelecionado ? (
+                    <>
+                      {diasHormonioMolde.map((dia) => {
+                        const doDia = moldeSelecionado.etapas.filter((e) => e.dia === dia);
+                        const descricao = doDia
+                          .map((e) => `${e.dose ? `${e.dose}${e.unidade ? ` ${e.unidade}` : ""} ` : ""}${e.produto}`)
+                          .join(" + ");
+                        return <tr key={dia}><td style={{ fontWeight: 700 }}>D{dia}</td><td>{addDias(d0, dia)}</td><td>{descricao}</td></tr>;
+                      })}
+                      <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D{diaFinal}</td><td>{addDias(d0, diaFinal)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
+                    </>
+                  ) : (
+                    <>
+                      <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona + Benzoato de estradiol + Acetato de buserelina</td></tr>
+                      <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol</td></tr>
+                      <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante + Cipionato de estradiol + Cloprostenol</td></tr>
+                      <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
+                    </>
+                  )}
                 </tbody>
               </table>
             </div>
-            <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado.</p>
+            <p style={nota}>
+              {moldeSelecionado
+                ? `Cronograma do molde "${moldeSelecionado.nome}" — a inseminação (D${diaFinal}) é sempre 2 dias depois da última etapa cadastrada. Ao salvar, cria estes eventos na Agenda para cada animal selecionado.`
+                : "Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado."}
+            </p>
           </div>
-          <EditorHormoniosIatf onChange={setHormonios} />
+          {moldeSelecionado ? (
+            <p style={{ ...nota, marginTop: "0.5rem" }}>
+              Hormônios vindos do molde acima — para mudar dose, produto ou dia, edite o molde em <strong>Central de Protocolos › Cadastro</strong>.
+              Ao confirmar cada dia na Agenda, você ainda escolhe o frasco em estoque do princípio ativo, como em qualquer protocolo.
+            </p>
+          ) : (
+            <EditorHormoniosIatf onChange={setHormonios} />
+          )}
         </>
       )}
       <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />

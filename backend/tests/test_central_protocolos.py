@@ -62,10 +62,20 @@ class TestMoldeIatf:
         corpo = r.json()
         assert [e["dia"] for e in corpo["etapas"]] == [0, 7, 9]
 
-    def test_rejeita_dia_fora_de_0_7_9(self, client):
+    def test_aceita_dia_livre(self, client):
+        # Dias do molde são livres (ex.: D0/D8/D10/D12) — só dia negativo é
+        # rejeitado, ver fazenda.rules.protocolo_iatf.
         c, engine = client
         r = c.post("/cadastro/protocolos-iatf", json={
-            "nome": "Molde inválido", "etapas": [_etapa_iatf(3)],
+            "nome": "Molde de dias livres", "etapas": [_etapa_iatf(0), _etapa_iatf(8), _etapa_iatf(10), _etapa_iatf(12)],
+        })
+        assert r.status_code == 200, r.text
+        assert [e["dia"] for e in r.json()["etapas"]] == [0, 8, 10, 12]
+
+    def test_rejeita_dia_negativo(self, client):
+        c, engine = client
+        r = c.post("/cadastro/protocolos-iatf", json={
+            "nome": "Molde inválido", "etapas": [_etapa_iatf(-1)],
         })
         assert r.status_code == 400
 
@@ -108,9 +118,12 @@ class TestNomeAutomatico:
         assert nome == "PROTOCOLO IATF - 05/08/26 A 16/08/26 (D0 A D11 - 12 DIAS)"
 
     def test_iatf_com_molde_usa_nome_cadastrado(self, client):
+        # Molde de dias livres (D0/D8, sem D9 clássico) — dia de inseminação
+        # é calculado como o último dia com hormônio + 2 (ver
+        # fazenda.rules.protocolo_iatf.dia_inseminacao), não mais fixo em D11.
         c, engine = client
         pid = c.post("/cadastro/protocolos-iatf", json={
-            "nome": "Protocolo IATF Lote A", "etapas": [_etapa_iatf(0)],
+            "nome": "Protocolo IATF Lote A", "etapas": [_etapa_iatf(0), _etapa_iatf(8)],
         }).json()["id"]
         r = c.post("/reproducao/protocolo-iatf", json={
             "animais": ["700"], "data_d0": "2026-08-05", "protocolo_id": pid,
@@ -118,7 +131,7 @@ class TestNomeAutomatico:
         assert r.status_code == 200, r.text
         lancs = c.get("/reproducao/protocolo-iatf/lancamentos").json()
         nome = next(l["nome_protocolo"] for l in lancs if l["lancamento_id"] == r.json()["lancamento_id"])
-        assert nome == "PROTOCOLO IATF LOTE A - 05/08/26 A 16/08/26 (D0 A D11 - 12 DIAS)"
+        assert nome == "PROTOCOLO IATF LOTE A - 05/08/26 A 15/08/26 (D0 A D10 - 11 DIAS)"
 
     def test_inducao_gera_nome_com_intervalo_de_dias(self, client):
         c, engine = client
