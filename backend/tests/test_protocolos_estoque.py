@@ -107,7 +107,7 @@ def _lancar_iatf(c, animais, data_d0: date, hormonios: list[dict] | None = None)
     if hormonios:
         payload["hormonios"] = hormonios
     r = c.post("/reproducao/protocolo-iatf", json=payload)
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     return r.json()["lancamento_id"]
 
 
@@ -669,38 +669,24 @@ class TestBugCancelarDuasVezesInflaSaldo:
         assert _saldo(engine, "Detergente para cochos") == 20, "cancelar de novo não pode inflar (bug)"
 
 
-class TestBugOrigemIdNuloNoGrupoMultiLancamento:
+class TestGrupoMultiLancamentoRateiaBaixaPorLancamento:
     """O evento agrupado da Agenda (mesma data_prevista, mesmo dia) pode
     reunir animais de MAIS DE UM ProtocoloIatfLancamento (dois lotes com o
     mesmo D0 — ver docstring de `_marcar_protocolo_iatf_realizado`,
     agenda.py ~1283). Quando o usuário escolhe o frasco explicitamente
-    (`medicamentos`) ao confirmar esse grupo, agenda.py linha ~1383 grava:
+    (`medicamentos`) ao confirmar esse grupo, agenda.py agora emite UMA
+    baixa POR LANÇAMENTO (origem_id = lancamento_id, quantidade = dose × nº
+    de vacas daquele lançamento) em vez de um bloco único com origem_id=None
+    — que deixava `cancelar()` (central_protocolos.py) incapaz de achar o
+    que estornar, já que ele filtra por origem_id do lançamento específico."""
 
-        origem_id = aplicacoes[0].lancamento_id if len(aplicacoes_por_lancamento) == 1 else None
-
-    — ou seja, com >1 lançamento no grupo, origem_id fica None. `cancelar()`
-    (central_protocolos.py ~681-685) filtra
-    `MovimentoEstoque.origem_id == origem_id_do_lancamento_especifico`, então
-    NUNCA encontra esse movimento (seu origem_id real é None) — a baixa fica
-    órfã, sem como ser estornada pela Central para nenhum dos dois
-    lançamentos do grupo.
-
-    Fora do meu escopo de correção: o bug nasce em agenda.py (proibido) e
-    afeta o cancelar() de central_protocolos.py (também proibido)."""
-
-    @pytest.mark.xfail(
-        strict=False,
-        reason="agenda.py:~1383 grava origem_id=None quando o grupo confirmado pela Agenda com "
-               "`medicamentos` explícito reúne >1 ProtocoloIatfLancamento (mesmo D0) — cancelar() "
-               "filtra por origem_id do lançamento específico e nunca acha o movimento para estornar.",
-    )
     def test_cancelar_um_lote_do_grupo_estorna_a_fracao_dele(self, client):
         c, engine = client
         _animais(engine, ["700", "800"])
         item_id = _estoque(engine, nome="Sincrocp", quantidade=50, unidade="ml")
         d0 = date.today()
         lid_a = _lancar_iatf(c, ["700"], d0)
-        _lancar_iatf(c, ["800"], d0)
+        lid_b = _lancar_iatf(c, ["800"], d0)
 
         evento_id = f"protocolo_iatf_{d0.isoformat()}_0"
         r = c.post("/agenda/realizados", json={
@@ -710,12 +696,80 @@ class TestBugOrigemIdNuloNoGrupoMultiLancamento:
         assert r.status_code == 200, r.text
         with Session(engine) as s:
             saldo_apos_baixa = s.get(Estoque, item_id).quantidade
-        assert saldo_apos_baixa == 50 - 2 * 2  # 2 vacas, bloco único (medicamentos explícito)
+        assert saldo_apos_baixa == 50 - 2 * 2  # 2 vacas, total do grupo continua o mesmo
+
+        movs = None
+        with Session(engine) as s:
+            movs = s.exec(
+                select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "iatf")
+            ).all()
+        assert len(movs) == 2, "uma baixa por lançamento, não uma só pro grupo"
+        assert {m.origem_id for m in movs} == {lid_a, lid_b}
+        assert all(m.quantidade == 2 for m in movs)  # 1 vaca cada, dose 2 ml
 
         c.post(f"/central-protocolos/iatf/{lid_a}/cancelar", json={"motivo": "teste"})
         with Session(engine) as s:
-            saldo_depois = s.get(Estoque, item_id).quantidade
-        assert saldo_depois > saldo_apos_baixa, "cancelar do lote A deveria estornar ao menos a fração dele"
+            saldo_apos_cancelar_a = s.get(Estoque, item_id).quantidade
+        assert saldo_apos_cancelar_a == saldo_apos_baixa + 2, "cancelar A devolve só a fração dele (2 ml)"
+
+        c.post(f"/central-protocolos/iatf/{lid_b}/cancelar", json={"motivo": "teste"})
+        with Session(engine) as s:
+            saldo_final = s.get(Estoque, item_id).quantidade
+        assert saldo_final == 50, "cancelar B depois fecha no saldo original"
+
+    def test_rateio_proporcional_com_lotes_de_tamanhos_diferentes(self, client):
+        c, engine = client
+        _animais(engine, ["1", "2", "3", "4"])
+        item_id = _estoque(engine, nome="Sincrocp", quantidade=100, unidade="ml")
+        d0 = date.today()
+        lid_a = _lancar_iatf(c, ["1", "2", "3"], d0)  # 3 vacas
+        lid_b = _lancar_iatf(c, ["4"], d0)  # 1 vaca
+
+        evento_id = f"protocolo_iatf_{d0.isoformat()}_0"
+        r = c.post("/agenda/realizados", json={
+            "evento_id": evento_id,
+            "medicamentos": [{"produto": "Sincrocp", "estoque_id": item_id, "dose": 2, "unidade": "ml", "via": "IM"}],
+        })
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            saldo_apos_baixa = s.get(Estoque, item_id).quantidade
+        assert saldo_apos_baixa == 100 - 2 * 4  # dose 2 ml x 4 vacas no total, igual a antes
+
+        with Session(engine) as s:
+            movs = {
+                m.origem_id: m.quantidade
+                for m in s.exec(select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "iatf")).all()
+            }
+        assert movs == {lid_a: 6, lid_b: 2}  # 3 vacas x 2ml = 6; 1 vaca x 2ml = 2 — rateio exato, sem dízima
+
+        c.post(f"/central-protocolos/iatf/{lid_a}/cancelar", json={"motivo": "teste"})
+        with Session(engine) as s:
+            assert s.get(Estoque, item_id).quantidade == saldo_apos_baixa + 6
+
+        c.post(f"/central-protocolos/iatf/{lid_b}/cancelar", json={"motivo": "teste"})
+        with Session(engine) as s:
+            assert s.get(Estoque, item_id).quantidade == 100
+
+    def test_avisos_nao_duplicam_por_lancamento(self, client):
+        c, engine = client
+        _animais(engine, ["700", "800"])
+        # Nenhum item "Sincrocp" cadastrado no estoque -> resolver_item devolve
+        # None -> o mesmo aviso de "não está no estoque" seria emitido uma vez
+        # por lançamento do grupo se não houvesse dedup.
+        d0 = date.today()
+        _lancar_iatf(c, ["700"], d0)
+        _lancar_iatf(c, ["800"], d0)
+
+        evento_id = f"protocolo_iatf_{d0.isoformat()}_0"
+        r = c.post("/agenda/realizados", json={
+            "evento_id": evento_id,
+            "medicamentos": [{"produto": "Sincrocp", "estoque_id": None, "dose": 2, "unidade": "ml", "via": "IM"}],
+        })
+        assert r.status_code == 200, r.text
+        avisos = r.json()["avisos"]
+        assert len(avisos) == len(set(avisos)), f"avisos duplicados: {avisos}"
+        assert any("não está no estoque" in a for a in avisos)
+        assert sum("não está no estoque" in a for a in avisos) == 1
 
 
 class TestSanidadeInducaoSemVinculoAoLancamento:

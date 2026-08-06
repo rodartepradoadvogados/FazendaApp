@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
+from fazenda.ordenacao import chave_numero
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
@@ -1103,8 +1104,8 @@ def listar_lancamentos_protocolo(
 
 @router.post("/protocolos/lancamentos", status_code=201)
 def lancar_protocolo(
-    dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloLancamentoIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
@@ -1147,10 +1148,41 @@ def lancar_protocolo(
     if dados.grau_mastite is not None and dados.grau_mastite not in GRAUS_MASTITE:
         raise HTTPException(status_code=400, detail="Grau de mastite inválido (aceitos: 1, 2 ou 3)")
 
+    # Idempotência (mesmo padrão de producao.lancar_inducao_lactacao — ver o
+    # comentário "Idempotência:" lá): duplo clique ou retry da fila offline
+    # não pode duplicar. Mas ProtocoloSanitarioLancamento é POR ANIMAL, não
+    # tem "cabeçalho" de lote como as outras 4 famílias — e, diferente
+    # delas, também não tem `ativo`/`encerrado_em` (a Central de Protocolos
+    # nem oferece cancelar/encerrar sanitário, "se resolve pela Agenda", ver
+    # `_lancamento_ou_404`). Por isso a proteção aqui é diferente das outras:
+    # em vez de recusar a chamada inteira quando encontra QUALQUER lançamento
+    # igual, ela é PARCIAL — passa animal por animal e pula só quem já tem
+    # (protocolo_id, data_inicio, numero_matriz) idêntico, criando
+    # normalmente os que faltam. Isso cobre tanto o duplo clique puro (todos
+    # os animais já existem, nada é criado) quanto o caso comum de "relançar
+    # os mesmos N + 1 animal novo" (ex.: usuário lembrou de incluir mais uma
+    # vaca no mesmo lote) — sem essa proteção parcial, os N repetidos
+    # duplicariam de novo, mesmo a chamada sendo "quase" um retry.
+    existentes_query = (
+        select(ProtocoloSanitarioLancamento.numero_matriz)
+        .where(ProtocoloSanitarioLancamento.protocolo_id == dados.protocolo_id)
+        .where(ProtocoloSanitarioLancamento.data_inicio == dados.data_inicio)
+        .where(ProtocoloSanitarioLancamento.numero_matriz.in_(numeros))
+    )
+    if fazenda_id is not None:
+        existentes_query = existentes_query.where(
+            or_(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id, ProtocoloSanitarioLancamento.fazenda_id.is_(None))
+        )
+    numeros_existentes = set(session.exec(existentes_query).all())
+
     protocolos = {protocolo.id: protocolo}
     lancamentos_criados = []
     avisos: list[str] = []
+    pulados: list[str] = []
     for numero in numeros:
+        if numero in numeros_existentes:
+            pulados.append(numero)
+            continue
         del_no_caso = None
         ccs_ultima = None
         recidiva = None
@@ -1207,7 +1239,19 @@ def lancar_protocolo(
         session.commit()
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
 
-    return {"criados": len(lancamentos_criados), "lancamentos": lancamentos_criados, "avisos": avisos}
+    if pulados:
+        avisos.append(
+            f"{len(pulados)} animal(is) já tinha(m) este protocolo lançado nesta data e "
+            f"foi(ram) ignorado(s) para não duplicar: {', '.join(sorted(pulados, key=chave_numero))}."
+        )
+    if not lancamentos_criados and numeros:
+        # Nada novo foi criado (todo mundo já existia) — mesma convenção de
+        # status das outras famílias: 200 em vez do 201 padrão da rota.
+        response.status_code = 200
+    return {
+        "criados": len(lancamentos_criados), "pulados": len(pulados), "lancamentos": lancamentos_criados,
+        "avisos": avisos,
+    }
 
 
 @router.get("/mastite/opcoes")

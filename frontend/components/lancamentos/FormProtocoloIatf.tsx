@@ -192,7 +192,14 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       } else {
         if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
         const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos });
-        setSucesso(`Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0 a D${diaFinal}).`);
+        // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
+        // protocolo/D0/animais, ou mesmo D0/animais/hormônios num ad-hoc sem
+        // molde) e reaproveitou em vez de duplicar — duplo clique ou retry da
+        // fila offline. Sem este ramo a tela dizia "agendado ... — 0 eventos
+        // na Agenda", que parece defeito (mesmo padrão de FormInducaoLactacao).
+        setSucesso(r.criado === false
+          ? (r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
+          : `Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0 a D${diaFinal}).`);
       }
       setSel(new Set()); setUm("");
       recarregarAtivosRef.current();

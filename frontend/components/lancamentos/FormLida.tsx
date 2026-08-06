@@ -130,8 +130,15 @@ export function FormLida({ animais }: { animais: AnimalRow[] }) {
         data_fim: lida?.modo === "frequencia" ? dataFim : undefined,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
-      setSucesso(
-        vinculo === "fazenda"
+      // `criado: false` = o backend achou um lançamento ativo idêntico (mesma
+      // lida, mesma data, mesmo período gerado e mesmo(s) animal(is) ou mesma
+      // tarefa/lote) e reaproveitou em vez de duplicar — duplo clique ou
+      // retry da fila offline. Sem este ramo a tela dizia "lançada ... — 0
+      // ocorrência(s) na Agenda", que parece defeito (mesmo padrão de
+      // FormInducaoLactacao).
+      setSucesso(r.criado === false
+        ? (r.aviso || "Esta lida já estava lançada para este alvo nesta data — nada foi duplicado.")
+        : vinculo === "fazenda"
           ? `Lida "${lida?.nome}" lançada como tarefa da fazenda — ${r.eventos_criados} ocorrência(s) na Agenda.`
           : `Lida "${lida?.nome}" lançada para ${r.animais} animal(is) — ${r.eventos_criados} ocorrência(s) na Agenda.`
       );

@@ -5360,7 +5360,7 @@ export async function fetchProtocolosCustomizadosParaLancar(): Promise<Protocolo
 export async function lancarProtocoloCustomizado(dados: {
   protocolo_id: number; animais: string[]; lote?: string | null; data_inicio: string;
   responsavel?: string | null; observacao?: string | null;
-}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number }> {
+}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number; aviso?: string }> {
   const res = await authFetch(`${API}/protocolos-customizados/lancar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -5439,7 +5439,7 @@ export async function fetchLidasParaLancar(): Promise<Lida[]> {
 export async function lancarLida(dados: {
   lida_id: number; animais?: string[]; lote?: string | null; data_inicio: string; data_fim?: string | null;
   responsavel?: string | null; observacao?: string | null;
-}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number }> {
+}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number; aviso?: string }> {
   const res = await authFetch(`${API}/lida/lancar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
