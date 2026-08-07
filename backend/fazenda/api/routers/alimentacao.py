@@ -438,7 +438,7 @@ def atualizar_alimento(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     alimento = session.get(Alimento, alimento_id)
-    if not alimento:
+    if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Alimento não encontrado")
     query_outro = select(Alimento).where(Alimento.nome == dados.nome, Alimento.id != alimento_id)
     if fazenda_id is not None:
@@ -458,9 +458,12 @@ def atualizar_alimento(
 
 
 @router.delete("/alimentos/{alimento_id}")
-def excluir_alimento(alimento_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_alimento(
+    alimento_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     alimento = session.get(Alimento, alimento_id)
-    if not alimento:
+    if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Alimento não encontrado")
     for e in session.exec(select(Estoque).where(Estoque.alimento_id == alimento_id)).all():
         e.alimento_id = None

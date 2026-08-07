@@ -20,7 +20,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 import fazenda.models  # noqa: F401 — força o registro de todas as tabelas (inclui ProtocoloIatf/Etapa) antes do create_all() do fixture
-from fazenda.models import Estoque, PrincipioAtivo, ProtocoloIatfAplicacao
+from fazenda.models import Estoque, MedicamentoComercial, PrincipioAtivo, ProtocoloIatfAplicacao
 
 
 @pytest.fixture
@@ -266,11 +266,21 @@ def _lancar_iatf_com_hormonio(c, animais, data_d0="2026-07-08", produto="Sincroc
     }).json()
 
 
+def _lancar_inducao_com_medicamento(c, animais, data_d0="2026-07-08", produto="Benzoato de Estradiol"):
+    pid = c.post("/cadastro/protocolos-inducao-lactacao", json={
+        "nome": f"Indução {produto}",
+        "etapas": [{"dia": 0, "tipo": "medicamento", "produto": produto, "dose": 1, "unidade": "ml"}],
+    }).json()["id"]
+    return c.post("/producao/inducao-lactacao", json={
+        "protocolo_id": pid, "animais": animais, "data_d0": data_d0,
+    }).json()
+
+
 class TestDetalheOpcoesDeFrasco:
-    """O detalhe do lançamento IATF (usado pela Central para "dar baixa de um
-    dia") tem que expor as mesmas opções de frasco que a Agenda já mostra —
-    sem isso o usuário nunca vê que há mais de um frasco do mesmo princípio
-    ativo em estoque."""
+    """O detalhe do lançamento (IATF e Indução, usado pela Central para "dar
+    baixa de um dia") tem que expor as mesmas opções de frasco que a Agenda já
+    mostra — sem isso o usuário nunca vê que há mais de um frasco do mesmo
+    princípio ativo em estoque, ou nem chega a poder escolher qual usou."""
 
     def _preparar_estoque_duplo(self, engine):
         with Session(engine) as s:
@@ -304,9 +314,26 @@ class TestDetalheOpcoesDeFrasco:
         for d in det["dias"]:
             assert d["hormonios"] == []
 
+    def test_detalhe_inducao_traz_opcoes_de_frasco_por_dia(self, client):
+        # Mesmo gap que o IATF já tinha: a Central pedia "em que dia?" e
+        # "quais animais?" mas nunca "o que foi aplicado?" pra indução —
+        # aplicação virava "realizada" sem dar baixa nenhuma, mesmo com dois
+        # frascos do mesmo princípio ativo em estoque.
+        c, engine = client
+        self._preparar_estoque_duplo(engine)
+        resultado = _lancar_inducao_com_medicamento(c, ["800"], produto="Sincrocp")
+        lancamento_id = resultado["lancamento_id"]
+
+        det = c.get(f"/central-protocolos/inducao/{lancamento_id}").json()
+        d0 = next(d for d in det["dias"] if d["dia"] == 0)
+        assert d0["hormonios"], "dia D0 deveria trazer o medicamento cadastrado no lançamento"
+        h = d0["hormonios"][0]
+        assert h["produto"] == "Sincrocp"
+        assert {o["nome"] for o in h["opcoes"]} == {"Sincrocp", "Croniben"}
+
     def test_outras_origens_nao_ganham_campo_hormonios(self, client):
-        # Escopo do pedido: só IATF. Indução/customizado/lida continuam como
-        # estavam — sem o campo extra.
+        # Customizado/lida continuam como estavam — sem o campo extra (cada
+        # etapa é uma tarefa livre, não necessariamente um medicamento).
         c, engine = client
         pid = c.post("/cadastro/protocolos-customizados", json={
             "nome": "Cura de casco", "categoria": "Rebanho", "tipo": "sanitario",
@@ -317,6 +344,107 @@ class TestDetalheOpcoesDeFrasco:
         }).json()
         det = c.get(f"/central-protocolos/customizado/{lanc['lancamento_id']}").json()
         assert all("hormonios" not in d for d in det["dias"])
+
+
+class TestBaixaInducaoComFrascoExplicito:
+    """Mesma garantia que TestBaixaComFrascoExplicito já dá pro IATF: POST
+    .../baixa com `medicamentos` explícito dá baixa NAQUELE frasco — não no
+    medicamento cadastrado no lançamento (que é só o fallback)."""
+
+    def _preparar_estoque_duplo(self, engine):
+        with Session(engine) as s:
+            pa = PrincipioAtivo(nome="Cloprostenol")
+            s.add(pa)
+            s.commit()
+            s.refresh(pa)
+            s.add(Estoque(nome="Sincrocp", quantidade=50, unidade="ml", principio_ativo_id=pa.id))
+            s.add(Estoque(nome="Croniben", quantidade=30, unidade="ml", principio_ativo_id=pa.id))
+            s.commit()
+
+    def test_baixa_com_estoque_id_explicito_abate_o_frasco_escolhido(self, client):
+        c, engine = client
+        self._preparar_estoque_duplo(engine)
+        resultado = _lancar_inducao_com_medicamento(c, ["800"], produto="Sincrocp")
+        lancamento_id = resultado["lancamento_id"]
+
+        with Session(engine) as s:
+            croniben_id = s.exec(select(Estoque).where(Estoque.nome == "Croniben")).first().id
+
+        r = c.post(f"/central-protocolos/inducao/{lancamento_id}/baixa", json={
+            "dia": 0,
+            "medicamentos": [{"produto": "Croniben", "estoque_id": croniben_id, "dose": 1, "unidade": "ml"}],
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            sincro = s.exec(select(Estoque).where(Estoque.nome == "Sincrocp")).first()
+            croniben = s.exec(select(Estoque).where(Estoque.nome == "Croniben")).first()
+            assert croniben.quantidade == 30 - 1
+            assert sincro.quantidade == 50
+
+    def test_sem_medicamentos_explicito_cai_no_cadastrado_e_avisa_sem_estoque(self, client):
+        # Reproduz o bug relatado: sem `medicamentos`, o backend já cai no
+        # medicamento cadastrado no lançamento — se ele não tem frasco em
+        # Estoque, a aplicação é marcada realizada mas SEM baixa, com aviso.
+        c, engine = client
+        resultado = _lancar_inducao_com_medicamento(c, ["800"], produto="Benzoato de Estradiol")
+        lancamento_id = resultado["lancamento_id"]
+        r = c.post(f"/central-protocolos/inducao/{lancamento_id}/baixa", json={"dia": 0})
+        assert r.status_code == 200, r.text
+        assert any("Benzoato de Estradiol" in a and "não está no estoque" in a for a in r.json()["avisos"])
+
+
+class TestIncluirSemEstoque:
+    """O toggle "incluir todos os medicamentos/hormônios (inclusive sem
+    estoque)" expande as opções do picker para toda marca comercial
+    cadastrada do princípio ativo — mesmo sem frasco em Estoque — dando
+    liberdade pro operador flagar o que realmente usou."""
+
+    def _preparar_estoque_e_catalogo(self, engine):
+        with Session(engine) as s:
+            pa = PrincipioAtivo(nome="Estradiol")
+            s.add(pa)
+            s.commit()
+            s.refresh(pa)
+            s.add(Estoque(nome="Sincrocp", quantidade=50, unidade="ml", principio_ativo_id=pa.id))
+            # Marca cadastrada no catálogo, mas SEM item de Estoque correspondente.
+            s.add(MedicamentoComercial(principio_ativo_id=pa.id, nome_comercial="Estrogin", laboratorio="Farmavet"))
+            s.commit()
+
+    def test_sem_o_flag_so_mostra_frascos_em_estoque(self, client):
+        c, engine = client
+        self._preparar_estoque_e_catalogo(engine)
+        resultado = _lancar_iatf_com_hormonio(c, ["700"], produto="Sincrocp")
+        det = c.get(f"/central-protocolos/iatf/{resultado['lancamento_id']}").json()
+        h = next(d for d in det["dias"] if d["dia"] == 0)["hormonios"][0]
+        assert {o["nome"] for o in h["opcoes"]} == {"Sincrocp"}
+
+    def test_com_o_flag_mostra_tambem_marca_sem_estoque(self, client):
+        c, engine = client
+        self._preparar_estoque_e_catalogo(engine)
+        resultado = _lancar_iatf_com_hormonio(c, ["700"], produto="Sincrocp")
+        det = c.get(f"/central-protocolos/iatf/{resultado['lancamento_id']}?incluir_sem_estoque=true").json()
+        h = next(d for d in det["dias"] if d["dia"] == 0)["hormonios"][0]
+        opcoes_por_nome = {o["nome"]: o for o in h["opcoes"]}
+        assert set(opcoes_por_nome) == {"Sincrocp", "Estrogin"}
+        assert opcoes_por_nome["Estrogin"]["estoque_id"] is None
+        assert opcoes_por_nome["Estrogin"]["sem_estoque"] is True
+        assert opcoes_por_nome["Sincrocp"]["sem_estoque"] is False
+
+    def test_escolher_opcao_sem_estoque_marca_realizado_mas_nao_da_baixa(self, client):
+        c, engine = client
+        self._preparar_estoque_e_catalogo(engine)
+        resultado = _lancar_iatf_com_hormonio(c, ["700"], produto="Sincrocp")
+        lancamento_id = resultado["lancamento_id"]
+        r = c.post(f"/central-protocolos/iatf/{lancamento_id}/baixa", json={
+            "dia": 0,
+            "medicamentos": [{"produto": "Estrogin", "estoque_id": None, "dose": 2, "unidade": "ml"}],
+        })
+        assert r.status_code == 200, r.text
+        assert any("Estrogin" in a and "não está no estoque" in a for a in r.json()["avisos"])
+        with Session(engine) as s:
+            sincro = s.exec(select(Estoque).where(Estoque.nome == "Sincrocp")).first()
+            assert sincro.quantidade == 50, "não deveria ter mexido no frasco Sincrocp"
 
 
 class TestBaixaComFrascoExplicito:

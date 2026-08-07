@@ -3594,9 +3594,12 @@ export type CelulaProtocolo = {
 };
 // Opção de frasco em estoque para um hormônio do dia (mesmo formato que a
 // Agenda já usa em `hormonios`/`medicamentos_opcoes`, ver agenda/page.tsx).
+// `estoque_id` vem `null` e `sem_estoque` vem `true` para uma marca comercial
+// cadastrada que ainda não tem frasco em Estoque — só aparece com
+// `incluirSemEstoque` habilitado; escolher uma dessas não abate estoque.
 export type OpcaoMedicamento = {
-  estoque_id: number; nome: string; marca: string | null; saldo: number;
-  unidade: string | null; estoque_inicializado: boolean;
+  estoque_id: number | null; nome: string; marca: string | null; saldo: number | null;
+  unidade: string | null; estoque_inicializado: boolean; sem_estoque: boolean;
 };
 export type HormonioProtocolo = {
   produto: string; dose: number | null; unidade: string | null; via: string | null;
@@ -3608,15 +3611,18 @@ export type DetalheCentralProtocolo = {
   ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
   dias: {
     dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number;
-    // Só vem preenchido para origem === "iatf" — o "qual medicamento/frasco?"
-    // que a Agenda já pergunta, agora também na Central.
+    // Vem preenchido para origem === "iatf" ou "inducao" — o "qual
+    // medicamento/frasco?" que a Agenda já pergunta, agora também na Central.
     hormonios?: HormonioProtocolo[];
   }[];
   animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];
 };
 
-export async function fetchDetalheProtocolo(origem: string, origemId: number): Promise<DetalheCentralProtocolo> {
-  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}`, { cache: "no-store" });
+export async function fetchDetalheProtocolo(
+  origem: string, origemId: number, incluirSemEstoque?: boolean,
+): Promise<DetalheCentralProtocolo> {
+  const qs = incluirSemEstoque ? "?incluir_sem_estoque=true" : "";
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}${qs}`, { cache: "no-store" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao carregar o protocolo"); }
   return res.json();
 }

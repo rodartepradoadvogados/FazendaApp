@@ -169,9 +169,12 @@ def listar_itens_estoque(
 
 
 @router.put("/estoque-itens/{item_id}")
-def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_meta_estoque(
+    item_id: int, dados: EstoqueMetaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     item = session.get(Estoque, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
         raise HTTPException(status_code=400, detail="Fornecedor não encontrado")

@@ -700,9 +700,12 @@ def criar_conta_corrente(
 
 
 @router.put("/contas-correntes/{conta_id}")
-def atualizar_conta_corrente(conta_id: int, dados: ContaCorrenteIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_conta_corrente(
+    conta_id: int, dados: ContaCorrenteIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     c = session.get(ContaCorrente, conta_id)
-    if not c:
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Conta corrente não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(c, campo, valor)
@@ -745,9 +748,12 @@ def criar_centro_custo(
 
 
 @router.put("/centros-custo/{centro_id}")
-def atualizar_centro_custo(centro_id: int, dados: CentroCustoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_centro_custo(
+    centro_id: int, dados: CentroCustoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     c = session.get(CentroCusto, centro_id)
-    if not c:
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Centro de custo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -893,9 +899,12 @@ def criar_conta_gerencial(
 
 
 @router.put("/plano-contas/{conta_id}")
-def atualizar_conta_gerencial(conta_id: int, dados: PlanoContaGerencialIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_conta_gerencial(
+    conta_id: int, dados: PlanoContaGerencialIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     conta = session.get(PlanoContaGerencial, conta_id)
-    if not conta:
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Conta gerencial não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(conta, campo, valor)
@@ -2401,12 +2410,16 @@ async def enviar_recibo(
 def contas_a_pagar(
     dias: int = Query(10, description="Janela em dias"),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """Retorna contas com vencimento nos próximos N dias (não quitadas)."""
     hoje = date.today()
     limite = hoje + __import__("datetime").timedelta(days=dias)
 
-    contas = session.exec(select(ContaGerencial)).all()
+    query = select(ContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
     nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
     resultado = []
     for c in contas:
