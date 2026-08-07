@@ -17,9 +17,9 @@ const TEMAS_APP = [
   { id: "escuro" as Tema, label: "Escuro", icon: Moon },
 ];
 const PALETAS = [
-  { id: "vinho" as Paleta, label: "Vinho", icon: Wine, title: "Paleta Vinho (padrão)" },
+  { id: "vinho" as Paleta, label: "Vinho", icon: Wine, title: "Paleta Vinho" },
   { id: "verde" as Paleta, label: "Verde", icon: Leaf, title: "Paleta Verde" },
-  { id: "azul" as Paleta, label: "Azul", icon: Droplet, title: "Paleta Azul" },
+  { id: "azul" as Paleta, label: "Azul", icon: Droplet, title: "Paleta Azul (padrão)" },
 ];
 
 /**
@@ -28,15 +28,15 @@ const PALETAS = [
  * independentes: trocar uma não mexe na outra.
  */
 export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "app" }) {
-  const [tema, setTema] = useState<Tema>("misto");
-  const [paleta, setPaleta] = useState<Paleta>("vinho");
+  const [tema, setTema] = useState<Tema>("claro");
+  const [paleta, setPaleta] = useState<Paleta>("azul");
 
   useEffect(() => {
     const el = document.documentElement;
-    const t = (el.getAttribute("data-theme") as Tema) || "misto";
-    const p = (el.getAttribute("data-paleta") as Paleta) || "vinho";
+    const t = (el.getAttribute("data-theme") as Tema) || "claro";
+    const p = (el.getAttribute("data-paleta") as Paleta) || "azul";
     setTema(variant === "app" && t === "misto" ? "claro" : t);
-    setPaleta(p === "verde" || p === "azul" ? p : "vinho");
+    setPaleta(p === "verde" || p === "vinho" ? p : "azul");
   }, [variant]);
 
   function mudarTema(t: Tema) {

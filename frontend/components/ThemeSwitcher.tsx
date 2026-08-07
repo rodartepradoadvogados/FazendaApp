@@ -19,7 +19,7 @@ const META: Record<Tema, { label: string; icon: typeof Sun }> = {
 function sincronizarCorTopo() {
   const escuro = document.documentElement.getAttribute("data-theme") === "escuro";
   const p = document.documentElement.getAttribute("data-paleta");
-  const paleta = p === "verde" || p === "azul" ? p : "vinho";
+  const paleta = p === "verde" || p === "vinho" ? p : "azul";
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", corTopo(escuro, paleta));
 }
 
@@ -39,12 +39,12 @@ export function aplicarPaleta(p: Paleta) {
 }
 
 export function ThemeSwitcher() {
-  const [tema, setTema] = useState<Tema>("misto");
+  const [tema, setTema] = useState<Tema>("claro");
 
   // Sincroniza com o que o script anti-flash já aplicou no <html>.
   useEffect(() => {
-    const atual = (document.documentElement.getAttribute("data-theme") as Tema) || "misto";
-    setTema(CICLO.includes(atual) ? atual : "misto");
+    const atual = (document.documentElement.getAttribute("data-theme") as Tema) || "claro";
+    setTema(CICLO.includes(atual) ? atual : "claro");
   }, []);
 
   function ciclar() {
