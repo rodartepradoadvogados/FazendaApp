@@ -103,6 +103,12 @@ INDICACOES: list[dict] = [
         "principios": [
             {"principio": "Pré-parto Neonatal (Rotavírus, Coronavírus, E. coli)", "prioridade": 1,
              "nota": "PREVENÇÃO via colostro — vacinar a vaca no pré-parto."},
+            {"principio": "Eletrólitos Orais (Reidratante)", "prioridade": 1,
+             "nota": "Reidratação é o que mais salva o bezerro — mais determinante para a sobrevivência do que o "
+                     "antibiótico. Iniciar assim que a diarreia for notada, enquanto o bezerro ainda mama."},
+            {"principio": "Ringer Lactato / Soro Fisiológico (Fluidoterapia IV)", "prioridade": 1,
+             "nota": "Desidratação grave (bezerro prostrado, sem reflexo de sucção) — a via oral deixa de ser "
+                     "suficiente e a reposição precisa ser IV."},
             {"principio": "Sulfadoxina + Trimetoprima", "prioridade": 1, "nota": "Tratamento de diarreia bacteriana."},
             {"principio": "Enrofloxacina", "prioridade": 2, "nota": "Quadro septicêmico; uso restrito."},
             {"principio": "Meloxicam", "prioridade": 2, "nota": "Analgesia — melhora ingestão de leite e ganho de peso."},
@@ -310,6 +316,58 @@ INDICACOES: list[dict] = [
         ],
     },
 
+    # Adição 2026-08-07 — necessidades reais não cobertas pelo catálogo
+    # anterior (nenhum dos 40 princípios originais tratava nenhuma delas).
+    {
+        "nome": "Timpanismo / Indigestão Espumosa", "tipo": "doenca",
+        "descricao": "Distensão ruminal aguda por formação de espuma estável (pasto novo/leguminosas — trevo, "
+                     "alfafa, azevém em pastejo intenso). Manejo de urgência: sem tratamento, evolui a óbito por "
+                     "asfixia em minutos a horas.",
+        "principios": [
+            {"principio": "Dimeticona / Simeticona (Antiespumante)", "prioridade": 1,
+             "nota": "Via oral/sonda esofágica. Em quadro grave com risco iminente de asfixia, a trocarização "
+                     "(punção do rúmen) é a alternativa mecânica de urgência — decisão veterinária."},
+        ],
+    },
+    {
+        "nome": "Coccidiose de Bezerros", "tipo": "doenca",
+        "descricao": "Eimeriose (Eimeria bovis, E. zuernii, E. alabamensis) — diarreia com sangue em bezerros de "
+                     "recria, principalmente em ambiente com alta carga de oocistos (piquete/baia lotados).",
+        "principios": [
+            {"principio": "Toltrazuril", "prioridade": 1,
+             "nota": "Dose única oral — referência de bula: 3 mL/10 kg PV (Baycox 5%). Metafilaxia a partir da 3ª "
+                     "semana de vida ou 10-14 dias após exposição ao ambiente contaminado."},
+            {"principio": "Sulfaquinoxalina", "prioridade": 2,
+             "nota": "Alternativa sulfamídica — tratamento em vários dias consecutivos (não é dose única). Sem "
+                     "marca comercial confirmada para bovinos no catálogo; confirmar dose com o veterinário/bula do produto."},
+        ],
+    },
+    {
+        "nome": "Antissepsia de Úbere e Umbigo", "tipo": "preventivo",
+        "descricao": "Antissepsia de rotina — pré e pós-dipping de tetos na ordenha e cura do coto umbilical do "
+                     "bezerro recém-nascido. Consumo DIÁRIO na ordenha: um dos itens de maior giro da fazenda.",
+        "principios": [
+            {"principio": "Iodo (Tintura/PVPI)", "prioridade": 1,
+             "nota": "Pré-dipping (antes da ordenha) e pós-dipping (após a ordenha) dos tetos, e imersão total do "
+                     "coto umbilical do bezerro — de preferência 2×/dia até a cura."},
+            {"principio": "Clorexidina (Antisséptico Tópico)", "prioridade": 2,
+             "nota": "Alternativa ao iodo para cura de umbigo e antissepsia de teto."},
+        ],
+    },
+    {
+        "nome": "Fluidoterapia / Reidratação", "tipo": "suporte",
+        "descricao": "Reidratação oral e fluidoterapia intravenosa — suporte geral de desidratação (diarreia, "
+                     "estresse térmico, jejum prolongado, hemorragia). É o pilar do tratamento da diarreia "
+                     "neonatal: mais determinante para a sobrevivência do bezerro do que o antibiótico "
+                     "(ver também a indicação \"Diarreia Neonatal\", que já lista os dois princípios abaixo).",
+        "principios": [
+            {"principio": "Eletrólitos Orais (Reidratante)", "prioridade": 1,
+             "nota": "1ª linha em desidratação leve/moderada, com o bezerro ainda mamando/com reflexo de sucção."},
+            {"principio": "Ringer Lactato / Soro Fisiológico (Fluidoterapia IV)", "prioridade": 1,
+             "nota": "Desidratação grave (>8%), animal deprimido/sem reflexo de sucção — a via IV passa a ser obrigatória."},
+        ],
+    },
+
     # ── PREVENTIVAS (vacinação / profilaxia programada) ─────────────────────
     {
         "nome": "Clostridiose", "tipo": "preventivo", "ja_semeada": True,
@@ -351,6 +409,33 @@ INDICACOES: list[dict] = [
         "descricao": "Mesma vacina polivalente da Leptospirose.",
         "principios": [{"principio": "Reprodutiva (IBR, BVD, Leptospirose)", "prioridade": 1}],
     },
+    # Adição 2026-08-07 — os nomes "Raiva" e "Febre Aftosa" já existem como
+    # `Doenca` (seed de api/routers/cadastro/sanitario.py::SEED_DOENCAS, que
+    # roda ANTES deste seed no lifespan — ver main.py; e "Raiva (Vacina)"/
+    # "Febre Aftosa (Vacina)" em farmacia_seed.PRINCIPIOS também referenciam
+    # o mesmo nome via a chave "doenca") — o bloco abaixo REAPROVEITA a
+    # `Doenca` já existente e só acrescenta o vínculo com o princípio (mesmo
+    # padrão dos 6 nomes sagrados, ver docstring do módulo), nunca duplica.
+    {
+        "nome": "Raiva", "tipo": "preventivo",
+        "descricao": "Raiva dos Herbívoros — zoonose fatal transmitida principalmente pelo morcego hematófago "
+                     "(Desmodus rotundus). Sem tratamento após início dos sintomas; a única defesa é a vacinação.",
+        "principios": [
+            {"principio": "Raiva (Vacina)", "prioridade": 1,
+             "nota": "Vacinação obrigatória/recomendada (PNCRH) em área de foco de morcego hematófago — "
+                     "confirmar exigência e periodicidade com a Defesa Agropecuária estadual."},
+        ],
+    },
+    {
+        "nome": "Febre Aftosa", "tipo": "preventivo",
+        "descricao": "Doença viral de notificação obrigatória. Calendário e obrigatoriedade da vacinação variam "
+                     "por UF e pelo status sanitário da zona (livre com ou sem vacinação) — confirmar a exigência "
+                     "vigente com a Defesa Agropecuária estadual/MAPA.",
+        "principios": [
+            {"principio": "Febre Aftosa (Vacina)", "prioridade": 1,
+             "nota": "Calendário definido pelo serviço veterinário oficial — depende da UF e do status sanitário."},
+        ],
+    },
     {
         "nome": "Secagem", "tipo": "preventivo",
         "descricao": "Terapia de vaca seca — antimicrobiano intramamário de longa ação na última ordenha.",
@@ -362,6 +447,10 @@ INDICACOES: list[dict] = [
         "nome": "Analgesia em Procedimentos", "tipo": "preventivo",
         "descricao": "Descorna, castração, marcação. Exigência crescente de bem-estar animal.",
         "principios": [
+            {"principio": "Lidocaína (Cloridrato)", "prioridade": 1,
+             "nota": "Anestesia local infiltrativa/bloqueio de nervo — cobre a dor DURANTE o procedimento "
+                     "(descorna, castração, sutura de feridas). Associar a um AINE sistêmico abaixo para a "
+                     "analgesia pós-procedimento."},
             {"principio": "Meloxicam", "prioridade": 1, "nota": "Referência para descorna de bezerro."},
             {"principio": "Flunixina Meglumina", "prioridade": 2},
             {"principio": "Cetoprofeno", "prioridade": 2},
@@ -454,6 +543,9 @@ INDICACOES: list[dict] = [
         "nome": "Choque / Reação Alérgica", "tipo": "suporte",
         "descricao": "Choque anafilático, endotóxico, reação vacinal.",
         "principios": [
+            {"principio": "Adrenalina (Epinefrina)", "prioridade": 1,
+             "nota": "1ª escolha em choque anafilático verdadeiro (reação vacinal grave, picada de cobra, "
+                     "dificuldade respiratória súbita) — ação imediata, aplicar ANTES do corticoide/AINE."},
             {"principio": "Dexametasona", "prioridade": 1, "nota": "ALERTA: risco de aborto em fêmea prenhe."},
             {"principio": "Flunixina Meglumina", "prioridade": 1, "nota": "Choque endotóxico — uso principal declarado no seed."},
         ],
@@ -1265,4 +1357,84 @@ MARCAS: list[dict] = [
      "carencia_carne_dias": 0, "status_carencia_carne": _R,
      "alerta": "USO EXCLUSIVO de médico veterinário habilitado pelo serviço oficial. "
                "— mapeada para 'Subdérmica' porque VIAS_APLICACAO não tem a opção."},
+
+    # ── Adição 2026-08-07 — 8 necessidades reais não cobertas pelo catálogo
+    # anterior (ver farmacia_seed.py para os princípios/marcas correspondentes
+    # e o relatório de fechamento desta tarefa para o que foi confirmado em
+    # fonte x o que ficou "a_preencher" de propósito). ──────────────────────
+
+    # ── Toltrazuril ──────────────────────────────────────────────────────────
+    {"principio": "Toltrazuril", "nome_comercial": "Baycox 5%",
+     "uso_principal": "Coccidiose de bezerros (Eimeria bovis, E. zuernii, E. alabamensis) — dose única.",
+     "concentracao": "50 mg/mL (toltrazuril 5%)",
+     "dose_padrao": 3.0, "unidade_dose": "ml", "dose_base": "por_kg_pv", "dose_referencia_kg": 10.0,
+     "dose_texto": "3 mL/10 kg PV (15 mg/kg), VO, dose única — a partir da 3ª semana de vida ou 10-14 dias após "
+                   "exposição ao ambiente contaminado", "via_padrao": "Oral", "status_dose": _R,
+     "carencia_leite_dias": None, "status_carencia_leite": _P,
+     "carencia_carne_dias": 63, "status_carencia_carne": _R,
+     "proibido_lactacao": True,
+     "alerta": "NÃO aplicar em fêmeas produtoras de leite para consumo humano."},
+
+    # ── Dimeticona / Simeticona (Antiespumante) ─────────────────────────────
+    {"principio": "Dimeticona / Simeticona (Antiespumante)", "nome_comercial": "Ruminol VTQ",
+     "uso_principal": "Timpanismo ruminal agudo/crônico e meteorismo em ruminantes.",
+     "concentracao": "Simeticona 30%",
+     "dose_padrao": None, "unidade_dose": "ml", "dose_base": "por_animal", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Oral", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A,
+     "alerta": "Dose por animal (não por kg) — confirmar na bula do lote antes de aplicar; princípio é considerado "
+               "inerte/sem risco de superdosagem, mas este catálogo não grava carência sem confirmação em bula."},
+
+    # ── Eletrólitos Orais (Reidratante) ─────────────────────────────────────
+    {"principio": "Eletrólitos Orais (Reidratante)", "nome_comercial": "AltaLYTE",
+     "uso_principal": "Reidratação oral de bezerros com diarreia.",
+     "concentracao": None,
+     "dose_padrao": None, "unidade_dose": "unidade", "dose_base": "por_litro_agua", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Oral", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A},
+
+    # ── Ringer Lactato / Soro Fisiológico (Fluidoterapia IV) ────────────────
+    {"principio": "Ringer Lactato / Soro Fisiológico (Fluidoterapia IV)", "nome_comercial": "Ringer Lactato",
+     "uso_principal": "Fluidoterapia IV — reposição hidroeletrolítica em desidratação grave.",
+     "concentracao": "Cloreto de sódio 0,6 g + cloreto de potássio 0,03 g + cloreto de cálcio 0,02 g + "
+                     "lactato de sódio 0,3 g / 100 mL",
+     "dose_padrao": None, "unidade_dose": "ml", "dose_base": "por_kg_pv", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Intravenosa", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A},
+
+    # ── Iodo (Tintura/PVPI) ──────────────────────────────────────────────────
+    {"principio": "Iodo (Tintura/PVPI)", "nome_comercial": "Tintura de Iodo 10%",
+     "uso_principal": "Pré/pós-dipping de tetos na ordenha e imersão do coto umbilical do bezerro.",
+     "concentracao": "Iodo 10 g + iodeto de sódio 3,75 g / 100 mL",
+     "dose_padrao": None, "unidade_dose": None, "dose_base": "por_animal", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Tópica", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A,
+     "alerta": "Uso tópico externo (pré/pós-dipping e umbigo) — não há confirmação de resíduo/carência de leite "
+               "para este catálogo; ficou em branco de propósito em vez de assumir 'liberado'."},
+
+    # ── Clorexidina (Antisséptico Tópico) ────────────────────────────────────
+    {"principio": "Clorexidina (Antisséptico Tópico)", "nome_comercial": "Clorexidina-Cetrimida",
+     "uso_principal": "Cura de umbigo de bezerro recém-nascido.",
+     "concentracao": None,
+     "dose_padrao": None, "unidade_dose": None, "dose_base": "por_animal", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Tópica", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A},
+
+    # ── Lidocaína (Cloridrato) ────────────────────────────────────────────────
+    {"principio": "Lidocaína (Cloridrato)", "nome_comercial": "Lidovet",
+     "uso_principal": "Anestesia local — cesarianas, castração, descorna, sutura de feridas, redução de prolapso.",
+     "concentracao": "Cloridrato de lidocaína 2% (20 mg/mL), sem vasoconstritor",
+     "dose_padrao": None, "unidade_dose": "ml", "dose_base": "por_kg_pv", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Subdérmica", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A,
+     "alerta": "Dose de anestésico local depende do procedimento/volume de infiltração, não é um simples mL/kg — "
+               "confirmar volume máximo seguro na bula antes de aplicar, especialmente em bezerro pequeno."},
+
+    # ── Raiva (Vacina) ────────────────────────────────────────────────────────
+    {"principio": "Raiva (Vacina)", "nome_comercial": "Vacina Antirrábica para Herbívoros",
+     "uso_principal": "Prevenção da raiva dos herbívoros — vacinação anual em área de foco de morcego hematófago.",
+     "concentracao": None,
+     "dose_padrao": None, "unidade_dose": "ml", "dose_base": "por_animal", "dose_referencia_kg": None,
+     "dose_texto": None, "via_padrao": "Subcutânea", "status_dose": _A,
+     "carencia_leite_dias": None, "status_carencia_leite": _A, "carencia_carne_dias": None, "status_carencia_carne": _A},
 ]

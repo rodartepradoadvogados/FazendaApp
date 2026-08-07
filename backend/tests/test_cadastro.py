@@ -1035,7 +1035,7 @@ class TestCadastroSanitario:
         with Session(engine) as s:
             bootstrap_farmacia(s)
         principios = c.get("/cadastro/principios-ativos").json()
-        assert len(principios) == 40
+        assert len(principios) == 51
         assert all(p["categoria"] for p in principios)
         assert any(p["nome"] == "Ivermectina" for p in principios)
 
