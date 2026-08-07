@@ -30,14 +30,14 @@ from fazenda.models import (
     LidaAplicacao, LidaLancamento,
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
-    ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
+    ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
     Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento, nome_curto
 # A baixa reaproveita, sem duplicar uma linha, exatamente o que a Agenda já
 # faz: gerar a Sanidade da aplicação e abater o estoque com rastreio de origem.
 from fazenda.api.routers.agenda import (
@@ -340,6 +340,15 @@ class RenomearProtocoloIn(BaseModel):
     nome: str
 
 
+class EditarLancamentoProtocoloIn(BaseModel):
+    """G16 — edição do cabeçalho do lançamento. Todos os campos são opcionais
+    (só o que veio na requisição é alterado — `exclude_unset`)."""
+    data_inicio: date | None = None
+    responsavel: str | None = None
+    observacao: str | None = None
+    nome: str | None = None
+
+
 class DesfazerAplicacaoIn(BaseModel):
     dia: int
     numero_matriz: str
@@ -471,6 +480,11 @@ def detalhe(
         "nome": lancamento.nome_protocolo,
         "data_inicio": getattr(lancamento, "data_d0", None) or getattr(lancamento, "data_inicio", None),
         "responsavel": lancamento.responsavel,
+        # G16 — a Central só editava o nome antes; agora responsavel/observacao/
+        # data_inicio também. `observacao` não estava no dict aqui até então —
+        # sem ela, o bloco "Editar" (frontend) não teria como pré-preencher o
+        # campo.
+        "observacao": lancamento.observacao,
         "encerrado_em": lancamento.encerrado_em, "encerrado_motivo": lancamento.encerrado_motivo,
         "ativo": getattr(lancamento, "ativo", True),
         "etapas_total": total, "etapas_realizadas": feitas,
@@ -498,6 +512,105 @@ def renomear(
     session.add(lancamento)
     session.commit()
     return {"ok": True, "nome": lancamento.nome_protocolo}
+
+
+def _dia_inicial_lancamento(session: Session, origem: str, lancamento) -> int:
+    """O `dia_inicial` que `gerar_nome_lancamento` usa para montar o nome
+    automático — depende de onde ele mora em cada origem (ver comentário no
+    topo de `detalhe()`): sempre 0 no IATF; vem do MOLDE cadastrado na
+    indução (não é campo do lançamento); é um campo próprio do lançamento no
+    customizado e na lida."""
+    if origem == "iatf":
+        return 0
+    if origem == "inducao":
+        molde = session.get(ProtocoloInducaoLactacao, lancamento.protocolo_id)
+        return molde.dia_inicial if molde else 0
+    return lancamento.dia_inicial
+
+
+@router.put("/{origem}/{origem_id}")
+def editar_lancamento(
+    origem: str, origem_id: int, dados: EditarLancamentoProtocoloIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """G16 — edita data de início/responsável/observação/nome de um
+    lançamento (as 4 origens com ação: iatf, inducao, customizado, lida).
+
+    Mudar `data_inicio` é a parte delicada: bloqueia se alguma etapa já foi
+    aplicada (mudar a data desalinharia o que já foi feito de verdade) e,
+    quando permitido, desloca TODAS as `data_prevista` das aplicações pelo
+    mesmo delta — a Agenda lê `data_prevista`, então o evento também muda de
+    dia lá. `ProtocoloIatfHormonio`/`ProtocoloInducaoMedicamento` guardam
+    `dia` relativo (não data), então não precisam de ajuste; no
+    customizado/lida o `dia` também é relativo ao `dia_inicial` gravado no
+    lançamento — só a `data_prevista` (absoluta) se desloca.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
+
+    if lancamento.encerrado_em is not None or getattr(lancamento, "ativo", True) is False:
+        raise HTTPException(
+            status_code=400,
+            detail="Protocolo encerrado/cancelado — reabra antes de editar.",
+        )
+
+    dados_definidos = dados.model_dump(exclude_unset=True)
+    avisos: list[str] = []
+
+    if "responsavel" in dados_definidos:
+        lancamento.responsavel = dados.responsavel
+    if "observacao" in dados_definidos:
+        lancamento.observacao = dados.observacao
+    if "nome" in dados_definidos:
+        nome = (dados.nome or "").strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Informe um nome para o protocolo.")
+        lancamento.nome_protocolo = nome
+
+    if "data_inicio" in dados_definidos and dados.data_inicio is not None:
+        campo_data = "data_d0" if origem in ("iatf", "inducao") else "data_inicio"
+        data_atual = getattr(lancamento, campo_data)
+        nova_data = dados.data_inicio
+        if nova_data != data_atual:
+            aps = _aplicacoes_do_lancamento(session, origem, origem_id)
+            if any(a.realizada for a in aps):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Este protocolo já tem etapa(s) aplicada(s) — mudar a data de início desalinharia "
+                           "as datas do que já foi feito. Desfaça as aplicações antes ou cancele o lançamento.",
+                )
+            delta = nova_data - data_atual
+            for ap in aps:
+                ap.data_prevista = ap.data_prevista + delta
+                session.add(ap)
+            setattr(lancamento, campo_data, nova_data)
+
+            # Regrava nome_protocolo com gerar_nome_lancamento SOMENTE se o
+            # nome atual ainda for exatamente o auto-gerado para a data
+            # ANTIGA (nome_curto tira o sufixo de datas, se houver, e
+            # comparamos o resultado reconstruído contra o nome gravado) — se
+            # o usuário renomeou à mão, ou o nome nunca teve o sufixo (nome
+            # legado, anterior a esta nomenclatura), preserva como está. Não
+            # regrava se `nome` também veio nesta mesma requisição — quem
+            # editou os dois de propósito quer o nome que mandou, não um
+            # recalculado por cima.
+            if "nome" not in dados_definidos:
+                nome_atual = lancamento.nome_protocolo
+                dia_inicial = _dia_inicial_lancamento(session, origem, lancamento)
+                dia_final = max((a.dia for a in aps), default=dia_inicial)
+                nome_base = nome_curto(nome_atual)
+                nome_autogerado_antigo = gerar_nome_lancamento(nome_base, data_atual, dia_inicial, dia_final)
+                if nome_atual == nome_autogerado_antigo:
+                    lancamento.nome_protocolo = gerar_nome_lancamento(nome_base, nova_data, dia_inicial, dia_final)
+
+            if nova_data > date.today():
+                avisos.append("A nova data de início é no futuro.")
+
+    session.add(lancamento)
+    session.commit()
+    resposta = detalhe(origem, origem_id, False, session, fazenda_id)
+    resposta["avisos"] = avisos
+    return resposta
 
 
 @router.post("/{origem}/{origem_id}/baixa")

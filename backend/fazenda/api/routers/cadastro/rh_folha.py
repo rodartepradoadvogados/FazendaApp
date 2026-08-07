@@ -1603,6 +1603,105 @@ def editar_parcela_vale(
     }
 
 
+@router.delete("/vales/{vale_id}/parcelas/{parcela_id}")
+def excluir_parcela_vale(
+    vale_id: int, parcela_id: int, acao: str = "conceder", confirmar: bool = False,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Exclui UMA parcela de um vale de funcionário — diferente de DELETE
+    /vales/{id} (apaga o vale inteiro, incluindo o lançamento de caixa).
+    Segue a mesma ordem de validação de `editar_parcela_vale` (ver ali para o
+    porquê de cada regra), mas não é o motor genérico de `exclusoes.py`: é
+    sub-registro com reconciliação própria via `_reconciliar_vale_competencias`.
+
+    `acao`:
+    - "conceder": apaga só a parcela; `ValeFuncionario.valor_total` NUNCA
+      muda aqui (é o valor efetivamente pago/adiantado, histórico) — a soma
+      das parcelas passa a divergir dele, e a resposta expõe
+      `diverge_valor_pago`/`diferenca_valor_pago` para o front avisar.
+    - "redistribuir_igual": distribui o valor da parcela apagada entre as
+      parcelas PENDENTES POSTERIORES (mesma regra de "só posteriores" de
+      `editar_parcela_vale` — nunca mexe em parcela já paga/anterior), com o
+      resto (arredondamento) na última — a soma das parcelas se mantém.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    parcela = session.get(ValeParcela, parcela_id)
+    if not parcela or parcela.vale_id != vale_id:
+        raise HTTPException(status_code=404, detail="Parcela não encontrada")
+
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    if competencia_paga:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Parcela já aplicada na folha paga de {competencia_paga} não pode ser excluída.",
+        )
+
+    todas_parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    if len(todas_parcelas) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Este vale tem uma única parcela — exclua o vale inteiro (o lançamento de caixa também será removido).",
+        )
+
+    # Só as parcelas POSTERIORES (mesma ordem de competência) e ainda
+    # pendentes entram na redistribuição — mesma regra de `editar_parcela_vale`.
+    outras_pendentes = [
+        p for p in todas_parcelas
+        if p.id != parcela_id and p.competencia > parcela.competencia
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+    ]
+
+    if not confirmar:
+        soma_atual = round(sum(p.valor for p in todas_parcelas), 2)
+        raise HTTPException(status_code=409, detail={
+            "mensagem": "Excluir esta parcela muda o valor total lançado do vale.",
+            "valor_parcela": parcela.valor,
+            "valor_vale": vale.valor_total,
+            "soma_apos": round(soma_atual - parcela.valor, 2),
+            "parcelas_pendentes_posteriores": len(outras_pendentes),
+        })
+
+    if acao == "redistribuir_igual":
+        if not outras_pendentes:
+            raise HTTPException(status_code=400, detail="Não há parcelas pendentes para redistribuir — escolha conceder.")
+        valor_base = round(parcela.valor / len(outras_pendentes), 2)
+        restante = parcela.valor
+        for i, p in enumerate(outras_pendentes):
+            acrescimo = valor_base if i < len(outras_pendentes) - 1 else round(restante, 2)
+            restante = round(restante - acrescimo, 2)
+            p.valor = round(p.valor + acrescimo, 2)
+            session.add(p)
+    elif acao != "conceder":
+        raise HTTPException(status_code=400, detail="Informe a ação: conceder ou redistribuir_igual.")
+
+    pessoa_id = vale.pessoa_id
+    competencia_apagada = parcela.competencia
+    session.delete(parcela)
+    session.commit()
+
+    # Inclui a competência apagada na reconciliação — senão a folha daquele
+    # mês fica com o desconto fantasma (ela já não tem mais parcela nenhuma
+    # apontando pra ela, mas o valor_vale/valor_liquido gravados na
+    # FolhaPagamento ainda refletem o vale antes da exclusão).
+    parcelas_restantes = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    competencias_afetadas = sorted({p.competencia for p in parcelas_restantes} | {competencia_apagada})
+    _reconciliar_vale_competencias(session, pessoa_id, competencias_afetadas)
+    session.commit()
+    session.refresh(vale)
+
+    soma_parcelas = round(sum(p.valor for p in parcelas_restantes), 2)
+    return {
+        **vale.model_dump(),
+        "parcelas_detalhe": sorted(({**p.model_dump()} for p in parcelas_restantes), key=lambda p: p["competencia"]),
+        "soma_parcelas_atual": soma_parcelas,
+        "diverge_valor_pago": soma_parcelas != vale.valor_total,
+        "diferenca_valor_pago": round(soma_parcelas - vale.valor_total, 2),
+    }
+
+
 @router.delete("/vales/{vale_id}")
 def excluir_vale(
     vale_id: int, session: Session = Depends(get_session),

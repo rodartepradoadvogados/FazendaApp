@@ -777,10 +777,20 @@ def verificar_mae_parto(
 
 
 @router.get("/secagens")
-def listar_secagens_historico(session: Session = Depends(get_session)) -> dict:
+def listar_secagens_historico(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Todas as secagens, achatadas — histórico de secagens (Reprodução), com
-    os mesmos filtros de animal/data/ciclo da sub-aba Reprodução."""
-    secagens = session.exec(select(Secagem).order_by(Secagem.data_secagem.desc())).all()
+    os mesmos filtros de animal/data/ciclo da sub-aba Reprodução.
+
+    Correção (fechamento dos 17 gaps de editar/excluir, G5): esta rota não
+    filtrava por fazenda — vazamento entre fazendas, secagens de uma fazenda
+    apareciam no histórico de outra."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Secagem)
+    if fazenda_id is not None:
+        query = query.where(Secagem.fazenda_id == fazenda_id)
+    secagens = session.exec(query.order_by(Secagem.data_secagem.desc())).all()
     registros = []
     for s in secagens:
         d = s.model_dump()

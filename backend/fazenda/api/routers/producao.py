@@ -96,7 +96,9 @@ def listar_controles(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     animais_query = select(Animal)
     partos_query = select(Parto)
-    controles_query = select(ControleLeiteiro)
+    # G13 — mais recentes primeiro, para sustentar a lista "últimos lançados"
+    # em Lançamentos › Produção sem que o frontend precise reordenar.
+    controles_query = select(ControleLeiteiro).order_by(ControleLeiteiro.data_controle.desc(), ControleLeiteiro.id.desc())
     if fazenda_id is not None:
         animais_query = animais_query.where(Animal.fazenda_id == fazenda_id)
         partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
@@ -118,6 +120,7 @@ def listar_controles(
         d = c.data_controle
         ordem = c.ordem_parto or partos_por_numero.get(c.numero_matriz) or None
         registros.append({
+            "id": c.id,  # G13 — sustenta editar/excluir na lista "últimos lançados"
             "numero": c.numero_matriz,
             "raca": raca_por_numero.get(c.numero_matriz) or "",
             "data": d.isoformat() if d else None,
@@ -397,6 +400,92 @@ def criar_pesagens(
         criados.append(registro)
     session.commit()
     return {"criados": len(criados)}
+
+
+# G7 — listagem individual de pesagens (com `id`), para sustentar editar/
+# excluir. O relatório abaixo (/pesagens/relatorio) agrega por animal e não
+# devolve id nenhum.
+@router.get("/pesagens")
+def listar_pesagens(
+    numero_matriz: str | None = None,
+    grupo: str | None = None,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    limite: int = 200,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query = query.where(PesagemCorporal.fazenda_id == fazenda_id)
+    if numero_matriz:
+        query = query.where(PesagemCorporal.numero_matriz == numero_matriz)
+    if grupo:
+        query = query.where(PesagemCorporal.grupo_primario == grupo)
+    if data_inicio:
+        query = query.where(PesagemCorporal.data_pesagem >= data_inicio)
+    if data_fim:
+        query = query.where(PesagemCorporal.data_pesagem <= data_fim)
+    pesagens = session.exec(query).all()
+    total = len(pesagens)
+    pesagens = sorted(pesagens, key=lambda p: (p.data_pesagem, p.id), reverse=True)
+    if limite:
+        pesagens = pesagens[:limite]
+    nomes = mapa_usuarios(session, {p.usuario_id for p in pesagens})
+    linhas = [
+        {
+            "id": p.id,
+            "numero_matriz": p.numero_matriz,
+            "data_pesagem": p.data_pesagem.isoformat(),
+            "peso_kg": p.peso_kg,
+            "del_dias": p.del_dias,
+            "idade_meses": p.idade_meses,
+            "grupo_primario": p.grupo_primario,
+            "fase": p.fase,
+            "usuario_nome": nomes.get(p.usuario_id),
+        }
+        for p in pesagens
+    ]
+    return {"pesagens": linhas, "total": total}
+
+
+class PesagemEditIn(BaseModel):
+    data_pesagem: date | None = None
+    peso_kg: float | None = None
+
+
+@router.put("/pesagens/{pesagem_id}")
+def atualizar_pesagem(
+    pesagem_id: int, dados: PesagemEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """`del_dias`/`idade_meses`/`grupo_primario` são a "foto do momento" do
+    lançamento e nunca são recalculados aqui. `fase` (transição) depende da
+    data — só é recalculada quando `data_pesagem` muda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pesagem = session.get(PesagemCorporal, pesagem_id)
+    if not pesagem or (fazenda_id is not None and pesagem.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pesagem não encontrada")
+
+    campos = dados.model_dump(exclude_unset=True)
+    if "peso_kg" in campos:
+        if campos["peso_kg"] is None or campos["peso_kg"] <= 0:
+            raise HTTPException(status_code=400, detail="Peso deve ser maior que zero.")
+        pesagem.peso_kg = campos["peso_kg"]
+    if campos.get("data_pesagem") is not None:
+        pesagem.data_pesagem = campos["data_pesagem"]
+        animal_query = select(Animal).where(Animal.numero == pesagem.numero_matriz)
+        if fazenda_id is not None:
+            animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(animal_query).first()
+        pesagem.fase = _fase_transicao(session, animal, pesagem.data_pesagem)
+
+    pesagem.atualizado_em = datetime.utcnow()
+    session.add(pesagem)
+    session.commit()
+    session.refresh(pesagem)
+    return pesagem.model_dump()
 
 
 @router.get("/pesagens/relatorio")
@@ -762,6 +851,47 @@ def criar_entrega_leite(
         session.refresh(existente)
         return existente.model_dump()
     registro = EntregaLeiteMensal(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+_REGEX_COMPETENCIA = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+# G6 — o POST acima já é upsert por competência (editar o VALOR de um mês já
+# funciona); este PUT serve para corrigir a COMPETÊNCIA errada. Se a nova
+# competência já tiver outro registro na mesma fazenda, bloqueia com 409 em
+# vez de deixar o upsert do POST engolir os dois em silêncio.
+@router.put("/entrega-leite/{registro_id}")
+def atualizar_entrega_leite(
+    registro_id: int, dados: EntregaLeiteMensalIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(EntregaLeiteMensal, registro_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Entrega de leite não encontrada")
+    if not _REGEX_COMPETENCIA.match(dados.competencia):
+        raise HTTPException(status_code=400, detail="Competência inválida — use o formato AAAA-MM.")
+    if dados.quantidade_litros <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade entregue deve ser maior que zero.")
+    if dados.competencia != registro.competencia:
+        conflito_query = select(EntregaLeiteMensal).where(
+            EntregaLeiteMensal.competencia == dados.competencia,
+            EntregaLeiteMensal.id != registro.id,
+        )
+        if fazenda_id is not None:
+            conflito_query = conflito_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+        if session.exec(conflito_query).first():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Já existe uma entrega lançada para a competência {dados.competencia} — exclua-a antes ou escolha outro mês.",
+            )
+    registro.competencia = dados.competencia
+    registro.quantidade_litros = dados.quantidade_litros
+    registro.observacao = dados.observacao
     session.add(registro)
     session.commit()
     session.refresh(registro)

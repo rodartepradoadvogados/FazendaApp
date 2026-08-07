@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, Trash2, Pencil, AlertTriangle, X, Check, Clock, ThumbsUp, ThumbsDown } from "lucide-react";
 import {
   fetchTiposExclusao, buscarExclusao, impactoExclusao, confirmarExclusao,
@@ -35,6 +35,7 @@ const DESTINO_EDITAR: Record<string, string> = {
   doenca: "/configuracoes?aba=cadastro",
   evento_sanitario: "/configuracoes?aba=cadastro",
   protocolo_sanitario: "/configuracoes?aba=cadastro",
+  safra: "/configuracoes?aba=cadastro&sub=safra",
 };
 // "animal" é o único destino que precisa do id do próprio registro (número
 // do animal) anexado à URL — os demais levam à listagem do tipo, onde o
@@ -51,7 +52,10 @@ const inputStyle: React.CSSProperties = {
 };
 
 type Candidato = { id: string; titulo: string; subtitulo: string; tipo_real?: string };
-type Tipo = { id: string; label: string };
+// `sem_filtro_data` vem do backend (GET /exclusoes/tipos) desde a Fase 0 do
+// registro extensível de tipos — antes disso era uma lista fixa duplicada
+// aqui (TIPOS_SEM_DATA), que ficava desatualizada a cada tipo novo.
+type Tipo = { id: string; label: string; sem_filtro_data: boolean };
 type Pendente = { id: number; tipo: string; id_alvo: string; titulo: string | null; solicitado_por: string | null; criado_em: string };
 
 /**
@@ -111,10 +115,10 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const TIPOS_SEM_DATA = new Set([
-    "animal", "estoque", "lote", "fornecedor", "motivo_movimentacao", "pessoa",
-    "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario",
-  ]);
+  const TIPOS_SEM_DATA = useMemo(
+    () => new Set(tipos.filter((t) => t.sem_filtro_data).map((t) => t.id)),
+    [tipos],
+  );
   const temFiltroData = tipo && !TIPOS_SEM_DATA.has(tipo);
 
   const buscar = async (t: string, q: string, ini: string, fim: string) => {

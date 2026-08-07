@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Sprout, Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
-import { fetchSafras, criarSafra, atualizarSafra } from "@/lib/api";
+import { Sprout, Plus, Pencil, Trash2, AlertTriangle, Check, X } from "lucide-react";
+import { fetchSafras, criarSafra, atualizarSafra, confirmarExclusao, ehAdmin } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Safra = {
@@ -47,6 +47,9 @@ export default function CadastroSafra() {
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [excluindo, setExcluindo] = useState<number | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
+  const admin = ehAdmin();
 
   const carregar = () => fetchSafras().then(setSafras).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -63,6 +66,30 @@ export default function CadastroSafra() {
     setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
+
+  // Passa pelo fluxo central e auditado de exclusão (POST /exclusoes/confirmar,
+  // tipo "safra" — G11) em vez de um DELETE direto: admin exclui na hora,
+  // operador vira uma SolicitacaoExclusao pendente de aprovação, mesmo
+  // padrão de app/sanidade/page.tsx.
+  const excluir = async (s: Safra) => {
+    const msg = admin
+      ? `Excluir a safra "${s.nome}"? Isso não pode ser desfeito. Os lançamentos financeiros do centro de custo não são apagados.`
+      : `Solicitar a exclusão da safra "${s.nome}"? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setExcluindo(s.id); setMsg(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("safra", String(s.id));
+      if (r.status === "excluido") {
+        await carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) {
+      setMsg(e.message || "Erro ao excluir safra");
+    } finally {
+      setExcluindo(null);
+    }
+  };
 
   const salvar = async () => {
     if (!form.nome.trim() || !form.data_inicio || !form.data_fim) { setMsg("Nome e período são obrigatórios."); return; }
@@ -94,6 +121,7 @@ export default function CadastroSafra() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--dourado-light)", fontSize: "0.85rem", marginBottom: "0.8rem" }}>{avisoExclusao}</p>}
       {!safras && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {safras && (
@@ -132,9 +160,13 @@ export default function CadastroSafra() {
                       <td style={{ textAlign: "right" }}>{s.hectares.toLocaleString("pt-BR")}</td>
                       <td style={{ textAlign: "right" }}>{s.toneladas_produzidas.toLocaleString("pt-BR")}</td>
                       <td style={{ fontSize: "0.78rem" }}>{s.ativo ? "Sim" : "Não"}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(s)}>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(s)}>
                           <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                          onClick={() => excluir(s)} disabled={excluindo === s.id} title="Excluir safra">
+                          <Trash2 size={13} /> {excluindo === s.id ? "Excluindo…" : "Excluir"}
                         </button>
                       </td>
                     </tr>

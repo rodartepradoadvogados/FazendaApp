@@ -7,7 +7,7 @@ import {
   fetchProtocolosIatfCadastrados, criarProtocoloIatfCadastrado, atualizarProtocoloIatfCadastrado, excluirProtocoloIatfCadastrado,
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico,
   fetchDetalheProtocolo, darBaixaProtocolo, encerrarProtocolo, reabrirProtocolo, cancelarProtocolo,
-  renomearProtocolo, desfazerAplicacao,
+  desfazerAplicacao, editarLancamentoProtocolo,
   fetchPrincipiosAtivos,
   formatDate,
   type ProtocoloIatfMolde, type EtapaProtocoloIatf, type LinhaCentralProtocolos,
@@ -375,8 +375,13 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   // toda marca comercial cadastrada do mesmo princípio ativo — dá liberdade
   // de flagar o que realmente foi usado mesmo sem frasco cadastrado.
   const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
-  const [renomeando, setRenomeando] = useState(false);
-  const [novoNome, setNovoNome] = useState("");
+  // G16 — bloco "Editar" (data de início/responsável/observação/nome), no
+  // lugar do antigo botão "Renomear" (só o nome). `observacao` não vem
+  // tipada em DetalheCentralProtocolo (frontend/lib/api.ts é terreno do
+  // Agente 0, fora da fronteira deste agente) — o backend passou a devolvê-la
+  // mesmo assim (ver central_protocolos.detalhe), acessada aqui via `any`.
+  const [editando, setEditando] = useState(false);
+  const [editForm, setEditForm] = useState({ data_inicio: "", responsavel: "", observacao: "", nome: "" });
   const [desfazerAlvo, setDesfazerAlvo] = useState<{ dia: number; numero_matriz: string; rotulo: string } | null>(null);
   const [desfazendo, setDesfazendo] = useState(false);
 
@@ -440,12 +445,24 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     finally { setSalvando(false); }
   }
 
-  async function confirmarRenomear() {
-    if (!novoNome.trim()) return;
+  async function confirmarEditar() {
+    if (!det) return;
     setSalvando(true); setErro(null);
     try {
-      await renomearProtocolo(origem, origemId, novoNome.trim());
-      setRenomeando(false); setNovoNome("");
+      // "nome" só entra no payload se o usuário de fato mexeu nele — o
+      // backend só regrava o nome auto-gerado (data nova no lugar da antiga)
+      // quando "nome" NÃO vem na requisição; mandar sempre, mesmo sem
+      // mudança, desligaria essa regravação automática ao mudar a data.
+      const dados: Parameters<typeof editarLancamentoProtocolo>[2] = {
+        data_inicio: editForm.data_inicio || undefined,
+        responsavel: editForm.responsavel,
+        observacao: editForm.observacao,
+      };
+      const nomeAtual = editForm.nome.trim();
+      if (nomeAtual && nomeAtual !== det.nome) dados.nome = nomeAtual;
+      const r = await editarLancamentoProtocolo(origem, origemId, dados);
+      setEditando(false);
+      setAviso(r.avisos?.length ? r.avisos.join(" ") : "Protocolo atualizado.");
       await carregar(); onMudou();
     } catch (e: any) { setErro(e.message); }
     finally { setSalvando(false); }
@@ -516,19 +533,43 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         <p className="mb-3" style={{ color: "var(--green-light)", fontSize: "0.82rem", fontWeight: 600 }}>{aviso}</p>
       )}
 
-      {renomeando ? (
-        <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-          <input style={{ ...inputStyle, width: "auto", minWidth: 260, flex: 1 }} value={novoNome}
-                 onChange={(e) => setNovoNome(e.target.value)} placeholder="Nome do protocolo" autoFocus />
-          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={confirmarRenomear} disabled={salvando || !novoNome.trim()}>
-            Salvar
-          </button>
-          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setRenomeando(false)}>Cancelar</button>
+      {editando ? (
+        <div className="mb-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.8rem" }}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+            <div><label style={labelStyle}>Data de início</label>
+              <input type="date" style={inputStyle} value={editForm.data_inicio}
+                     onChange={(e) => setEditForm((f) => ({ ...f, data_inicio: e.target.value }))} /></div>
+            <div><label style={labelStyle}>Responsável</label>
+              <input style={inputStyle} value={editForm.responsavel}
+                     onChange={(e) => setEditForm((f) => ({ ...f, responsavel: e.target.value }))} /></div>
+            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Observação</label>
+              <input style={inputStyle} value={editForm.observacao}
+                     onChange={(e) => setEditForm((f) => ({ ...f, observacao: e.target.value }))} /></div>
+            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
+              <input style={inputStyle} value={editForm.nome}
+                     onChange={(e) => setEditForm((f) => ({ ...f, nome: e.target.value }))} placeholder="Nome do protocolo" /></div>
+          </div>
+          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Mudar a data de início desloca todas as datas previstas das aplicações pelo mesmo intervalo —
+            bloqueado se alguma etapa já tiver sido aplicada.
+          </p>
+          <div className="flex items-center gap-2">
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={confirmarEditar} disabled={salvando}>
+              Salvar
+            </button>
+            <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditando(false)}>Cancelar</button>
+          </div>
         </div>
       ) : (
         <button className="btn-ghost mb-2" style={{ fontSize: "0.74rem" }}
-                onClick={() => { setNovoNome(det.nome); setRenomeando(true); }}>
-          Renomear
+                onClick={() => {
+                  setEditForm({
+                    data_inicio: det.data_inicio || "", responsavel: det.responsavel || "",
+                    observacao: (det as any).observacao || "", nome: det.nome,
+                  });
+                  setEditando(true);
+                }}>
+          Editar
         </button>
       )}
 

@@ -3,8 +3,8 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo) + motivo,
 // análogo ao MultiFiltro de Diagnóstico/Motivo das outras abas.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
-import { fetchSecagensHistorico, atualizarSecagem } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Search, Trash2, X } from "lucide-react";
+import { fetchSecagensHistorico, atualizarSecagem, confirmarExclusao, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -36,6 +36,7 @@ export default function HistoricoSecagens() {
   const [modo, setModo] = useState<"data" | "ciclo">("data");
   const [cicloSel, setCicloSel] = useState<"1" | "2" | "3" | "esp">("1");
   const [cicloIdx, setCicloIdx] = useState(0);
+  const admin = ehAdmin();
 
   const carregar = () => fetchSecagensHistorico().then((d) => setRegs(d.secagens)).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -44,6 +45,7 @@ export default function HistoricoSecagens() {
   const [editVals, setEditVals] = useState({ data: "", motivo: "rotina", escore: "", observacao: "" });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
 
   const abrirEdicao = (s: SecagemReg) => {
     setEditando(s);
@@ -63,6 +65,32 @@ export default function HistoricoSecagens() {
       carregar();
     } catch (e: any) {
       setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
+
+  // Mesmo padrão de frontend/app/sanidade/page.tsx: passa pelo fluxo central
+  // e auditado de exclusão (POST /exclusoes/confirmar) — excluir uma secagem
+  // também devolve ao estoque o(s) produto(s) de secagem/vacina pré-parto já
+  // aplicados e remove aplicações ainda programadas na Agenda (ver
+  // rules/exclusao_tipos/rebanho.py::_alvos_secagem).
+  const excluirSecagem = async (s: SecagemReg) => {
+    const msg = admin
+      ? `Excluir a secagem de "${s.numero}" em ${fmtDia(s.data)}? Isso também devolve ao estoque o(s) produto(s) já aplicados e remove aplicações programadas na Agenda. Não pode ser desfeito.`
+      : `Solicitar a exclusão da secagem de "${s.numero}" em ${fmtDia(s.data)}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setSalvandoEdicao(true); setErroEdicao(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("secagem", String(s.id));
+      if (r.status === "excluido") {
+        setEditando(null);
+        carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao excluir");
     } finally {
       setSalvandoEdicao(false);
     }
@@ -119,6 +147,7 @@ export default function HistoricoSecagens() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && <>
@@ -208,9 +237,19 @@ export default function HistoricoSecagens() {
                 <input style={selStyle} value={editVals.observacao} onChange={(e) => setEditVals((v) => ({ ...v, observacao: e.target.value }))} /></div>
             </div>
             {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
-            <div className="flex items-center gap-3 mt-4">
-              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
-              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            <div className="flex items-center justify-between gap-3 mt-4">
+              <div className="flex items-center gap-3">
+                <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+                <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => excluirSecagem(editando)}
+                disabled={salvandoEdicao}
+              >
+                <Trash2 size={14} /> Excluir secagem
+              </button>
             </div>
           </div>
         </div>

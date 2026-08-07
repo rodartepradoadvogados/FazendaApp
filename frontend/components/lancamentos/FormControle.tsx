@@ -1,12 +1,18 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { baixarModeloControleLeiteiro, criarControlesLeiteiros, importarControleLeiteiroPlanilha } from "@/lib/api";
+import { baixarModeloControleLeiteiro, criarControlesLeiteiros, importarControleLeiteiroPlanilha, fetchControles, formatDate } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal } from "@/components/lancamentos/_shared";
+import { UltimosLancados } from "@/components/lancamentos/UltimosLancados";
 const UploadPlanilha = dynamic(() => import("@/components/UploadPlanilha").then((m) => m.UploadPlanilha), { ssr: false });
+
+// G13 — "últimos lançados": conferir/corrigir os controles recém-digitados
+// sem sair da tela de Lançamentos. GET /producao/controles já vem ordenado
+// por data desc, id desc (mais recente primeiro) — só corta em 10 aqui.
+type ControleRecente = { id: number; numero: string; data: string | null; producao_kg: number | null };
 
 // Upload de planilha (Excel/.xlsx ou CSV) — usado tanto em Controle leiteiro
 // (por animal ou por lote, um botão de modelo cada) quanto em Qualidade do
@@ -22,6 +28,12 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  const [recentes, setRecentes] = useState<ControleRecente[]>([]);
+  const carregarRecentes = useCallback(() => {
+    fetchControles().then((d) => setRecentes((d.controles ?? []).slice(0, 10))).catch(() => setRecentes([]));
+  }, []);
+  useEffect(carregarRecentes, [carregarRecentes]);
 
   const del = useMemo(() => animais.find((a) => a.numero === vaca)?.del_dias ?? null, [animais, vaca]);
   // Controle leiteiro é só de quem está em lactação: em lote de lactação
@@ -60,6 +72,7 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
       const r = await criarControlesLeiteiros({ data_controle: dataControle, entradas });
       setSucesso(`${r.criados} ${r.criados === 1 ? "pesagem" : "pesagens"} lançada${r.criados === 1 ? "" : "s"} com sucesso.`);
       limpar();
+      carregarRecentes();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar controle leiteiro");
     } finally {
@@ -178,6 +191,18 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
           <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
         </div>
       )}
+
+      <UltimosLancados<ControleRecente>
+        titulo="Últimos controles lançados"
+        linhas={recentes}
+        colunas={[
+          { label: "Animal", render: (l) => <span style={{ fontWeight: 700 }}>{l.numero}</span> },
+          { label: "Data", render: (l) => (l.data ? formatDate(l.data) : "—") },
+          { label: "kg", render: (l) => l.producao_kg ?? "—", alinhar: "right" },
+        ]}
+        tipoExclusao="controle"
+        onExcluido={carregarRecentes}
+      />
     </>
   );
 }

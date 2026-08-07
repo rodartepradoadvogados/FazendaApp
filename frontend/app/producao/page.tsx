@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe, ChevronDown, ChevronRight } from "lucide-react";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, formatDate, ehAdmin } from "@/lib/api";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X } from "lucide-react";
+import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -790,7 +790,7 @@ export function RelatoriosPesagemView() {
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  useEffect(() => {
+  const carregarRelatorio = () => {
     setCarregando(true); setErro(null);
     fetchRelatorioPesagemCorporal({
       numero_matriz: relTipo === "animal" ? relAnimal || undefined : undefined,
@@ -798,13 +798,70 @@ export function RelatoriosPesagemView() {
       data_inicio: relIni || undefined,
       data_fim: relFim || undefined,
     }).then((d) => setLinhas(d.linhas)).catch((e) => setErro(e.message)).finally(() => setCarregando(false));
-  }, [relTipo, relAnimal, relLote, relIni, relFim]);
+  };
+  useEffect(carregarRelatorio, [relTipo, relAnimal, relLote, relIni, relFim]);
+
+  // G7 — "Pesagens lançadas": listagem individual (com id), mesmos filtros do
+  // relatório acima, para editar (peso/data) ou excluir uma pesagem específica.
+  const admin = ehAdmin();
+  const [pesagens, setPesagens] = useState<PesagemLinha[] | null>(null);
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editVals, setEditVals] = useState({ data: "", peso: "" });
+
+  const carregarPesagens = () => {
+    fetchPesagens({
+      numero_matriz: relTipo === "animal" ? relAnimal || undefined : undefined,
+      grupo: relTipo === "lote" ? relLote || undefined : undefined,
+      data_inicio: relIni || undefined,
+      data_fim: relFim || undefined,
+    }).then((d) => setPesagens(d.pesagens)).catch(() => setPesagens([]));
+  };
+  useEffect(carregarPesagens, [relTipo, relAnimal, relLote, relIni, relFim]);
+
+  const iniciarEdicaoPesagem = (p: PesagemLinha) => {
+    setEditId(p.id);
+    setEditVals({ data: p.data_pesagem, peso: String(p.peso_kg) });
+  };
+
+  const salvarEdicaoPesagem = async (p: PesagemLinha) => {
+    setOcupado(p.id);
+    try {
+      await atualizarPesagem(p.id, { data_pesagem: editVals.data || undefined, peso_kg: editVals.peso ? Number(editVals.peso.replace(",", ".")) : undefined });
+      setEditId(null);
+      carregarPesagens();
+      carregarRelatorio();
+    } catch (e: any) { setErro(e.message || "Erro ao editar pesagem"); }
+    finally { setOcupado(null); }
+  };
+
+  // Mesmo padrão de app/sanidade/page.tsx: admin exclui na hora, operador
+  // solicita e aguarda aprovação — via motor genérico de exclusões.
+  const excluirPesagem = async (p: PesagemLinha) => {
+    const msg = admin
+      ? `Excluir a pesagem de ${p.numero_matriz} em ${formatDate(p.data_pesagem)}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão da pesagem de ${p.numero_matriz} em ${formatDate(p.data_pesagem)}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setOcupado(p.id); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("pesagem_corporal", String(p.id));
+      if (r.status === "excluido") {
+        carregarPesagens();
+        carregarRelatorio();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) { setErro(e.message || "Erro ao excluir"); }
+    finally { setOcupado(null); }
+  };
 
   const inputStyle: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
     border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
   };
   const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
+  const inpEdit: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "5px", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
 
   return (
     <div className="px-6 pt-6 space-y-4">
@@ -869,6 +926,59 @@ export function RelatoriosPesagemView() {
           </div>
         )}
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.35rem" }}>GMD: ganho médio diário entre a primeira e a última pesagem do período. GPD: média dos ganhos diários entre pesagens consecutivas.</p>
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-3">Pesagens lançadas</div>
+        {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
+        <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
+          <table className="fazenda-table">
+            <thead>
+              <tr><th>Data</th><th>Animal</th><th>Lote</th><th style={{ textAlign: "right" }}>Peso (kg)</th><th>Fase</th><th style={{ textAlign: "right" }}>Ações</th></tr>
+            </thead>
+            <tbody>
+              {(pesagens || []).map((p) => {
+                const editando = editId === p.id;
+                return (
+                  <Fragment key={p.id}>
+                    <tr>
+                      <td style={{ fontSize: "0.78rem" }}>{formatDate(p.data_pesagem)}</td>
+                      <td style={{ fontWeight: 700 }}>{p.numero_matriz}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{p.grupo_primario || "—"}</td>
+                      <td style={{ textAlign: "right" }}>{p.peso_kg}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{p.fase || "—"}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {!editando && (
+                          <span style={{ display: "inline-flex", gap: "0.3rem" }}>
+                            <button title="Editar" onClick={() => iniciarEdicaoPesagem(p)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></button>
+                            <button title={admin ? "Excluir" : "Solicitar exclusão"} disabled={ocupado === p.id} onClick={() => excluirPesagem(p)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                    {editando && (
+                      <tr>
+                        <td colSpan={6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
+                              <input type="date" style={inpEdit} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
+                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Peso (kg)</label>
+                              <input type="number" inputMode="decimal" style={inpEdit} value={editVals.peso} onChange={(e) => setEditVals((s) => ({ ...s, peso: e.target.value }))} /></div>
+                          </div>
+                          <div className="flex gap-2 mt-2">
+                            <button className="btn-primary" disabled={ocupado === p.id} onClick={() => salvarEdicaoPesagem(p)} style={{ fontSize: "0.78rem" }}><Check size={13} /> {ocupado === p.id ? "…" : "Salvar"}</button>
+                            <button className="btn-ghost" disabled={ocupado === p.id} onClick={() => setEditId(null)} style={{ fontSize: "0.78rem" }}><X size={13} /> Cancelar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {!(pesagens || []).length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma pesagem lançada no filtro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
