@@ -130,6 +130,22 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("unidade_base", "VARCHAR"), ("unidade_apresentacao", "VARCHAR"),
         ("estoque_minimo_apresentacoes", "FLOAT DEFAULT 1"),
     ],
+    # Catálogo da Farmácia: `doenca` é a INDICAÇÃO (doença ou manejo) e
+    # `medicamento_comercial` guarda a bula — dose, via e carência separada em
+    # leite e carne. Nulo em carência = "não informada", nunca zero.
+    "doenca": [
+        ("tipo", "VARCHAR DEFAULT 'doenca'"), ("descricao", "VARCHAR"), ("origem_id", "INTEGER"),
+    ],
+    "medicamento_comercial": [
+        ("uso_principal", "VARCHAR"), ("concentracao", "VARCHAR"),
+        ("dose_padrao", "FLOAT"), ("unidade_dose", "VARCHAR"), ("dose_base", "VARCHAR"),
+        ("dose_referencia_kg", "FLOAT"), ("dose_texto", "VARCHAR"), ("via_padrao", "VARCHAR"),
+        ("link_bula", "VARCHAR"),
+        ("carencia_leite_dias", "INTEGER"), ("carencia_carne_dias", "INTEGER"),
+        ("proibido_lactacao", "BOOLEAN"), ("alerta_gestacao", "BOOLEAN"), ("alerta", "VARCHAR"),
+        ("origem_id", "INTEGER"),
+    ],
+    "indicacao_terapeutica": [("nota", "VARCHAR"), ("origem_id", "INTEGER")],
     "estoque_semen": [
         ("naab", "VARCHAR"),
         ("valor_unitario", "FLOAT"), ("local_armazenamento", "VARCHAR"),
