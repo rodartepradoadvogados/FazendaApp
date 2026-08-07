@@ -246,7 +246,7 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
             <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Escolha o medicamento de cada etapa (cadastrada por critério)</p>
             <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
               <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
-              Incluir itens sem estoque
+              Incluir todos os medicamentos/hormônios (inclusive sem estoque)
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {etapasCriterio.map((e) => (

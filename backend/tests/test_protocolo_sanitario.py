@@ -620,3 +620,60 @@ class TestCadastroPorCriterio:
             assert substituto.quantidade == 40.0
             original = s.exec(select(Estoque).where(Estoque.nome == "Mastite Injetável")).first()
             assert original.quantidade == 0  # não mexeu no item zerado
+
+
+class TestMedicamentosPorPrincipioAtivoOuDoencaComCatalogo:
+    """`incluir_sem_estoque` também tem que valer pra etapa cadastrada por
+    princípio ativo/doença (não só classificação) — mesma flag "incluir
+    todos os medicamentos/hormônios, inclusive sem estoque" do picker de
+    Central de Protocolos/Agenda, agora unificada aqui."""
+
+    def _preparar_principio_com_marca_sem_estoque(self, engine):
+        from fazenda.models import MedicamentoComercial, PrincipioAtivo
+        with Session(engine) as s:
+            pa = PrincipioAtivo(nome="Cloprostenol")
+            s.add(pa)
+            s.commit()
+            s.refresh(pa)
+            s.add(Estoque(nome="Sincrocp", quantidade=50, unidade="ml", principio_ativo_id=pa.id))
+            s.add(MedicamentoComercial(principio_ativo_id=pa.id, nome_comercial="Croniben", laboratorio="Farmavet"))
+            s.commit()
+            return pa.id
+
+    def test_principio_ativo_sem_flag_so_lista_frasco_em_estoque(self, client):
+        c, engine = client
+        self._preparar_principio_com_marca_sem_estoque(engine)
+        r = c.get("/estoque/medicamentos", params={"principio_ativo": "Cloprostenol"})
+        assert [m["nome"] for m in r.json()] == ["Sincrocp"]
+
+    def test_principio_ativo_com_flag_inclui_marca_sem_estoque(self, client):
+        c, engine = client
+        self._preparar_principio_com_marca_sem_estoque(engine)
+        r = c.get("/estoque/medicamentos", params={"principio_ativo": "Cloprostenol", "incluir_sem_estoque": "true"})
+        por_nome = {m["nome"]: m for m in r.json()}
+        assert set(por_nome) == {"Sincrocp", "Croniben"}
+        assert por_nome["Sincrocp"]["sem_estoque"] is False
+        assert por_nome["Croniben"]["sem_estoque"] is True
+        assert por_nome["Croniben"]["estoque_id"] is None
+
+    def test_doenca_encontra_principio_via_indicacao_terapeutica(self, client):
+        """Antes só o vínculo direto PrincipioAtivo.doenca_id (1-pra-1, só
+        biológicos) era considerado — uma doença tratada por antibiótico
+        (via IndicacaoTerapeutica, N-pra-N) não aparecia. Confirma que agora
+        aparece."""
+        from fazenda.models import Doenca, IndicacaoTerapeutica, PrincipioAtivo
+        c, engine = client
+        with Session(engine) as s:
+            doenca = Doenca(nome="Metrite")
+            s.add(doenca)
+            pa = PrincipioAtivo(nome="Ceftiofur")
+            s.add(pa)
+            s.commit()
+            s.refresh(doenca)
+            s.refresh(pa)
+            s.add(IndicacaoTerapeutica(principio_ativo_id=pa.id, doenca_id=doenca.id, prioridade=1))
+            s.add(Estoque(nome="Excenel", quantidade=20, unidade="ml", principio_ativo_id=pa.id))
+            s.commit()
+
+        r = c.get("/estoque/medicamentos", params={"doenca": "Metrite"})
+        assert [m["nome"] for m in r.json()] == ["Excenel"]
