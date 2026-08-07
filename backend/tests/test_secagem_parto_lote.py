@@ -522,7 +522,10 @@ class TestProtocoloIatf:
         # #440: mesmo concluído, a lista de animais do protocolo continua
         # populada (para a Agenda poder mostrar "ÚLTIMA IATF — y animais"
         # com clique para ver quem foi inseminado nesse grupo).
-        assert item["animais"] == [{"numero_matriz": "500", "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True}]
+        assert item["animais"] == [{
+            "numero_matriz": "500", "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True,
+            "pronta_para_inseminar": True,  # hormônio todo aplicado, nenhum Serviço lançado ainda
+        }]
 
 
 class TestRegistrarServico:

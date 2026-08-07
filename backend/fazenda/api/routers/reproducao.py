@@ -1132,6 +1132,23 @@ def listar_protocolos_iatf_ativos(
     for ap in aplicacoes:
         por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
 
+    # Datas de serviço já registradas por animal — usado para decidir se o
+    # protocolo "ainda está vigente" (nenhum serviço lançado depois do D0
+    # deste lançamento) ou se já foi encerrado por uma inseminação. A
+    # inseminação em si pode ser lançada bem depois de o hormônio ter sido
+    # aplicado (a posteriori) — por isso "vigente" nunca depende de estar
+    # exatamente na etapa D11 hoje, só de ainda não ter serviço no ciclo.
+    query_servicos_datas = select(Servico.numero_matriz, Servico.data_servico)
+    if fazenda_id is not None:
+        query_servicos_datas = query_servicos_datas.where(Servico.fazenda_id == fazenda_id)
+    datas_servico_por_animal: dict[str, list[date]] = {}
+    for numero, data_servico in session.exec(query_servicos_datas).all():
+        if data_servico is not None:
+            datas_servico_por_animal.setdefault(numero, []).append(data_servico)
+
+    def _vigente(numero: str, data_d0: date) -> bool:
+        return not any(d >= data_d0 for d in datas_servico_por_animal.get(numero, []))
+
     _candidatas_cache: list | None = None
 
     def candidatas_herd() -> list[dict]:
@@ -1204,6 +1221,12 @@ def listar_protocolos_iatf_ativos(
                         # implantada (ver diagnóstico "mais animais do que o
                         # implantado") — sinaliza para o usuário conferir.
                         "d0_confirmado": any(a.dia == 0 and a.realizada for a in aps_por_animal_concluido[n]),
+                        # Protocolo "concluído" aqui só quer dizer que o hormônio
+                        # já foi todo aplicado — é exatamente quando a
+                        # inseminação está pronta pra ser lançada. Só deixa de
+                        # estar "vigente" quando já existe um Serviço registrado
+                        # depois do D0 deste lançamento (ver `_vigente`).
+                        "pronta_para_inseminar": _vigente(n, lanc.data_d0),
                     }
                     for n in animais_concluidos
                 ],
@@ -1221,7 +1244,10 @@ def listar_protocolos_iatf_ativos(
         for numero, aps_animal in sorted(por_animal.items(), key=lambda item: chave_numero(item[0])):
             pendentes_animal = [a for a in aps_animal if not a.realizada]
             if not pendentes_animal:
-                animais_status.append({"numero_matriz": numero, "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True})
+                animais_status.append({
+                    "numero_matriz": numero, "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True,
+                    "pronta_para_inseminar": _vigente(numero, lanc.data_d0),
+                })
                 continue
             # Próxima etapa é sempre calculada pela DATA, não por qual etapa
             # foi marcada "realizada" — do contrário, uma etapa nunca
@@ -1253,11 +1279,15 @@ def listar_protocolos_iatf_ativos(
                 "etapa_atual": f"D{proxima.dia}",
                 "data_etapa_atual": proxima.data_prevista.isoformat(),
                 "d0_confirmado": bool(d0 and d0.realizada),
-                # A "sub-aba Inseminação" usa este flag para filtrar as
-                # matrizes prontas para a IA — não pode comparar etapa_atual
-                # com a string "D11", porque o dia de inseminação varia
-                # conforme o molde (ver fazenda.rules.protocolo_iatf).
+                # Mantido por compatibilidade — indica só se a etapa de HOJE é a
+                # de inseminação. Não pode comparar etapa_atual com a string
+                # "D11", porque o dia de inseminação varia conforme o molde.
                 "na_inseminacao": proxima.dia == maior_dia_animal,
+                # A "sub-aba Inseminação" usa ESTE flag pra decidir se mostra a
+                # matriz: o protocolo está vigente (ainda sem Serviço lançado
+                # depois do D0), não importa em qual etapa do hormônio está
+                # hoje — a inseminação pode ser lançada a posteriori.
+                "pronta_para_inseminar": _vigente(numero, lanc.data_d0),
             })
         ativos.append({
             "lancamento_id": lanc.id,
