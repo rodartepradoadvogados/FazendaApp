@@ -459,7 +459,29 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                 <div><span style={labelStyle}>Valor</span><br />{a.valor != null ? `R$ ${a.valor}` : "—"}</div>
               </div>
             )}
+            <div style={{ marginTop: "0.85rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)", display: "grid", gridTemplateColumns: "repeat(3, minmax(120px, 1fr))", gap: "0.75rem", fontSize: "0.8rem" }}>
+              <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto?.dias_gestacao ?? "—"}</div>
+              <div><span style={labelStyle}>DEL atual</span><br />{a.del_dias != null ? String(a.del_dias) : "—"}</div>
+              <div><span style={labelStyle}>Previsão de parto</span><br />{ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+            </div>
           </div>
+
+          {ficha.precisao_parto && (
+            <div className="card" style={cardStyle}>
+              <div className="card-header mb-3">Previsão de parto</div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Última IA</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
+                <div><span style={labelStyle}>Último diagnóstico positivo</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
+                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
+                <div><span style={labelStyle}>Data da previsão de parto</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
+              </div>
+            </div>
+          )}
+
+          {!!ficha.partos?.length && (
+            <SecaoHistoricoTabela chave="partos" titulo="Partos" colunas={SECOES[0].colunas} linhas={formatarLinhas("partos", ficha.partos)} onAbrirCria={buscar} />
+          )}
 
           <div className="card" style={destacar ? { ...cardStyle, borderColor: "var(--red)" } : cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
@@ -580,20 +602,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             </SecaoRecolhivel>
           )}
 
-          {ficha.precisao_parto && (
-            <div className="card" style={cardStyle}>
-              <div className="card-header mb-3">Precisão de parto</div>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
-                <div><span style={labelStyle}>Última IA com diagnóstico positivo</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
-                <div><span style={labelStyle}>Confirmação da prenhez</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
-                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
-                <div><span style={labelStyle}>Parto provável</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
-                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
-              </div>
-            </div>
-          )}
-
-          {SECOES.map((s) => {
+          {SECOES.filter((s) => s.chave !== "partos").map((s) => {
             const linhasBrutas = (ficha[s.chave] as Record<string, unknown>[]) || [];
             if (!linhasBrutas.length) return null;
             const linhas = formatarLinhas(s.chave, linhasBrutas);
