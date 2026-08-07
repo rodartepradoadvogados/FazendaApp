@@ -27,6 +27,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
+from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.estoque_baixa import (
     baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
     resolver_item as _resolver_item_estoque, resolver_marca_comercial,
@@ -455,12 +456,16 @@ class MarcarCuraAplicacaoIn(BaseModel):
 
 
 @router.post("/aplicacoes/{aplicacao_id}/cura")
-def marcar_cura_aplicacao(aplicacao_id: int, dados: MarcarCuraAplicacaoIn, session: Session = Depends(get_session)) -> dict:
+def marcar_cura_aplicacao(
+    aplicacao_id: int, dados: MarcarCuraAplicacaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Marca, no dia seguinte a uma aplicação curativa avulsa, se o animal foi
     curado ou não — mesma ideia do /mastite/cura, mas para aplicação avulsa
     (não um protocolo multi-dia). Alimenta o relatório Taxa de cura."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     s = session.get(Sanidade, aplicacao_id)
-    if not s:
+    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     s.curada = dados.curada
     session.add(s)
@@ -496,18 +501,41 @@ def _status_lactacao(animal: Animal | None) -> str:
 
 
 @router.get("/taxa-cura")
-def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
+def relatorio_taxa_cura(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
-    Casos de cura já avaliados (aplicação avulsa curativa + protocolo
-    sanitário), achatados para o dashboard interativo — filtra no cliente por
-    período, lote, lactação/seca e categoria, e permite comparar o mesmo
-    animal ao longo da vida (vários casos por número).
+    Casos de cura (aplicação avulsa curativa + protocolo sanitário),
+    achatados para o dashboard interativo — filtra no cliente por período,
+    lote, lactação/seca e categoria, e permite comparar o mesmo animal ao
+    longo da vida (vários casos por número).
+
+    Traz tanto os casos JÁ AVALIADOS (`avaliado=True`, `curada` true/false)
+    quanto os que já poderiam ter sido avaliados mas ninguém respondeu
+    (`avaliado=False`, `curada=None`) — um protocolo só vira "não avaliado"
+    quando já TERMINOU (todas as aplicações do último dia realizadas, mesma
+    regra de `agenda.py`); protocolo em andamento não é pendência, ainda não
+    chegou a hora de perguntar. Sem isso, quem nunca responde "curado?" fica
+    invisível no relatório e a taxa de cura mostrada fica artificialmente
+    boa — daí a taxa (`taxa_cura_pct`) ser calculada só sobre os avaliados, e
+    o campo `cobertura_avaliacao_pct` existir para denunciar se ela é
+    confiável (poucos casos avaliados = número pouco confiável mesmo que
+    bonito).
     """
-    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+
+    query_animais = select(Animal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
     protocolos_nomes = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
 
     casos = []
-    for s in session.exec(select(Sanidade).where(Sanidade.curada != None)).all():  # noqa: E711
+
+    query_sanidade = select(Sanidade).where(Sanidade.curada != None)  # noqa: E711
+    if fazenda_id is not None:
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+    for s in session.exec(query_sanidade).all():
         animal = animais_por_numero.get(s.numero_matriz)
         casos.append({
             "origem": "aplicacao",
@@ -516,11 +544,32 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
             "tratamento": s.produto,
             "data": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
             "curada": s.curada,
+            "avaliado": True,
             "lote": s.lote or (animal.grupo_primario if animal else None),
             "categoria": _categoria_animal(animal),
             "status_lactacao": _status_lactacao(animal),
         })
-    for lanc in session.exec(select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.curada != None)).all():  # noqa: E711
+
+    query_lancamentos = select(ProtocoloSanitarioLancamento)
+    if fazenda_id is not None:
+        query_lancamentos = query_lancamentos.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query_lancamentos).all()
+
+    query_aplicacoes_protocolo = select(ProtocoloSanitarioAplicacao)
+    if fazenda_id is not None:
+        query_aplicacoes_protocolo = query_aplicacoes_protocolo.where(ProtocoloSanitarioAplicacao.fazenda_id == fazenda_id)
+    aplicacoes_por_lancamento: dict[int, list] = {}
+    for a in session.exec(query_aplicacoes_protocolo).all():
+        aplicacoes_por_lancamento.setdefault(a.lancamento_id, []).append(a)
+
+    for lanc in lancamentos:
+        if lanc.curada is not None:
+            avaliado = True
+        else:
+            terminou, _ = protocolo_terminado(aplicacoes_por_lancamento.get(lanc.id, []))
+            if not terminou:
+                continue  # protocolo em andamento — ainda não é caso pendente de avaliação
+            avaliado = False
         animal = animais_por_numero.get(lanc.numero_matriz)
         casos.append({
             "origem": "protocolo",
@@ -529,19 +578,28 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
             "tratamento": protocolos_nomes.get(lanc.protocolo_id, "—"),
             "data": lanc.data_inicio.isoformat() if lanc.data_inicio else None,
             "curada": lanc.curada,
+            "avaliado": avaliado,
             "lote": animal.grupo_primario if animal else None,
             "categoria": _categoria_animal(animal),
             "status_lactacao": _status_lactacao(animal),
         })
 
     casos.sort(key=lambda c: (c["numero"], c["data"] or ""))
-    total = len(casos)
-    curados = sum(1 for c in casos if c["curada"])
+    total_avaliados = sum(1 for c in casos if c["avaliado"])
+    total_nao_avaliados = len(casos) - total_avaliados
+    curados = sum(1 for c in casos if c["avaliado"] and c["curada"])
+    nao_curados = total_avaliados - curados
     return {
         "casos": casos,
-        "total": total,
+        "total": total_avaliados,  # retrocompatibilidade (era o total de avaliados antes do defeito 3)
+        "total_avaliados": total_avaliados,
         "curados": curados,
-        "taxa_cura_pct": round(100 * curados / total, 1) if total else None,
+        "nao_curados": nao_curados,
+        "total_nao_avaliados": total_nao_avaliados,
+        "taxa_cura_pct": round(100 * curados / total_avaliados, 1) if total_avaliados else None,
+        "cobertura_avaliacao_pct": (
+            round(100 * total_avaliados / len(casos), 1) if casos else None
+        ),
     }
 
 
@@ -1360,18 +1418,43 @@ class MarcarCuraIn(BaseModel):
     curada: bool
 
 
-@router.post("/mastite/cura")
-def marcar_cura_mastite(dados: MarcarCuraIn, session: Session = Depends(get_session)) -> dict:
-    """Marca, no último dia do protocolo, se o caso de mastite foi curado ou não.
-    Se não curado, sinaliza a necessidade do próximo tratamento."""
-    lanc = session.get(ProtocoloSanitarioLancamento, dados.lancamento_id)
-    if not lanc:
-        raise HTTPException(status_code=404, detail="Lançamento de mastite não encontrado")
-    lanc.curada = dados.curada
+def _marcar_cura_protocolo(lancamento_id: int, curada: bool, session: Session, fazenda_id: int | None) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lanc = session.get(ProtocoloSanitarioLancamento, lancamento_id)
+    if not lanc or (fazenda_id is not None and lanc.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento de protocolo sanitário não encontrado")
+    lanc.curada = curada
     session.add(lanc)
     session.commit()
-    proximo = None if dados.curada else "Caso não curado — inicie o próximo tratamento (protocolo seguinte)."
+    proximo = None if curada else "Caso não curado — inicie o próximo tratamento (protocolo seguinte)."
     return {"lancamento_id": lanc.id, "curada": lanc.curada, "proximo_tratamento": proximo}
+
+
+@router.post("/protocolos/lancamentos/{lancamento_id}/cura")
+def marcar_cura_protocolo(
+    lancamento_id: int, dados: MarcarCuraIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Marca, no último dia do protocolo, se o caso foi curado ou não — para
+    QUALQUER protocolo sanitário (mastite, vermifugação, etc.), não só
+    mastite. Se não curado, sinaliza a necessidade do próximo tratamento."""
+    if dados.lancamento_id != lancamento_id:
+        raise HTTPException(status_code=400, detail="lancamento_id do corpo diverge da URL")
+    return _marcar_cura_protocolo(lancamento_id, dados.curada, session, fazenda_id)
+
+
+@router.post("/mastite/cura")
+def marcar_cura_mastite(
+    dados: MarcarCuraIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """RETROCOMPATIBILIDADE — o app em produção ainda chama esta rota. Apesar
+    do nome ("mastite"), sempre serviu para marcar a cura de QUALQUER
+    protocolo sanitário lançado, não só mastite. Mantida funcionando com a
+    mesma lógica de `POST /protocolos/lancamentos/{id}/cura` (a rota nova,
+    com nome correto, para a qual o frontend atual já aponta) — não remova
+    sem migrar quem ainda chama esta."""
+    return _marcar_cura_protocolo(dados.lancamento_id, dados.curada, session, fazenda_id)
 
 
 # ---------------------------------------------------------------------------

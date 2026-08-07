@@ -28,6 +28,7 @@ from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
 from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
+from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.protocolo_customizado import (
     eventos_agenda as _eventos_protocolo_custom_agenda,
     marcar_realizado as _marcar_protocolo_custom_realizado,
@@ -44,6 +45,7 @@ from fazenda.rules.lida import (
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
+from fazenda.rules.ponto_critico_recria import eventos_agenda as _eventos_ponto_critico_recria_agenda
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
@@ -598,6 +600,12 @@ def calcular_agenda(
     # propósito, mesmo espírito do protocolo personalizado acima.
     eventos_cronograma_sanitario = _cronograma_sanitario_rules.eventos_agenda(session, data, realizados, fazenda_id)
 
+    # Ponto crítico da recria (decisão do dono do produto): cada
+    # JanelaPontoCritico ATIVA vira aviso de verdade quando há animal (ativo,
+    # da fazenda) entrando na faixa de idade de risco. Fora do AgendaEngine de
+    # propósito, mesmo espírito do protocolo personalizado/lida acima.
+    eventos_ponto_critico_recria = _eventos_ponto_critico_recria_agenda(session, data, realizados, fazenda_id)
+
     # Aplicações programadas ("aplicado? não" / data futura) ainda não baixadas.
     # Dar baixa aqui gera a aplicação de verdade e a saída de estoque.
     # Uma vez criada, essa linha ficava pendurada pra sempre — mesmo que o
@@ -706,12 +714,8 @@ def calcular_agenda(
         for a in session.exec(select(ProtocoloSanitarioAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(a.lancamento_id, []).append(a)
         for lanc in lancamentos_protocolo_abertos:
-            aps = aplicacoes_por_lancamento.get(lanc.id, [])
-            if not aps:
-                continue
-            ultimo_dia = max(a.data_prevista for a in aps)
-            aps_ultimo_dia = [a for a in aps if a.data_prevista == ultimo_dia]
-            if not all(a.realizada for a in aps_ultimo_dia):
+            terminou, ultimo_dia = protocolo_terminado(aplicacoes_por_lancamento.get(lanc.id, []))
+            if not terminou:
                 continue  # falta aplicar algum medicamento do último dia — ainda não pergunta
             dia_seguinte = ultimo_dia + timedelta(days=1)
             if dia_seguinte > data or dia_seguinte < limite_cura:
@@ -942,7 +946,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_ponto_critico_recria
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

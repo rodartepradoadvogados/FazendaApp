@@ -2565,7 +2565,10 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
 }
 
 export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean) {
-  const res = await authFetch(`${API}/sanidade/mastite/cura`, {
+  // Rota nova, com nome correto — /mastite/cura (retrocompatibilidade) segue
+  // funcionando pois o app em produção ainda a chama, mas serve qualquer
+  // protocolo sanitário, não só mastite.
+  const res = await authFetch(`${API}/sanidade/protocolos/lancamentos/${lancamentoId}/cura`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lancamento_id: lancamentoId, curada }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
@@ -2574,9 +2577,13 @@ export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean)
 
 export type CasoTaxaCura = {
   origem: "aplicacao" | "protocolo"; id: number; numero: string; tratamento: string;
-  data: string | null; curada: boolean; lote: string | null; categoria: string; status_lactacao: string;
+  data: string | null; curada: boolean | null; avaliado: boolean;
+  lote: string | null; categoria: string; status_lactacao: string;
 };
-export async function fetchTaxaCura(): Promise<{ casos: CasoTaxaCura[]; total: number; curados: number; taxa_cura_pct: number | null }> {
+export async function fetchTaxaCura(): Promise<{
+  casos: CasoTaxaCura[]; total: number; total_avaliados: number; curados: number; nao_curados: number;
+  total_nao_avaliados: number; taxa_cura_pct: number | null; cobertura_avaliacao_pct: number | null;
+}> {
   const res = await authFetch(`${API}/sanidade/taxa-cura`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Taxa de cura error: ${res.status}`);
   return res.json();
@@ -4854,7 +4861,7 @@ async function _rSend(path: string, method: string, body?: any) {
   return res.json();
 }
 
-export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
+export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; doenca_id?: number | null; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
 export type RecriaPontoCritico = { dia_pico: number; dia_min: number; dia_max: number; casos_na_janela: number; total_casos: number; pct_na_janela: number };
 export type RecriaCurva = {
   doenca: string; total_casos: number;
@@ -4865,7 +4872,7 @@ export type RecriaCurva = {
 export type RecriaMetas = { idade_parto_meses: number; idade_prenhez_meses: number; idade_1a_cobertura_meses: number; taxa_prenhez_meta: number; desvio_padrao_meta: number; custo_diario_recria: number };
 export type RecriaPesoAlvo = { id?: number; mes: number; peso_min_kg: number; peso_max_kg: number };
 export type RecriaFase = { id?: number; nome: string; dia_min: number; dia_max: number; ordem: number; ativo: boolean };
-export type RecriaJanela = { id?: number; doenca: string; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
+export type RecriaJanela = { id?: number; doenca: string; doenca_id?: number | null; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
 
 export const fetchRecriaDoencas = (): Promise<{ doenca: string; casos: number }[]> => _rGet(`/recria/doencas`);
 export const fetchRecriaCurva = (doenca: string, ini?: string, fim?: string): Promise<RecriaCurva> => {
@@ -4877,7 +4884,7 @@ export const fetchRecriaOcorrencias = (doenca = "", numero = ""): Promise<Recria
   const p = new URLSearchParams(); if (doenca) p.set("doenca", doenca); if (numero) p.set("numero_matriz", numero);
   return _rGet(`/recria/ocorrencias${p.toString() ? "?" + p.toString() : ""}`);
 };
-export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
+export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; doenca_id?: number | null; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
 export const excluirRecriaOcorrencia = (id: number) => _rSend(`/recria/ocorrencias/${id}`, "DELETE");
 export const fetchRecriaMetas = (): Promise<RecriaMetas> => _rGet(`/recria/metas`);
 export const salvarRecriaMetas = (d: RecriaMetas) => _rSend(`/recria/metas`, "PUT", d);

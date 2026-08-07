@@ -89,7 +89,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("usuario_id", "INTEGER"), ("gta", "VARCHAR"), ("icms_incide", "BOOLEAN"),
         ("icms_tipo", "VARCHAR"), ("icms_valor", "FLOAT"),
     ],
-    "ocorrencia_clinica": [("usuario_id", "INTEGER")],
+    "ocorrencia_clinica": [("usuario_id", "INTEGER"), ("doenca_id", "INTEGER")],
+    # Vínculo com o catálogo Doenca (ver alembic b3c4d5e6f7a1) — `doenca`
+    # (texto) segue intacto como histórico/fallback.
+    "janela_ponto_critico": [("doenca_id", "INTEGER")],
     "registro_cocho": [("usuario_id", "INTEGER")],
     "animal": [
         ("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN"), ("grupo_manual", "BOOLEAN"),

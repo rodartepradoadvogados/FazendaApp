@@ -105,6 +105,7 @@ from fazenda.api.routers.news import (
 )
 from fazenda.api.routers.painel_cowdata import seed_cowdata_empresa
 from fazenda.rules.farmacia import bootstrap_farmacia
+from fazenda.rules.recria_doenca import backfill_doenca_catalogo
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
@@ -236,6 +237,12 @@ async def lifespan(app: FastAPI):
         bootstrap_farmacia(session)
         # Recria: metas, curva de peso-alvo e janelas de ponto crítico padrão.
         seed_recria(session, fazenda_id=1)
+        # Vincula ao catálogo (Doenca) o texto livre já lançado em
+        # OcorrenciaClinica/JanelaPontoCritico — casa por nome ou cria a
+        # doença nova na fazenda dona do registro (ver decisão (b) do dono do
+        # produto). Depois do bootstrap_farmacia (precisa do catálogo global
+        # já semeado) e do seed_recria (que acabou de criar as janelas padrão).
+        backfill_doenca_catalogo(session)
         # Catálogo NAAB completo (Alta Genetics) empacotado no repo — carrega
         # uma única vez, sem depender de upload manual do usuário.
         bootstrap_touros_naab(session)
