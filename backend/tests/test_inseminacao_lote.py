@@ -257,6 +257,70 @@ class TestDescontoDoseSemen:
             assert mov.origem_tipo == "ia_semen"
 
 
+class TestProtocoloVigenteParaInseminacao:
+    """"Protocolo de IATF atual" (sub-aba Inseminação) tem que mostrar a
+    matriz enquanto o protocolo estiver vigente — nenhum Serviço lançado
+    depois do D0 — não importa em qual etapa do hormônio ela está hoje. A
+    inseminação pode ser lançada bem depois de o hormônio ter sido aplicado
+    (a posteriori)."""
+
+    def _animal(self, ativos, numero):
+        return next(a for g in ativos for a in g["animais"] if a["numero_matriz"] == numero)
+
+    def test_pronta_para_inseminar_mesmo_ainda_no_d0_sem_servico(self, client):
+        c, engine = client
+        hoje = date.today().isoformat()
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": hoje})
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal = self._animal(ativos, "700")
+        # Ainda em D0 (não é a etapa de inseminação) — mas sem serviço nenhum
+        # lançado, o protocolo continua vigente e a matriz tem que aparecer.
+        assert animal["etapa_atual"] == "D0"
+        assert animal["pronta_para_inseminar"] is True
+
+    def test_deixa_de_estar_pronta_apos_lancar_servico_no_ciclo(self, client):
+        c, engine = client
+        hoje = date.today()
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": hoje.isoformat()})
+        c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": (hoje + timedelta(days=11)).isoformat(),
+            "tipo_servico": "IA", "reprodutor": "Coors",
+        })
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal = self._animal(ativos, "700")
+        assert animal["pronta_para_inseminar"] is False
+
+    def test_protocolo_concluido_pronta_para_inseminar_ate_ter_servico(self, client):
+        c, engine = client
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        for evento_id in [
+            "protocolo_iatf_2026-07-03_0", "protocolo_iatf_2026-07-10_7",
+            "protocolo_iatf_2026-07-12_9", "protocolo_iatf_2026-07-14_11",
+        ]:
+            r = c.post("/agenda/realizados", json={"evento_id": evento_id})
+            assert r.status_code == 200, r.text
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        grupo = next(g for g in ativos if any(a["numero_matriz"] == "700" for a in g["animais"]))
+        assert grupo["concluido"] is True
+        animal = self._animal(ativos, "700")
+        assert animal["etapa_atual"] == "Concluído"
+        # Hormônio todo aplicado, mas ninguém lançou a inseminação ainda —
+        # continua "pronta", que é justamente o caso que a Central de
+        # Protocolos confirmar sozinha (sem passar pela tela de Inseminação)
+        # deixava invisível antes desta correção.
+        assert animal["pronta_para_inseminar"] is True
+
+        c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-07-15", "tipo_servico": "IA", "reprodutor": "Coors",
+        })
+        ativos2 = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal2 = self._animal(ativos2, "700")
+        assert animal2["pronta_para_inseminar"] is False
+
+
 class TestSemenDisponivel:
     def test_categorias_e_minimo(self, client):
         c, engine = client
