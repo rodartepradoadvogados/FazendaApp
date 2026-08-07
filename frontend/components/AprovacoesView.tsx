@@ -6,6 +6,7 @@ import {
   fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, type LancamentoPendente,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
@@ -354,11 +355,11 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
                           </button>
                         </div>
                         <div><label style={lbl}>Qtd.</label><input type="number" style={inputStyle} value={item.quantidade} onChange={(e) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, quantidade: e.target.value } : x))} /></div>
-                        <div><label style={lbl}>Vlr. unit.</label><input type="number" step="0.01" style={inputStyle} value={item.valor_unitario} onChange={(e) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_unitario: e.target.value } : x))} /></div>
+                        <div><label style={lbl}>Vlr. unit.</label><CampoMoeda style={inputStyle} value={Number(item.valor_unitario) || 0} onChange={(v) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_unitario: v ? String(v) : "" } : x))} /></div>
                         <div>
                           <label style={lbl}>Vlr. total (R$)</label>
                           <div className="flex items-center gap-1">
-                            <input type="number" step="0.01" style={inputStyle} value={item.valor_total} onChange={(e) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_total: e.target.value } : x))} />
+                            <CampoMoeda style={inputStyle} value={Number(item.valor_total) || 0} onChange={(v) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_total: v ? String(v) : "" } : x))} />
                             <button type="button" className="btn-ghost" disabled={editItens.length <= 1} title="Remover item" style={{ padding: "0.3rem" }} onClick={() => setEditItens((s) => s.filter((_, i) => i !== idx))}>
                               <Trash2 size={13} />
                             </button>
@@ -409,7 +410,7 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
                                 <tr key={i}>
                                   <td>{i + 1}/{parcelas.length}</td>
                                   <td><input type="date" style={inputStyle} value={p.data_vencimento} onChange={(e) => setParcelas((s) => s.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-                                  <td><input type="number" step="0.01" style={inputStyle} value={p.valor} onChange={(e) => setParcelas((s) => s.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                                  <td><CampoMoeda style={inputStyle} value={Number(p.valor) || 0} onChange={(v) => setParcelas((s) => s.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
                                 </tr>
                               ))}
                             </tbody>

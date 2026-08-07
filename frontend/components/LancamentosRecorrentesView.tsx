@@ -23,6 +23,7 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { RESPONSAVEIS } from "@/lib/constants";
 
@@ -387,7 +388,7 @@ function ModalGerar({ modelo, onClose, onGerado }: { modelo: LancamentoRecorrent
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div>
           <label style={labelStyle}>Valor (R$)</label>
-          <input type="number" inputMode="decimal" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} autoFocus />
+          <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} autoFocus />
         </div>
         <div>
           <label style={labelStyle}>Data de emissão</label>
@@ -425,8 +426,8 @@ function ModalGerar({ modelo, onClose, onGerado }: { modelo: LancamentoRecorrent
           </div>
           <div>
             <label style={labelStyle}>Valor pago (R$)</label>
-            <input type="number" inputMode="decimal" style={inputStyle} value={valorPago}
-              onChange={(e) => setValorPago(e.target.value)} placeholder={valor || "igual ao valor acima"} />
+            <CampoMoeda style={inputStyle} value={Number(valorPago) || 0}
+              onChange={(v) => setValorPago(v ? String(v) : "")} placeholder={valor || "igual ao valor acima"} />
           </div>
           <div>
             <label style={labelStyle}>Conta bancária</label>

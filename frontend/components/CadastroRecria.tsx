@@ -11,6 +11,7 @@ import {
   fetchCategoriasManejo, criarCategoriaManejo, atualizarCategoriaManejo, excluirCategoriaManejo, fetchComposicaoCategorias,
   type RecriaMetas, type RecriaPesoAlvo, type RecriaFase, type RecriaJanela, type RecriaBenchmark, type CategoriaManejo,
 } from "@/lib/api";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const input: React.CSSProperties = { padding: "0.4rem 0.55rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", width: "100%" };
 const lbl: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.15rem" };
@@ -226,7 +227,7 @@ function SecMetas() {
         {campo("idade_1a_cobertura_meses", "Idade à 1ª cobertura (meses)")}
         {campo("taxa_prenhez_meta", "Meta taxa de prenhez (%)")}
         {campo("desvio_padrao_meta", "Meta desvio-padrão (meses)")}
-        {campo("custo_diario_recria", "Custo diário de recria (R$)")}
+        <div><label style={lbl}>Custo diário de recria (R$)</label><CampoMoeda style={input} value={m.custo_diario_recria} onChange={(v) => setM({ ...m, custo_diario_recria: v })} /></div>
       </div>
       <div className="flex items-center gap-3 mt-3">
         <button className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}

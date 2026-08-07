@@ -10,6 +10,7 @@ import { AnimalPicker } from "./AnimalPicker";
 import { TouroPicker, type TouroPickerItem } from "./TouroPicker";
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Vaca", "Touro", "Bezerro"];
 // Fallback caso o cadastro (Configurações > Cadastro > Raças e grau de
@@ -260,7 +261,7 @@ export default function CadastroAnimalForm() {
             <Campo label="Data de nascimento"><input type="date" style={inputStyle} value={form.data_nasc} onChange={(e) => setForm({ ...form, data_nasc: e.target.value })} /></Campo>
             <Campo label="Data de entrada na fazenda (se comprado)"><input type="date" style={inputStyle} value={form.data_entrada} onChange={(e) => setForm({ ...form, data_entrada: e.target.value })} /></Campo>
             <Campo label="Proprietário"><input style={inputStyle} value={form.proprietario} onChange={(e) => setForm({ ...form, proprietario: e.target.value })} /></Campo>
-            <Campo label="Valor (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={form.valor} onChange={(e) => setForm({ ...form, valor: e.target.value })} placeholder="ex.: 7000" /></Campo>
+            <Campo label="Valor (R$)"><CampoMoeda style={inputStyle} value={Number(form.valor) || 0} onChange={(v) => setForm({ ...form, valor: v ? String(v) : "" })} /></Campo>
             <Campo label="Data de baixa (se houver)"><input type="date" style={inputStyle} value={form.data_baixa} onChange={(e) => setForm({ ...form, data_baixa: e.target.value })} /></Campo>
             <Campo label="Motivo de baixa">
               <select style={inputStyle} value={form.motivo_baixa} onChange={(e) => setForm({ ...form, motivo_baixa: e.target.value })}>

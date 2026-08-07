@@ -14,6 +14,7 @@ import type { AnimalRow } from "./AnimalModal";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -283,7 +284,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
         </div>
         <div className="grid grid-cols-2 gap-3 mb-2" style={{ maxWidth: "480px" }}>
           <Campo label={tipoValor === "total" ? "Valor total (R$)" : "Valor por animal (R$)"}>
-            <input type="number" step="0.01" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} />
+            <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />
           </Campo>
         </div>
         {!!quantidade && !!valorNum && (
@@ -372,8 +373,8 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
               <input type="checkbox" checked={entregue} onChange={(e) => setEntregue(e.target.checked)} /> Sim
             </label>
           </Campo>
-          <Campo label="Desconto (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={desconto} onChange={(e) => setDesconto(e.target.value)} placeholder="0,00" /></Campo>
-          <Campo label="Acréscimo (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} placeholder="0,00" /></Campo>
+          <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
+          <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
         </div>
 
         {/* ICMS */}
@@ -398,7 +399,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
                   Há várias isenções para operações intermunicipais — confirme com a contabilidade antes de recolher.
                 </p>
               </div>
-              <Campo label="Valor do ICMS (R$)"><input type="number" step="0.01" style={inputStyle} value={icmsValor} onChange={(e) => setIcmsValor(e.target.value)} /></Campo>
+              <Campo label="Valor do ICMS (R$)"><CampoMoeda style={inputStyle} value={Number(icmsValor) || 0} onChange={(v) => setIcmsValor(v ? String(v) : "")} /></Campo>
             </div>
           )}
         </div>
@@ -436,7 +437,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
             {jaPago && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
                 <Campo label="Data de pagamento"><input type="date" style={inputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></Campo>
-                <Campo label="Valor pago (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={valorPago} onChange={(e) => setValorPago(e.target.value)} /></Campo>
+                <Campo label="Valor pago (R$)"><CampoMoeda style={inputStyle} value={Number(valorPago) || 0} onChange={(v) => setValorPago(v ? String(v) : "")} /></Campo>
                 <Campo label="Conta bancária">
                   <select style={inputStyle} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
                     <option value="">Selecione…</option>

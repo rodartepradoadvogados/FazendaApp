@@ -5,6 +5,7 @@ import { fetchPessoas, criarPessoa, atualizarPessoa, fetchTiposPessoa, criarTipo
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = {
   id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
@@ -328,7 +329,7 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
         <div><label style={labelStyle}>CEP</label>
           <input style={inputStyle} value={form.cep} onChange={(e) => setForm({ ...form, cep: maskCep(e.target.value) })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>
-          <input type="number" inputMode="decimal" style={inputStyle} value={form.salarioBase} onChange={(e) => setForm({ ...form, salarioBase: e.target.value })} /></div>
+          <CampoMoeda style={inputStyle} value={Number(form.salarioBase) || 0} onChange={(v) => setForm({ ...form, salarioBase: v ? String(v) : "" })} /></div>
         <div><label style={labelStyle}>Data de admissão</label>
           <input type="date" style={inputStyle} value={form.dataAdmissao} onChange={(e) => setForm({ ...form, dataAdmissao: e.target.value })}
             title="Usada para calcular a folha proporcional do 1º mês de trabalho" /></div>

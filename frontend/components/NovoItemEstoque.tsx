@@ -9,6 +9,7 @@ import {
   type ItemCadastroSimples,
 } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 
@@ -243,7 +244,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         {form.estocavel && (
           <div><label style={labelStyle}>Estoque mínimo</label><input type="number" style={inputStyle} value={form.estoque_minimo} onChange={(e) => set({ estoque_minimo: e.target.value })} /></div>
         )}
-        <div><label style={labelStyle}>Valor unitário (R$)</label><input type="number" style={inputStyle} value={form.valor_unitario} onChange={(e) => set({ valor_unitario: e.target.value })} /></div>
+        <div><label style={labelStyle}>Valor unitário (R$)</label><CampoMoeda style={inputStyle} value={Number(form.valor_unitario) || 0} onChange={(v) => set({ valor_unitario: v ? String(v) : "" })} /></div>
         {form.estocavel && (
           <div><label style={labelStyle}>Local de armazenamento</label>
             <select style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })}>

@@ -1,6 +1,7 @@
 "use client";
 import { AlertTriangle } from "lucide-react";
 import { formatBRL } from "@/lib/api";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 export type Parcela = { data_vencimento: string; valor: string };
 
@@ -43,8 +44,8 @@ export function ParcelasEditor({
               <td>{i + 1}/{parcelas.length}</td>
               <td><input type="date" style={inputStyle} value={p.data_vencimento}
                 onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-              <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }} value={p.valor}
-                onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+              <td><CampoMoeda style={{ ...inputStyle, textAlign: "right" }} value={Number(p.valor) || 0}
+                onChange={(v) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
             </tr>
           ))}
         </tbody>

@@ -10,6 +10,7 @@ import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
@@ -205,7 +206,7 @@ export default function DiariaView() {
           </div>
           <div>
             <label style={lbl}>Valor da diária (R$)</label>
-            <input type="number" step="0.01" style={inputSm} value={valorDiaria} onChange={(e) => setValorDiaria(e.target.value)} />
+            <CampoMoeda style={inputSm} value={Number(valorDiaria) || 0} onChange={(v) => setValorDiaria(v ? String(v) : "")} />
           </div>
           <div>
             <label style={lbl}>Data de início</label>
@@ -448,7 +449,7 @@ export default function DiariaView() {
           </div>
           <div style={{ marginTop: "0.6rem" }}>
             <label style={lbl}>Valor (R$)</label>
-            <input type="number" step="0.01" style={inputSm} value={valorPagamento} onChange={(e) => setValorPagamento(e.target.value)} />
+            <CampoMoeda style={inputSm} value={Number(valorPagamento) || 0} onChange={(v) => setValorPagamento(v ? String(v) : "")} />
           </div>
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
           <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} onClick={() => registrarPagamento(pagandoId)}>

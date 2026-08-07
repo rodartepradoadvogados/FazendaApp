@@ -8,6 +8,7 @@ import {
   abrirChamado, calcularJuros, criarLancamentoExtraordinario, fetchChamados,
   type CalculoJuros, type Chamado,
 } from "@/lib/api";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { CORES_CONTADOR } from "@/app/contador/layout";
 import { useCadeado } from "@/lib/useCadeado";
@@ -89,7 +90,7 @@ function LancamentoExtraordinario({ token, planoContas }: { token: string; plano
         </div>
         <div>
           <label style={estiloLabel}>Valor (R$)</label>
-          <input type="number" step="0.01" min="0.01" style={estiloInput} value={valor} onChange={(e) => setValor(e.target.value)} required />
+          <CampoMoeda style={estiloInput} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />
         </div>
         <div>
           <label style={estiloLabel}>Vencimento</label>
@@ -142,7 +143,7 @@ function RecalculoJuros({ token }: { token: string }) {
       <form onSubmit={calcular} style={{ display: "grid", gap: "0.8rem", gridTemplateColumns: "repeat(auto-fit, minmax(9rem, 1fr))" }}>
         <div>
           <label style={estiloLabel}>Valor original (R$)</label>
-          <input type="number" step="0.01" min="0.01" style={estiloInput} value={valorOriginal} onChange={(e) => setValorOriginal(e.target.value)} required />
+          <CampoMoeda style={estiloInput} value={Number(valorOriginal) || 0} onChange={(v) => setValorOriginal(v ? String(v) : "")} />
         </div>
         <div>
           <label style={estiloLabel}>Vencimento original</label>

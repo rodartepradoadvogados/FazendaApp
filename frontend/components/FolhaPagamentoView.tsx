@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
@@ -96,7 +97,7 @@ function CampoRetencao({
       <div><label style={labelStyleLote}>{label} (%)</label>
         <input type="number" inputMode="decimal" style={selStyleLote} value={percentual} onChange={(e) => onChangePercentual(e.target.value)} /></div>
       <div><label style={labelStyleLote}>{label} (R$)</label>
-        <input type="number" inputMode="decimal" style={selStyleLote} value={valor} onChange={(e) => onChangeValor(e.target.value)} /></div>
+        <CampoMoeda style={selStyleLote} value={Number(valor) || 0} onChange={(v) => onChangeValor(v ? String(v) : "")} /></div>
     </>
   );
 }
@@ -805,9 +806,9 @@ export default function FolhaPagamentoView() {
           <div><label style={labelStyleLote}>Competência (mês)</label>
             <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Valor bruto (R$)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={valorBruto} onChange={(e) => setValorBruto(e.target.value)} /></div>
+            <CampoMoeda style={selStyleLote} value={Number(valorBruto) || 0} onChange={(v) => setValorBruto(v ? String(v) : "")} /></div>
           <div><label style={labelStyleLote}>Outros descontos (R$)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
+            <CampoMoeda style={selStyleLote} value={Number(descontos) || 0} onChange={(v) => setDescontos(v ? String(v) : "")} /></div>
         </div>
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
           Competência = mês trabalhado. O pagamento (conta a pagar) é lançado no dia 5 do mês seguinte
@@ -1006,7 +1007,7 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Vencimento</label>
                               <input type="date" style={selStyleLote} value={editLinhaData} onChange={(e) => setEditLinhaData(e.target.value)} /></div>
                             <div><label style={labelStyleLote}>Valor (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editLinhaValor} onChange={(e) => setEditLinhaValor(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editLinhaValor) || 0} onChange={(v) => setEditLinhaValor(v ? String(v) : "")} /></div>
                           </div>
                           {editLinhaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editLinhaMsg}</p>}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -1173,9 +1174,9 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Competência (mês)</label>
                               <input type="month" style={selStyleLote} value={editCompetencia} onChange={(e) => setEditCompetencia(e.target.value)} /></div>
                             <div><label style={labelStyleLote}>Valor bruto (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValorBruto} onChange={(e) => setEditValorBruto(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editValorBruto) || 0} onChange={(v) => setEditValorBruto(v ? String(v) : "")} /></div>
                             <div><label style={labelStyleLote}>Outros descontos (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editDescontos} onChange={(e) => setEditDescontos(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editDescontos) || 0} onChange={(v) => setEditDescontos(v ? String(v) : "")} /></div>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <CampoRetencao
@@ -1332,7 +1333,7 @@ export default function FolhaPagamentoView() {
                                 {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
                               </select></div>
                             <div><label style={labelStyleLote}>Valor total (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValeValorTotal} onChange={(e) => setEditValeValorTotal(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editValeValorTotal) || 0} onChange={(v) => setEditValeValorTotal(v ? String(v) : "")} /></div>
                             <div><label style={labelStyleLote}>Forma de pagamento</label>
                               <select style={selStyleLote} value={editValeFormaPagamento} onChange={(e) => setEditValeFormaPagamento(e.target.value)}>
                                 {FORMAS_VALE.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1378,9 +1379,9 @@ export default function FolhaPagamentoView() {
                                   <td style={{ fontSize: "0.78rem" }}>{mesCompLabel(p.competencia)}</td>
                                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
                                     {editandoParcela?.parcelaId === p.id ? (
-                                      <input type="number" inputMode="decimal" autoFocus
+                                      <CampoMoeda autoFocus
                                         style={{ ...selStyleLote, width: "7rem", textAlign: "right", display: "inline-block" }}
-                                        value={editParcelaValor} onChange={(e) => setEditParcelaValor(e.target.value)} />
+                                        value={Number(editParcelaValor) || 0} onChange={(v) => setEditParcelaValor(v ? String(v) : "")} />
                                     ) : formatBRL(p.valor)}
                                   </td>
                                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{p.aplicada ? "Aplicada na folha" : "Pendente"}</td>
@@ -1473,7 +1474,7 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Origem</label>
                               <input style={selStyleLote} value={v.origem_descricao} disabled /></div>
                             <div><label style={labelStyleLote}>Valor (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValeAvulsoValor} onChange={(e) => setEditValeAvulsoValor(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editValeAvulsoValor) || 0} onChange={(v) => setEditValeAvulsoValor(v ? String(v) : "")} /></div>
                             <div><label style={labelStyleLote}>Forma de pagamento</label>
                               <select style={selStyleLote} value={editValeAvulsoFormaPagamento} onChange={(e) => setEditValeAvulsoFormaPagamento(e.target.value)}>
                                 {FORMAS_VALE_AVULSO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1675,7 +1676,7 @@ function ValeFuncionarioSection({
             <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipos.join(", ")})</option>)}
           </select></div>
         <div><label style={labelStyleLote}>Valor total (R$)</label>
-          <input type="number" inputMode="decimal" style={selStyleLote} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valorTotal) || 0} onChange={(v) => setValorTotal(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Forma de pagamento</label>
           <select style={selStyleLote} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
             {FORMAS_VALE.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1825,11 +1826,11 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
             <input style={selStyleLote} value={codigoReceita} onChange={(e) => setCodigoReceita(e.target.value)} /></div>
         )}
         <div><label style={labelStyleLote}>Valor principal (R$)</label>
-          <input type="number" inputMode="decimal" style={selStyleLote} value={valorPrincipal} onChange={(e) => setValorPrincipal(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valorPrincipal) || 0} onChange={(v) => setValorPrincipal(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Multa (R$)</label>
-          <input type="number" inputMode="decimal" style={selStyleLote} value={valorMulta} onChange={(e) => setValorMulta(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valorMulta) || 0} onChange={(v) => setValorMulta(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Juros (R$)</label>
-          <input type="number" inputMode="decimal" style={selStyleLote} value={valorJuros} onChange={(e) => setValorJuros(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valorJuros) || 0} onChange={(v) => setValorJuros(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Vencimento</label>
           <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
       </div>

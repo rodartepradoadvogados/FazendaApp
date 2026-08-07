@@ -7,6 +7,7 @@ import {
   type LancamentoCowData, type ResumoFinanceiroCowData, type MovimentoCowData, type FluxoCaixaCowDataMes, type DreCowData,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
 const inputStyle: React.CSSProperties = {
@@ -181,7 +182,7 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
             </div>
             <div>
               <label style={labelStyle}>Valor (R$)</label>
-              <input style={{ ...inputStyle, width: "100%" }} type="number" value={novo.valor} onChange={(e) => setNovo({ ...novo, valor: e.target.value })} />
+              <CampoMoeda style={{ ...inputStyle, width: "100%" }} value={Number(novo.valor) || 0} onChange={(v) => setNovo({ ...novo, valor: v ? String(v) : "" })} />
             </div>
             <div>
               <label style={labelStyle}>Data</label>

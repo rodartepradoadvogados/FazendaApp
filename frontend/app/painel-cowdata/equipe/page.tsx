@@ -7,6 +7,7 @@ import {
   type PessoaCowData, type FolhaCowData,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
 const inputStyle: React.CSSProperties = {
@@ -112,7 +113,7 @@ export default function EquipeCowData() {
             </div>
             <div>
               <label style={labelStyle}>Salário base (R$)</label>
-              <input style={inputStyle} type="number" value={novo.salario_base} onChange={(e) => setNovo({ ...novo, salario_base: e.target.value })} />
+              <CampoMoeda style={inputStyle} value={Number(novo.salario_base) || 0} onChange={(v) => setNovo({ ...novo, salario_base: v ? String(v) : "" })} />
             </div>
           </div>
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
@@ -217,11 +218,11 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
               </div>
               <div>
                 <label style={labelStyle}>Valor bruto</label>
-                <input style={{ ...inputStyle, width: "8rem" }} type="number" value={novaFolha.valor_bruto} onChange={(e) => setNovaFolha({ ...novaFolha, valor_bruto: e.target.value })} />
+                <CampoMoeda style={{ ...inputStyle, width: "8rem" }} value={Number(novaFolha.valor_bruto) || 0} onChange={(v) => setNovaFolha({ ...novaFolha, valor_bruto: v ? String(v) : "" })} />
               </div>
               <div>
                 <label style={labelStyle}>Descontos</label>
-                <input style={{ ...inputStyle, width: "7rem" }} type="number" value={novaFolha.descontos} onChange={(e) => setNovaFolha({ ...novaFolha, descontos: e.target.value })} />
+                <CampoMoeda style={{ ...inputStyle, width: "7rem" }} value={Number(novaFolha.descontos) || 0} onChange={(v) => setNovaFolha({ ...novaFolha, descontos: v ? String(v) : "" })} />
               </div>
               <div>
                 <label style={labelStyle}>Status</label>
