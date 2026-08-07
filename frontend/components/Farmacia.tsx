@@ -3,10 +3,14 @@
 // reprodutivo, produtivo, preventivo, suporte) com os PRINCÍPIOS que tratam
 // cada uma (ordenados por prioridade) e as MARCAS comerciais de cada
 // princípio, já com bula e carência formatada. O catálogo nasce global
-// (mesmo documento base para todas as fazendas); quem quer editar bula,
-// prioridade ou nota PERSONALIZA a indicação primeiro (clona pra fazenda) —
-// ver POST/DELETE /farmacia/indicacoes/{id}/personalizar no backend. Nunca dá
-// pra editar a linha global direto (o backend devolve 404).
+// (mesmo documento base para todas as fazendas) — dose e carência do padrão
+// são só um ponto de partida, editável a qualquer momento. Editar qualquer
+// campo do padrão (bula, prioridade, nota) PERSONALIZA a indicação
+// automaticamente, num passo só: o backend clona pra fazenda e já aplica a
+// edição no clone (ver PUT /farmacia/medicamentos/{id} e PUT
+// /farmacia/indicacoes/{id} no backend). O botão "Personalizar para minha
+// fazenda" (POST/DELETE .../personalizar) continua disponível pra quem
+// prefere clonar antes de editar, mas deixou de ser pré-requisito.
 import { useEffect, useMemo, useState } from "react";
 import {
   Search, Lock, Pencil, ChevronDown, ChevronRight, AlertTriangle, Ban, ExternalLink, RotateCcw, Check, X,
@@ -102,8 +106,9 @@ export default function Farmacia() {
       <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", flex: "1 1 320px", margin: 0 }}>
           Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de
-          prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo para todas as
-          fazendas; personalize uma indicação para editar bula, prioridade ou nota sem afetar as demais.
+          prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as
+          fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada
+          automaticamente só para a sua fazenda, sem afetar as demais.
         </p>
         <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
           onClick={restaurar} disabled={restaurando}
@@ -156,7 +161,16 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
   const [aberto, setAberto] = useState(false);
   const [processando, setProcessando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [avisoPersonalizacao, setAvisoPersonalizacao] = useState(false);
   const tipoInfo = TIPO_INFO[ind.tipo] || { label: ind.tipo, cor: "var(--text-muted)" };
+
+  // Repassado aos filhos (princípio/marca): quando a edição de um campo do
+  // padrão dispara a personalização automática (`personalizou_automaticamente`
+  // na resposta do PUT), avisa aqui e recarrega a lista.
+  const onMudouFilho = (personalizouAutomaticamente?: boolean) => {
+    if (personalizouAutomaticamente) setAvisoPersonalizacao(true);
+    onMudou();
+  };
 
   const personalizar = async () => {
     setProcessando(true); setErro(null);
@@ -167,7 +181,7 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
   const voltarPadrao = async () => {
     if (!window.confirm(`Voltar "${ind.nome}" ao padrão? Isso descarta as edições de bula/prioridade feitas para a sua fazenda nesta indicação.`)) return;
     setProcessando(true); setErro(null);
-    try { await despersonalizarIndicacao(ind.id); onMudou(); }
+    try { await despersonalizarIndicacao(ind.id); setAvisoPersonalizacao(false); onMudou(); }
     catch (e: any) { setErro(e.message || "Erro ao voltar ao padrão"); }
     finally { setProcessando(false); }
   };
@@ -204,7 +218,7 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
             </>
           ) : (
             <>
-              <span title="Catálogo padrão — compartilhado por todas as fazendas" style={{ display: "inline-flex", color: "var(--text-muted)" }}>
+              <span title="Este é o padrão CowData. Ao editar qualquer campo, uma cópia passa a valer só para a sua fazenda." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
                 <Lock size={14} />
               </span>
               <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={personalizar} disabled={processando}>
@@ -216,6 +230,18 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
       </div>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", padding: "0.4rem 0.9rem 0" }}>{erro}</p>}
+      {avisoPersonalizacao && (
+        <p style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
+          color: "var(--dourado-light)", fontSize: "0.76rem", padding: "0.4rem 0.9rem", margin: 0,
+          background: "rgba(184,134,11,0.08)", borderTop: "1px solid var(--border)",
+        }}>
+          <span>Esta indicação agora é personalizada da sua fazenda — o botão &quot;Voltar ao padrão&quot; desfaz.</span>
+          <button onClick={() => setAvisoPersonalizacao(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", display: "inline-flex", flexShrink: 0 }} title="Dispensar aviso">
+            <X size={13} />
+          </button>
+        </p>
+      )}
 
       {aberto && (
         <div style={{ padding: "0.85rem" }}>
@@ -224,7 +250,7 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
           ) : (
             <div className="space-y-3">
               {ind.principios.map((p) => (
-                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudou} />
+                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} />
               ))}
             </div>
           )}
@@ -235,7 +261,7 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
 }
 
 function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
-  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: () => void;
+  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void;
 }) {
   const [editandoVinculo, setEditandoVinculo] = useState(false);
   const [prioridade, setPrioridade] = useState(String(p.prioridade));
@@ -248,9 +274,9 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
   const salvarVinculo = async () => {
     setSalvando(true); setErro(null);
     try {
-      await atualizarVinculoIndicacao(p.indicacao_id, { prioridade: Number(prioridade) || 1, nota: nota.trim() || null });
+      const r = await atualizarVinculoIndicacao(p.indicacao_id, { prioridade: Number(prioridade) || 1, nota: nota.trim() || null });
       setEditandoVinculo(false);
-      onMudou();
+      onMudou(r.personalizou_automaticamente);
     } catch (e: any) { setErro(e.message || "Erro ao salvar"); }
     finally { setSalvando(false); }
   };
@@ -272,11 +298,15 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
           {p.categoria_software && <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: "0.72rem" }}> · {p.categoria_software}</span>}
         </span>
         <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>{status.label}</span>
-        {indicacaoPersonalizada && (
-          <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)} title="Editar prioridade/nota">
-            <Pencil size={11} />
-          </button>
+        {!indicacaoPersonalizada && (
+          <span title="Este é o padrão CowData. Ao editar, uma cópia passa a valer só para a sua fazenda." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
+            <Lock size={11} />
+          </span>
         )}
+        <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)}
+          title={indicacaoPersonalizada ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
+          <Pencil size={11} />
+        </button>
       </div>
       {p.nota && !editandoVinculo && <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>{p.nota}</p>}
 
@@ -305,7 +335,9 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
   );
 }
 
-function MarcaLinha({ m, principioId, onMudou }: { m: MarcaIndicacaoCatalogo; principioId: number; onMudou: () => void }) {
+function MarcaLinha({ m, principioId, onMudou }: {
+  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void;
+}) {
   const [editando, setEditando] = useState(false);
   const semInfo = carenciaNaoInformada(m.carencia);
 
@@ -316,6 +348,11 @@ function MarcaLinha({ m, principioId, onMudou }: { m: MarcaIndicacaoCatalogo; pr
           <div style={{ fontWeight: 700, fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
             {m.nome_comercial}
             {m.laboratorio && <span style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)" }}>— {m.laboratorio}</span>}
+            {!m.editavel && (
+              <span title="Este é o padrão CowData. Ao editar, uma cópia passa a valer só para a sua fazenda." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
+                <Lock size={12} />
+              </span>
+            )}
             {m.link_bula && (
               <a href={m.link_bula} target="_blank" rel="noopener noreferrer" title="Ver bula"
                 style={{ color: "var(--dourado-light)", display: "inline-flex" }}>
@@ -330,11 +367,10 @@ function MarcaLinha({ m, principioId, onMudou }: { m: MarcaIndicacaoCatalogo; pr
           </div>
         </div>
 
-        {m.editavel && (
-          <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}>
-            <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
-          </button>
-        )}
+        <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}
+          title={m.editavel ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
+          <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
+        </button>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: "0.45rem" }}>
@@ -362,7 +398,8 @@ function MarcaLinha({ m, principioId, onMudou }: { m: MarcaIndicacaoCatalogo; pr
 
       {editando && (
         <FormEdicaoMarca principioId={principioId} marcaId={m.id}
-          onSalvo={() => { setEditando(false); onMudou(); }} onCancelar={() => setEditando(false)} />
+          onSalvo={(personalizouAutomaticamente) => { setEditando(false); onMudou(personalizouAutomaticamente); }}
+          onCancelar={() => setEditando(false)} />
       )}
     </div>
   );
@@ -374,7 +411,7 @@ function MarcaLinha({ m, principioId, onMudou }: { m: MarcaIndicacaoCatalogo; pr
 // inteira: usar só os campos do catálogo (que não inclui dose_base/
 // dose_referencia_kg/ativo) apagaria esses campos ao salvar.
 function FormEdicaoMarca({ principioId, marcaId, onSalvo, onCancelar }: {
-  principioId: number; marcaId: number; onSalvo: () => void; onCancelar: () => void;
+  principioId: number; marcaId: number; onSalvo: (personalizouAutomaticamente?: boolean) => void; onCancelar: () => void;
 }) {
   const [form, setForm] = useState<Record<string, any> | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -399,14 +436,14 @@ function FormEdicaoMarca({ principioId, marcaId, onSalvo, onCancelar }: {
     if (!form) return;
     setSalvando(true); setErro(null);
     try {
-      await atualizarMarcaFarmacia(marcaId, {
+      const r = await atualizarMarcaFarmacia(marcaId, {
         ...form,
         dose_padrao: form.dose_padrao === "" ? null : Number(form.dose_padrao),
         dose_referencia_kg: form.dose_referencia_kg === "" ? null : Number(form.dose_referencia_kg),
         carencia_leite_dias: form.carencia_leite_dias === "" || form.carencia_leite_dias == null ? null : Number(form.carencia_leite_dias),
         carencia_carne_dias: form.carencia_carne_dias === "" || form.carencia_carne_dias == null ? null : Number(form.carencia_carne_dias),
       });
-      onSalvo();
+      onSalvo(r.personalizou_automaticamente);
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar a bula");
     } finally {

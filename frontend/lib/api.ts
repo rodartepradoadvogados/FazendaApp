@@ -3376,19 +3376,26 @@ export async function despersonalizarIndicacao(id: number) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao voltar ao padrão"); }
   return res.json();
 }
+// Editar um campo do padrão (marca global ou vínculo global) personaliza a
+// indicação automaticamente num passo só — o backend clona pra fazenda e
+// aplica a edição no clone, sinalizando isso em `personalizou_automaticamente`
+// pra tela poder avisar o usuário (ver Farmacia.tsx).
 export async function atualizarMarcaFarmacia(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a bula"); }
-  return res.json();
+  return res.json() as Promise<Record<string, any> & { personalizou_automaticamente?: boolean }>;
 }
 export async function atualizarVinculoIndicacao(id: number, dados: { prioridade: number; nota?: string | null }) {
   const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar prioridade/nota"); }
-  return res.json();
+  return res.json() as Promise<{
+    id: number; doenca_id: number; principio_ativo_id: number; prioridade: number; nota: string | null;
+    personalizou_automaticamente?: boolean;
+  }>;
 }
 
 export async function fetchProducao() {
