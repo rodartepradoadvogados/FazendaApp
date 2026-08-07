@@ -155,21 +155,45 @@ def atualizar_marca(
     marca_id: int, dados: MarcaIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Edita uma marca comercial — inclusive os campos de bula. 404 quando o
-    registro não é da fazenda atual: bloqueia editar o catálogo global direto
-    (`m.fazenda_id` global é `None`, sempre diferente de um `fazenda_id`
-    resolvido — o produtor precisa personalizar antes, ver POST
-    /indicacoes/{doenca_id}/personalizar)."""
+    """Edita uma marca comercial — inclusive os campos de bula.
+
+    404 de verdade só quando o registro é de OUTRA fazenda (isolamento) ou não
+    existe. Quando a marca é GLOBAL (padrão CowData) e há uma fazenda
+    resolvida, a edição personaliza automaticamente num passo só: clona a(s)
+    indicação(ões) que usam o princípio dessa marca (ver `_clonar_doenca`) e
+    aplica a edição no clone da fazenda — o global nunca é tocado. A resposta
+    inclui `personalizou_automaticamente` para a tela avisar o usuário.
+
+    Sem fazenda resolvida (token legado), não há para quem clonar: mantém o
+    comportamento antigo de editar o global direto.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     m = session.get(MedicamentoComercial, marca_id)
-    if not m or (fazenda_id is not None and m.fazenda_id != fazenda_id):
+    if not m:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
+
+    personalizou = False
+    if m.fazenda_id is not None:
+        if fazenda_id is None or m.fazenda_id != fazenda_id:
+            raise HTTPException(status_code=404, detail="Marca não encontrada")
+    elif fazenda_id is not None:
+        for doenca_id in _doencas_globais_do_principio(session, m.principio_ativo_id):
+            doenca = session.get(Doenca, doenca_id)
+            if doenca is not None:
+                _clonar_doenca(session, doenca, fazenda_id)
+        m = _clonar_marca(session, m, fazenda_id)
+        personalizou = True
+
     for k, v in dados.model_dump().items():
         setattr(m, k, v)
     session.add(m)
     session.commit()
     session.refresh(m)
-    return {**m.model_dump(), "carencia": carencia_dict(m.carencia_leite_dias, m.carencia_carne_dias, m.proibido_lactacao)}
+    return {
+        **m.model_dump(),
+        "carencia": carencia_dict(m.carencia_leite_dias, m.carencia_carne_dias, m.proibido_lactacao),
+        "personalizou_automaticamente": personalizou,
+    }
 
 
 @router.delete("/medicamentos/{marca_id}")
@@ -331,13 +355,38 @@ def atualizar_indicacao(
     indicacao_id: int, dados: IndicacaoUpdateIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Edita prioridade/nota de um vínculo princípio↔doença. Mesma trava de
-    404 da marca: vínculo global (`fazenda_id` nulo) não é editável direto —
-    precisa personalizar a indicação antes (POST .../personalizar)."""
+    """Edita prioridade/nota de um vínculo princípio↔doença.
+
+    Mesma lógica de `atualizar_marca`: 404 de verdade só para vínculo de
+    OUTRA fazenda ou inexistente. Vínculo GLOBAL (`fazenda_id` nulo) com
+    fazenda resolvida personaliza a indicação automaticamente (clona a
+    Doenca inteira via `_clonar_doenca`) e edita o vínculo já no clone.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     ind = session.get(IndicacaoTerapeutica, indicacao_id)
-    if not ind or (fazenda_id is not None and ind.fazenda_id != fazenda_id):
+    if not ind:
         raise HTTPException(status_code=404, detail="Indicação não encontrada")
+
+    personalizou = False
+    if ind.fazenda_id is not None:
+        if fazenda_id is None or ind.fazenda_id != fazenda_id:
+            raise HTTPException(status_code=404, detail="Indicação não encontrada")
+    elif fazenda_id is not None:
+        doenca = session.get(Doenca, ind.doenca_id)
+        if not doenca or (doenca.fazenda_id is not None and doenca.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Indicação não encontrada")
+        if doenca.fazenda_id is None:
+            _clonar_doenca(session, doenca, fazenda_id)
+        ind_clone = session.exec(
+            select(IndicacaoTerapeutica).where(
+                IndicacaoTerapeutica.origem_id == ind.id, IndicacaoTerapeutica.fazenda_id == fazenda_id,
+            )
+        ).first()
+        if ind_clone is None:
+            raise HTTPException(status_code=404, detail="Indicação não encontrada")
+        ind = ind_clone
+        personalizou = True
+
     if dados.prioridade < 1:
         raise HTTPException(status_code=400, detail="Prioridade deve ser 1 ou maior")
     ind.prioridade = dados.prioridade
@@ -348,16 +397,22 @@ def atualizar_indicacao(
     return {
         "id": ind.id, "doenca_id": ind.doenca_id, "principio_ativo_id": ind.principio_ativo_id,
         "prioridade": ind.prioridade, "nota": ind.nota,
+        "personalizou_automaticamente": personalizou,
     }
 
 
 # ── Catálogo de indicações da aba Farmácia (personalização por fazenda) ────
 # Tela única que junta INDICAÇÃO (Doenca) → PRINCÍPIOS que tratam (via
 # IndicacaoTerapeutica, com prioridade/nota) → MARCAS de cada princípio (com a
-# bula completa). O catálogo nasce global (fazenda_id nulo); a fazenda que
-# quer editar bula/prioridade/nota PERSONALIZA (clona) a indicação primeiro —
-# ver POST/DELETE .../personalizar logo abaixo. Nunca edita o global direto
-# (PUT /medicamentos e PUT /indicacoes já travam isso com 404).
+# bula completa). O catálogo nasce global (fazenda_id nulo); é só leitura
+# para todas as fazendas até alguém editar algo. Editar um campo do padrão
+# (bula de marca, prioridade/nota do vínculo) PERSONALIZA (clona) a indicação
+# automaticamente, num passo só — ver PUT /medicamentos, PUT /indicacoes e
+# os helpers `_clonar_doenca`/`_clonar_marca` logo abaixo. O botão
+# POST/DELETE .../personalizar continua existindo para quem prefere
+# personalizar antes de editar, mas deixou de ser pré-requisito. Nos dois
+# caminhos o global nunca é alterado, e 404 continua reservado a registro de
+# OUTRA fazenda ou inexistente — isolamento, não fricção de UX.
 def _norm_busca(s: str | None) -> str:
     """Normaliza para a busca do catálogo: sem acento, minúsculo — mesmo
     critério de fazenda.rules.farmacia._norm, mantido local para não acoplar
@@ -378,6 +433,111 @@ def _sem_duplicata_do_padrao(itens: list, fazenda_id: int | None) -> list:
         return itens
     clonados = {it.origem_id for it in itens if it.fazenda_id == fazenda_id and it.origem_id}
     return [it for it in itens if not (it.fazenda_id is None and it.id in clonados)]
+
+
+def _clonar_marca(session: Session, marca: MedicamentoComercial, fazenda_id: int) -> MedicamentoComercial:
+    """Clona uma MedicamentoComercial GLOBAL para a fazenda — idempotente (se
+    já existe um clone com `origem_id` apontando pra esta marca, devolve ele
+    em vez de duplicar). Assume `marca.fazenda_id is None`; quem chama já
+    garantiu isso."""
+    existente = session.exec(
+        select(MedicamentoComercial).where(
+            MedicamentoComercial.origem_id == marca.id, MedicamentoComercial.fazenda_id == fazenda_id,
+        )
+    ).first()
+    if existente is not None:
+        return existente
+    clone = MedicamentoComercial(
+        principio_ativo_id=marca.principio_ativo_id, nome_comercial=marca.nome_comercial,
+        laboratorio=marca.laboratorio, ativo=marca.ativo,
+        uso_principal=marca.uso_principal, concentracao=marca.concentracao,
+        dose_padrao=marca.dose_padrao, unidade_dose=marca.unidade_dose,
+        dose_base=marca.dose_base, dose_referencia_kg=marca.dose_referencia_kg,
+        dose_texto=marca.dose_texto, via_padrao=marca.via_padrao, link_bula=marca.link_bula,
+        carencia_leite_dias=marca.carencia_leite_dias, carencia_carne_dias=marca.carencia_carne_dias,
+        proibido_lactacao=marca.proibido_lactacao, alerta_gestacao=marca.alerta_gestacao,
+        alerta=marca.alerta, fazenda_id=fazenda_id, origem_id=marca.id,
+    )
+    session.add(clone)
+    session.commit()
+    session.refresh(clone)
+    return clone
+
+
+def _clonar_doenca(session: Session, doenca: Doenca, fazenda_id: int) -> Doenca:
+    """A trava de personalização, extraída para ser reutilizada tanto pelo
+    POST .../personalizar explícito quanto pela personalização automática de
+    PUT /medicamentos e PUT /indicacoes: clona a indicação global (Doenca +
+    IndicacaoTerapeutica + as MedicamentoComercial dos princípios envolvidos,
+    via `_clonar_marca`) para a fazenda atual.
+
+    NUNCA clona `PrincipioAtivo` — é a âncora de `Estoque.principio_ativo_id`
+    da fazenda e de todo o histórico de baixa (MovimentoEstoque, Sanidade
+    referenciam o item de estoque, que referencia o princípio). Clonar o
+    princípio criaria um segundo id para a mesma molécula e quebraria esse
+    vínculo para todo item de estoque e toda aplicação já lançada.
+
+    Idempotente: se a fazenda já tem um clone desta doença (`origem_id`
+    apontando pra cá), devolve o clone existente em vez de duplicar. Assume
+    `doenca.fazenda_id is None`; quem chama já garantiu isso.
+    """
+    clone = session.exec(
+        select(Doenca).where(Doenca.origem_id == doenca.id, Doenca.fazenda_id == fazenda_id)
+    ).first()
+    if clone is not None:
+        return clone
+
+    clone = Doenca(
+        nome=doenca.nome, tipo=doenca.tipo, descricao=doenca.descricao, ativo=doenca.ativo,
+        fazenda_id=fazenda_id, origem_id=doenca.id,
+    )
+    session.add(clone)
+    session.commit()
+    session.refresh(clone)
+
+    indicacoes_originais = session.exec(
+        visivel(
+            select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca.id),
+            IndicacaoTerapeutica, fazenda_id,
+        )
+    ).all()
+    for orig in indicacoes_originais:
+        session.add(IndicacaoTerapeutica(
+            principio_ativo_id=orig.principio_ativo_id, doenca_id=clone.id,
+            prioridade=orig.prioridade, nota=orig.nota,
+            fazenda_id=fazenda_id, origem_id=orig.id,
+        ))
+    session.commit()
+
+    # Marcas comerciais dos princípios envolvidos — só as GLOBAIS (a fazenda
+    # pode já ter a própria/clonada de uma personalização anterior que
+    # compartilha o mesmo princípio; `_clonar_marca` não duplica).
+    principios_ids = {i.principio_ativo_id for i in indicacoes_originais}
+    for pid in principios_ids:
+        marcas_globais = session.exec(
+            select(MedicamentoComercial).where(
+                MedicamentoComercial.principio_ativo_id == pid, MedicamentoComercial.fazenda_id.is_(None),
+            )
+        ).all()
+        for marca in marcas_globais:
+            _clonar_marca(session, marca, fazenda_id)
+
+    return clone
+
+
+def _doencas_globais_do_principio(session: Session, principio_ativo_id: int) -> set[int]:
+    """Ids das Doenca GLOBAIS indicadas (via IndicacaoTerapeutica global) para
+    este princípio — usado pela personalização automática de PUT
+    /medicamentos: ao editar uma marca do padrão, personaliza também a(s)
+    indicação(ões) que a usam."""
+    return {
+        i.doenca_id for i in session.exec(
+            select(IndicacaoTerapeutica).where(
+                IndicacaoTerapeutica.principio_ativo_id == principio_ativo_id,
+                IndicacaoTerapeutica.fazenda_id.is_(None),
+            )
+        ).all()
+    }
 
 
 def _montar_indicacao_dict(
@@ -498,16 +658,12 @@ def listar_indicacoes_catalogo(
 def personalizar_indicacao(
     doenca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """A trava de personalização: clona a indicação global (Doenca +
-    IndicacaoTerapeutica + as MedicamentoComercial dos princípios envolvidos)
-    para a fazenda atual, para o produtor poder editar bula/prioridade/nota
-    sem afetar o catálogo das outras fazendas.
-
-    NUNCA clona `PrincipioAtivo` — é a âncora de `Estoque.principio_ativo_id`
-    da fazenda e de todo o histórico de baixa (MovimentoEstoque, Sanidade
-    referenciam o item de estoque, que referencia o princípio). Clonar o
-    princípio criaria um segundo id para a mesma molécula e quebraria esse
-    vínculo para todo item de estoque e toda aplicação já lançada.
+    """Personalização explícita e manual (o botão "Personalizar para minha
+    fazenda"): clona a indicação global via `_clonar_doenca` — a mesma
+    função que a personalização automática de PUT /medicamentos e PUT
+    /indicacoes usa por baixo dos panos ao editar direto num campo do
+    padrão. Continua útil pra quem prefere personalizar antes de editar, mas
+    deixou de ser pré-requisito para editar.
 
     Idempotente: se a fazenda já tem um clone desta doença (`origem_id`
     apontando pra cá), devolve o clone existente em vez de duplicar.
@@ -522,64 +678,7 @@ def personalizar_indicacao(
     if doenca.fazenda_id == fazenda_id:
         raise HTTPException(status_code=400, detail="Esta indicação já é da fazenda — nada para personalizar")
 
-    clone = session.exec(
-        select(Doenca).where(Doenca.origem_id == doenca_id, Doenca.fazenda_id == fazenda_id)
-    ).first()
-    if clone is None:
-        clone = Doenca(
-            nome=doenca.nome, tipo=doenca.tipo, descricao=doenca.descricao, ativo=doenca.ativo,
-            fazenda_id=fazenda_id, origem_id=doenca.id,
-        )
-        session.add(clone)
-        session.commit()
-        session.refresh(clone)
-
-        indicacoes_originais = session.exec(
-            visivel(
-                select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca.id),
-                IndicacaoTerapeutica, fazenda_id,
-            )
-        ).all()
-        for orig in indicacoes_originais:
-            session.add(IndicacaoTerapeutica(
-                principio_ativo_id=orig.principio_ativo_id, doenca_id=clone.id,
-                prioridade=orig.prioridade, nota=orig.nota,
-                fazenda_id=fazenda_id, origem_id=orig.id,
-            ))
-        session.commit()
-
-        # Marcas comerciais dos princípios envolvidos — só as GLOBAIS (a
-        # fazenda pode já ter a própria/clonada de uma personalização
-        # anterior que compartilha o mesmo princípio; não duplica).
-        principios_ids = {i.principio_ativo_id for i in indicacoes_originais}
-        for pid in principios_ids:
-            marcas_globais = session.exec(
-                select(MedicamentoComercial).where(
-                    MedicamentoComercial.principio_ativo_id == pid,
-                    MedicamentoComercial.fazenda_id.is_(None),
-                )
-            ).all()
-            for marca in marcas_globais:
-                ja_clonada = session.exec(
-                    select(MedicamentoComercial).where(
-                        MedicamentoComercial.origem_id == marca.id,
-                        MedicamentoComercial.fazenda_id == fazenda_id,
-                    )
-                ).first()
-                if ja_clonada:
-                    continue
-                session.add(MedicamentoComercial(
-                    principio_ativo_id=marca.principio_ativo_id, nome_comercial=marca.nome_comercial,
-                    laboratorio=marca.laboratorio, ativo=marca.ativo,
-                    uso_principal=marca.uso_principal, concentracao=marca.concentracao,
-                    dose_padrao=marca.dose_padrao, unidade_dose=marca.unidade_dose,
-                    dose_base=marca.dose_base, dose_referencia_kg=marca.dose_referencia_kg,
-                    dose_texto=marca.dose_texto, via_padrao=marca.via_padrao, link_bula=marca.link_bula,
-                    carencia_leite_dias=marca.carencia_leite_dias, carencia_carne_dias=marca.carencia_carne_dias,
-                    proibido_lactacao=marca.proibido_lactacao, alerta_gestacao=marca.alerta_gestacao,
-                    alerta=marca.alerta, fazenda_id=fazenda_id, origem_id=marca.id,
-                ))
-        session.commit()
+    clone = _clonar_doenca(session, doenca, fazenda_id)
 
     resumo_por_pa = {r["id"]: r for r in resumo_principios(session, fazenda_id)}
     return _montar_indicacao_dict(session, clone, fazenda_id, resumo_por_pa, {})

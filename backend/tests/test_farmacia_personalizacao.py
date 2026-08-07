@@ -302,42 +302,136 @@ class TestDespersonalizar:
         assert r.status_code == 404
 
 
-class TestPutMarcaTravaGlobal:
-    def test_put_em_marca_global_da_404(self, client):
+class TestPutMarcaPersonalizaAutomaticamente:
+    """PUT numa marca do padrão global personaliza sozinho — o produtor não
+    precisa clicar em "Personalizar" antes: editar já clona."""
+
+    def test_put_em_marca_global_personaliza_automaticamente_sem_404(self, client):
         c, engine = client
-        _, _, marca_id = _ids_globais(engine)
+        _, pa_id, marca_id = _ids_globais(engine)
         _como_fazenda(1)
         r = c.put(f"/farmacia/medicamentos/{marca_id}", json={
-            "principio_ativo_id": _ids_globais(engine)[1], "nome_comercial": "Excenel", "dose_texto": "novo",
-        })
-        assert r.status_code == 404
-
-    def test_put_em_marca_personalizada_funciona(self, client):
-        c, engine = client
-        doenca_id, pa_id, marca_id = _ids_globais(engine)
-        _como_fazenda(1)
-        c.post(f"/farmacia/indicacoes/{doenca_id}/personalizar")
-        with Session(engine) as s:
-            marca_fazenda = s.exec(
-                select(MedicamentoComercial).where(
-                    MedicamentoComercial.principio_ativo_id == pa_id, MedicamentoComercial.fazenda_id == 1,
-                )
-            ).one()
-            marca_fazenda_id = marca_fazenda.id
-
-        r = c.put(f"/farmacia/medicamentos/{marca_fazenda_id}", json={
-            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "1 mL/40 kg SC",
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "novo",
             "carencia_leite_dias": 2, "carencia_carne_dias": 5,
         })
         assert r.status_code == 200, r.text
         corpo = r.json()
-        assert corpo["dose_texto"] == "1 mL/40 kg SC"
+        assert corpo["personalizou_automaticamente"] is True
+        assert corpo["id"] != marca_id  # é o clone, não o registro global
+        assert corpo["dose_texto"] == "novo"
         assert corpo["carencia"]["leite_dias"] == 2
-        assert corpo["carencia"]["carne_dias"] == 5
+
+        with Session(engine) as s:
+            # O global permanece INTOCADO — mesma dose/carência de antes.
+            global_ = s.get(MedicamentoComercial, marca_id)
+            assert global_.dose_texto == "1 mL/50 kg SC"
+            assert global_.carencia_carne_dias == 4
+            assert global_.fazenda_id is None
+
+            # O valor novo está no clone da fazenda.
+            clone = s.exec(
+                select(MedicamentoComercial).where(
+                    MedicamentoComercial.origem_id == marca_id, MedicamentoComercial.fazenda_id == 1,
+                )
+            ).one()
+            assert clone.dose_texto == "novo"
+            assert clone.carencia_leite_dias == 2
+
+    def test_put_em_marca_ja_da_fazenda_nao_personaliza_de_novo(self, client):
+        c, engine = client
+        _, pa_id, marca_id = _ids_globais(engine)
+        _como_fazenda(1)
+        primeira = c.put(f"/farmacia/medicamentos/{marca_id}", json={
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "novo",
+        }).json()
+        clone_id = primeira["id"]
+
+        r = c.put(f"/farmacia/medicamentos/{clone_id}", json={
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "novo2",
+        })
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert not corpo.get("personalizou_automaticamente")  # false ou ausente — já era da fazenda
+        assert corpo["dose_texto"] == "novo2"
+
+        with Session(engine) as s:
+            # continua um único clone — não duplicou.
+            clones = s.exec(
+                select(MedicamentoComercial).where(
+                    MedicamentoComercial.origem_id == marca_id, MedicamentoComercial.fazenda_id == 1,
+                )
+            ).all()
+            assert len(clones) == 1
+
+    def test_put_em_marca_de_outra_fazenda_continua_404(self, client):
+        c, engine = client
+        _, pa_id, marca_id = _ids_globais(engine)
+        _como_fazenda(1)
+        clone_id = c.put(f"/farmacia/medicamentos/{marca_id}", json={
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "novo",
+        }).json()["id"]
+
+        _como_fazenda(2)
+        r = c.put(f"/farmacia/medicamentos/{clone_id}", json={
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "invasão",
+        })
+        assert r.status_code == 404  # isolamento entre fazendas — não é fricção, é proteção
+
+    def test_editar_duas_marcas_da_mesma_indicacao_nao_duplica_clone_da_indicacao(self, client):
+        c, engine = client
+        doenca_id, pa_id, marca_id = _ids_globais(engine)
+        # Segundo princípio + marca, indicado para a MESMA doença global.
+        with Session(engine) as s:
+            pa2 = PrincipioAtivo(nome="Enrofloxacina", categoria_software="Antimicrobiano", unidade_base="ml")
+            s.add(pa2)
+            s.commit()
+            s.refresh(pa2)
+            s.add(IndicacaoTerapeutica(principio_ativo_id=pa2.id, doenca_id=doenca_id, prioridade=2, nota="2ª escolha"))
+            marca2 = MedicamentoComercial(
+                principio_ativo_id=pa2.id, nome_comercial="Kinolox", laboratorio="Bayer",
+                dose_texto="1 mL/20 kg SC", carencia_leite_dias=3, carencia_carne_dias=10,
+            )
+            s.add(marca2)
+            s.commit()
+            s.refresh(marca2)
+            pa2_id, marca2_id = pa2.id, marca2.id
+
+        _como_fazenda(1)
+        r1 = c.put(f"/farmacia/medicamentos/{marca_id}", json={
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "editado 1",
+        })
+        assert r1.status_code == 200, r1.text
+        r2 = c.put(f"/farmacia/medicamentos/{marca2_id}", json={
+            "principio_ativo_id": pa2_id, "nome_comercial": "Kinolox", "dose_texto": "editado 2",
+        })
+        assert r2.status_code == 200, r2.text
+
+        with Session(engine) as s:
+            clones_doenca = s.exec(select(Doenca).where(Doenca.origem_id == doenca_id, Doenca.fazenda_id == 1)).all()
+            assert len(clones_doenca) == 1  # um único clone da indicação, não dois
+
+    def test_apos_personalizar_marca_automaticamente_catalogo_nao_duplica(self, client):
+        c, engine = client
+        _, pa_id, marca_id = _ids_globais(engine)
+        _como_fazenda(1)
+        c.put(f"/farmacia/medicamentos/{marca_id}", json={
+            "principio_ativo_id": pa_id, "nome_comercial": "Excenel", "dose_texto": "editado",
+        })
+
+        itens = c.get("/farmacia/indicacoes-catalogo").json()
+        mastites = [i for i in itens if i["nome"] == "Mastite Clínica"]
+        assert len(mastites) == 1, "catálogo mostrou padrão E personalização — duplicado"
+        marcas = mastites[0]["principios"][0]["marcas"]
+        assert len(marcas) == 1, "catálogo mostrou marca global E clonada — duplicado"
+        assert marcas[0]["dose_texto"] == "editado"
+        assert marcas[0]["editavel"] is True
 
 
-class TestPutIndicacaoTravaGlobal:
-    def test_put_em_vinculo_global_da_404(self, client):
+class TestPutIndicacaoPersonalizaAutomaticamente:
+    """Mesma lógica para PUT /farmacia/indicacoes/{id} (prioridade/nota do
+    vínculo princípio↔doença)."""
+
+    def test_put_em_vinculo_global_personaliza_automaticamente_sem_404(self, client):
         c, engine = client
         doenca_id, pa_id, _ = _ids_globais(engine)
         _como_fazenda(1)
@@ -347,17 +441,55 @@ class TestPutIndicacaoTravaGlobal:
                     IndicacaoTerapeutica.doenca_id == doenca_id, IndicacaoTerapeutica.principio_ativo_id == pa_id,
                 )
             ).one()
-        r = c.put(f"/farmacia/indicacoes/{vinculo_global.id}", json={"prioridade": 3, "nota": "tentativa"})
-        assert r.status_code == 404
+            vinculo_global_id = vinculo_global.id
 
-    def test_put_em_vinculo_personalizado_funciona(self, client):
+        r = c.put(f"/farmacia/indicacoes/{vinculo_global_id}", json={"prioridade": 3, "nota": "tentativa"})
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["personalizou_automaticamente"] is True
+        assert corpo["id"] != vinculo_global_id
+        assert corpo["prioridade"] == 3
+        assert corpo["nota"] == "tentativa"
+
+        with Session(engine) as s:
+            original = s.get(IndicacaoTerapeutica, vinculo_global_id)
+            assert original.prioridade == 1
+            assert original.nota == "1ª escolha"
+
+            clone = s.exec(
+                select(IndicacaoTerapeutica).where(
+                    IndicacaoTerapeutica.origem_id == vinculo_global_id, IndicacaoTerapeutica.fazenda_id == 1,
+                )
+            ).one()
+            assert clone.prioridade == 3
+            assert clone.nota == "tentativa"
+
+    def test_put_em_vinculo_ja_personalizado_nao_personaliza_de_novo(self, client):
         c, engine = client
-        doenca_id, pa_id, _ = _ids_globais(engine)
+        doenca_id, _, _ = _ids_globais(engine)
         _como_fazenda(1)
         clone = c.post(f"/farmacia/indicacoes/{doenca_id}/personalizar").json()
         vinculo_id = clone["principios"][0]["indicacao_id"]
 
         r = c.put(f"/farmacia/indicacoes/{vinculo_id}", json={"prioridade": 3, "nota": "só com corpo lúteo"})
         assert r.status_code == 200, r.text
-        assert r.json()["prioridade"] == 3
-        assert r.json()["nota"] == "só com corpo lúteo"
+        corpo = r.json()
+        assert not corpo.get("personalizou_automaticamente")
+        assert corpo["prioridade"] == 3
+        assert corpo["nota"] == "só com corpo lúteo"
+
+    def test_put_em_vinculo_de_outra_fazenda_continua_404(self, client):
+        c, engine = client
+        doenca_id, pa_id, _ = _ids_globais(engine)
+        _como_fazenda(1)
+        with Session(engine) as s:
+            vinculo_global_id = s.exec(
+                select(IndicacaoTerapeutica).where(
+                    IndicacaoTerapeutica.doenca_id == doenca_id, IndicacaoTerapeutica.principio_ativo_id == pa_id,
+                )
+            ).one().id
+        clone_id = c.put(f"/farmacia/indicacoes/{vinculo_global_id}", json={"prioridade": 3}).json()["id"]
+
+        _como_fazenda(2)
+        r = c.put(f"/farmacia/indicacoes/{clone_id}", json={"prioridade": 9})
+        assert r.status_code == 404
