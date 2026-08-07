@@ -211,7 +211,21 @@ def _resumo_relatorio_personalizado(
     perdas = [s for s in servicos_rows if s.data_perda_prenhez]
     if data_de or data_ate:
         perdas = [s for s in perdas if (not data_de or s.data_perda_prenhez >= data_de) and (not data_ate or s.data_perda_prenhez <= data_ate)]
-    diagnosticados = sum(1 for s in servicos_rows if (s.diagnostico or "").strip())
+    # Denominador do % de perda de prenhez tem que respeitar o mesmo período
+    # do numerador (`perdas` acima) — senão o numerador conta só as perdas do
+    # período mas o denominador soma diagnósticos de todo o histórico, e o
+    # percentual sai artificialmente baixo. Data do diagnóstico = mesma
+    # âncora usada em agenda_engine.py/eventos_sanitarios.py: data_diagnostico
+    # com fallback pra data_servico (nem todo lançamento antigo tem a
+    # primeira preenchida).
+    diagnosticados_no_periodo = [
+        s for s in servicos_rows
+        if (s.diagnostico or "").strip()
+        and (not (data_de or data_ate) or (s.data_diagnostico or s.data_servico))
+        and (not data_de or (s.data_diagnostico or s.data_servico) >= data_de)
+        and (not data_ate or (s.data_diagnostico or s.data_servico) <= data_ate)
+    ]
+    diagnosticados = len(diagnosticados_no_periodo)
 
     partos_filtrados = partos_rows
     if data_de or data_ate:
