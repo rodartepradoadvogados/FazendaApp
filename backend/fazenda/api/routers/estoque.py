@@ -343,8 +343,17 @@ def listar_medicamentos(
     O casamento por princípio ativo/doença usa a Farmácia: além do texto legado
     `principio_ativo`, resolve o vínculo relacional (principio_ativo_id →
     PrincipioAtivo.nome / PrincipioAtivo.doenca_id → Doenca.nome), para que os
-    medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto."""
-    from fazenda.models import Doenca, PrincipioAtivo
+    medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto.
+
+    `incluir_sem_estoque` também acrescenta, pra critério `principio_ativo` ou
+    `doenca`, toda marca comercial cadastrada (`MedicamentoComercial`) que
+    ainda não tem item de Estoque nenhum — mesmo mecanismo de
+    `estoque_baixa.opcoes_medicamento` (usado no picker de Central de
+    Protocolos/Agenda), só que aqui o resultado é achatado no mesmo formato
+    de item de estoque, com `estoque_id: None` e `sem_estoque: True`, porque
+    o Protocolo Sanitário resolve o medicamento pelo NOME digitado no
+    lançamento (`escolhas_medicamento`), não por estoque_id."""
+    from fazenda.models import Doenca, IndicacaoTerapeutica, MedicamentoComercial, PrincipioAtivo
 
     fazenda_id = fazenda_id_seguro(fazenda_id)
 
@@ -365,7 +374,12 @@ def listar_medicamentos(
             if (pa.nome or "").strip().lower() == alvo:
                 pa_ids.add(pa.id)
 
-    # Doença → princípios ativos ligados a ela (via doenca_id da Farmácia).
+    # Doença → princípios ativos ligados a ela: pelo vínculo direto
+    # PrincipioAtivo.doenca_id (1-pra-1, só biológicos) E pela indicação
+    # terapêutica N-pra-N (IndicacaoTerapeutica — o caso geral, ex.: um
+    # antibiótico tratando mais de uma doença). Sem a segunda parte, um
+    # protocolo cadastrado "por doença" só encontrava vacina — nunca o
+    # antibiótico/anti-inflamatório indicado pra ela.
     pa_ids_doenca: set[int] = set()
     if doenca:
         alvo_d = doenca.strip().lower()
@@ -373,6 +387,11 @@ def listar_medicamentos(
         for pa in session.exec(query_pa).all():
             if pa.doenca_id in doenca_ids:
                 pa_ids_doenca.add(pa.id)
+        query_ind = select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id.in_(doenca_ids))
+        if fazenda_id is not None:
+            query_ind = query_ind.where(IndicacaoTerapeutica.fazenda_id == fazenda_id)
+        for ind in session.exec(query_ind).all():
+            pa_ids_doenca.add(ind.principio_ativo_id)
 
     # Finalidade: "secagem" = antimicrobianos intramamários de vaca seca;
     # "vacina" = todos os biológicos; "vacina_pre_parto" = só as vacinas
@@ -433,8 +452,29 @@ def listar_medicamentos(
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
-            "laboratorio": e.laboratorio, "estoque_id": e.id,
+            "laboratorio": e.laboratorio, "estoque_id": e.id, "sem_estoque": False,
         })
+
+    # incluir_sem_estoque + critério por princípio ativo/doença: acrescenta
+    # toda marca comercial do catálogo que ainda não apareceu acima (nenhum
+    # item de Estoque criado pra ela) — dá liberdade pro operador escolher o
+    # que realmente usou mesmo sem frasco cadastrado. Só faz sentido pra
+    # princípio ativo/doença: "classificação"/"finalidade" não têm uma marca
+    # comercial associada diretamente (são agrupamentos do item de estoque).
+    pa_ids_sem_estoque = pa_ids | pa_ids_doenca if incluir_sem_estoque else set()
+    if pa_ids_sem_estoque:
+        ja_listados = {(x["nome"] or "").strip().lower() for x in saida}
+        query_mc = select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id.in_(pa_ids_sem_estoque))
+        for mc in session.exec(query_mc).all():
+            nome_norm = (mc.nome_comercial or "").strip().lower()
+            if not nome_norm or nome_norm in ja_listados:
+                continue
+            ja_listados.add(nome_norm)
+            saida.append({
+                "nome": mc.nome_comercial, "unidade": None, "quantidade": None,
+                "principio_ativo": None, "classificacao_medicamento": None,
+                "laboratorio": mc.laboratorio, "estoque_id": None, "sem_estoque": True,
+            })
     return sorted(saida, key=lambda x: x["nome"])
 
 
