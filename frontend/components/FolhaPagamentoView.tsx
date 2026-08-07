@@ -5,7 +5,7 @@ import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
-  fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirVale, ehAdmin, formatBRL,
+  fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirParcelaVale, excluirVale, ehAdmin, formatBRL,
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
   lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, type GuiaFolhaEncargo,
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
@@ -222,6 +222,16 @@ export default function FolhaPagamentoView() {
     vale: any; parcela: any; valoresItens: Record<number, number>; valorVale: number; valorLancado: number;
   } | null>(null);
 
+  // G15 — exclusão de UMA parcela do vale (endpoint próprio, com
+  // reconciliação da folha). Primeiro chamamos sem `confirmar` para colher o
+  // payload de divergência do 409 (mesmo padrão de `salvarParcela`/409
+  // acima) e só então perguntamos "conceder" ou "redistribuir_igual".
+  const [excluindoParcela, setExcluindoParcela] = useState<{
+    vale: any; parcela: any; valor_parcela: number; valor_vale: number; soma_apos: number; parcelas_pendentes_posteriores: number;
+  } | null>(null);
+  const [excluirParcelaSalvando, setExcluirParcelaSalvando] = useState(false);
+  const [excluirParcelaErro, setExcluirParcelaErro] = useState<string | null>(null);
+
   // Vale avulso (Empreitada/Contrato/Diária) — mesma seção de relatório, tabela própria.
   const [valesAvulsos, setValesAvulsos] = useState<any[] | null>(null);
   const [expandedValeAvulsoId, setExpandedValeAvulsoId] = useState<number | null>(null);
@@ -431,6 +441,36 @@ export default function FolhaPagamentoView() {
       }
     } finally {
       setParcelaSalvando(false);
+    }
+  }
+
+  async function pedirExcluirParcela(vale: any, parcela: any) {
+    setExcluirParcelaErro(null);
+    try {
+      // Sem `confirmar`: o backend sempre responde 409 (payload de
+      // divergência) — nunca apaga direto daqui.
+      await excluirParcelaVale(vale.id, parcela.id);
+    } catch (e: any) {
+      if (e.status === 409 && e.detail?.valor_parcela !== undefined) {
+        setExcluindoParcela({ vale, parcela, ...e.detail });
+      } else {
+        setExcluirParcelaErro(e.message || "Erro ao excluir parcela");
+      }
+    }
+  }
+
+  async function confirmarExcluirParcela(acao: "conceder" | "redistribuir_igual") {
+    if (!excluindoParcela) return;
+    setExcluirParcelaSalvando(true);
+    setExcluirParcelaErro(null);
+    try {
+      await excluirParcelaVale(excluindoParcela.vale.id, excluindoParcela.parcela.id, { acao, confirmar: true });
+      setExcluindoParcela(null);
+      carregarVales(); carregar(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirParcelaErro(e.message || "Erro ao excluir parcela");
+    } finally {
+      setExcluirParcelaSalvando(false);
     }
   }
 
@@ -1403,10 +1443,17 @@ export default function FolhaPagamentoView() {
                                           onClick={() => { setEditandoParcela(null); setParcelaErro(null); }}>Cancelar</button>
                                       </div>
                                     ) : (
-                                      <button className="btn-ghost" title="Editar esta parcela" style={{ fontSize: "0.72rem" }}
-                                        onClick={() => abrirEdicaoParcela(v, p)}>
-                                        <Pencil size={12} />
-                                      </button>
+                                      <div style={{ display: "flex", gap: "0.3rem" }}>
+                                        <button className="btn-ghost" title="Editar esta parcela" style={{ fontSize: "0.72rem" }}
+                                          onClick={() => abrirEdicaoParcela(v, p)}>
+                                          <Pencil size={12} />
+                                        </button>
+                                        <button className="btn-ghost" title={p.aplicada ? "Parcela já aplicada na folha — não pode ser excluída" : "Excluir esta parcela"}
+                                          style={{ fontSize: "0.72rem", color: p.aplicada ? undefined : "var(--red)" }}
+                                          disabled={p.aplicada} onClick={() => pedirExcluirParcela(v, p)}>
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
                                     )}
                                   </td>
                                 </tr>
@@ -1415,6 +1462,9 @@ export default function FolhaPagamentoView() {
                           </table>
                           {parcelaErro && editandoParcela?.valeId === v.id && (
                             <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{parcelaErro}</p>
+                          )}
+                          {excluirParcelaErro && excluindoParcela === null && (
+                            <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{excluirParcelaErro}</p>
                           )}
                           {v.observacao && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Observação: {v.observacao}</p>}
                           <button className="btn-ghost" onClick={() => iniciarEdicaoVale(v)}>
@@ -1572,6 +1622,38 @@ export default function FolhaPagamentoView() {
           onCancelar={() => setDivergenciaValeAvulso(null)}
           onConfirmar={(acao) => salvarEdicaoValeAvulso(divergenciaValeAvulso.v, acao)}
         />
+      )}
+      {excluindoParcela && (
+        <Modal title="Excluir parcela do vale" onClose={() => setExcluindoParcela(null)} width="460px">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.85rem" }}>
+            <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.7rem 0.9rem" }}>
+              <p style={{ marginBottom: "0.3rem" }}>Excluir esta parcela muda o valor total lançado do vale.</p>
+              <p>Valor da parcela: <b>{formatBRL(excluindoParcela.valor_parcela)}</b></p>
+              <p>Valor do vale: <b>{formatBRL(excluindoParcela.valor_vale)}</b></p>
+              <p>Soma das parcelas após excluir (concedendo): <b>{formatBRL(excluindoParcela.soma_apos)}</b></p>
+            </div>
+            {excluirParcelaErro && <p style={{ color: "var(--red)" }}>{excluirParcelaErro}</p>}
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.3rem" }}>
+              <button className="btn-ghost" style={{ textAlign: "left", padding: "0.6rem 0.8rem" }}
+                disabled={excluirParcelaSalvando} onClick={() => confirmarExcluirParcela("conceder")}>
+                <b>Conceder</b>
+                <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                  Só esta parcela some — o valor total do vale não muda, a soma das parcelas fica menor.
+                </div>
+              </button>
+              {excluindoParcela.parcelas_pendentes_posteriores > 0 && (
+                <button className="btn-ghost" style={{ textAlign: "left", padding: "0.6rem 0.8rem" }}
+                  disabled={excluirParcelaSalvando} onClick={() => confirmarExcluirParcela("redistribuir_igual")}>
+                  <b>Redistribuir igualmente</b>
+                  <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                    Divide o valor desta parcela entre as {excluindoParcela.parcelas_pendentes_posteriores} parcela(s) pendente(s) posteriores — a soma se mantém.
+                  </div>
+                </button>
+              )}
+              <button className="btn-ghost" disabled={excluirParcelaSalvando} onClick={() => setExcluindoParcela(null)}>Cancelar</button>
+            </div>
+          </div>
+        </Modal>
       )}
       {confirmarDivergenciaFolha && (
         <Modal title="Valor líquido diferente do lançado" onClose={() => setConfirmarDivergenciaFolha(null)} width="440px">

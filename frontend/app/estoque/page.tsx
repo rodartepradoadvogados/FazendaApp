@@ -1,10 +1,13 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search, Pencil, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes } from "lucide-react";
-import { fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, ehAdmin, formatDate, type MovimentoEstoqueRow } from "@/lib/api";
+import { AlertTriangle, Filter, Search, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes } from "lucide-react";
+import {
+  fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, atualizarMovimentoEstoque, confirmarExclusao,
+  ehAdmin, formatDate, type MovimentoEstoqueRow,
+} from "@/lib/api";
+import { Modal } from "@/components/Modal";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
@@ -29,6 +32,12 @@ const COLUNAS_POR_PRODUTO = [
   { header: "Total entradas", key: "totalEntradas" }, { header: "Total saídas", key: "totalSaidas" },
   { header: "Saldo movimentado", key: "saldo" },
 ];
+
+// G1 — `GET /estoque/movimentos` já devolve `origem_tipo`/`pedido_item_id`
+// (é um `model_dump()` do `MovimentoEstoque` inteiro), só que o tipo
+// `MovimentoEstoqueRow` de `lib/api.ts` não os declara — estendido aqui em
+// vez de tocar em `api.ts` (fora da fronteira deste agente).
+type MovimentoRow = MovimentoEstoqueRow & { origem_tipo?: string | null; pedido_item_id?: number | null };
 
 // Mesma classificação entrada/saída do backend (backend/fazenda/api/routers/estoque.py) —
 // usada para separar o mesmo histórico de movimentos nos mapas de entrada/saída
@@ -280,14 +289,67 @@ function EstoqueInventario() {
 function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcone, corQtd, nomeArquivoBase }: {
   titulo: string; descricao: string; tiposIncluidos: string[]; icon: any; corIcone: string; corQtd: string; nomeArquivoBase: string;
 }) {
-  const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
+  const [movimentos, setMovimentos] = useState<MovimentoRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [busca, setBusca] = useState("");
   const admin = ehAdmin();
 
-  useEffect(() => { fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message)); }, []);
+  // G1 — edição/exclusão do movimento manual (`origem_tipo` nulo). Igual ao
+  // padrão de app/sanidade/page.tsx:960-982: admin exclui na hora, operador
+  // só solicita (fica pendente até um admin aprovar) — passa pelo mesmo
+  // motor central e auditado de exclusão (POST /exclusoes/confirmar) em vez
+  // de um DELETE direto.
+  const [editando, setEditando] = useState<MovimentoRow | null>(null);
+  const [editQtd, setEditQtd] = useState("");
+  const [editUnidade, setEditUnidade] = useState("");
+  const [editData, setEditData] = useState("");
+  const [editObs, setEditObs] = useState("");
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
+
+  const carregar = () => fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos as MovimentoRow[])).catch((e) => setError(e.message));
+
+  useEffect(() => { carregar(); }, []);
+
+  const abrirEdicao = (m: MovimentoRow) => {
+    setEditando(m);
+    setEditQtd(String(m.quantidade));
+    setEditUnidade(m.unidade || "");
+    setEditData(m.data_movimento);
+    setEditObs(m.observacao || "");
+  };
+
+  const salvarEdicao = async () => {
+    if (!editando) return;
+    setOcupado(editando.id); setError(null);
+    try {
+      await atualizarMovimentoEstoque(editando.id, {
+        quantidade: Number(editQtd), unidade: editUnidade || null, data_movimento: editData, observacao: editObs || null,
+      });
+      setEditando(null);
+      await carregar();
+    } catch (e: any) { setError(e.message); }
+    finally { setOcupado(null); }
+  };
+
+  const excluir = async (m: MovimentoRow) => {
+    const msg = admin
+      ? `Excluir o movimento "${m.movimento}" de ${m.quantidade} ${m.unidade || ""} de ${m.nome_item}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão do movimento "${m.movimento}" de ${m.nome_item}? Um administrador precisa aprovar antes de ser excluído de fato.`;
+    if (!window.confirm(msg)) return;
+    setOcupado(m.id); setError(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("movimento_estoque", String(m.id));
+      if (r.status === "excluido") {
+        await carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setOcupado(null); }
+  };
 
   const filtrados = useMemo(() => {
     if (!movimentos) return [];
@@ -311,6 +373,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {avisoExclusao && <div className="alert-aviso mb-4"><AlertTriangle size={18} /><span>{avisoExclusao}</span></div>}
       {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {movimentos && (
@@ -352,9 +415,15 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                   <ThOrdenavel label="Qtd" campo="quantidade" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                   <th>Observação</th>
                   {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+                  <th style={{ textAlign: "right" }}>Ações</th>
                 </tr></thead>
                 <tbody>
-                  {pag.linhasPagina.map((m) => (
+                  {pag.linhasPagina.map((m) => {
+                    // Movimento gerado por outro lançamento (Sanidade, Protocolo,
+                    // Secagem…) não pode ser editado/excluído por aqui — o
+                    // backend bloqueia com 400, então nem mostramos os botões.
+                    const editavel = !m.origem_tipo;
+                    return (
                     <tr key={m.id}>
                       <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{formatDate(m.data_movimento)}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
@@ -362,9 +431,28 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                       <td style={{ textAlign: "right" }}>{m.quantidade} {m.unidade || ""}</td>
                       <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
                       {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {editavel ? (
+                          <>
+                            <button onClick={() => abrirEdicao(m)} disabled={ocupado === m.id} title="Editar movimento"
+                              style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", marginRight: "0.5rem" }}>
+                              <Pencil size={14} />
+                            </button>
+                            <button onClick={() => excluir(m)} disabled={ocupado === m.id} title="Excluir movimento"
+                              style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--red)" }}>
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }} title={`Gerado por ${m.origem_tipo} — desfaça pelo lançamento de origem`}>
+                            gerado por {m.origem_tipo}
+                          </span>
+                        )}
+                      </td>
                     </tr>
-                  ))}
-                  {!filtrados.length && <tr><td colSpan={admin ? 6 : 5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento no filtro.</td></tr>}
+                    );
+                  })}
+                  {!filtrados.length && <tr><td colSpan={admin ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento no filtro.</td></tr>}
                 </tbody>
               </table>
               <Paginacao pagina={pag.pagina} totalPaginas={pag.totalPaginas} totalLinhas={pag.totalLinhas}
@@ -372,6 +460,36 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
             </div>
           </div>
         </>
+      )}
+
+      {editando && (
+        <Modal title={`Editar movimento — ${editando.nome_item}`} onClose={() => setEditando(null)} width="480px">
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            <div>
+              <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Quantidade</label>
+              <input type="number" step="any" style={selStyle} value={editQtd} onChange={(e) => setEditQtd(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Unidade</label>
+              <input style={selStyle} value={editUnidade} onChange={(e) => setEditUnidade(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data</label>
+              <input type="date" style={selStyle} value={editData} onChange={(e) => setEditData(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Observação</label>
+              <input style={selStyle} value={editObs} onChange={(e) => setEditObs(e.target.value)} />
+            </div>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              Não é possível trocar o item ou o tipo (entrada/saída) por aqui — exclua este movimento e lance um novo.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              <button className="btn-primary" onClick={salvarEdicao} disabled={ocupado === editando.id}>Salvar</button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

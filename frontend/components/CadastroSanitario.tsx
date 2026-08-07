@@ -7,7 +7,7 @@ import {
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
   fetchExames, criarExame, atualizarExame, excluirExame,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, excluirProtocoloSanitario, importarProtocoloSanitarioExcel,
-  fetchProtocolosInducaoLactacaoCadastro, criarProtocoloInducaoLactacao, atualizarProtocoloInducaoLactacao,
+  fetchProtocolosInducaoLactacaoCadastro, criarProtocoloInducaoLactacao, atualizarProtocoloInducaoLactacao, excluirProtocoloInducaoLactacao,
   fetchEstoque, fetchLotes,
   fetchServicosCadastro,
   type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload,
@@ -445,6 +445,8 @@ export function CadastroProtocolosInducao() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [excluindo, setExcluindo] = useState<number | null>(null);
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
 
   const carregar = () => fetchProtocolosInducaoLactacaoCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -461,6 +463,21 @@ export function CadastroProtocolosInducao() {
     setEditando(p.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
+
+  // Bloqueado no backend (409) se o protocolo já foi lançado alguma vez —
+  // nesse caso o usuário desativa em vez de excluir (checkbox "Ativo").
+  const excluir = async (p: ProtocoloInducaoLactacaoCadastro) => {
+    if (!window.confirm(`Excluir o protocolo "${p.nome}"? Isso não pode ser desfeito.`)) return;
+    setExcluindo(p.id); setErroExclusao(null);
+    try {
+      await excluirProtocoloInducaoLactacao(p.id);
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir protocolo");
+    } finally {
+      setExcluindo(null);
+    }
+  };
 
   const acrescentarEtapa = () => setForm((f) => ({ ...f, etapas: [...f.etapas, etapaInducaoVazia(f.etapas.length)] }));
   const removerEtapa = (idx: number) => setForm((f) => (f.etapas.length > 1 ? { ...f, etapas: f.etapas.filter((_, i) => i !== idx) } : f));
@@ -514,6 +531,7 @@ export function CadastroProtocolosInducao() {
         em Lançamentos › Produção › Indução de lactação.
       </p>
 
+      {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -546,6 +564,10 @@ export function CadastroProtocolosInducao() {
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
                         <Pencil size={13} /> Editar
+                      </button>
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                        onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
+                        <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
                       </button>
                     </td>
                   </tr>

@@ -277,6 +277,13 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     # Curativo x preventivo no protocolo sanitário de etapas. Nulo = curativo
     # (todo protocolo cadastrado antes desta distinção), resolvido na leitura.
     "protocolo_sanitario": [("finalidade", "VARCHAR")],
+    # Redundante com a revisão Alembic 20dc777765f9 (mesma coluna) — rede de
+    # segurança para bancos que já tinham a tabela `lancamento_pendente`
+    # criada por `create_all`/`_migrar_colunas` antes de existir Alembic, cujo
+    # `alembic_version` pode ficar carimbado numa revisão futura sem ter
+    # passado por esta em particular (ver `_aplicar_alembic` acima). Usada só
+    # pelo G17 (Configurações › Aprovações › Desfazer aprovação).
+    "lancamento_pendente": [("registro_criado", "TEXT")],
 }
 
 

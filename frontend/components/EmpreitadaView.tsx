@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, CheckCircle2 } from "lucide-react";
 import {
   fetchPessoas, fetchEmpreitadas, criarEmpreitada, concluirEtapaEmpreitada, formatBRL,
-  atualizarParcelaEmpreitada, redistribuirParcelasEmpreitada,
+  atualizarParcelaEmpreitada, redistribuirParcelasEmpreitada, confirmarExclusao, ehAdmin,
 } from "@/lib/api";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 import { inputSm } from "@/components/estiloCampoAvulso";
@@ -47,6 +47,11 @@ export default function EmpreitadaView() {
   const [error, setError] = useState<string | null>(null);
   const [etapasForm, setEtapasForm] = useState<EtapaForm[]>(etapaFormVazia);
   const [msgEtapa, setMsgEtapa] = useState<string | null>(null);
+  // G9 — exclusão do cabeçalho da empreita (motor genérico: admin exclui na
+  // hora, operador só solicita). Erro (ex.: 400 de parcela já paga) fica
+  // escopado ao item, exibido junto das etapas em renderItemExtra.
+  const [excluindoId, setExcluindoId] = useState<number | null>(null);
+  const [msgExclusao, setMsgExclusao] = useState<{ id: number; texto: string } | null>(null);
 
   const empreiteiros = useMemo(() => pessoas.filter((p) => p.tipos.includes("Empreiteiro")), [pessoas]);
 
@@ -66,6 +71,27 @@ export default function EmpreitadaView() {
       carregar();
     } catch (e: any) {
       setMsgEtapa(e.message || "Erro ao concluir etapa");
+    }
+  }
+
+  async function excluirEmpreitada(item: Empreitada) {
+    const admin = ehAdmin();
+    const msg = admin
+      ? `Excluir a empreita de ${item.pessoa_nome} (${item.descricao})? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão da empreita de ${item.pessoa_nome} (${item.descricao})? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setMsgExclusao(null);
+    setExcluindoId(item.id);
+    try {
+      const r = await confirmarExclusao("empreitada", String(item.id));
+      if (r.status !== "excluido") {
+        setMsgExclusao({ id: item.id, texto: "Solicitação de exclusão enviada — aguardando aprovação de um administrador." });
+      }
+      carregar();
+    } catch (e: any) {
+      setMsgExclusao({ id: item.id, texto: e.message || "Erro ao excluir empreita" });
+    } finally {
+      setExcluindoId(null);
     }
   }
 
@@ -132,9 +158,16 @@ export default function EmpreitadaView() {
       onRedistribuirParcelas={redistribuirParcelasEmpreitada}
       tituloListagem="Empreitas lançadas" textoVazioListagem="Nenhuma empreita lançada ainda."
       statusLabel={(status) => (status === "concluida" ? "concluída" : "em andamento")}
+      acaoItem={(item) => (
+        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir empreita"
+          disabled={excluindoId === item.id} onClick={() => excluirEmpreitada(item)}>
+          <Trash2 size={13} />
+        </button>
+      )}
       renderItemExtra={(item) => (
         <>
           {msgEtapa && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.5rem" }}>{msgEtapa}</p>}
+          {msgExclusao?.id === item.id && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.5rem" }}>{msgExclusao.texto}</p>}
           {item.etapas.length > 0 && (
             <table className="fazenda-table" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
               <thead><tr><th>Etapa</th><th>Valor</th><th>Situação</th><th></th></tr></thead>

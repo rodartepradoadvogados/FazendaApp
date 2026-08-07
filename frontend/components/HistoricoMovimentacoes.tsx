@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { History, AlertTriangle, Search } from "lucide-react";
-import { fetchMovimentacoes, formatDate, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Search, Trash2 } from "lucide-react";
+import { fetchMovimentacoes, formatDate, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { rotuloOrigemMovimentoLote } from "@/lib/constants";
 
 type Movimento = {
@@ -16,13 +16,21 @@ const selStyle: React.CSSProperties = {
   borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 
+// Montado como aba "Movimentações" em Rebanho (app/rebanho/page.tsx) — antes
+// deste componente ficava importado por ninguém, órfão, e a tela de histórico
+// de transferências entre lotes descrita na auditoria não existia de fato
+// (ver plano de fechamento dos 17 gaps de editar/excluir, G4). Por isso não
+// tem <h1>/cabeçalho próprio: quem dá o título é a aba que o hospeda.
 export default function HistoricoMovimentacoes() {
   const [movs, setMovs] = useState<Movimento[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
   const admin = ehAdmin();
 
-  useEffect(() => { fetchMovimentacoes().then(setMovs).catch((e) => setError(e.message)); }, []);
+  const carregar = () => fetchMovimentacoes().then(setMovs).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); }, []);
 
   const filtrados = useMemo(() => {
     if (!movs) return [];
@@ -30,14 +38,30 @@ export default function HistoricoMovimentacoes() {
     return movs.filter((m) => m.numero_matriz.toLowerCase().includes(busca.toLowerCase()));
   }, [movs, busca]);
 
+  // Mesmo padrão de frontend/app/sanidade/page.tsx: passa pelo fluxo central
+  // e auditado de exclusão (POST /exclusoes/confirmar) em vez de um DELETE
+  // próprio — admin exclui na hora, operador vira uma solicitação pendente.
+  const excluir = async (m: Movimento) => {
+    const msg = admin
+      ? `Excluir a movimentação de ${m.numero_matriz} (${m.lote_origem || "—"} → ${m.lote_destino})? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão da movimentação de ${m.numero_matriz} (${m.lote_origem || "—"} → ${m.lote_destino})? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setOcupado(m.id); setError(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("movimento_lote", String(m.id));
+      if (r.status === "excluido") {
+        await carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setOcupado(null); }
+  };
+
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><History size={22} style={{ color: "var(--dourado)" }} /> Histórico de movimentações</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Relatório de todas as transferências de animais entre lotes.</p>
-      </div>
-
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!movs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {movs && (
@@ -57,6 +81,7 @@ export default function HistoricoMovimentacoes() {
                   <th>Motivo</th><th title="Como a movimentação foi lançada: manual, sugestão confirmada num pop-up, aplicada automaticamente ou sugestão passiva da Agenda">Tipo</th>
                   <th>Responsável</th><th>Observação</th>
                   {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+                  <th style={{ textAlign: "right" }}>Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -80,9 +105,19 @@ export default function HistoricoMovimentacoes() {
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.responsavel || "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
                     {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="btn-ghost"
+                        title="Excluir movimentação"
+                        disabled={ocupado === m.id}
+                        onClick={() => excluir(m)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
-                {!filtrados.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma movimentação registrada.</td></tr>}
+                {!filtrados.length && <tr><td colSpan={admin ? 11 : 10} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma movimentação registrada.</td></tr>}
               </tbody>
             </table>
           </div>

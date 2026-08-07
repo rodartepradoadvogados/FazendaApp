@@ -2269,6 +2269,130 @@ def editar_lancamento(
     return registro.model_dump()
 
 
+# G2 — `ContaGerencial` que NASCEM já pagas, espelhando a baixa de outro
+# módulo (RH). Estorná-las por aqui deixaria as duas pontas divergentes —
+# desfazer precisa ser feito no módulo de origem. Ver
+# `rh_folha._sincronizar_conta_vale` (Vale de funcionário),
+# `rh_contratos.registrar_pagamento_diaria` (Diária) e o lançamento de Vale
+# avulso (também rh_contratos).
+TIPOS_DOCUMENTO_BAIXA_ESPELHADA = {"Vale de funcionário", "Vale avulso", "Diária"}
+
+
+class EstornoIn(BaseModel):
+    motivo: str | None = None
+    # Sem isso, uma baixa que criou parcela(s) para cobrir a diferença de
+    # valor pago (ver `pagar_lancamento` acima) é bloqueada com 409 — o
+    # chamador precisa confirmar explicitamente que quer removê-las também.
+    confirmar_parcelas_diferenca: bool = False
+
+
+@router.post("/lancamentos/{lancamento_id}/estornar")
+def estornar_lancamento(
+    lancamento_id: int, dados: EstornoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Reverte a baixa (pagamento/recebimento) de um lançamento — o lançamento
+    CONTINUA existindo, só volta para "em aberto" (contas a pagar/receber).
+    Não é exclusão: para excluir o lançamento em si, use o motor genérico
+    (`POST /exclusoes/...`, tipo "financeiro").
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(ContaGerencial, lancamento_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+
+    if registro.data_pagamento is None and registro.valor_pago is None:
+        raise HTTPException(status_code=400, detail="Este lançamento não está baixado — não há pagamento a estornar.")
+
+    if registro.tipo_documento in TIPOS_DOCUMENTO_BAIXA_ESPELHADA:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este lançamento é o espelho de um {registro.tipo_documento} — desfaça no próprio módulo "
+            "(Financeiro › Folha › Vales / Pessoal › Diárias), senão os dois ficam divergentes.",
+        )
+
+    # Parcelas geradas pela diferença de valor pago (`pagar_lancamento`,
+    # `dados.parcelas_diferenca`) — mesmo `numero_lancamento`, número maior
+    # que a parcela baixada, ainda em aberto, lançadas manualmente. Não há
+    # `criado_em` em `ContaGerencial` (só `atualizado_em`) para distinguir
+    # com certeza dessas parcelas "de diferença" de parcelas futuras comuns
+    # do mesmo lançamento que só ainda não foram pagas — usamos
+    # `atualizado_em >= registro.atualizado_em` como aproximação: as
+    # parcelas de diferença são criadas no momento da baixa, estritamente
+    # depois da criação da parcela que está sendo baixada agora.
+    irmas_diferenca: list[ContaGerencial] = []
+    if registro.numero_lancamento and registro.parcela_num is not None:
+        query_irmas = select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == registro.numero_lancamento,
+            ContaGerencial.parcela_num > registro.parcela_num,
+            ContaGerencial.valor_pago.is_(None),
+            ContaGerencial.origem == "manual",
+        )
+        if registro.fazenda_id is not None:
+            query_irmas = query_irmas.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+        irmas_diferenca = [
+            c for c in session.exec(query_irmas).all()
+            if c.atualizado_em is not None and registro.atualizado_em is not None
+            and c.atualizado_em >= registro.atualizado_em
+        ]
+
+    if irmas_diferenca and not dados.confirmar_parcelas_diferenca:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "mensagem": f"Esta baixa criou {len(irmas_diferenca)} parcela(s) para a diferença. "
+                "Estornar sem removê-las deixa o lançamento com valor duplicado.",
+                # `mode="json"` — o `detail` de HTTPException não passa pelo
+                # `jsonable_encoder` de resposta normal do FastAPI, então
+                # `date`/`datetime` cru quebrariam o `json.dumps` da resposta.
+                "parcelas": [c.model_dump(mode="json") for c in irmas_diferenca],
+            },
+        )
+
+    avisos: list[str] = []
+    if registro.forma_pagamento == "credito":
+        avisos.append("O pagamento estornado era em cartão de crédito — confira/ajuste a fatura manualmente.")
+
+    parcelas_diferenca_removidas = 0
+    if irmas_diferenca:
+        ids_removidas = {c.id for c in irmas_diferenca}
+        for c in irmas_diferenca:
+            session.delete(c)
+        parcelas_diferenca_removidas = len(irmas_diferenca)
+
+        query_restantes = select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento)
+        if registro.fazenda_id is not None:
+            query_restantes = query_restantes.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+        remanescentes = [c for c in session.exec(query_restantes).all() if c.id not in ids_removidas]
+        novo_total = len(remanescentes)
+        for r in remanescentes:
+            r.parcela_total = novo_total
+            session.add(r)
+
+    # Reversão do que a baixa fez (`pagar_lancamento`/`baixa_lote`/
+    # `baixa_lote_detalhada`), ao contrário.
+    registro.data_pagamento = None
+    registro.valor_pago = None
+    registro.conta_bancaria = None
+    registro.numero_documento_pagamento = None
+    registro.forma_pagamento = None
+    registro.data_vencimento_cartao = None
+    registro.desconto_acrescimo = None
+    registro.atualizado_em = datetime.utcnow()
+    session.add(registro)
+
+    session.commit()
+    session.refresh(registro)
+
+    return {
+        **registro.model_dump(),
+        "estornado": True,
+        "parcelas_diferenca_removidas": parcelas_diferenca_removidas,
+        "avisos": avisos,
+    }
+
+
 @router.post("/importar-xml")
 def importar_xml(
     dados: XmlIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),

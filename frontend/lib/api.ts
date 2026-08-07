@@ -912,6 +912,13 @@ export async function atualizarProtocoloInducaoLactacao(id: number, dados: Proto
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo de indução de lactação"); }
   return res.json();
 }
+// G8 — espelha excluir_protocolo_sanitario/excluir_protocolo_iatf_cadastrado:
+// 409 se o protocolo já foi lançado ao menos uma vez (usar `ativo: false` em vez disso).
+export async function excluirProtocoloInducaoLactacao(id: number) {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo de indução de lactação"); }
+  return res.json();
+}
 
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
@@ -1536,6 +1543,25 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao editar parcela do vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+/** G15 — exclui UMA parcela do vale (não o vale inteiro; para isso já existe
+ * `excluirVale`). 400 se a parcela já caiu em folha paga, ou se for a única
+ * parcela do vale (exclua o vale inteiro nesse caso). Sem `confirmar`, a API
+ * responde 409 com `detail = {mensagem, valor_parcela, valor_vale, soma_apos,
+ * parcelas_pendentes_posteriores}` — mesmo padrão de `atualizarParcelaVale`;
+ * reenviar com `confirmar: true` e a `acao` escolhida. */
+export type ExcluirParcelaValeOpts = { acao?: "conceder" | "redistribuir_igual"; confirmar?: boolean };
+export async function excluirParcelaVale(valeId: number, parcelaId: number, opts: ExcluirParcelaValeOpts = {}) {
+  const qs = new URLSearchParams({ acao: opts.acao || "conceder", confirmar: opts.confirmar ? "true" : "false" });
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}?${qs}`, { method: "DELETE" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao excluir parcela do vale");
     err.detail = d.detail;
     err.status = res.status;
     throw err;
@@ -3018,6 +3044,22 @@ export async function fetchMovimentosEstoque(): Promise<{ movimentos: MovimentoE
   return res.json();
 }
 
+// G1 — só movimento manual (`origem_tipo` nulo) pode ser editado/excluído por
+// aqui; movimento gerado por outro lançamento (Sanidade, Protocolo, Secagem…)
+// dá 400 e aponta pra desfazer pelo lançamento de origem.
+export type MovimentoEstoqueEditIn = {
+  quantidade: number; unidade?: string | null; data_movimento: string; observacao?: string | null;
+};
+export async function atualizarMovimentoEstoque(id: number, dados: MovimentoEstoqueEditIn) {
+  const res = await authFetch(`${API}/estoque/movimentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar movimento de estoque"); }
+  return res.json() as Promise<MovimentoEstoqueRow & { saldo_item: number }>;
+}
+// A exclusão do movimento manual roteia pelo motor genérico — ver
+// confirmarExclusao("movimento_estoque", id) em "── Exclusões ──" abaixo.
+
 export async function fetchAlimentacao() {
   const res = await authFetch(`${API}/alimentacao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Alimentação error: ${res.status}`);
@@ -3481,6 +3523,39 @@ export async function importarPesagemCorporalPlanilha(file: File): Promise<{ cri
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
+
+// G7 — /producao/pesagens/relatorio (acima) agrega por animal e não devolve
+// `id`; esta é a listagem individual (com id) que sustenta editar/excluir.
+export type PesagemFiltros = { numero_matriz?: string; grupo?: string; data_inicio?: string; data_fim?: string; limite?: number };
+export type PesagemLinha = {
+  id: number; numero_matriz: string; data_pesagem: string; peso_kg: number;
+  del_dias: number | null; idade_meses: number | null; grupo_primario: string | null;
+  fase: string | null; usuario_nome: string | null;
+};
+export async function fetchPesagens(filtros: PesagemFiltros = {}): Promise<{ pesagens: PesagemLinha[]; total: number }> {
+  const qs = new URLSearchParams();
+  if (filtros.numero_matriz) qs.set("numero_matriz", filtros.numero_matriz);
+  if (filtros.grupo) qs.set("grupo", filtros.grupo);
+  if (filtros.data_inicio) qs.set("data_inicio", filtros.data_inicio);
+  if (filtros.data_fim) qs.set("data_fim", filtros.data_fim);
+  if (filtros.limite) qs.set("limite", String(filtros.limite));
+  const res = await authFetch(`${API}/producao/pesagens?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Pesagens error: ${res.status}`);
+  return res.json();
+}
+// `data_pesagem`/`peso_kg` são opcionais (exclude_unset no backend) — manda só o que mudou.
+// Mudar a data recalcula `fase`; `del_dias`/`idade_meses`/`grupo_primario` são
+// fotos do momento do lançamento e não são recalculados.
+export type PesagemEditIn = { data_pesagem?: string; peso_kg?: number };
+export async function atualizarPesagem(id: number, dados: PesagemEditIn) {
+  const res = await authFetch(`${API}/producao/pesagens/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar pesagem"); }
+  return res.json();
+}
+// A exclusão roteia pelo motor genérico — confirmarExclusao("pesagem_corporal", id).
+
 // ── Qualidade do leite ──
 export async function fetchQualidadeLeite() {
   const res = await authFetch(`${API}/producao/qualidade-leite`, { cache: "no-store" });
@@ -3524,6 +3599,18 @@ export async function criarEntregaLeiteMensal(dados: { competencia: string; quan
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar entrega mensal do leite"); }
   return res.json();
 }
+// G6 — o POST acima já faz upsert por competência (editar o valor de um mês
+// já funciona); o PUT serve pra corrigir a COMPETÊNCIA errada. 409 se a nova
+// competência já tiver outro registro na mesma fazenda.
+export type EntregaLeiteEditIn = { competencia: string; quantidade_litros: number; observacao?: string | null };
+export async function atualizarEntregaLeite(id: number, dados: EntregaLeiteEditIn) {
+  const res = await authFetch(`${API}/producao/entrega-leite/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar entrega de leite"); }
+  return res.json();
+}
+// A exclusão roteia pelo motor genérico — confirmarExclusao("entrega_leite", id).
 
 // ── Relatório controle leiteiro × ITALAC × entrega ──
 export async function fetchRelatorioControleEntrega(dataInicio?: string, dataFim?: string) {
@@ -3727,6 +3814,22 @@ export async function renomearProtocolo(origem: string, origemId: number, nome: 
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao renomear o protocolo"); }
+  return res.json();
+}
+
+// G16 — genérico para as 4 origens (iatf, inducao, customizado, lida); todos
+// os campos são opcionais (exclude_unset no backend). 400 se o protocolo
+// estiver encerrado/cancelado, ou se `data_inicio` mudar com etapa já
+// aplicada. Mudar `data_inicio` desloca `data_prevista` de todas as
+// aplicações pelo mesmo delta.
+export type EditarLancamentoProtocoloIn = {
+  data_inicio?: string; responsavel?: string; observacao?: string; nome?: string;
+};
+export async function editarLancamentoProtocolo(origem: string, origemId: number, dados: EditarLancamentoProtocoloIn) {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento do protocolo"); }
   return res.json();
 }
 
@@ -4414,6 +4517,29 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   return res.json();
 }
 
+// G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
+// lançamento. Se a baixa criou parcela(s) para cobrir a diferença de valor
+// pago (ver marcarPagoFinanceiro/parcelas_diferenca), a API responde 409 com
+// `detail = {mensagem, parcelas}` — reenviar com `confirmar_parcelas_diferenca: true`
+// para apagar essas parcelas e restaurar `parcela_total` das remanescentes.
+export type EstornoLancamentoIn = { motivo?: string | null; confirmar_parcelas_diferenca?: boolean };
+export type EstornoLancamentoOut = Record<string, any> & {
+  estornado: true; parcelas_diferenca_removidas: number; avisos: string[];
+};
+export async function estornarPagamentoLancamento(id: number, dados: EstornoLancamentoIn = {}): Promise<EstornoLancamentoOut> {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/estornar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao estornar pagamento");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // Sugestão de casamento entre o texto vindo da nota/documento e o cadastro
 // existente (fornecedor, produto de estoque ou serviço) — só aparece quando
 // há semelhança mas não certeza (confiança "provavel"; ver
@@ -4901,6 +5027,31 @@ export async function aprovarLancamento(id: number) {
 export async function rejeitarLancamento(id: number) {
   const res = await authFetch(`${API}/aprovacoes/${id}/rejeitar`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rejeitar"); }
+  return res.json();
+}
+
+// G17 — fila de decididos (aprovados/rejeitados), com a possibilidade de
+// desfazer. `pode_desfazer` é sempre true para rejeitado; para aprovado, só
+// quando o backend conseguiu gravar o(s) registro(s) criados (ver
+// `LancamentoPendente.registro_criado`) e eles ainda existem — aprovações
+// antigas (de antes desta coluna existir) vêm com `pode_desfazer: false` e
+// `motivo_nao_desfaz` explicando o porquê.
+export type LancamentoPendenteDecidido = LancamentoPendente & {
+  pode_desfazer: boolean; motivo_nao_desfaz: string | null;
+};
+export async function fetchAprovacoesDecididas(limite = 30): Promise<LancamentoPendenteDecidido[]> {
+  const res = await authFetch(`${API}/aprovacoes/decididas?limite=${limite}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Aprovações decididas error: ${res.status}`);
+  return res.json();
+}
+/** Rejeitado → volta a "pendente" (pode ser reavaliado). Aprovado → desfaz o
+ * que foi criado (mesmo trio do motor de exclusões: desvincula vale, estorna
+ * estoque, `session.delete`) e também volta a "pendente" — 400 se o registro
+ * não for reversível (`registro_criado` ausente ou `reversivel: false`), 409
+ * se ainda estiver "pendente" (nada pra desfazer). */
+export async function desfazerAprovacao(id: number) {
+  const res = await authFetch(`${API}/aprovacoes/${id}/desfazer`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desfazer aprovação"); }
   return res.json();
 }
 

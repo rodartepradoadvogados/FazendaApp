@@ -20,7 +20,7 @@ from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Doenca, PrincipioAtivo, ProtocoloIatf, ProtocoloIatfEtapa, ProtocoloIatfLancamento,
-    ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario,
+    ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloInducaoLancamento, ProtocoloSanitario,
     ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -547,6 +547,35 @@ def atualizar_protocolo_inducao(
         session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
     session.commit()
     return _serializar_protocolo_inducao(session, protocolo)
+
+
+@router.delete("/protocolos-inducao-lactacao/{protocolo_id}")
+def excluir_protocolo_inducao(
+    protocolo_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cópia estrutural de `excluir_protocolo_sanitario`/`excluir_protocolo_iatf_cadastrado`
+    (G8) — mesmo padrão de bloqueio quando já houve lançamento: aqui o
+    caminho recomendado é desativar (`ativo=False`), não apagar histórico."""
+    protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    ja_lancado = session.exec(
+        select(ProtocoloInducaoLancamento).where(ProtocoloInducaoLancamento.protocolo_id == protocolo_id)
+    ).first()
+    if ja_lancado:
+        raise HTTPException(
+            status_code=409,
+            detail="Este protocolo já foi lançado ao menos uma vez e não pode ser excluído — desative-o (campo Ativo) em vez disso.",
+        )
+    etapas = session.exec(
+        select(ProtocoloInducaoLactacaoEtapa).where(ProtocoloInducaoLactacaoEtapa.protocolo_id == protocolo_id)
+    ).all()
+    for e in etapas:
+        session.delete(e)
+    session.delete(protocolo)
+    session.commit()
+    return {"excluido": True}
 
 
 # ---------------------------------------------------------------------------

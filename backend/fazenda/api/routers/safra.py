@@ -1,8 +1,13 @@
 """
 Router de Safra — cadastro usado pelo relatório de custo agrícola (Opção A do
 plano de custo da silagem, ver relatorio_custo_safra.py). Mesmo padrão de
-campos simples de Lote/CentroCusto — sem exclusão direta, só soft-delete via
-`ativo` (Configurações > Cadastro > Safra).
+campos simples de Lote/CentroCusto — soft-delete via `ativo` continua sendo o
+caminho recomendado no dia a dia, mas a exclusão direta também existe (G11):
+`Safra` não tem nenhuma FK apontando para ela (os lançamentos financeiros do
+centro de custo não dependem da linha de Safra em si), então ela está
+registrada como tipo `safra` no motor genérico de exclusões — ver
+`fazenda.rules.exclusao_tipos.agricultura` e
+`Configurações > Cadastro > Excluir cadastros`.
 """
 from __future__ import annotations
 

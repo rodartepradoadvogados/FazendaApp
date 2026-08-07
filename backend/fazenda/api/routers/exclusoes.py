@@ -18,6 +18,8 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.exclusao_tipos import REGISTRO
+from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
 from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.models import (
     AgendaManual,
@@ -92,36 +94,22 @@ SUBTIPOS_TODOS = [
     "evento_manual", "financeiro", "compra_animal", "compra_semen", "venda_animal",
 ]
 
+# Tipos "de cadastro" (sem data intrínseca) entre os hardcoded em TIPOS —
+# espelha o que era a constante TIPOS_SEM_DATA em FormExclusao.tsx antes de
+# GET /tipos virar a fonte da verdade (ver `tipos()` abaixo). Tipo novo
+# registrado via `rules/exclusao_tipos` declara isso no próprio
+# `TipoExclusao.sem_filtro_data` — não precisa entrar aqui.
+_TIPOS_SEM_DATA_LEGADO = {
+    "animal", "estoque", "lote", "fornecedor", "motivo_movimentacao", "pessoa",
+    "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario",
+}
+
 
 @router.get("/tipos")
 def tipos() -> list[dict]:
-    return sorted(TIPOS, key=lambda t: t["label"])
-
-
-def _br(data) -> str:
-    """Formata uma data como dd/mm/aaaa (padrão brasileiro) para exibição no título."""
-    return data.strftime("%d/%m/%Y") if data else "—"
-
-
-def _contem(termo: str, *valores) -> bool:
-    if not termo:
-        return True
-    termo = termo.strip().lower()
-    return any(termo in str(v).lower() for v in valores if v is not None)
-
-
-def _dentro_periodo(data_ref, data_inicio: str, data_fim: str) -> bool:
-    """Filtro de data opcional — sem data de referência no registro, ou sem filtro definido, não exclui nada."""
-    if not data_inicio and not data_fim:
-        return True
-    if data_ref is None:
-        return False
-    ref = data_ref.isoformat()
-    if data_inicio and ref < data_inicio:
-        return False
-    if data_fim and ref > data_fim:
-        return False
-    return True
+    legados = [{**t, "sem_filtro_data": t["id"] in _TIPOS_SEM_DATA_LEGADO} for t in TIPOS]
+    novos = [{"id": t.id, "label": t.label, "sem_filtro_data": t.sem_filtro_data} for t in REGISTRO.values()]
+    return sorted(legados + novos, key=lambda t: t["label"])
 
 
 def _buscar_um(
@@ -132,6 +120,11 @@ def _buscar_um(
     filtrados por um termo de busca e, opcionalmente, por período. Cada item carrega um
     campo interno "_data" (para ordenação cronológica) que a rota pública remove antes
     de responder."""
+    if tipo in REGISTRO:
+        return REGISTRO[tipo].buscar(
+            termo=termo, data_inicio=data_inicio, data_fim=data_fim, session=session, fazenda_id=fazenda_id,
+        )
+
     if tipo == "animal":
         rows = session.exec(select(Animal)).all()
         out = [
@@ -451,6 +444,9 @@ def buscar(
 
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
     """Retorna (descrições do impacto, objetos que serão apagados)."""
+    if tipo in REGISTRO:
+        return REGISTRO[tipo].alvos(id_=id_, session=session, fazenda_id=fazenda_id)
+
     if tipo == "animal":
         animal = session.exec(select(Animal).where(Animal.numero == id_)).first()
         if not animal:

@@ -605,3 +605,98 @@ def movimentar_estoque(
 ) -> dict:
     item = _criar_movimento_estoque(dados, session, usuario_id=user.id, fazenda_id=fazenda_id)
     return item.model_dump()
+
+
+class MovimentoEditIn(BaseModel):
+    """Edição de um `MovimentoEstoque` lançado manualmente (G1). Não permite
+    trocar `nome`/`movimento` — isso é excluir e relançar, não editar.
+    `extra="allow"` só para conseguirmos detectar `nome`/`movimento` no corpo
+    e devolver uma mensagem de erro explicativa em vez do 422 genérico do
+    FastAPI para campo desconhecido."""
+
+    model_config = {"extra": "allow"}
+
+    quantidade: float
+    unidade: str | None = None
+    data_movimento: date
+    observacao: str | None = None
+
+
+def _resolver_item_do_movimento(mov: MovimentoEstoque, session: Session, fazenda_id: int | None) -> Estoque | None:
+    """`MovimentoEstoque.estoque_id` pode ser `None` em movimentos legados —
+    nesse caso resolve o item por `nome_item` + `fazenda_id`, igual ao
+    lançamento (`_criar_movimento_estoque`)."""
+    if mov.estoque_id:
+        item = session.get(Estoque, mov.estoque_id)
+        if item:
+            return item
+    query_item = select(Estoque).where(Estoque.nome == mov.nome_item)
+    if fazenda_id is not None:
+        query_item = query_item.where(Estoque.fazenda_id == fazenda_id)
+    return session.exec(query_item).first()
+
+
+@router.put("/movimentos/{movimento_id}")
+def editar_movimento_estoque(
+    movimento_id: int, dados: MovimentoEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Edita quantidade/unidade/data/observação de um movimento manual
+    (`origem_tipo is None`). Aplica o *delta* da quantidade no saldo do item
+    (e no `EstoqueSemen.doses`, quando o item for de sêmen) — não refaz o
+    movimento do zero, para não perder o histórico de outros movimentos do
+    mesmo item entre o lançamento original e esta edição."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    extras = dados.model_extra or {}
+    if "nome" in extras or "movimento" in extras:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível trocar o item ou o tipo (entrada/saída) de um movimento existente — "
+            "exclua este movimento e lance um novo.",
+        )
+    mov = session.get(MovimentoEstoque, movimento_id)
+    if not mov or (fazenda_id is not None and mov.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Movimento de estoque não encontrado")
+    if mov.origem_tipo is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este movimento foi gerado por um lançamento de {mov.origem_tipo} — desfaça pelo próprio "
+            "lançamento (Sanidade, Protocolo, Secagem…), não pelo histórico de estoque.",
+        )
+    if mov.pedido_item_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta entrada está vinculada a um item de pedido — desfaça pelo Pedido.",
+        )
+    if dados.quantidade <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade deve ser maior que zero")
+
+    item = _resolver_item_do_movimento(mov, session, fazenda_id)
+    if not item:
+        raise HTTPException(status_code=404, detail=f'Item de estoque "{mov.nome_item}" não encontrado')
+
+    sinal = -1 if mov.movimento in MOVIMENTOS_SAIDA else 1
+    delta = sinal * (dados.quantidade - mov.quantidade)
+    item.quantidade = (item.quantidade or 0) + delta
+    if item.estoque_minimo is not None:
+        item.abaixo_minimo = item.quantidade < item.estoque_minimo
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+
+    if item.estoque_semen_id:
+        touro = session.get(EstoqueSemen, item.estoque_semen_id)
+        if touro:
+            touro.doses = touro.doses + round(delta)
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
+
+    mov.quantidade = dados.quantidade
+    mov.unidade = dados.unidade
+    mov.data_movimento = dados.data_movimento
+    mov.observacao = dados.observacao
+    session.add(mov)
+    session.commit()
+    session.refresh(mov)
+    session.refresh(item)
+
+    return {**mov.model_dump(), "saldo_item": item.quantidade}

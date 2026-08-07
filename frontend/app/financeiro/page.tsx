@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award,
+  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -21,6 +21,7 @@ import {
   criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
   marcarItemComoVale, desmarcarItemComoVale,
+  estornarPagamentoLancamento, type EstornoLancamentoOut,
 } from "@/lib/api";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import {
@@ -671,7 +672,8 @@ export default function FinanceiroPage() {
           <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
             onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
             onEditar={(l) => setEditando(l)}
-            onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })} />
+            onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
+            onEstornado={recarregar} />
         ) : <>
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -2708,9 +2710,38 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void }) {
+function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
   const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
+
+  // G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
+  // lançamento. Se a baixa criou parcela(s) para cobrir a diferença de valor
+  // pago, a API responde 409 com as parcelas — pedimos confirmação numa
+  // segunda etapa antes de apagá-las junto.
+  const [estornando, setEstornando] = useState<number | null>(null);
+  const [confirmarParcelas, setConfirmarParcelas] = useState<{ lanc: Lanc; mensagem: string; parcelas: any[] } | null>(null);
+  const [erroEstorno, setErroEstorno] = useState<string | null>(null);
+
+  const estornar = async (l: Lanc, confirmarParcelasDiferenca = false) => {
+    if (!confirmarParcelasDiferenca) {
+      if (!window.confirm("Estornar a baixa deste lançamento? Ele volta para contas a pagar/receber.")) return;
+    }
+    setEstornando(l.id); setErroEstorno(null);
+    try {
+      const r: EstornoLancamentoOut = await estornarPagamentoLancamento(l.id, { confirmar_parcelas_diferenca: confirmarParcelasDiferenca });
+      setConfirmarParcelas(null);
+      if (r.avisos?.length) window.alert(r.avisos.join("\n"));
+      onEstornado();
+    } catch (e: any) {
+      if (e.status === 409 && e.detail?.parcelas) {
+        setConfirmarParcelas({ lanc: l, mensagem: e.detail.mensagem, parcelas: e.detail.parcelas });
+      } else {
+        setErroEstorno(e.message);
+      }
+    } finally {
+      setEstornando(null);
+    }
+  };
   const hoje = new Date().toISOString().slice(0, 10);
   const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
   // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
@@ -2851,6 +2882,12 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
                     <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                       <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
                       {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
+                      {!emAberto && (
+                        <button className="btn-ghost" title="Estornar a baixa — o lançamento volta para contas a pagar/receber"
+                          style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} disabled={estornando === r.id} onClick={() => estornar(r)}>
+                          <Undo2 size={12} /> Estornar
+                        </button>
+                      )}
                       <button className="btn-ghost" title="Emitir recibo deste lançamento (salvar PDF ou enviar por e-mail)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onRecibo(r)}><Receipt size={12} /> Recibo</button>
                     </td>
                   </tr>
@@ -2867,6 +2904,36 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
           </div>
         )}
       </div>
+
+      {erroEstorno && (
+        <div className="alert-critico mt-3"><AlertTriangle size={18} /><span>{erroEstorno}</span></div>
+      )}
+
+      {confirmarParcelas && (
+        <Modal title="Estornar com parcelas de diferença" onClose={() => setConfirmarParcelas(null)} width="560px">
+          <p style={{ fontSize: "0.85rem" }}>{confirmarParcelas.mensagem}</p>
+          <div className="overflow-x-auto" style={{ maxHeight: "40vh", margin: "0.75rem 0" }}>
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+              <tbody>
+                {confirmarParcelas.parcelas.map((p: any) => (
+                  <tr key={p.id}>
+                    <td style={{ fontSize: "0.8rem" }}>{p.parcela_num}/{p.parcela_total}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{formatDate(p.data_vencimento)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.8rem" }}>{formatBRL(p.valor_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button className="btn-ghost" onClick={() => setConfirmarParcelas(null)} disabled={estornando !== null}>Cancelar</button>
+            <button className="btn-primary" onClick={() => estornar(confirmarParcelas.lanc, true)} disabled={estornando !== null}>
+              Estornar e remover as parcelas
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
