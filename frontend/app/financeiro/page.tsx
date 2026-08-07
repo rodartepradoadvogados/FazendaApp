@@ -20,7 +20,9 @@ import {
   fetchCartoesCredito, fetchCartaoCredito, criarCartaoCredito, atualizarCartaoCredito, fetchExtratoCartao, fetchFaturasCartao,
   criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
+  marcarItemComoVale, desmarcarItemComoVale,
 } from "@/lib/api";
+import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
@@ -66,7 +68,9 @@ type Lanc = {
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
   mes_competencia: string | null; mes_caixa: string | null;
-  itens?: { produto: string }[];
+  itens?: { id: number; produto: string; valor_total: number; descricao?: string | null;
+            eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
+            vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
   usuario_nome?: string | null;
   patrimonio_id?: number | null;
 };
@@ -954,7 +958,8 @@ export default function FinanceiroPage() {
           <FormEditarLancamento lanc={editando} centros={centros} planoContas={planoContas} produtos={opcoesProdutoRel}
             fornecedores={opcoesRel.fornecedores}
             onCancelar={() => setEditando(null)}
-            onSalvo={() => { setEditando(null); recarregar(); }} />
+            onSalvo={() => { setEditando(null); recarregar(); }}
+            onVerRelatorioVales={() => { setEditando(null); setRel("folha"); }} />
         </Modal>
       )}
       {recibo && <ReciboModal lanc={recibo} onClose={() => setRecibo(null)} />}
@@ -2393,8 +2398,14 @@ function RelatorioCompraVendaAnimaisView() {
  * fornecedor/cliente, centro de custo, conta gerencial, datas e documento sem
  * precisar dar baixa. Não mexe no pagamento (isso é o fluxo "Tratar").
  */
-function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedores, onSalvo, onCancelar }: {
+type ItemLancEditar = NonNullable<Lanc["itens"]>[number];
+
+function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedores, onSalvo, onCancelar, onVerRelatorioVales }: {
   lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; produtos: string[]; fornecedores: string[]; onSalvo: () => void; onCancelar: () => void;
+  // Leva o usuário até "Financeiro > Ações > Folha de pagamento > Relatório
+  // de vales e descontos" (ver chamada em app/financeiro/page.tsx) — usado
+  // pelo link "ver no relatório de vales" do bloco de itens abaixo.
+  onVerRelatorioVales?: () => void;
 }) {
   const [descricao, setDescricao] = useState(lanc.descricao || "");
   const [fornecedor, setFornecedor] = useState(lanc.fornecedor || "");
@@ -2434,6 +2445,40 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     [fornecedores, fornecedor]
   );
   const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
+
+  // Checkbox "É vale de funcionário?" por item da nota (item já salvo — o
+  // vale é de verdade, criado/excluído já no backend, ver lib/api.ts). Marcar
+  // abre o ValeItemModal; desmarcar SEMPRE pergunta antes de excluir o vale
+  // vinculado (decisão do usuário — nunca em silêncio, nunca vínculo
+  // pendurado sem perguntar).
+  const [valeModalItem, setValeModalItem] = useState<ItemLancEditar | null>(null);
+  const [confirmarDesmarcar, setConfirmarDesmarcar] = useState<ItemLancEditar | null>(null);
+  const [desmarcando, setDesmarcando] = useState(false);
+  const [desmarcarErro, setDesmarcarErro] = useState<string | null>(null);
+
+  async function marcarVale(item: ItemLancEditar, dados: ValeItemDados) {
+    await marcarItemComoVale(item.id, {
+      pessoa_id: dados.pessoa_id, modo: dados.modo, parcelas: dados.parcelas,
+      competencia_inicio: dados.competencia_inicio || undefined,
+      origem_tipo: dados.origem_tipo, origem_id: dados.origem_id,
+      observacao: dados.observacao, confirmar: dados.confirmar,
+    });
+    setValeModalItem(null);
+    onSalvo();
+  }
+
+  async function desmarcarVale(item: ItemLancEditar, excluirVale: boolean) {
+    setDesmarcando(true); setDesmarcarErro(null);
+    try {
+      await desmarcarItemComoVale(item.id, excluirVale);
+      setConfirmarDesmarcar(null);
+      onSalvo();
+    } catch (e: any) {
+      setDesmarcarErro(e.message || "Erro ao desmarcar vale");
+    } finally {
+      setDesmarcando(false);
+    }
+  }
   useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
   useEffect(() => {
     listarAnexosLancamentoPorId(lanc.id).then(setAnexos).catch(() => setAnexos([]));
@@ -2514,6 +2559,32 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             <datalist id="produtos-editar-lancamento">{produtos.map((p) => <option key={p} value={p} />)}</datalist>
           )}
         </div>
+        {itensDoLanc.length > 0 && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyleLote}>Produtos/serviços desta nota</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginTop: "0.3rem" }}>
+              {itensDoLanc.map((it) => (
+                <div key={it.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", flexWrap: "wrap" }}>
+                  {tipoConta === "despesa" && (
+                    <input type="checkbox" checked={it.eh_vale}
+                      onChange={(e) => e.target.checked ? setValeModalItem(it) : setConfirmarDesmarcar(it)} />
+                  )}
+                  <span>{it.produto} — {formatBRL(it.valor_total)}</span>
+                  {it.eh_vale && (
+                    <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
+                      → vale de {it.vale_pessoa_nome}
+                      {" "}
+                      <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }}
+                        onClick={() => onVerRelatorioVales?.()}>
+                        ver no relatório de vales
+                      </button>
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div><label style={labelStyleLote}>Valor (R$)</label>
           <CampoMoeda style={selStyleLote} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Centro de custo</label>
@@ -2600,6 +2671,37 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             onCriado={(f) => { if (f?.nome) setFornecedor(f.nome); setAbrirNovoFornecedor(false); }}
             onCancelar={() => setAbrirNovoFornecedor(false)}
           />
+        </Modal>
+      )}
+
+      {valeModalItem && (
+        <ValeItemModal apresentacao="modal"
+          valorItem={valeModalItem.valor_total}
+          dataItem={dataEmissao || dataCompetencia || ""}
+          produtoItem={valeModalItem.produto}
+          inicial={null}
+          onConfirmar={(d) => marcarVale(valeModalItem, d)}
+          onCancelar={() => setValeModalItem(null)} />
+      )}
+
+      {confirmarDesmarcar && (
+        <Modal title="Excluir também o vale?" onClose={() => { setConfirmarDesmarcar(null); setDesmarcarErro(null); }} width="480px">
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            Este item gerou o vale de {confirmarDesmarcar.vale_pessoa_nome} no valor de {formatBRL(confirmarDesmarcar.valor_total)}.
+            Ao desmarcar, o item volta a contar como despesa da fazenda nos relatórios. <strong>Excluir também o vale?</strong>
+          </p>
+          {desmarcarErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.4rem" }}>{desmarcarErro}</p>}
+          <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
+            <button className="btn-primary" disabled={desmarcando} onClick={() => desmarcarVale(confirmarDesmarcar, true)}>
+              {desmarcando ? "Excluindo…" : "Sim, excluir o vale"}
+            </button>
+            <button className="btn-ghost" disabled={desmarcando} onClick={() => desmarcarVale(confirmarDesmarcar, false)}>
+              Não, manter o vale
+            </button>
+            <button className="btn-ghost" disabled={desmarcando} onClick={() => { setConfirmarDesmarcar(null); setDesmarcarErro(null); }}>
+              Cancelar
+            </button>
+          </div>
         </Modal>
       )}
     </div>
@@ -2729,7 +2831,16 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: vencido ? "var(--red)" : undefined, fontWeight: vencido ? 700 : undefined }}>
                       {formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "")}{vencido ? " ⚠" : ""}
                     </td>
-                    <td style={{ fontSize: "0.78rem" }}>{r.descricao || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>
+                      {r.descricao || "—"}
+                      {(r.itens || []).some((it) => it.eh_vale) && (
+                        <span title="Item lançado como vale — fora dos relatórios gerenciais"
+                          style={{ marginLeft: "0.4rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)",
+                            border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem" }}>
+                          vale
+                        </span>
+                      )}
+                    </td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
                     <td style={{ fontSize: "0.75rem" }}>{r.centro_custo}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}</td>

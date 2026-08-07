@@ -25,6 +25,7 @@ from fazenda.models import (
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
 from .rh_folha import _competencia_seguinte, listar_folha_pagamento
 
@@ -1383,6 +1384,7 @@ def listar_todos_vales_avulsos(
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     empreitadas = {e.id: e.descricao for e in session.exec(select(Empreitada)).all()}
     contratos = {c.id: c.descricao for c in session.exec(select(Contrato)).all()}
+    origens_lancamento = origens_lancamento_por_vale(session, {v.id for v in vales}, "vale_avulso_id")
     saida = []
     for v in vales:
         if v.origem_tipo == "empreitada":
@@ -1394,6 +1396,7 @@ def listar_todos_vales_avulsos(
         saida.append({
             **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"), "origem_descricao": origem_descricao,
             **_info_parcelas_vale_avulso(session, v),
+            "origem_lancamento": origens_lancamento.get(v.id),
         })
     return saida
 
@@ -1491,6 +1494,11 @@ def excluir_vale_avulso(
         ).first()
         if conta_gerada:
             session.delete(conta_gerada)
+    # Zera o vínculo em qualquer LancamentoItem que apontava para este vale
+    # (caminho inverso: usuário excluiu o vale direto no Relatório de vales,
+    # não pelo checkbox do item) — sem isso ficaria FK pendurada e o item
+    # sumido dos relatórios gerenciais para sempre (ver rules/vale_item.py).
+    limpar_vinculo_de_itens(session, vale_avulso_id=vale_id)
     session.delete(vale)
     session.commit()
     return {"ok": True}
