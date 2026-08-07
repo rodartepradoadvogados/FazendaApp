@@ -31,6 +31,7 @@ from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
 from fazenda.rules.unidades import unidades_compativeis
+from fazenda.rules.visibilidade import visivel
 
 RESULTADOS_EXAME = ["positivo", "negativo", "indefinido"]
 
@@ -66,11 +67,17 @@ def indicacoes_por_doenca(
     estoque ao vivo — alimenta a consulta "Remédios por doença" e o banner de
     substituto no lançamento (quando o 1º colocado está sem estoque)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Doença do CATÁLOGO GLOBAL tem fazenda_id nulo — o `!=` estrito dava 404
+    # em toda doença semeada assim que a fazenda passou a ter `fid` no token.
+    # Tolera nulo (é de todo mundo), rejeita a de OUTRA fazenda.
     doenca = session.get(Doenca, doenca_id)
-    if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
+    if not doenca or (fazenda_id is not None and doenca.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Doença não encontrada")
     indicacoes = session.exec(
-        select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca_id).order_by(IndicacaoTerapeutica.prioridade)
+        visivel(
+            select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca_id),
+            IndicacaoTerapeutica, fazenda_id,
+        ).order_by(IndicacaoTerapeutica.prioridade)
     ).all()
     resumo_por_pa = {r["id"]: r for r in resumo_principios(session, fazenda_id)}
     opcoes = []

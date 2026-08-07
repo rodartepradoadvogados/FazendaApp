@@ -19,6 +19,7 @@ from fazenda.database import get_session
 from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/farmacia", tags=["farmacia"])
 
@@ -237,9 +238,10 @@ def listar_indicacoes(
     principio_ativo_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query = select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.principio_ativo_id == principio_ativo_id)
-    if fazenda_id is not None:
-        query = query.where(IndicacaoTerapeutica.fazenda_id == fazenda_id)
+    query = visivel(
+        select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.principio_ativo_id == principio_ativo_id),
+        IndicacaoTerapeutica, fazenda_id,
+    )
     indicacoes = session.exec(query.order_by(IndicacaoTerapeutica.prioridade)).all()
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     return [
@@ -271,6 +273,7 @@ def criar_indicacao(
         select(IndicacaoTerapeutica).where(
             IndicacaoTerapeutica.principio_ativo_id == dados.principio_ativo_id,
             IndicacaoTerapeutica.doenca_id == dados.doenca_id,
+            IndicacaoTerapeutica.fazenda_id == fazenda_id,
         )
     ).first()
     if existe:

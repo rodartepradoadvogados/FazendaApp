@@ -21,6 +21,7 @@ from sqlmodel import Session, select
 
 from fazenda.models import Doenca, Estoque, MedicamentoComercial, PrincipioAtivo, SeedFlag
 from fazenda.rules.farmacia_seed import PRINCIPIOS
+from fazenda.rules.visibilidade import visivel
 
 # Conversões entre unidades do mesmo eixo (fator para a unidade-base).
 _PARA_BASE = {
@@ -59,10 +60,17 @@ def seed_farmacia(session: Session) -> None:
     """Cria/enriquece os princípios ativos e as marcas comerciais do documento
     base. Idempotente: só CRIA o que falta e só PREENCHE campos vazios de
     princípios já existentes (não sobrescreve edição do usuário)."""
+    # O seed cuida SÓ do catálogo global (`fazenda_id IS NULL`). Sem o filtro,
+    # a busca por nome achava a linha de uma fazenda que já tivesse cadastrado
+    # o mesmo princípio/doença à mão: o seed enriquecia o registro DELA (dado
+    # de uma cliente alterado por rotina global) e nunca criava o global, que
+    # então faltava para todas as outras.
     for p in PRINCIPIOS:
         doenca_id = None
         if p.get("doenca"):
-            doenca = session.exec(select(Doenca).where(Doenca.nome == p["doenca"])).first()
+            doenca = session.exec(
+                select(Doenca).where(Doenca.nome == p["doenca"], Doenca.fazenda_id.is_(None))
+            ).first()
             if not doenca:
                 doenca = Doenca(nome=p["doenca"])
                 session.add(doenca)
@@ -70,7 +78,9 @@ def seed_farmacia(session: Session) -> None:
                 session.refresh(doenca)
             doenca_id = doenca.id
 
-        pa = session.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == p["nome"])).first()
+        pa = session.exec(
+            select(PrincipioAtivo).where(PrincipioAtivo.nome == p["nome"], PrincipioAtivo.fazenda_id.is_(None))
+        ).first()
         if not pa:
             pa = PrincipioAtivo(nome=p["nome"])
             session.add(pa)
@@ -336,9 +346,7 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
     `fazenda_id` filtra os princípios ativos pela fazenda atual — os itens de
     Estoque em si ainda não têm fazenda_id (migração pendente), então o saldo
     agregado por princípio permanece global até essa etapa seguinte."""
-    query = select(PrincipioAtivo).order_by(PrincipioAtivo.nome)
-    if fazenda_id is not None:
-        query = query.where(PrincipioAtivo.fazenda_id == fazenda_id)
+    query = visivel(select(PrincipioAtivo).order_by(PrincipioAtivo.nome), PrincipioAtivo, fazenda_id)
     principios = session.exec(query).all()
     itens = session.exec(select(Estoque)).all()
     por_pa: dict[int, list[Estoque]] = {}
