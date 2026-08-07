@@ -15,6 +15,7 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
@@ -421,6 +422,20 @@ def listar_medicamentos(
                 pa_ids_vacina_pre_parto.add(pa.id)
 
     itens = session.exec(query_estoque).all()
+    # Cache de marcas por princípio ativo — carrega uma vez por pa_id (não uma
+    # vez por item) para casar cada item de Estoque com sua carência/bula sem
+    # repetir a mesma query dezenas de vezes num catálogo grande.
+    marcas_por_pa: dict[int, list] = {}
+
+    def _marcas_do(pa_id: int | None) -> list:
+        if pa_id is None:
+            return []
+        if pa_id not in marcas_por_pa:
+            marcas_por_pa[pa_id] = session.exec(
+                select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa_id)
+            ).all()
+        return marcas_por_pa[pa_id]
+
     saida = []
     for e in itens:
         if e.ativo is False:
@@ -451,10 +466,16 @@ def listar_medicamentos(
         # <= 0, para não sumir com itens legados sem saldo lançado ainda.
         if not incluir_sem_estoque and e.quantidade is not None and e.quantidade <= 0:
             continue
+        marca = resolver_marca_comercial(
+            session, item=e, principio_ativo_id=e.principio_ativo_id, candidatos=_marcas_do(e.principio_ativo_id),
+        )
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
             "laboratorio": e.laboratorio, "estoque_id": e.id, "sem_estoque": False,
+            "carencia": carencia_para_item(e, marca),
+            "proibido_lactacao": bool(marca.proibido_lactacao) if marca else False,
+            "alerta": marca.alerta if marca else None,
         })
 
     # incluir_sem_estoque + critério por princípio ativo/doença: acrescenta
@@ -479,6 +500,9 @@ def listar_medicamentos(
                 "nome": mc.nome_comercial, "unidade": None, "quantidade": None,
                 "principio_ativo": None, "classificacao_medicamento": None,
                 "laboratorio": mc.laboratorio, "estoque_id": None, "sem_estoque": True,
+                "carencia": carencia_para_item(None, mc),
+                "proibido_lactacao": bool(mc.proibido_lactacao),
+                "alerta": mc.alerta,
             })
     return sorted(saida, key=lambda x: x["nome"])
 

@@ -19,9 +19,10 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, BaixaAnimal, CompraAnimal, EventoSanitario, ExameResultado, OcorrenciaClinica,
-    ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, VendaAnimal,
+    Animal, BaixaAnimal, CompraAnimal, Estoque, EventoSanitario, ExameResultado, MedicamentoComercial,
+    OcorrenciaClinica, ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, VendaAnimal,
 )
+from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
 
 router = APIRouter(prefix="/relatorio-rastreabilidade-sanitaria", tags=["relatorio-rastreabilidade-sanitaria"])
 
@@ -75,13 +76,34 @@ def relatorio(
             "produto": None, "resultado": None, "doenca": None, "responsavel": v.responsavel,
         })
 
+    # Item de Estoque por nome do produto — casa cada aplicação com a marca
+    # comercial dona da carência (mesma resolução de sanidade.listar_aplicacoes),
+    # cacheada por nome porque o mesmo produto se repete em muitas linhas. Este
+    # relatório não filtra por fazenda (nenhum outro campo aqui filtra), então
+    # o casamento também não filtra — coerente com o resto do arquivo.
+    estoque_por_nome = {(e.nome or "").strip().lower(): e for e in session.exec(select(Estoque)).all()}
+    resolvido_por_produto: dict[str, tuple[Estoque | None, MedicamentoComercial | None]] = {}
+
+    def _item_e_marca(produto: str | None) -> tuple[Estoque | None, MedicamentoComercial | None]:
+        chave = (produto or "").strip().lower()
+        if chave not in resolvido_por_produto:
+            item = estoque_por_nome.get(chave)
+            marca = resolver_marca_comercial(
+                session, item=item, nome=produto,
+                principio_ativo_id=item.principio_ativo_id if item else None,
+            )
+            resolvido_por_produto[chave] = (item, marca)
+        return resolvido_por_produto[chave]
+
     for s in session.exec(select(Sanidade)).all():
         if not _incluido(s.numero_matriz) or not _dentro_periodo(s.data_aplicacao):
             continue
+        item_produto, marca_produto = _item_e_marca(s.produto)
         linhas.append({
             "numero_animal": s.numero_matriz, "tipo_evento": "Aplicação sanitária", "data": s.data_aplicacao,
             "gta": None, "descricao": s.produto, "contraparte": None,
             "produto": s.produto, "resultado": None, "doenca": s.atividade, "responsavel": s.responsavel,
+            "carencia": carencia_para_item(item_produto, marca_produto, data_aplicacao=s.data_aplicacao),
         })
 
     protocolos_nomes = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
@@ -129,6 +151,10 @@ def relatorio(
     }
     for l in linhas:
         l["nome_animal"] = nomes_animal.get(l["numero_animal"])
+        # Só a linha de "Aplicação sanitária" tem carência (é a única com
+        # produto/dose) — as demais ganham a chave com None, pra UI poder
+        # sempre ler `l.carencia` sem checar o tipo de evento primeiro.
+        l.setdefault("carencia", None)
 
     linhas.sort(key=lambda l: (l["numero_animal"], l["data"]))
     return linhas

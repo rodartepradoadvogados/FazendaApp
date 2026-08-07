@@ -17,7 +17,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
-    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica,
+    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
@@ -27,7 +27,10 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.calendario_visao import montar_calendario_visual
 from fazenda.rules.cronograma_sanitario import cronograma_aberto
-from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _estoque_devolver, resolver_item as _resolver_item_estoque
+from fazenda.rules.estoque_baixa import (
+    baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
+    resolver_item as _resolver_item_estoque, resolver_marca_comercial,
+)
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
 from fazenda.rules.unidades import unidades_compativeis
@@ -53,6 +56,12 @@ AGENTES_MASTITE = [
 DIAS_RECIDIVA_MASTITE = 20
 
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
+
+
+def _data_br(iso: str) -> str:
+    """`"2026-08-10"` -> `"10/08/2026"` — formato que o operador lê no campo,
+    não o ISO que só serve pra máquina."""
+    return date.fromisoformat(iso).strftime("%d/%m/%Y")
 
 FREQUENCIAS = ["dias", "meses", "anos"]
 
@@ -122,10 +131,33 @@ def listar_aplicacoes(
         query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
     sanidades = session.exec(query_sanidades).all()
     nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
+
+    # Item de Estoque por nome do produto (mesma fazenda) — usado para casar
+    # cada aplicação com a marca comercial que carrega a carência. Cacheado
+    # por nome (memoizado abaixo) porque o mesmo produto se repete em muitas
+    # linhas e não vale a pena resolver a marca de novo a cada uma.
+    query_estoque_prod = select(Estoque)
+    if fazenda_id is not None:
+        query_estoque_prod = query_estoque_prod.where(Estoque.fazenda_id == fazenda_id)
+    estoque_por_nome = {(e.nome or "").strip().lower(): e for e in session.exec(query_estoque_prod).all()}
+    resolvido_por_produto: dict[str, tuple[Estoque | None, MedicamentoComercial | None]] = {}
+
+    def _item_e_marca(produto: str | None) -> tuple[Estoque | None, MedicamentoComercial | None]:
+        chave = (produto or "").strip().lower()
+        if chave not in resolvido_por_produto:
+            item = estoque_por_nome.get(chave)
+            marca = resolver_marca_comercial(
+                session, item=item, nome=produto,
+                principio_ativo_id=item.principio_ativo_id if item else None,
+            )
+            resolvido_por_produto[chave] = (item, marca)
+        return resolvido_por_produto[chave]
+
     registros = []
     for s in sanidades:
         d = s.data_aplicacao
         animal = animais_por_numero.get(s.numero_matriz)
+        item_produto, marca_produto = _item_e_marca(s.produto)
         registros.append({
             "id": s.id,
             "numero": s.numero_matriz,
@@ -146,6 +178,7 @@ def listar_aplicacoes(
             "ano": d.year if d else None,
             "mes": f"{d.year}-{d.month:02d}" if d else None,
             "usuario_nome": nomes.get(s.usuario_id),
+            "carencia": carencia_para_item(item_produto, marca_produto, data_aplicacao=d),
         })
     return {"aplicacoes": registros, "total": len(registros)}
 
@@ -233,6 +266,32 @@ def registrar_aplicacao(
                 status_code=400,
                 detail=f'Unidade "{item.unidade}" não é compatível com o produto "{item.produto}" (aceitas: {", ".join(compativeis)})',
             )
+
+        # Aviso de carência — uma vez por produto lançado (não por animal: é a
+        # mesma informação repetida). O que o ordenhador/tratador precisa não é
+        # o número de dias, é ATÉ QUANDO descartar — por isso o aviso carrega a
+        # data de liberação já calculada a partir de `data_aplicacao`, não só o
+        # prazo cru. Sem carência informada, NENHUM aviso é emitido: inventar
+        # "sem carência" seria pior que não avisar nada (ver rules/carencia.py).
+        marca_item = resolver_marca_comercial(
+            session, item=estoque_item, nome=item.produto,
+            principio_ativo_id=estoque_item.principio_ativo_id if estoque_item else None,
+        )
+        carencia = carencia_para_item(estoque_item, marca_item, data_aplicacao=dados.data_aplicacao)
+        if carencia["leite_dias"] is not None or carencia["carne_dias"] is not None or carencia["proibido_lactacao"]:
+            frase = carencia["texto"]
+            complementos = []
+            if carencia["proibido_lactacao"]:
+                complementos.append(
+                    "Produto NÃO PODE ser usado em vaca em lactação — não aplique em animal em produção."
+                )
+            if carencia.get("liberacao_leite"):
+                complementos.append(f'Descarte o leite até {_data_br(carencia["liberacao_leite"])}.')
+            if carencia.get("liberacao_carne"):
+                complementos.append(f'Aguarde até {_data_br(carencia["liberacao_carne"])} para abater.')
+            if complementos:
+                frase = frase + " " + " ".join(complementos)
+            avisos.append(f'{item.produto}: {frase}')
 
         for numero in dados.animais:
             sanidade = Sanidade(
