@@ -9,6 +9,7 @@ import {
   FINALIDADES_ESTOQUE, type PatrimonioPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
@@ -910,16 +911,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
               <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
               <Campo label={it.modoValor === "unitario" ? "Valor unitário (R$)" : "Valor unitário (R$) — calculado"}>
-                <input type="number" inputMode="decimal"
+                <CampoMoeda
                   style={it.modoValor === "unitario" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
-                  value={it.valor_unitario} readOnly={it.modoValor === "total"}
-                  onChange={(e) => atualizarItem(idx, { valor_unitario: e.target.value })} />
+                  value={Number(it.valor_unitario) || 0} disabled={it.modoValor === "total"}
+                  onChange={(v) => atualizarItem(idx, { valor_unitario: v ? String(v) : "" })} />
               </Campo>
               <Campo label={it.modoValor === "total" ? "Valor total (R$)" : "Valor total (R$) — calculado"}>
-                <input type="number" inputMode="decimal"
+                <CampoMoeda
                   style={it.modoValor === "total" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
-                  value={it.valor_total} readOnly={it.modoValor === "unitario"}
-                  onChange={(e) => atualizarItem(idx, { valor_total: e.target.value })} />
+                  value={Number(it.valor_total) || 0} disabled={it.modoValor === "unitario"}
+                  onChange={(v) => atualizarItem(idx, { valor_total: v ? String(v) : "" })} />
               </Campo>
             </div>
             <button type="button" className="btn-ghost" title="Cadastrar um novo produto, serviço ou conta gerencial" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
@@ -1011,8 +1012,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <input type="checkbox" checked={entregue} onChange={(e) => { entregueTocadoRef.current = true; setEntregue(e.target.checked); }} /> Já entregue / recebido
           </label>
         </Campo>
-        <Campo label="Desconto (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={desconto} onChange={(e) => setDesconto(e.target.value)} placeholder="0,00" /></Campo>
-        <Campo label="Acréscimo (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} placeholder="0,00" /></Campo>
+        <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
+        <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
         <div>
           <label style={lbl}>Valor líquido da nota</label>
           <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
@@ -1047,8 +1048,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                       <td>{i + 1}/{parcelas.length}</td>
                       <td><input type="date" style={inputStyle} value={p.data_vencimento}
                         onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-                      <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }} value={p.valor}
-                        onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                      <td><CampoMoeda style={{ ...inputStyle, textAlign: "right" }} value={Number(p.valor) || 0}
+                        onChange={(v) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
                       <td><input style={inputStyle} value={p.numero_boleto || ""} placeholder="opcional" title="Linha digitável desta parcela, se houver"
                         onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, numero_boleto: e.target.value } : x))} /></td>
                       <td style={{ textAlign: "center" }}>
@@ -1066,8 +1067,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                                   onChange={(e) => atualizarBaixaParcela(i, { data_pagamento: e.target.value })} />
                               </Campo>
                               <Campo label="Valor pago (R$)">
-                                <input type="number" inputMode="decimal" style={inputStyle} value={p.valor_pago || ""}
-                                  onChange={(e) => atualizarBaixaParcela(i, { valor_pago: e.target.value })} />
+                                <CampoMoeda style={inputStyle} value={Number(p.valor_pago) || 0}
+                                  onChange={(v) => atualizarBaixaParcela(i, { valor_pago: v ? String(v) : "" })} />
                               </Campo>
                               <Campo label="Conta bancária">
                                 <select style={inputStyle} value={p.conta_bancaria || ""} onChange={(e) => atualizarBaixaParcela(i, { conta_bancaria: e.target.value })}>
@@ -1191,7 +1192,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           {jaPago && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
               <Campo label="Data de pagamento"><input type="date" style={inputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></Campo>
-              <Campo label="Valor pago (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={valorPago} onChange={(e) => setValorPago(e.target.value)} /></Campo>
+              <Campo label="Valor pago (R$)"><CampoMoeda style={inputStyle} value={Number(valorPago) || 0} onChange={(v) => setValorPago(v ? String(v) : "")} /></Campo>
               <Campo label="Conta bancária">
                 <select style={inputStyle} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
                   <option value="">Selecione…</option>

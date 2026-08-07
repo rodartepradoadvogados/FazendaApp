@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
@@ -55,7 +56,7 @@ export default function ComissaoCorretagemForm({
               </datalist>
             </div>
             <div><label style={labelStyle}>Valor da comissão (R$)</label>
-              <input type="number" step="0.01" style={selStyle} value={valorComissao} onChange={(e) => setValorComissao(e.target.value)} /></div>
+              <CampoMoeda style={selStyle} value={Number(valorComissao) || 0} onChange={(v) => setValorComissao(v ? String(v) : "")} /></div>
           </div>
           <label style={labelStyle}>Forma de pagamento da comissão</label>
           <div className="flex gap-4 mt-1" style={{ fontSize: "0.82rem" }}>

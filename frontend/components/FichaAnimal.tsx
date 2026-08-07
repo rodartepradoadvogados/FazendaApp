@@ -8,6 +8,7 @@ import { AnimalPicker } from "@/components/AnimalPicker";
 import { SecaoRecolhivel } from "@/components/ui";
 import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type PrecisaoParto = {
   data_ultima_ia_positiva: string | null;
@@ -427,7 +428,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                   <CampoEdit label="Grau de sangue"><input style={inpStyle} value={formAnimal.grau_sangue} onChange={(e) => setFormAnimal((f) => ({ ...f, grau_sangue: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Mãe (nº)"><input style={inpStyle} value={formAnimal.mae_numero} onChange={(e) => setFormAnimal((f) => ({ ...f, mae_numero: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
-                  <CampoEdit label="Valor (R$)"><input type="number" style={inpStyle} value={formAnimal.valor} onChange={(e) => setFormAnimal((f) => ({ ...f, valor: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Valor (R$)"><CampoMoeda style={inpStyle} value={Number(formAnimal.valor) || 0} onChange={(v) => setFormAnimal((f) => ({ ...f, valor: v ? String(v) : "" }))} /></CampoEdit>
                   <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observações"><input style={inpStyle} value={formAnimal.observacoes} onChange={(e) => setFormAnimal((f) => ({ ...f, observacoes: e.target.value }))} /></CampoEdit></div>
                   <div className="flex items-end">
                     <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>

@@ -11,6 +11,7 @@ import {
   type PlanoConsultorNome, type PlanoConsultorCatalogo, type ContratoConsultor,
   type FazendaGerenciada, type CategoriaImportacao, type RegistroImportado, type SimulacaoIn, type SimulacaoOut,
 } from "@/lib/api";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -303,12 +304,12 @@ function SimulacaoPainel() {
     try { sessionStorage.removeItem(CHAVE_SESSAO_SIMULACAO); } catch { /* ignore */ }
   }
 
-  const CAMPOS: { campo: keyof SimulacaoIn; label: string; sufixo?: string }[] = [
+  const CAMPOS: { campo: keyof SimulacaoIn; label: string; sufixo?: string; moeda?: boolean }[] = [
     { campo: "vacas_lactacao", label: "Vacas em lactação" },
     { campo: "producao_media_litro_vaca_dia", label: "Produção média (L/vaca/dia)" },
-    { campo: "preco_litro", label: "Preço do litro (R$)" },
-    { campo: "custo_alimentar_vaca_dia", label: "Custo alimentar (R$/vaca/dia)" },
-    { campo: "outros_custos_mensais", label: "Outros custos mensais (R$)" },
+    { campo: "preco_litro", label: "Preço do litro (R$)", moeda: true },
+    { campo: "custo_alimentar_vaca_dia", label: "Custo alimentar (R$/vaca/dia)", moeda: true },
+    { campo: "outros_custos_mensais", label: "Outros custos mensais (R$)", moeda: true },
     { campo: "taxa_prenhez_pct", label: "Taxa de prenhez (%, opcional)" },
   ];
 
@@ -322,11 +323,16 @@ function SimulacaoPainel() {
         </p>
         {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
         <div className="mb-4" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
-          {CAMPOS.map(({ campo, label }) => (
+          {CAMPOS.map(({ campo, label, moeda }) => (
             <label key={campo}>
               <span style={lbl}>{label}</span>
-              <input type="number" min={0} step="0.01" style={inp}
-                value={form[campo] ?? ""} onChange={(e) => set(campo, e.target.value)} />
+              {moeda ? (
+                <CampoMoeda style={inp} value={typeof form[campo] === "number" ? (form[campo] as number) : 0}
+                  onChange={(v) => setForm((s) => ({ ...s, [campo]: v }))} />
+              ) : (
+                <input type="number" min={0} step="0.01" style={inp}
+                  value={form[campo] ?? ""} onChange={(e) => set(campo, e.target.value)} />
+              )}
             </label>
           ))}
         </div>

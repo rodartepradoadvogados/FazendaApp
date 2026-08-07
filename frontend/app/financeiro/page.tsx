@@ -28,6 +28,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { FiltrosSalvos } from "@/components/FiltrosSalvos";
@@ -1281,7 +1282,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                           </td>
                           <td style={{ textAlign: "right", color: n.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(n.valor)}</td>
                           <td><input type="date" style={{ ...selStyleLote, minWidth: 130 }} value={l.data} onChange={(e) => patchLinha(n.id, { data: e.target.value })} /></td>
-                          <td><input type="number" inputMode="decimal" style={{ ...selStyleLote, width: 100 }} value={l.valor} onChange={(e) => patchLinha(n.id, { valor: e.target.value })} /></td>
+                          <td><CampoMoeda style={{ ...selStyleLote, width: 100 }} value={Number(l.valor) || 0} onChange={(v) => patchLinha(n.id, { valor: v ? String(v) : "" })} /></td>
                           <td>
                             <select style={{ ...selStyleLote, minWidth: 110 }} value={l.conta} onChange={(e) => patchLinha(n.id, { conta: e.target.value })}>
                               <option value="">—</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
@@ -1605,7 +1606,7 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div><label style={label}>Data de imobilização</label>
             <input type="date" style={inputStyle} value={dataImobilizacao} onChange={(e) => setDataImobilizacao(e.target.value)} /></div>
           <div><label style={label}>Valor {depreciavel ? "de aquisição" : "inicial (de mercado)"} (R$)</label>
-            <input type="number" step="0.01" style={inputStyle} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} /></div>
+            <CampoMoeda style={inputStyle} value={Number(valorTotal) || 0} onChange={(v) => setValorTotal(v ? String(v) : "")} /></div>
           <div><label style={label}>Quantidade</label>
             <input type="number" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></div>
           <div><label style={label}>Unidade</label>
@@ -1626,7 +1627,7 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
             <div><label style={label}>Vida útil</label>
               <input style={inputStyle} value={vidaUtil} onChange={(e) => setVidaUtil(e.target.value)} placeholder="ex.: 10 Anos" /></div>
             <div><label style={label}>Valor residual (R$)</label>
-              <input type="number" step="0.01" style={inputStyle} value={valorResidual} onChange={(e) => setValorResidual(e.target.value)} /></div>
+              <CampoMoeda style={inputStyle} value={Number(valorResidual) || 0} onChange={(v) => setValorResidual(v ? String(v) : "")} /></div>
           </div>
         ) : (
           <div>
@@ -1679,7 +1680,7 @@ function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPat
           {item.data_ultima_atualizacao_valor_mercado ? ` (${formatDate(item.data_ultima_atualizacao_valor_mercado)})` : ""}
         </p>
         <div><label style={label}>Novo valor de mercado (R$)</label>
-          <input type="number" step="0.01" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+          <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         <div><label style={label}>Data da avaliação</label>
           <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
         {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
@@ -1802,7 +1803,7 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
                 <div><label style={label}>Data da manutenção</label>
                   <input type="date" style={inputStyle} value={dataRealizacao} onChange={(e) => setDataRealizacao(e.target.value)} /></div>
                 <div><label style={label}>Valor (R$)</label>
-                  <input style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0,00" /></div>
+                  <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
                 <div><label style={label}>Fornecedor/Oficina</label>
                   <input style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
                 <div><label style={label}>Descrição do serviço</label>
@@ -2014,7 +2015,7 @@ function ModalNovoCartao({ cartao, onClose, onSalvo }: { cartao: CartaoCredito |
           <div><label style={cartaoLabelStyle}>Dia de vencimento</label>
             <input type="number" min={1} max={31} style={cartaoInputStyle} value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)} /></div>
           <div><label style={cartaoLabelStyle}>Limite (R$)</label>
-            <input type="number" step="0.01" style={cartaoInputStyle} value={limite} onChange={(e) => setLimite(e.target.value)} /></div>
+            <CampoMoeda style={cartaoInputStyle} value={Number(limite) || 0} onChange={(v) => setLimite(v ? String(v) : "")} /></div>
           <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
             <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} /> Ativo</label></div>
         </div>
@@ -2198,7 +2199,7 @@ function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: numbe
           <div><label style={cartaoLabelStyle}>Data da compra</label>
             <input type="date" style={cartaoInputStyle} value={dataCompra} onChange={(e) => setDataCompra(e.target.value)} /></div>
           <div><label style={cartaoLabelStyle}>Valor (R$)</label>
-            <input type="number" step="0.01" style={cartaoInputStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+            <CampoMoeda style={cartaoInputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
           <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Descrição</label>
             <input style={cartaoInputStyle} value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="ex.: Peças trator" /></div>
           <div><label style={cartaoLabelStyle}>Categoria (opcional)</label>
@@ -2514,7 +2515,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
           )}
         </div>
         <div><label style={labelStyleLote}>Valor (R$)</label>
-          <input style={selStyleLote} type="number" step="0.01" value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Centro de custo</label>
           <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
             <option value="">—</option>{centrosOpcoes.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -3048,7 +3049,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <div><label style={labelStyleLote}>Data de {tipo === "receita" ? "recebimento" : "pagamento"}</label>
               <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
             <div><label style={labelStyleLote}>Valor {tipo === "receita" ? "recebido" : "pago"} (R$)</label>
-              <input type="number" inputMode="decimal" style={selStyleLote} value={valorPago} onChange={(e) => setValorPago(e.target.value)} /></div>
+              <CampoMoeda style={selStyleLote} value={Number(valorPago) || 0} onChange={(v) => setValorPago(v ? String(v) : "")} /></div>
             <div><label style={labelStyleLote}>Conta corrente</label>
               <select style={selStyleLote} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
                 <option value="">Selecione…</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
@@ -3098,8 +3099,8 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
                         <tr key={i}>
                           <td><input type="date" style={selStyleLote} value={p.data_vencimento}
                             onChange={(e) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-                          <td><input type="number" step="0.01" style={{ ...selStyleLote, textAlign: "right" }} value={p.valor}
-                            onChange={(e) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                          <td><CampoMoeda style={{ ...selStyleLote, textAlign: "right" }} value={Number(p.valor) || 0}
+                            onChange={(v) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -3831,7 +3832,7 @@ function FormItemOrcamento({ planoContas, centros, anoDefault, item, onSalvo, on
           <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
         </select>
       </div>
-      <div><label style={labelStyleLote}>Valor orçado</label><input type="number" step="0.01" style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={(e) => setValor(Number(e.target.value))} /></div>
+      <div><label style={labelStyleLote}>Valor orçado</label><CampoMoeda style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={setValor} /></div>
       <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       {erro && <div className="alert-critico"><span>{erro}</span></div>}
       <div className="flex gap-2 justify-end">
@@ -4203,7 +4204,7 @@ function FormItemCenario({ planoContas, centros, cenarioId, item, onSalvo, onCan
           <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
         </select>
       </div>
-      <div><label style={labelStyleLote}>Valor previsto</label><input type="number" step="0.01" style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={(e) => setValor(Number(e.target.value))} /></div>
+      <div><label style={labelStyleLote}>Valor previsto</label><CampoMoeda style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={setValor} /></div>
       <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       {erro && <div className="alert-critico"><span>{erro}</span></div>}
       <div className="flex gap-2 justify-end">

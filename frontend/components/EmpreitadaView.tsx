@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 import { inputSm } from "@/components/estiloCampoAvulso";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Etapa = {
@@ -96,7 +97,7 @@ export default function EmpreitadaView() {
                 {etapasForm.map((et, i) => (
                   <tr key={i}>
                     <td><input style={inputSm} value={et.nome} onChange={(e) => setEtapasForm(etapasForm.map((x, idx) => idx === i ? { ...x, nome: e.target.value } : x))} placeholder={`Etapa ${i + 1}`} /></td>
-                    <td><input type="number" step="0.01" style={{ ...inputSm, width: "120px" }} value={et.valor} onChange={(e) => setEtapasForm(etapasForm.map((x, idx) => idx === i ? { ...x, valor: e.target.value } : x))} /></td>
+                    <td><CampoMoeda style={{ ...inputSm, width: "120px" }} value={Number(et.valor) || 0} onChange={(v) => setEtapasForm(etapasForm.map((x, idx) => idx === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
                     <td><button type="button" className="btn-ghost" onClick={() => setEtapasForm(etapasForm.filter((_, idx) => idx !== i))}><Trash2 size={13} /></button></td>
                   </tr>
                 ))}

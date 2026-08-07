@@ -5,6 +5,7 @@ import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, ma
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
@@ -284,7 +285,7 @@ export default function BaixarAnimal() {
               </div>
               <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: "480px" }}>
                 <div><label style={labelStyle}>{tipoValor === "total" ? "Valor total (R$)" : "Valor por animal (R$)"}</label>
-                  <input type="number" step="0.01" style={selStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+                  <CampoMoeda style={selStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
                 <div><label style={labelStyle}>Cliente</label>
                   <select style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)}>
                     <option value="">Selecione…</option>

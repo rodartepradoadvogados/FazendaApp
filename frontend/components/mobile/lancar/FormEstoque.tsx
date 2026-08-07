@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dna } from "lucide-react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { fetchEstoque, fetchPlanoContas, FINALIDADES_ESTOQUE } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { EstoquePicker } from "@/components/EstoquePicker";
@@ -180,7 +181,7 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
       </label>
       {lancarValor && (
         <MobCampo label="Valor unitário (R$)">
-          <input type="number" inputMode="decimal" className="mob-input" value={valorUnitario} onChange={(e) => setValorUnitario(e.target.value)} />
+          <CampoMoeda className="mob-input" value={Number(valorUnitario) || 0} onChange={(v) => setValorUnitario(v ? String(v) : "")} />
         </MobCampo>
       )}
       {valorTotal != null && (
