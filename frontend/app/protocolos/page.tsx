@@ -364,17 +364,24 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   const [encerrando, setEncerrando] = useState(false);
   const [cancelando, setCancelando] = useState(false);
   const [motivo, setMotivo] = useState("");
-  // IATF: qual medicamento/frasco foi escolhido em cada hormônio do dia em
-  // baixa — dia → índice do hormônio → estoque_id escolhido. Mesma lógica da
-  // Agenda (ver medIatf em app/agenda/page.tsx).
-  const [medIatf, setMedIatf] = useState<Record<number, Record<number, number | "">>>({});
+  // IATF e Indução: qual medicamento/frasco foi escolhido em cada hormônio do
+  // dia em baixa — dia → índice do hormônio → índice da opção escolhida em
+  // `h.opcoes` (não o estoque_id: com "incluir mesmo sem estoque" ligado,
+  // várias opções podem ter estoque_id null). Mesma lógica da Agenda (ver
+  // medIatf em app/agenda/page.tsx).
+  const [medSelecionado, setMedSelecionado] = useState<Record<number, Record<number, number | "">>>({});
+  // Toggle "incluir todos os medicamentos/hormônios, inclusive sem estoque":
+  // expande as opções do picker além dos frascos já em Estoque, listando
+  // toda marca comercial cadastrada do mesmo princípio ativo — dá liberdade
+  // de flagar o que realmente foi usado mesmo sem frasco cadastrado.
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [renomeando, setRenomeando] = useState(false);
   const [novoNome, setNovoNome] = useState("");
   const [desfazerAlvo, setDesfazerAlvo] = useState<{ dia: number; numero_matriz: string; rotulo: string } | null>(null);
   const [desfazendo, setDesfazendo] = useState(false);
 
-  const carregar = () => fetchDetalheProtocolo(origem, origemId).then(setDet).catch((e) => setErro(e.message));
-  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [origem, origemId]);
+  const carregar = () => fetchDetalheProtocolo(origem, origemId, incluirSemEstoque).then(setDet).catch((e) => setErro(e.message));
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [origem, origemId, incluirSemEstoque]);
 
   function abrirBaixa(dia: number) {
     const d = det?.dias.find((x) => x.dia === dia);
@@ -388,11 +395,11 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         .filter((a) => a.celulas.some((c) => c.dia === dia && !c.realizada))
         .map((a) => a.numero_matriz),
     );
-    setMedIatf((p) => ({ ...p, [dia]: {} }));
+    setMedSelecionado((p) => ({ ...p, [dia]: {} }));
     setAviso(null);
   }
 
-  const hormoniosDoDiaBaixa = origem === "iatf" && diaBaixa != null
+  const hormoniosDoDiaBaixa = (origem === "iatf" || origem === "inducao") && diaBaixa != null
     ? det?.dias.find((d) => d.dia === diaBaixa)?.hormonios || []
     : [];
 
@@ -402,19 +409,20 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     try {
       const pendentes = (det?.animais || []).filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
       const todos = animaisBaixa.length === pendentes.length;
-      // IATF: monta `medicamentos` a partir dos hormônios do dia + o frasco
-      // escolhido em medIatf — mesmo mapeamento que a Agenda já faz
-      // (marcarRealizado em app/agenda/page.tsx). Sem hormônios cadastrados
-      // (protocolo ad-hoc, ou D11/inseminação), não manda nada — mesmo
-      // comportamento de antes (backend cai nos hormônios do lançamento).
+      // IATF e Indução: monta `medicamentos` a partir dos hormônios do dia +
+      // o frasco escolhido em medSelecionado (índice em h.opcoes) — mesmo
+      // mapeamento que a Agenda já faz (marcarRealizado em app/agenda/page.tsx).
+      // Sem hormônios cadastrados (protocolo ad-hoc, ou D11/inseminação), não
+      // manda nada — mesmo comportamento de antes (backend cai nos
+      // medicamentos cadastrados no lançamento).
       let medicamentos: MedicamentoIatf[] | undefined;
-      if (origem === "iatf" && hormoniosDoDiaBaixa.length) {
-        const sel = medIatf[diaBaixa] || {};
+      if ((origem === "iatf" || origem === "inducao") && hormoniosDoDiaBaixa.length) {
+        const sel = medSelecionado[diaBaixa] || {};
         medicamentos = hormoniosDoDiaBaixa.map((h, idx) => {
-          const estoqueId = sel[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
-          const opcao = h.opcoes?.find((o) => o.estoque_id === estoqueId);
+          const optIdx = sel[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
+          const opcao = optIdx === "" ? undefined : h.opcoes?.[optIdx];
           return {
-            produto: opcao?.nome ?? h.produto, estoque_id: estoqueId === "" ? undefined : estoqueId,
+            produto: opcao?.nome ?? h.produto, estoque_id: opcao?.estoque_id ?? undefined,
             dose: h.dose, unidade: h.unidade, via: h.via,
           };
         }).filter((m) => m.produto);
@@ -618,28 +626,39 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
           </div>
           {hormoniosDoDiaBaixa.length > 0 && (
             <div style={{ marginTop: "0.6rem", background: "var(--surface)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
-              <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.35rem" }}>
-                Qual medicamento/frasco você está usando?
+              <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.35rem" }}>
+                <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--dourado-light)" }}>
+                  Qual medicamento/frasco você está usando?
+                </div>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={incluirSemEstoque}
+                         onChange={(ev) => setIncluirSemEstoque(ev.target.checked)} />
+                  Incluir todos os medicamentos/hormônios (inclusive sem estoque)
+                </label>
               </div>
               {hormoniosDoDiaBaixa.map((h, idx) => {
-                const sel = medIatf[diaBaixa!]?.[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
+                const sel = medSelecionado[diaBaixa!]?.[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
                 return (
                   <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
                     <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
                       {h.produto}{h.dose ? ` · ${h.dose}${h.unidade || ""}` : ""}
                     </span>
                     {(h.opcoes?.length ?? 0) === 0 ? (
-                      <span style={{ fontSize: "0.72rem", color: "var(--amber)" }}>Sem medicamento em estoque para este princípio.</span>
+                      <span style={{ fontSize: "0.72rem", color: "var(--amber)" }}>
+                        Sem medicamento em estoque para este princípio.
+                        {!incluirSemEstoque && " Marque \"incluir mesmo sem estoque\" para flagar o que foi usado."}
+                      </span>
                     ) : (
                       <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
                               value={sel}
-                              onChange={(ev) => setMedIatf((p) => ({
-                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value ? Number(ev.target.value) : "" },
+                              onChange={(ev) => setMedSelecionado((p) => ({
+                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value === "" ? "" : Number(ev.target.value) },
                               }))}>
                         <option value="">Selecione o frasco…</option>
-                        {h.opcoes.map((o) => (
-                          <option key={o.estoque_id} value={o.estoque_id}>
-                            {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}{!o.estoque_inicializado ? " (sem estoque inicial)" : ""}
+                        {h.opcoes.map((o, oi) => (
+                          <option key={oi} value={oi}>
+                            {o.nome}{o.marca ? ` · ${o.marca}` : ""}
+                            {o.sem_estoque ? " — sem frasco em estoque" : ` — saldo ${o.saldo} ${o.unidade || ""}${!o.estoque_inicializado ? " (sem estoque inicial)" : ""}`}
                           </option>
                         ))}
                       </select>

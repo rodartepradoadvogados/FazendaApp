@@ -30,7 +30,7 @@ from fazenda.models import (
     LidaAplicacao, LidaLancamento,
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
-    ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
+    ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
     Usuario,
 )
@@ -384,7 +384,7 @@ def _aplicacoes_do_lancamento(session: Session, origem: str, origem_id: int) -> 
 
 @router.get("/{origem}/{origem_id}")
 def detalhe(
-    origem: str, origem_id: int,
+    origem: str, origem_id: int, incluir_sem_estoque: bool = False,
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """A grade animal × dia de um lançamento: uma linha por animal, uma coluna
@@ -423,11 +423,12 @@ def detalhe(
     for linha in animais.values():
         linha["celulas"].sort(key=lambda c: c["dia"])
 
-    # IATF: os hormônios cadastrados por dia + as opções de frasco em estoque
-    # do mesmo princípio ativo — mesmo campo "qual medicamento/frasco?" que a
-    # Agenda já mostra (ver fazenda.rules.estoque_baixa.opcoes_medicamento).
-    # Só IATF: é o único caso relatado onde a Central dava baixa sem deixar o
-    # usuário escolher o frasco quando há mais de um do mesmo princípio ativo.
+    # IATF e Indução: os hormônios/medicamentos cadastrados por dia + as
+    # opções de frasco em estoque do mesmo princípio ativo — mesmo campo
+    # "qual medicamento/frasco?" que a Agenda já mostra (ver
+    # fazenda.rules.estoque_baixa.opcoes_medicamento). `incluir_sem_estoque`
+    # expande as opções para toda marca comercial do princípio ativo, mesmo
+    # sem frasco em Estoque — liberdade de flagar o que realmente foi usado.
     if origem == "iatf":
         hormonios_por_dia: dict[int, list] = defaultdict(list)
         for h in session.exec(
@@ -438,9 +439,29 @@ def detalhe(
             d["hormonios"] = [
                 {
                     "produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via,
-                    "opcoes": estoque_baixa.opcoes_medicamento(session, fazenda_id=fazenda_id, produto=h.produto)[1],
+                    "opcoes": estoque_baixa.opcoes_medicamento(
+                        session, fazenda_id=fazenda_id, produto=h.produto,
+                        incluir_sem_estoque=incluir_sem_estoque,
+                    )[1],
                 }
                 for h in hormonios_por_dia.get(d["dia"], [])
+            ]
+    elif origem == "inducao":
+        medicamentos_por_dia: dict[int, list] = defaultdict(list)
+        for m in session.exec(
+            select(ProtocoloInducaoMedicamento).where(ProtocoloInducaoMedicamento.lancamento_id == origem_id)
+        ).all():
+            medicamentos_por_dia[m.dia].append(m)
+        for d in dias.values():
+            d["hormonios"] = [
+                {
+                    "produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via,
+                    "opcoes": estoque_baixa.opcoes_medicamento(
+                        session, fazenda_id=fazenda_id, produto=m.produto,
+                        incluir_sem_estoque=incluir_sem_estoque,
+                    )[1],
+                }
+                for m in medicamentos_por_dia.get(d["dia"], [])
             ]
 
     total = len(aps)

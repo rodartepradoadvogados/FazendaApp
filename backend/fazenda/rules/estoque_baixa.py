@@ -23,7 +23,7 @@ from datetime import date, datetime
 
 from sqlmodel import Session, select
 
-from fazenda.models import Estoque, EstoqueSemen, MovimentoEstoque, PrincipioAtivo
+from fazenda.models import Estoque, EstoqueSemen, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.unidades import pode_dar_baixa_direta
 
@@ -52,6 +52,7 @@ def opcoes_medicamento(
     session: Session, *, fazenda_id: int | None, produto: str | None,
     todos_estoque: list[Estoque] | None = None,
     principios_por_nome: dict[str, PrincipioAtivo] | None = None,
+    incluir_sem_estoque: bool = False,
 ) -> tuple[int | None, list[dict]]:
     """Dado o produto/princípio ativo de um hormônio/medicamento de protocolo,
     resolve o princípio ativo e lista os frascos em estoque (DA FAZENDA) para
@@ -61,6 +62,15 @@ def opcoes_medicamento(
     `todos_estoque`/`principios_por_nome` são pré-carregados opcionalmente
     pelo chamador (Agenda e Central chamam isto uma vez por hormônio/dia — sem
     isso cada chamada faria duas consultas extras ao banco).
+
+    `incluir_sem_estoque`: além dos frascos já em Estoque, acrescenta toda
+    marca comercial cadastrada (`MedicamentoComercial`) do mesmo princípio
+    ativo que ainda não apareceu na lista — com `estoque_id=None` e
+    `sem_estoque=True`. Dá liberdade pro operador flagar o que realmente
+    usou mesmo quando ninguém cadastrou o frasco em Estoque; escolher uma
+    dessas opções não abate estoque nenhum (mesmo aviso "não está no
+    estoque desta fazenda" de sempre, só que como escolha explícita, não
+    fallback silencioso).
     """
     if todos_estoque is None:
         query = select(Estoque)
@@ -83,12 +93,26 @@ def opcoes_medicamento(
         if pa_id is not None and e.principio_ativo_id == pa_id:
             opcoes.append({"estoque_id": e.id, "nome": e.nome, "marca": e.laboratorio,
                            "saldo": e.quantidade or 0, "unidade": e.unidade,
-                           "estoque_inicializado": e.estoque_inicializado is not False})
+                           "estoque_inicializado": e.estoque_inicializado is not False,
+                           "sem_estoque": False})
     # Se o próprio produto é um item de estoque (sem princípio), ele é a opção.
     if not opcoes and item is not None:
         opcoes.append({"estoque_id": item.id, "nome": item.nome, "marca": item.laboratorio,
                        "saldo": item.quantidade or 0, "unidade": item.unidade,
-                       "estoque_inicializado": item.estoque_inicializado is not False})
+                       "estoque_inicializado": item.estoque_inicializado is not False,
+                       "sem_estoque": False})
+    if incluir_sem_estoque and pa_id is not None:
+        ja_listados = {(o["nome"] or "").strip().lower() for o in opcoes}
+        for mc in session.exec(
+            select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa_id)
+        ).all():
+            nome_norm = (mc.nome_comercial or "").strip().lower()
+            if not nome_norm or nome_norm in ja_listados:
+                continue
+            ja_listados.add(nome_norm)
+            opcoes.append({"estoque_id": None, "nome": mc.nome_comercial, "marca": mc.laboratorio,
+                           "saldo": None, "unidade": None, "estoque_inicializado": False,
+                           "sem_estoque": True})
     return pa_id, opcoes
 
 
