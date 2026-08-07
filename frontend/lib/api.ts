@@ -2565,7 +2565,10 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
 }
 
 export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean) {
-  const res = await authFetch(`${API}/sanidade/mastite/cura`, {
+  // Rota nova, com nome correto — /mastite/cura (retrocompatibilidade) segue
+  // funcionando pois o app em produção ainda a chama, mas serve qualquer
+  // protocolo sanitário, não só mastite.
+  const res = await authFetch(`${API}/sanidade/protocolos/lancamentos/${lancamentoId}/cura`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lancamento_id: lancamentoId, curada }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
@@ -2574,9 +2577,13 @@ export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean)
 
 export type CasoTaxaCura = {
   origem: "aplicacao" | "protocolo"; id: number; numero: string; tratamento: string;
-  data: string | null; curada: boolean; lote: string | null; categoria: string; status_lactacao: string;
+  data: string | null; curada: boolean | null; avaliado: boolean;
+  lote: string | null; categoria: string; status_lactacao: string;
 };
-export async function fetchTaxaCura(): Promise<{ casos: CasoTaxaCura[]; total: number; curados: number; taxa_cura_pct: number | null }> {
+export async function fetchTaxaCura(): Promise<{
+  casos: CasoTaxaCura[]; total: number; total_avaliados: number; curados: number; nao_curados: number;
+  total_nao_avaliados: number; taxa_cura_pct: number | null; cobertura_avaliacao_pct: number | null;
+}> {
   const res = await authFetch(`${API}/sanidade/taxa-cura`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Taxa de cura error: ${res.status}`);
   return res.json();
@@ -3330,6 +3337,72 @@ export async function fetchIndicacoesDoenca(doencaId: number) {
   const res = await authFetch(`${API}/sanidade/indicacoes-doenca/${doencaId}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Indicações por doença error: ${res.status}`);
   return res.json() as Promise<{ doenca_id: number; doenca: string; opcoes: OpcaoIndicacaoDoenca[] }>;
+}
+
+// ── Catálogo de indicações da aba Farmácia (Fase 5) ──
+// Tela única: cada INDICAÇÃO (doença/manejo, `tipo` = doenca | reprodutivo |
+// produtivo | preventivo | suporte) traz a cadeia completa PRINCÍPIOS que
+// tratam → MARCAS de cada princípio, já com bula e carência formatada
+// (`carencia.texto`, pronto do backend — ver lib/carencia.ts para o preview
+// do formulário). Catálogo nasce global (fazenda_id nulo); a fazenda que
+// quer editar bula/prioridade/nota PERSONALIZA a indicação antes (clona).
+export type CarenciaFarmacia = {
+  leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string;
+  liberacao_leite?: string | null; liberacao_carne?: string | null;
+};
+export type MarcaIndicacaoCatalogo = {
+  id: number; nome_comercial: string; laboratorio: string | null; uso_principal: string | null;
+  concentracao: string | null; dose_texto: string | null; dose_padrao: number | null; unidade_dose: string | null;
+  via_padrao: string | null; link_bula: string | null; alerta: string | null; alerta_gestacao: boolean;
+  carencia: CarenciaFarmacia; editavel: boolean;
+};
+export type PrincipioIndicacaoCatalogo = {
+  id: number; nome: string; categoria_software: string | null; prioridade: number; nota: string | null;
+  indicacao_id: number; abaixo_minimo: boolean; total_apresentacoes: number; precisa_inicializar: boolean;
+  marcas: MarcaIndicacaoCatalogo[];
+};
+export type IndicacaoCatalogo = {
+  id: number; nome: string; tipo: string; descricao: string | null;
+  personalizada: boolean; origem_id: number | null; principios: PrincipioIndicacaoCatalogo[];
+};
+export async function fetchIndicacoesCatalogo(tipo?: string, busca?: string) {
+  const qs = new URLSearchParams();
+  if (tipo) qs.set("tipo", tipo);
+  if (busca) qs.set("busca", busca);
+  const res = await authFetch(`${API}/farmacia/indicacoes-catalogo${qs.toString() ? `?${qs}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo de indicações error: ${res.status}`);
+  return res.json() as Promise<IndicacaoCatalogo[]>;
+}
+export async function personalizarIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}/personalizar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao personalizar indicação"); }
+  return res.json() as Promise<IndicacaoCatalogo>;
+}
+export async function despersonalizarIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}/personalizar`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao voltar ao padrão"); }
+  return res.json();
+}
+// Editar um campo do padrão (marca global ou vínculo global) personaliza a
+// indicação automaticamente num passo só — o backend clona pra fazenda e
+// aplica a edição no clone, sinalizando isso em `personalizou_automaticamente`
+// pra tela poder avisar o usuário (ver Farmacia.tsx).
+export async function atualizarMarcaFarmacia(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a bula"); }
+  return res.json() as Promise<Record<string, any> & { personalizou_automaticamente?: boolean }>;
+}
+export async function atualizarVinculoIndicacao(id: number, dados: { prioridade: number; nota?: string | null }) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar prioridade/nota"); }
+  return res.json() as Promise<{
+    id: number; doenca_id: number; principio_ativo_id: number; prioridade: number; nota: string | null;
+    personalizou_automaticamente?: boolean;
+  }>;
 }
 
 export async function fetchProducao() {
@@ -4788,7 +4861,7 @@ async function _rSend(path: string, method: string, body?: any) {
   return res.json();
 }
 
-export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
+export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; doenca_id?: number | null; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
 export type RecriaPontoCritico = { dia_pico: number; dia_min: number; dia_max: number; casos_na_janela: number; total_casos: number; pct_na_janela: number };
 export type RecriaCurva = {
   doenca: string; total_casos: number;
@@ -4799,7 +4872,7 @@ export type RecriaCurva = {
 export type RecriaMetas = { idade_parto_meses: number; idade_prenhez_meses: number; idade_1a_cobertura_meses: number; taxa_prenhez_meta: number; desvio_padrao_meta: number; custo_diario_recria: number };
 export type RecriaPesoAlvo = { id?: number; mes: number; peso_min_kg: number; peso_max_kg: number };
 export type RecriaFase = { id?: number; nome: string; dia_min: number; dia_max: number; ordem: number; ativo: boolean };
-export type RecriaJanela = { id?: number; doenca: string; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
+export type RecriaJanela = { id?: number; doenca: string; doenca_id?: number | null; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
 
 export const fetchRecriaDoencas = (): Promise<{ doenca: string; casos: number }[]> => _rGet(`/recria/doencas`);
 export const fetchRecriaCurva = (doenca: string, ini?: string, fim?: string): Promise<RecriaCurva> => {
@@ -4811,7 +4884,7 @@ export const fetchRecriaOcorrencias = (doenca = "", numero = ""): Promise<Recria
   const p = new URLSearchParams(); if (doenca) p.set("doenca", doenca); if (numero) p.set("numero_matriz", numero);
   return _rGet(`/recria/ocorrencias${p.toString() ? "?" + p.toString() : ""}`);
 };
-export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
+export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; doenca_id?: number | null; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
 export const excluirRecriaOcorrencia = (id: number) => _rSend(`/recria/ocorrencias/${id}`, "DELETE");
 export const fetchRecriaMetas = (): Promise<RecriaMetas> => _rGet(`/recria/metas`);
 export const salvarRecriaMetas = (d: RecriaMetas) => _rSend(`/recria/metas`, "PUT", d);

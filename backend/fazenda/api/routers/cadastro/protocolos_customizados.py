@@ -29,7 +29,10 @@ router = APIRouter()
 # "alimentacao" fica fora de propósito: a Agenda sequestra a célula de ação
 # dessa categoria para "Ir para Dieta" em vez do botão normal de realizado.
 CATEGORIAS_PROTOCOLO_CUSTOM = ["Atividades", "Reprodutivo", "Produção", "sanidade", "Rebanho", "Gestão/Financeiro"]
-VIAS_APLICACAO = ["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]
+VIAS_APLICACAO = [
+    "Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina",
+    "Intravaginal", "Intradérmica", "Pour-on",
+]
 # Classificação macro exigida pela Central de Protocolos — junto com
 # IATF=reprodutivo, Indução=produtivo e Sanitário=sanitario, é o que permite
 # um protocolo customizado entrar nos filtros de Acompanhamento/Histórico por

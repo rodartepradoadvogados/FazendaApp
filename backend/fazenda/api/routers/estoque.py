@@ -15,6 +15,8 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
+from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
 
@@ -359,12 +361,12 @@ def listar_medicamentos(
 
     algum_criterio = bool(principio_ativo or classificacao or doenca or finalidade)
 
-    query_pa = select(PrincipioAtivo)
-    query_doenca = select(Doenca)
+    # Catálogo (princípio ativo, doença) é global + da fazenda — ver
+    # rules/visibilidade. Estoque é dado real da fazenda: filtro estrito.
+    query_pa = visivel(select(PrincipioAtivo), PrincipioAtivo, fazenda_id)
+    query_doenca = visivel(select(Doenca), Doenca, fazenda_id)
     query_estoque = select(Estoque)
     if fazenda_id is not None:
-        query_pa = query_pa.where(PrincipioAtivo.fazenda_id == fazenda_id)
-        query_doenca = query_doenca.where(Doenca.fazenda_id == fazenda_id)
         query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
 
     pa_ids: set[int] = set()
@@ -387,9 +389,10 @@ def listar_medicamentos(
         for pa in session.exec(query_pa).all():
             if pa.doenca_id in doenca_ids:
                 pa_ids_doenca.add(pa.id)
-        query_ind = select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id.in_(doenca_ids))
-        if fazenda_id is not None:
-            query_ind = query_ind.where(IndicacaoTerapeutica.fazenda_id == fazenda_id)
+        query_ind = visivel(
+            select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id.in_(doenca_ids)),
+            IndicacaoTerapeutica, fazenda_id,
+        )
         for ind in session.exec(query_ind).all():
             pa_ids_doenca.add(ind.principio_ativo_id)
 
@@ -419,6 +422,20 @@ def listar_medicamentos(
                 pa_ids_vacina_pre_parto.add(pa.id)
 
     itens = session.exec(query_estoque).all()
+    # Cache de marcas por princípio ativo — carrega uma vez por pa_id (não uma
+    # vez por item) para casar cada item de Estoque com sua carência/bula sem
+    # repetir a mesma query dezenas de vezes num catálogo grande.
+    marcas_por_pa: dict[int, list] = {}
+
+    def _marcas_do(pa_id: int | None) -> list:
+        if pa_id is None:
+            return []
+        if pa_id not in marcas_por_pa:
+            marcas_por_pa[pa_id] = session.exec(
+                select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa_id)
+            ).all()
+        return marcas_por_pa[pa_id]
+
     saida = []
     for e in itens:
         if e.ativo is False:
@@ -449,10 +466,16 @@ def listar_medicamentos(
         # <= 0, para não sumir com itens legados sem saldo lançado ainda.
         if not incluir_sem_estoque and e.quantidade is not None and e.quantidade <= 0:
             continue
+        marca = resolver_marca_comercial(
+            session, item=e, principio_ativo_id=e.principio_ativo_id, candidatos=_marcas_do(e.principio_ativo_id),
+        )
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
             "laboratorio": e.laboratorio, "estoque_id": e.id, "sem_estoque": False,
+            "carencia": carencia_para_item(e, marca),
+            "proibido_lactacao": bool(marca.proibido_lactacao) if marca else False,
+            "alerta": marca.alerta if marca else None,
         })
 
     # incluir_sem_estoque + critério por princípio ativo/doença: acrescenta
@@ -464,7 +487,10 @@ def listar_medicamentos(
     pa_ids_sem_estoque = pa_ids | pa_ids_doenca if incluir_sem_estoque else set()
     if pa_ids_sem_estoque:
         ja_listados = {(x["nome"] or "").strip().lower() for x in saida}
-        query_mc = select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id.in_(pa_ids_sem_estoque))
+        query_mc = visivel(
+            select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id.in_(pa_ids_sem_estoque)),
+            MedicamentoComercial, fazenda_id,
+        )
         for mc in session.exec(query_mc).all():
             nome_norm = (mc.nome_comercial or "").strip().lower()
             if not nome_norm or nome_norm in ja_listados:
@@ -474,6 +500,9 @@ def listar_medicamentos(
                 "nome": mc.nome_comercial, "unidade": None, "quantidade": None,
                 "principio_ativo": None, "classificacao_medicamento": None,
                 "laboratorio": mc.laboratorio, "estoque_id": None, "sem_estoque": True,
+                "carencia": carencia_para_item(None, mc),
+                "proibido_lactacao": bool(mc.proibido_lactacao),
+                "alerta": mc.alerta,
             })
     return sorted(saida, key=lambda x: x["nome"])
 

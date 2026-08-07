@@ -27,6 +27,7 @@ export function rotuloOrigemMovimentoLote(origem: unknown): string {
 // digitação) — usada no lançamento e na edição de aplicações de sanidade.
 export const VIAS_APLICACAO = [
   "Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina",
+  "Intravaginal", "Intradérmica", "Pour-on",
 ];
 
 // Unidades de dose no CADASTRO de qualquer protocolo (IATF, sanitário,

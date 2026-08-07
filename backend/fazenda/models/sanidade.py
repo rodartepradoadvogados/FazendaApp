@@ -8,7 +8,7 @@ o re-export consolidado usado pelo resto do código.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+from typing import ClassVar, Optional
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -130,7 +130,13 @@ class PrincipioAtivo(SQLModel, table=True):
 class MedicamentoComercial(SQLModel, table=True):
     """Marca comercial + laboratório de um princípio ativo (tabela filha). Ex.:
     Maxicam 2%/Ourofino → Meloxicam. Catálogo relacional; um item de estoque
-    físico referencia uma marca (ou pelo menos o princípio)."""
+    físico referencia uma marca (ou pelo menos o princípio).
+
+    É AQUI que moram dose, via e carência — não no princípio ativo: duas marcas
+    da mesma molécula têm concentrações diferentes (ivermectina 1% e 3,15% são
+    volumes completamente diferentes) e carências diferentes. Herdar carência
+    de "marca irmã" do mesmo princípio é justamente o erro que contamina tanque.
+    """
 
     __tablename__ = "medicamento_comercial"
 
@@ -142,16 +148,57 @@ class MedicamentoComercial(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
+    # ── Bula (o "norte" do catálogo padrão, editável por fazenda) ──
+    uso_principal: Optional[str] = None
+    concentracao: Optional[str] = None            # ex.: "50 mg/mL", "1%"
+    dose_padrao: Optional[float] = None
+    unidade_dose: Optional[str] = None            # ml | dose | seringa | unidade
+    dose_base: Optional[str] = None               # por_kg_pv | por_animal | por_teto | por_litro_agua
+    dose_referencia_kg: Optional[float] = None    # ex.: 1 mL/50 kg → 50
+    dose_texto: Optional[str] = None              # texto pronto ("1 mL/50 kg SC")
+    via_padrao: Optional[str] = None
+    link_bula: Optional[str] = None
+
+    # ── Carência: guardada SEPARADA (leite × carne), exibida num campo único
+    #    (ver rules/carencia.formatar_carencia). Nulo = NÃO INFORMADA, nunca
+    #    zero: a UI precisa dizer "não informada" em vez de induzir a "liberado".
+    carencia_leite_dias: Optional[int] = None
+    carencia_carne_dias: Optional[int] = None
+    proibido_lactacao: Optional[bool] = None      # não usar em vaca em ordenha
+    alerta_gestacao: Optional[bool] = None        # risco de aborto (corticoide, PGF2α)
+    alerta: Optional[str] = None                  # texto livre de alerta clínico
+
+    # Linha global que esta é cópia de — preenchido só quando a fazenda
+    # personaliza o padrão (ver POST /farmacia/indicacoes/{id}/personalizar).
+    origem_id: Optional[int] = Field(default=None, foreign_key="medicamento_comercial.id", index=True)
+
 
 class Doenca(SQLModel, table=True):
+    """INDICAÇÃO: o motivo pelo qual se aplica alguma coisa.
+
+    Nasceu como "doença" (mastite, pneumonia) e continua sendo isso por padrão,
+    mas `tipo` generaliza para MANEJO — sincronização/IATF, indução de lactação,
+    secagem. É o que permite um seletor único de "por que estou aplicando":
+    protocolo de indução de lactação mistura hormônio e medicamento, e o
+    operador não pode ser obrigado a escolher a categoria antes de achar o que
+    usou. O nome da tabela continua `doenca` de propósito — renomear quebraria
+    `PrincipioAtivo.doenca_id`, `ProtocoloSanitarioEtapa` gravada por critério
+    e o casamento por nome de vacina pré-parto em routers/estoque.py.
+    """
+
     __tablename__ = "doenca"
     __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_doenca_nome_fazenda"),)
+
+    TIPOS: ClassVar[tuple[str, ...]] = ("doenca", "reprodutivo", "produtivo", "preventivo", "suporte")
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    tipo: Optional[str] = Field(default="doenca", index=True)  # ver TIPOS
+    descricao: Optional[str] = None
+    origem_id: Optional[int] = Field(default=None, foreign_key="doenca.id", index=True)
 
 
 class IndicacaoTerapeutica(SQLModel, table=True):
@@ -163,7 +210,11 @@ class IndicacaoTerapeutica(SQLModel, table=True):
     aparecem automaticamente no lançamento."""
 
     __tablename__ = "indicacao_terapeutica"
-    __table_args__ = (UniqueConstraint("principio_ativo_id", "doenca_id", name="uq_indicacao_principio_doenca"),)
+    # `fazenda_id` entra na unique: sem ele, a 2ª fazenda que personalizasse a
+    # mesma indicação batia em IntegrityError (500) na hora de clonar o padrão.
+    __table_args__ = (
+        UniqueConstraint("principio_ativo_id", "doenca_id", "fazenda_id", name="uq_indicacao_principio_doenca"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
@@ -171,6 +222,8 @@ class IndicacaoTerapeutica(SQLModel, table=True):
     prioridade: int = 2  # 1 = 1ª escolha, 2 = 2ª opção, 3 = 3ª opção...
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nota: Optional[str] = None  # ressalva clínica ("só com corpo lúteo", etc.)
+    origem_id: Optional[int] = Field(default=None, foreign_key="indicacao_terapeutica.id", index=True)
 
 
 class ExameDefinicao(SQLModel, table=True):

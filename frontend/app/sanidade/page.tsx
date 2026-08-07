@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical } from "lucide-react";
 import {
-  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, today, fetchTaxaCura, type CasoTaxaCura,
+  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, today, fetchTaxaCura, type CasoTaxaCura, marcarCuraAplicacao, marcarCuraProtocolo,
   fetchCronogramasSanitarios, criarCronogramaSanitario,
   fetchCalendarioVisao, type JanelaCalendario, type JanelaCalendarioEvento,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
@@ -1528,27 +1528,64 @@ const LABEL_CATEGORIA: Record<string, string> = { vaca: "Vaca", novilha: "Novilh
 const LABEL_LACTACAO: Record<string, string> = { lactacao: "Lactação", seca: "Seca" };
 
 function TaxaCuraView() {
-  const [dados, setDados] = useState<{ casos: CasoTaxaCura[]; total: number; curados: number; taxa_cura_pct: number | null } | null>(null);
+  const [dados, setDados] = useState<{
+    casos: CasoTaxaCura[]; total: number; total_avaliados: number; curados: number; nao_curados: number;
+    total_nao_avaliados: number; taxa_cura_pct: number | null; cobertura_avaliacao_pct: number | null;
+  } | null>(null);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [fLotes, setFLotes] = useState<string[]>([]);
   const [fCategorias, setFCategorias] = useState<string[]>([]);
   const [fLactacao, setFLactacao] = useState<string[]>([]);
+  const [marcando, setMarcando] = useState<Set<string>>(new Set());
 
-  useEffect(() => { fetchTaxaCura().then(setDados).catch(() => setDados({ casos: [], total: 0, curados: 0, taxa_cura_pct: null })); }, []);
+  const carregar = useCallback(() => {
+    fetchTaxaCura().then(setDados).catch(() => setDados({
+      casos: [], total: 0, total_avaliados: 0, curados: 0, nao_curados: 0,
+      total_nao_avaliados: 0, taxa_cura_pct: null, cobertura_avaliacao_pct: null,
+    }));
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  // Responde "curado? sim/não" para um caso já com o protocolo encerrado mas
+  // sem avaliação — o mesmo POST que a Agenda usa, só que aqui fora dela
+  // (Defeito 4: a Agenda esconde o evento depois de 60 dias sem resposta, mas
+  // o caso nunca deixa de poder ser avaliado — só passa a responder por aqui).
+  const marcar = async (c: CasoTaxaCura, curada: boolean) => {
+    const chave = `${c.origem}-${c.id}`;
+    setMarcando((p) => new Set(p).add(chave));
+    try {
+      if (c.origem === "protocolo") await marcarCuraProtocolo(c.id, curada);
+      else await marcarCuraAplicacao(c.id, curada);
+      carregar();
+    } catch (err: any) {
+      alert(err.message || "Erro ao marcar cura");
+    } finally {
+      setMarcando((p) => { const n = new Set(p); n.delete(chave); return n; });
+    }
+  };
 
   const lotesOpc = useMemo(() => Array.from(new Set((dados?.casos || []).map((c) => c.lote).filter((v): v is string => !!v))).sort(), [dados]);
 
-  const filtrados = useMemo(() => (dados?.casos || []).filter((c) =>
+  const dentroDoFiltro = useCallback((c: CasoTaxaCura) =>
     (!ini || (c.data || "") >= ini) && (!fim || (c.data || "") <= fim) &&
     (fLotes.length === 0 || (c.lote != null && fLotes.includes(c.lote))) &&
     (fCategorias.length === 0 || fCategorias.includes(c.categoria)) &&
     (fLactacao.length === 0 || fLactacao.includes(c.status_lactacao))
-  ), [dados, ini, fim, fLotes, fCategorias, fLactacao]);
+  , [ini, fim, fLotes, fCategorias, fLactacao]);
+
+  // Casos já avaliados (curada true/false) — só eles entram no cálculo da
+  // taxa de cura. Os não avaliados (protocolo encerrado, ninguém respondeu)
+  // ficam à parte, listados abaixo com botões Sim/Não.
+  const filtrados = useMemo(() => (dados?.casos || []).filter((c) => c.avaliado && dentroDoFiltro(c)), [dados, dentroDoFiltro]);
+  const naoAvaliados = useMemo(() => (dados?.casos || []).filter((c) => !c.avaliado && dentroDoFiltro(c)), [dados, dentroDoFiltro]);
 
   const totalFiltro = filtrados.length;
   const curadosFiltro = filtrados.filter((c) => c.curada).length;
   const taxaFiltro = totalFiltro ? Math.round((1000 * curadosFiltro) / totalFiltro) / 10 : null;
+  const totalComPendentesFiltro = totalFiltro + naoAvaliados.length;
+  const coberturaFiltro = totalComPendentesFiltro ? Math.round((1000 * totalFiltro) / totalComPendentesFiltro) / 10 : null;
 
   // Comparação do próprio animal ao longo da vida: agrupa por número, mostra
   // a taxa de cura individual — só faz sentido comparar quem já teve mais de 1 caso.
@@ -1583,11 +1620,72 @@ function TaxaCuraView() {
 
       {!dados ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <Indicador categoria="sanidade" valor={totalFiltro} rotulo="Casos avaliados" />
             <Indicador categoria="sanidade" valor={curadosFiltro} cor="var(--green-light)" rotulo="Curados" />
-            <Indicador categoria="sanidade" valor={taxaFiltro != null ? `${taxaFiltro}%` : "—"} cor={taxaFiltro != null && taxaFiltro < 70 ? "var(--red)" : "var(--green-light)"} rotulo="Taxa de cura" />
+            <Indicador
+              categoria="sanidade"
+              valor={taxaFiltro != null ? `${taxaFiltro}%` : "—"}
+              cor={taxaFiltro != null && taxaFiltro < 70 ? "var(--red)" : "var(--green-light)"}
+              rotulo="Taxa de cura"
+              title="Calculada só sobre os casos já avaliados (curado? sim/não respondido) — quem nunca respondeu não entra na conta, pra não inflar a taxa artificialmente."
+              extra={
+                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                  {totalComPendentesFiltro > 0
+                    ? `calculada sobre ${totalFiltro} de ${totalComPendentesFiltro} caso${totalComPendentesFiltro === 1 ? "" : "s"} avaliados`
+                    : "sem casos no filtro"}
+                </span>
+              }
+            />
+            <Indicador
+              categoria="sanidade"
+              valor={naoAvaliados.length}
+              cor={naoAvaliados.length > 0 ? "var(--red)" : "var(--green-light)"}
+              rotulo="Não avaliados"
+              title="Protocolos já encerrados (todas as aplicações do último dia realizadas) sem resposta 'curado?' — some da Agenda depois de 60 dias, mas continua respondível aqui embaixo."
+              extra={
+                coberturaFiltro != null ? (
+                  <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>cobertura de avaliação: {coberturaFiltro}%</span>
+                ) : null
+              }
+            />
           </div>
+
+          <SecaoRecolhivel
+            titulo="Casos não avaliados"
+            badge={<span style={{ fontSize: "0.8rem", color: naoAvaliados.length ? "var(--red)" : "var(--dourado-light)", fontWeight: 400 }}>{naoAvaliados.length}</span>}
+            descricao="Protocolos já encerrados sem resposta 'curado? sim/não' — enquanto não forem respondidos, ficam de fora do cálculo da taxa de cura acima. Responda aqui os casos que já saíram da Agenda (mais de 60 dias sem resposta)."
+          >
+            <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <th>Animal</th><th>Tratamento</th><th>Data</th><th>Lote</th><th>Categoria</th><th>Lactação/Seca</th><th>Curado?</th>
+                </tr></thead>
+                <tbody>
+                  {naoAvaliados.slice().sort((a, b) => (b.data || "").localeCompare(a.data || "")).map((c) => {
+                    const chave = `${c.origem}-${c.id}`;
+                    return (
+                      <tr key={chave}>
+                        <td style={{ fontWeight: 700 }}>{c.numero}</td>
+                        <td style={{ fontSize: "0.8rem" }}>{c.tratamento}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{c.data ? formatDate(c.data) : "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.lote || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{LABEL_CATEGORIA[c.categoria] || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{LABEL_LACTACAO[c.status_lactacao] || "—"}</td>
+                        <td>
+                          <span className="flex items-center gap-1" style={{ fontSize: "0.72rem" }}>
+                            <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(chave)} onClick={() => marcar(c, true)}>Sim</button>
+                            <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(chave)} onClick={() => marcar(c, false)}>Não</button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!naoAvaliados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum caso pendente de avaliação com esses filtros.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </SecaoRecolhivel>
 
           <SecaoRecolhivel titulo="Casos" badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span>}
             descricao="Lista completa dos casos avaliados que atendem aos filtros acima">

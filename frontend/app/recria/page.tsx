@@ -548,9 +548,10 @@ function AbaNutricao() {
 // ─────────────────────────── REGISTRAR ───────────────────────────
 function AbaRegistrar() {
   const [numeros, setNumeros] = useState<string[]>([]);
-  const [doencasCadastro, setDoencasCadastro] = useState<string[]>([]);
+  const [doencasCadastro, setDoencasCadastro] = useState<{ id: number; nome: string }[]>([]);
   const [numero, setNumero] = useState("");
   const [doenca, setDoenca] = useState("");
+  const [doencaId, setDoencaId] = useState<number | null>(null);
   const [data, setData] = useState(hoje());
   const [obs, setObs] = useState("");
   const [lista, setLista] = useState<RecriaOcorrencia[] | null>(null);
@@ -562,7 +563,7 @@ function AbaRegistrar() {
   const carregar = () => fetchRecriaOcorrencias().then(setLista).catch(() => setLista([]));
   useEffect(() => {
     fetchAnimais({ incluirMachos: true }).then((d: any) => setNumeros((d.animais || d || []).map((a: any) => a.numero).filter(Boolean))).catch(() => {});
-    fetchDoencas().then((d: any[]) => setDoencasCadastro(d.map((x) => x.nome))).catch(() => setDoencasCadastro([]));
+    fetchDoencas().then((d: any[]) => setDoencasCadastro(d.map((x) => ({ id: x.id, nome: x.nome })))).catch(() => setDoencasCadastro([]));
     carregar();
   }, []);
 
@@ -572,7 +573,10 @@ function AbaRegistrar() {
     if (!doenca.trim()) { setMsg({ tipo: "erro", txt: "Informe a doença." }); return; }
     setSalvando(true);
     try {
-      await criarRecriaOcorrencia({ numero_matriz: numero.trim(), doenca: doenca.trim(), data_ocorrencia: data, observacao: obs.trim() || undefined });
+      await criarRecriaOcorrencia({
+        numero_matriz: numero.trim(), doenca: doenca.trim(), doenca_id: doencaId ?? undefined,
+        data_ocorrencia: data, observacao: obs.trim() || undefined,
+      });
       setMsg({ tipo: "ok", txt: `Caso de ${doenca} no animal ${numero} registrado.` });
       setNumero(""); setObs(""); carregar();
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); } finally { setSalvando(false); }
@@ -591,9 +595,13 @@ function AbaRegistrar() {
             <input style={input} list="recria-animais" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex.: 145" />
             <datalist id="recria-animais">{numeros.map((n) => <option key={n} value={n} />)}</datalist></div>
           <div><label style={lbl}>Doença</label>
-            <select style={input} value={doenca} onChange={(e) => setDoenca(e.target.value)}>
+            <select style={input} value={doenca} onChange={(e) => {
+              const nome = e.target.value;
+              setDoenca(nome);
+              setDoencaId(doencasCadastro.find((d) => d.nome === nome)?.id ?? null);
+            }}>
               <option value="">Selecione...</option>
-              {doencasCadastro.map((d) => <option key={d} value={d}>{d}</option>)}
+              {doencasCadastro.map((d) => <option key={d.id} value={d.nome}>{d.nome}</option>)}
             </select></div>
           <div><label style={lbl}>Data do caso</label><input type="date" style={input} value={data} onChange={(e) => setData(e.target.value)} /></div>
           <div><label style={lbl}>Observação (opcional)</label><input style={input} value={obs} onChange={(e) => setObs(e.target.value)} /></div>
