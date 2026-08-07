@@ -37,7 +37,10 @@ router = APIRouter()
 # Igual à lista usada no restante do site (frontend/lib/constants.ts) — as
 # duas listas divergiam (esta faltava Subcutânea/Intrauterina), o que rejeitava
 # no backend vias que o formulário deixava escolher.
-VIAS_APLICACAO = ["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]
+VIAS_APLICACAO = [
+    "Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina",
+    "Intravaginal", "Intradérmica", "Pour-on",
+]
 CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao", "doenca"]
 CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
 # Finalidade do protocolo sanitário de etapas. None (protocolo cadastrado

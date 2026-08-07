@@ -3332,6 +3332,65 @@ export async function fetchIndicacoesDoenca(doencaId: number) {
   return res.json() as Promise<{ doenca_id: number; doenca: string; opcoes: OpcaoIndicacaoDoenca[] }>;
 }
 
+// ── Catálogo de indicações da aba Farmácia (Fase 5) ──
+// Tela única: cada INDICAÇÃO (doença/manejo, `tipo` = doenca | reprodutivo |
+// produtivo | preventivo | suporte) traz a cadeia completa PRINCÍPIOS que
+// tratam → MARCAS de cada princípio, já com bula e carência formatada
+// (`carencia.texto`, pronto do backend — ver lib/carencia.ts para o preview
+// do formulário). Catálogo nasce global (fazenda_id nulo); a fazenda que
+// quer editar bula/prioridade/nota PERSONALIZA a indicação antes (clona).
+export type CarenciaFarmacia = {
+  leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string;
+  liberacao_leite?: string | null; liberacao_carne?: string | null;
+};
+export type MarcaIndicacaoCatalogo = {
+  id: number; nome_comercial: string; laboratorio: string | null; uso_principal: string | null;
+  concentracao: string | null; dose_texto: string | null; dose_padrao: number | null; unidade_dose: string | null;
+  via_padrao: string | null; link_bula: string | null; alerta: string | null; alerta_gestacao: boolean;
+  carencia: CarenciaFarmacia; editavel: boolean;
+};
+export type PrincipioIndicacaoCatalogo = {
+  id: number; nome: string; categoria_software: string | null; prioridade: number; nota: string | null;
+  indicacao_id: number; abaixo_minimo: boolean; total_apresentacoes: number; precisa_inicializar: boolean;
+  marcas: MarcaIndicacaoCatalogo[];
+};
+export type IndicacaoCatalogo = {
+  id: number; nome: string; tipo: string; descricao: string | null;
+  personalizada: boolean; origem_id: number | null; principios: PrincipioIndicacaoCatalogo[];
+};
+export async function fetchIndicacoesCatalogo(tipo?: string, busca?: string) {
+  const qs = new URLSearchParams();
+  if (tipo) qs.set("tipo", tipo);
+  if (busca) qs.set("busca", busca);
+  const res = await authFetch(`${API}/farmacia/indicacoes-catalogo${qs.toString() ? `?${qs}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo de indicações error: ${res.status}`);
+  return res.json() as Promise<IndicacaoCatalogo[]>;
+}
+export async function personalizarIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}/personalizar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao personalizar indicação"); }
+  return res.json() as Promise<IndicacaoCatalogo>;
+}
+export async function despersonalizarIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}/personalizar`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao voltar ao padrão"); }
+  return res.json();
+}
+export async function atualizarMarcaFarmacia(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a bula"); }
+  return res.json();
+}
+export async function atualizarVinculoIndicacao(id: number, dados: { prioridade: number; nota?: string | null }) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar prioridade/nota"); }
+  return res.json();
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);

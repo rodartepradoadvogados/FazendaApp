@@ -2,9 +2,17 @@
 // Remédios por doença — consulta rápida do substituto inteligente: escolhe a
 // doença e vê o ranking de princípios ativos indicados (1ª escolha, 2ª opção…)
 // já cruzado com o estoque em tempo real. Mesmo padrão visual de Farmacia.tsx.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pill, AlertTriangle } from "lucide-react";
 import { fetchDoencas, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
+
+// Mesmos tipos de Doenca.TIPOS (backend) — agrupam o seletor em optgroups
+// para "lançar por finalidade reprodutiva/produtiva/preventiva/suporte"
+// aparecer separado das doenças propriamente ditas.
+const GRUPOS_TIPO: [string, string][] = [
+  ["doenca", "Doenças"], ["reprodutivo", "Reprodutivo"], ["produtivo", "Produtivo"],
+  ["preventivo", "Preventivo"], ["suporte", "Suporte"],
+];
 
 function num(v?: number | null): string {
   if (v == null) return "—";
@@ -23,12 +31,25 @@ const input: React.CSSProperties = {
 };
 
 export default function RemediosPorDoenca() {
-  const [doencas, setDoencas] = useState<{ id: number; nome: string; ativo: boolean }[] | null>(null);
+  const [doencas, setDoencas] = useState<{ id: number; nome: string; ativo: boolean; tipo?: string | null }[] | null>(null);
   const [doencaId, setDoencaId] = useState<number | "">("");
   const [opcoes, setOpcoes] = useState<OpcaoIndicacaoDoenca[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => { fetchDoencas().then(setDoencas).catch((e) => setErro(e.message)); }, []);
+
+  // Agrupa por tipo (Doenças / Reprodutivo / Produtivo / Preventivo / Suporte)
+  // — mesma ordem de GRUPOS_TIPO; indicações de tipo desconhecido caem no
+  // grupo "Doenças" (comportamento anterior ao campo `tipo` existir).
+  const grupos = useMemo(() => {
+    const ativas = (doencas || []).filter((d) => d.ativo);
+    return GRUPOS_TIPO
+      .map(([tipo, label]) => ({
+        label,
+        itens: ativas.filter((d) => (tipo === "doenca" ? !d.tipo || d.tipo === "doenca" : d.tipo === tipo)),
+      }))
+      .filter((g) => g.itens.length > 0);
+  }, [doencas]);
 
   useEffect(() => {
     if (doencaId === "") { setOpcoes(null); return; }
@@ -48,8 +69,10 @@ export default function RemediosPorDoenca() {
         <select style={{ ...input, minWidth: 260 }} value={doencaId}
           onChange={(e) => setDoencaId(e.target.value === "" ? "" : Number(e.target.value))}>
           <option value="">Selecione a doença…</option>
-          {(doencas || []).filter((d) => d.ativo).map((d) => (
-            <option key={d.id} value={d.id}>{d.nome}</option>
+          {grupos.map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.itens.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+            </optgroup>
           ))}
         </select>
       </div>
