@@ -508,12 +508,21 @@ def calcular_indicadores(
         animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal, vacas_nums, hoje,
     )
 
+    # Números das gestantes pelo MESMO critério ao vivo usado para contar
+    # `prenhes` logo abaixo — reaproveitado no drill-down (`gestantes_detalhe`/
+    # `partos_previstos`) mais adiante para o card e a lista baterem sempre.
+    # Antes o card usava este critério (estado ao vivo, com fallback pro
+    # sit_rep congelado do CSV) e o drill-down usava só o sit_rep cru — uma
+    # matriz cujo estado ao vivo virou "gestante" antes do próximo import do
+    # CSV entrava no card mas sumia da lista que abre ao clicar nele.
+    numeros_gestantes_vivo: set[str] = set()
     prenhes = vazias = inseminadas = 0
     for a in animais:
         estado = estados_por_animal.get(a.get("numero"))
         if estado is not None:
             if estado == "gestante":
                 prenhes += 1
+                numeros_gestantes_vivo.add(a.get("numero"))
             elif estado == "inseminada":
                 inseminadas += 1
             else:
@@ -522,6 +531,7 @@ def calcular_indicadores(
         sit = (a.get("sit_rep") or "").strip()
         if sit == "Ges.":
             prenhes += 1
+            numeros_gestantes_vivo.add(a.get("numero"))
         elif sit.startswith("Vaz."):
             vazias += 1
         elif sit == "Ins.":
@@ -596,7 +606,10 @@ def calcular_indicadores(
     iep_meses = round(iep_dias / 30.44, 1) if iep_dias else None
 
     # ---------------------------------------------------------------
-    # Partos previstos — só matrizes ATUALMENTE prenhes (sit_rep = "Ges.").
+    # Partos previstos — só matrizes ATUALMENTE prenhes, pelo mesmo critério
+    # ao vivo de `numeros_gestantes_vivo` (não o sit_rep cru — ver comentário
+    # acima de onde o set é montado, é o que faz o card "Gestantes" bater com
+    # esta lista).
     # Parto provável = data do último serviço POSITIVO + gestacao_dias_referencia()
     # (ponto médio da faixa editável gestacao_dias_min/max).
     # Uma matriz por linha (não conta serviços antigos nem vazias/PEV).
@@ -619,9 +632,9 @@ def calcular_indicadores(
     # não importa o quão distante esteja do parto.
     gestantes_detalhe: list[dict] = []
     for a in animais:
-        if (a.get("sit_rep") or "").strip() != "Ges.":
-            continue
         num = a.get("numero")
+        if num not in numeros_gestantes_vivo:
+            continue
         data_serv = ult_pos.get(num)
         if not data_serv:
             continue
