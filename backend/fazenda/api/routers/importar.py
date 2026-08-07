@@ -1045,6 +1045,9 @@ def backfill_fornecedores_e_estoque(
 
     estoque_query = select(Estoque.nome)
     curva_query = select(CurvaABC.produto)
+    # NÃO aplicar sem_itens_de_vale aqui — são candidatos a cadastro de
+    # estoque a partir de nomes de produto já usados; excluir os itens de
+    # vale só empobreceria a lista de sugestões (ver rules/vale_item.py).
     lancamento_query = select(LancamentoItem.produto)
     sanidade_query = select(Sanidade.produto)
     if fazenda_id is not None:

@@ -1298,6 +1298,7 @@ export default function FolhaPagamentoView() {
               <ThOrdenavel label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
               <th>Documento</th>
               <th>Conta bancária</th>
+              <th>Origem</th>
               <th>Ações</th>
             </tr></thead>
             <tbody>
@@ -1314,6 +1315,12 @@ export default function FolhaPagamentoView() {
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor_pago)}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.numero_documento_pagamento || "—"}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{rotuloContaVale(v.conta_corrente_id)}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}
+                      title={v.origem_lancamento ? `${v.origem_lancamento.produto} — nota ${v.origem_lancamento.numero_documento ?? "s/ nº"} — ${v.origem_lancamento.fornecedor_cliente ?? ""}` : undefined}>
+                    {v.origem_lancamento
+                      ? `${v.origem_lancamento.numero_lancamento} — ${v.origem_lancamento.produto}`
+                      : "Lançamento avulso"}
+                  </td>
                   <td>
                     <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                       disabled={excluindoValeId === v.id}
@@ -1324,7 +1331,7 @@ export default function FolhaPagamentoView() {
                 </tr>
                 {expandedValeId === v.id && (
                   <tr>
-                    <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                    <td colSpan={12} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                       {editingValeId === v.id ? (
                         <div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1420,7 +1427,7 @@ export default function FolhaPagamentoView() {
                 )}
                 </Fragment>
               ))}
-              {vales && !valesOrdenados.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
+              {vales && !valesOrdenados.length && <tr><td colSpan={12} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1433,11 +1440,12 @@ export default function FolhaPagamentoView() {
               <th style={{ width: "1.5rem" }} />
               <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
-              <ThOrdenavel label="Origem" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdenavel label="Abatido de" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <th>Parcela</th>
               <ThOrdenavel label="Valor" campo="valor" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} alinhar="right" />
               <ThOrdenavel label="Forma de pagamento" campo="forma_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <th>Conta bancária</th>
+              <th>Origem</th>
               <th>Ações</th>
             </tr></thead>
             <tbody>
@@ -1457,6 +1465,12 @@ export default function FolhaPagamentoView() {
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor)}</td>
                   <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE_AVULSO.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{rotuloContaVale(v.conta_corrente_id)}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}
+                      title={v.origem_lancamento ? `${v.origem_lancamento.produto} — nota ${v.origem_lancamento.numero_documento ?? "s/ nº"} — ${v.origem_lancamento.fornecedor_cliente ?? ""}` : undefined}>
+                    {v.origem_lancamento
+                      ? `${v.origem_lancamento.numero_lancamento} — ${v.origem_lancamento.produto}`
+                      : "Lançamento avulso"}
+                  </td>
                   <td>
                     <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                       disabled={excluindoValeAvulsoId === v.id}
@@ -1467,11 +1481,11 @@ export default function FolhaPagamentoView() {
                 </tr>
                 {expandedValeAvulsoId === v.id && (
                   <tr>
-                    <td colSpan={9} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                    <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                       {editingValeAvulsoId === v.id ? (
                         <div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                            <div><label style={labelStyleLote}>Origem</label>
+                            <div><label style={labelStyleLote}>Abatido de</label>
                               <input style={selStyleLote} value={v.origem_descricao} disabled /></div>
                             <div><label style={labelStyleLote}>Valor (R$)</label>
                               <CampoMoeda style={selStyleLote} value={Number(editValeAvulsoValor) || 0} onChange={(v) => setEditValeAvulsoValor(v ? String(v) : "")} /></div>
@@ -1516,7 +1530,7 @@ export default function FolhaPagamentoView() {
                 )}
                 </Fragment>
               ))}
-              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
+              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>

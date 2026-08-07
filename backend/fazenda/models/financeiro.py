@@ -104,6 +104,18 @@ class LancamentoItem(SQLModel, table=True):
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
     valor_total: float
+    # ── Item que na verdade é gasto pessoal de um funcionário/empreiteiro/
+    # diarista (checkbox "É vale de funcionário?" na linha do item, ver
+    # FormFinanceiro.tsx). O dinheiro saiu de verdade na compra — o caixa da
+    # fazenda continua batendo —, mas gerencialmente isso não é despesa da
+    # fazenda e sim adiantamento A RECEBER da pessoa: por isso o item passa a
+    # ser ignorado por todo relatório gerencial (ver rules/vale_item.py).
+    # Exatamente UM dos dois é preenchido, nunca os dois: o vale gerado é um
+    # ValeFuncionario (desconto na folha) OU um ValeAvulso (abatimento de
+    # empreitada/contrato/diária) de verdade — não há sistema paralelo de vale.
+    # Ambos nullable: item sem vale (a esmagadora maioria) tem os dois nulos.
+    vale_funcionario_id: Optional[int] = Field(default=None, foreign_key="vale_funcionario.id", index=True)
+    vale_avulso_id: Optional[int] = Field(default=None, foreign_key="vale_avulso.id", index=True)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

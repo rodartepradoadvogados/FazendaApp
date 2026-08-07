@@ -4201,7 +4201,86 @@ export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lançamento"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    // Preserva `detail`/`status` (padrão `criarVale`) — o 409 de "estourou 40%
+    // do salário" de um item marcado como vale (ver ValeItemModal) precisa do
+    // `detail.competencias_excedidas` estruturado, não só de uma string solta.
+    const err: any = new Error(mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null) || "Erro ao criar lançamento");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+// ── Vale a partir de um item de lançamento financeiro (checkbox "É vale de
+// funcionário?" na linha do item, ver ValeItemModal/FormFinanceiro) ──
+export type ValeItemOrigem = {
+  origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number;
+  label: string; saldo_pendente: number | null; itens_pendentes: number | null;
+};
+export type ValeItemOpcoes = {
+  pessoa_id: number; pessoa_nome: string; tipos: string[];
+  folha: { disponivel: boolean; motivo: string | null; salario_base: number | null; limite_por_competencia: number | null };
+  origens: ValeItemOrigem[];
+  sugestao: { modo: "folha" | "avulso"; origem_tipo?: string | null; origem_id?: number | null } | null;
+  bloqueio: string | null;
+};
+export type ValeItemIn = {
+  pessoa_id: number;
+  modo: "folha" | "avulso";
+  parcelas?: number;
+  competencia_inicio?: string | null;
+  origem_tipo?: "empreitada" | "contrato" | "diaria" | null;
+  origem_id?: number | null;
+  observacao?: string | null;
+  confirmar?: boolean;
+};
+export type ValeItemResultado = {
+  item_id: number; numero_lancamento: string; vale_tipo: "funcionario" | "avulso";
+  vale_id: number; valor: number; data_pagamento: string;
+  pessoa_id: number; pessoa_nome: string; resumo: string;
+};
+
+export async function fetchOpcoesValeItem(pessoaId: number): Promise<ValeItemOpcoes> {
+  const res = await authFetch(`${API}/cadastro/vale-item/opcoes?pessoa_id=${pessoaId}`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao buscar opções de vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function marcarItemComoVale(itemId: number, dados: ValeItemIn): Promise<ValeItemResultado> {
+  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    // Preserva `detail`/`status` (mesmo padrão de `criarVale`) — o 409 de
+    // "item já gerou um vale" e o 409 de "estourou 40% do salário" chegam
+    // com `detail` estruturado (objeto), não só uma string.
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao marcar item como vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function desmarcarItemComoVale(itemId: number, excluirVale: boolean) {
+  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}?excluir_vale=${excluirVale ? "true" : "false"}`, { method: "DELETE" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao desmarcar vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 

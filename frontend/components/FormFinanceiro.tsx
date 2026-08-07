@@ -9,6 +9,7 @@ import {
   FINALIDADES_ESTOQUE, type PatrimonioPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
@@ -52,10 +53,17 @@ type Item = {
   // catálogo de estoque, ex.: "Supermercado", "Material de escritório". Some
   // não tem por que travar o lançamento a um cadastro prévio.
   modoProduto: "estoque" | "livre";
+  // Checkbox "É vale de funcionário?" da linha do item — quando preenchido,
+  // ao salvar o lançamento este item vira um vale de verdade (funcionário:
+  // desconto na folha; empreiteiro/diarista: abatimento de empreitada/
+  // contrato/diária) e some dos relatórios gerenciais (ver ValeItemModal e
+  // rules/vale_item.py no backend). null (padrão) = item normal da fazenda.
+  vale: ValeItemDados | null;
 };
 const itemVazio = (): Item => ({
   codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto", produto: "", descricao: "",
   quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario", modoProduto: "estoque",
+  vale: null,
 });
 
 type Opcoes = {
@@ -87,7 +95,7 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura }: {
+export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura, apresentacaoModais }: {
   tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void;
   // Recebe a mesma mensagem de sucesso mostrada dentro do formulário — o pai
   // (contas a pagar/receber) reaproveita pra mostrar a confirmação no topo da
@@ -97,6 +105,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // usado pelo ModalDivididoDocumento pra mostrar a prévia do documento ao
   // lado do formulário (ver app/financeiro/page.tsx).
   onArquivoParaLeitura?: (file: File) => void;
+  // Como o ValeItemModal (checkbox "É vale de funcionário?" de cada item)
+  // aparece: "modal" (pop-up, desktop) ou "tela" (tela cheia com botão
+  // voltar, app mobile — ver components/mobile/lancar/FormFinanceiroApp.tsx).
+  // Default "modal": os demais usos deste formulário fora do app não passam
+  // a prop e continuam com o pop-up.
+  apresentacaoModais?: "modal" | "tela";
 }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
@@ -145,6 +159,26 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [adicionarPara, setAdicionarPara] = useState<number | null>(null);
   const [modoAdicionar, setModoAdicionar] = useState<"produto" | "servico" | "conta">("produto");
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
+
+  // Checkbox "É vale de funcionário?" de cada item — `valeAbertoPara` é o
+  // índice do item cujo ValeItemModal está aberto (marcar ou "alterar" um já
+  // marcado); `desmarcandoVale` é o índice pedindo confirmação antes de
+  // remover a marcação de um item AINDA NÃO SALVO (aqui não existe vale de
+  // verdade a excluir — essa pergunta acontece em FormEditarLancamento,
+  // app/financeiro/page.tsx, para um item já salvo com vale já criado).
+  const [valeAbertoPara, setValeAbertoPara] = useState<number | null>(null);
+  const [desmarcandoVale, setDesmarcandoVale] = useState<number | null>(null);
+  function pedirDesmarcarVale(idx: number) { setDesmarcandoVale(idx); }
+  // 409 de "estourou 40% do salário" recebido ao SALVAR O LANÇAMENTO inteiro
+  // (não da marcação isolada de um item, que aqui só grava estado local — o
+  // vale de verdade só nasce no POST /financeiro/lancamentos, ver salvar()
+  // abaixo). Reabre o ValeItemModal do item ofensor já mostrando o aviso: a
+  // 1ª tentativa de confirmar dentro do modal reproduz o mesmo erro (ver
+  // onConfirmar do ValeItemModal, JSX abaixo); ao clicar "Lançar mesmo
+  // assim", o item guarda `confirmar: true` para a próxima tentativa de
+  // salvar. Heurística (o backend não devolve QUAL item estourou): o
+  // primeiro item marcado como vale de folha que ainda não tem `confirmar`.
+  const [pendingErro409, setPendingErro409] = useState<{ idx: number; mensagem: string; competencias_excedidas: { competencia: string; total: number }[] } | null>(null);
 
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   // Pré-preenchimento via query string (ex.: botão "Lançar financeiro" do
@@ -470,6 +504,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         // cadastrado no estoque — começa em texto livre pra não forçar o
         // usuário a bater o nome exato antes de poder editar.
         modoProduto: "livre",
+        vale: null,
       })));
     } else if (dados.valor_total != null) {
       setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), modoValor: "total" }]);
@@ -653,6 +688,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           quantidade: i.quantidade ? Number(i.quantidade) : null,
           valor_unitario: i.valor_unitario ? Number(i.valor_unitario) : null,
           valor_total: Number(i.valor_total) || 0,
+          // Só os campos do contrato (ValeItemNovoIn) — pessoa_nome/origem_label
+          // são de UI (ver checkbox acima e ValeItemModal), não vão no payload.
+          vale: i.vale ? {
+            pessoa_id: i.vale.pessoa_id, modo: i.vale.modo,
+            parcelas: i.vale.parcelas, competencia_inicio: i.vale.competencia_inicio || null,
+            origem_tipo: i.vale.origem_tipo || null, origem_id: i.vale.origem_id || null,
+            observacao: i.vale.observacao || null, confirmar: i.vale.confirmar || false,
+          } : null,
         })),
       centro_custo: centroCusto || null,
       fornecedor_cliente: fornecedor || null,
@@ -705,6 +748,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     if (!validos.length) { setErro("Informe ao menos um produto ou serviço."); return; }
     if (!centroCusto.trim()) { setErro("Selecione o centro de custo."); return; }
     if (valorLiquido <= 0) { setErro("O valor líquido do lançamento deve ser positivo."); return; }
+    if (itens.some((i) => i.vale && (Number(i.valor_total) || 0) <= 0)) {
+      setErro("Item marcado como vale precisa de valor maior que zero."); return;
+    }
     if (!confirmandoDuplicado) {
       setVerificandoDuplicado(true);
       try {
@@ -743,7 +789,18 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       onSujo?.(false);
       onSalvo?.(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
     } catch (e: any) {
-      setErro(e.message || "Erro ao salvar lançamento");
+      if (e.status === 409 && e.detail?.competencias_excedidas) {
+        const idx = itens.findIndex((i) => i.vale?.modo === "folha" && !i.vale?.confirmar);
+        if (idx !== -1) {
+          setErro("Um dos itens marcados como vale passa do limite de 40% do salário na competência. Revise a marcação destacada abaixo.");
+          setPendingErro409({ idx, mensagem: e.detail.mensagem, competencias_excedidas: e.detail.competencias_excedidas || [] });
+          setValeAbertoPara(idx);
+        } else {
+          setErro(e.message || "Erro ao salvar lançamento");
+        }
+      } else {
+        setErro(e.message || "Erro ao salvar lançamento");
+      }
     } finally {
       setSalvando(false); setConfirmando(false); setConfirmandoDuplicado(false); setDuplicados([]);
     }
@@ -923,6 +980,23 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   onChange={(v) => atualizarItem(idx, { valor_total: v ? String(v) : "" })} />
               </Campo>
             </div>
+            {tipo === "despesa" && (
+              <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
+                <input id={`vale-item-${idx}`} type="checkbox" checked={!!it.vale}
+                  onChange={(e) => e.target.checked ? setValeAbertoPara(idx) : pedirDesmarcarVale(idx)} />
+                <label htmlFor={`vale-item-${idx}`} style={{ fontSize: "0.8rem" }}>É vale de funcionário?</label>
+                {it.vale && (
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    {it.vale.pessoa_nome} — {it.vale.modo === "folha"
+                      ? `${it.vale.parcelas}x na folha a partir de ${it.vale.competencia_inicio}`
+                      : it.vale.origem_label}
+                    {" "}
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                      onClick={() => setValeAbertoPara(idx)}>alterar</button>
+                  </span>
+                )}
+              </div>
+            )}
             <button type="button" className="btn-ghost" title="Cadastrar um novo produto, serviço ou conta gerencial" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
               onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
               <Plus size={13} /> Adicionar {it.tipo_item === "servico" ? "serviço" : "produto"} ou conta gerencial novo(a)
@@ -1429,6 +1503,48 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             </div>
           </div>
         </div>
+      )}
+
+      {valeAbertoPara !== null && (
+        <ValeItemModal apresentacao={apresentacaoModais ?? "modal"}
+          valorItem={Number(itens[valeAbertoPara].valor_total) || 0}
+          dataItem={dataEmissao || new Date().toISOString().slice(0, 10)}
+          produtoItem={itens[valeAbertoPara].produto}
+          inicial={itens[valeAbertoPara].vale}
+          onConfirmar={(d) => {
+            // Reabertura após 409 de 40% do salário (ver `pendingErro409` e o
+            // catch de salvar() acima): a 1ª tentativa de confirmar dentro do
+            // modal reproduz o mesmo erro recebido do backend — o modal
+            // mostra o aviso e troca o botão para "Lançar mesmo assim"; só
+            // na 2ª tentativa (já com `confirmar: true`) o vínculo é
+            // gravado localmente, pronto para o usuário clicar de novo em
+            // "Salvar lançamento".
+            if (pendingErro409 && pendingErro409.idx === valeAbertoPara) {
+              const detalhe = pendingErro409;
+              setPendingErro409(null);
+              const err: any = new Error(detalhe.mensagem);
+              err.status = 409; err.detail = { mensagem: detalhe.mensagem, competencias_excedidas: detalhe.competencias_excedidas };
+              return Promise.reject(err);
+            }
+            atualizarItem(valeAbertoPara, { vale: d });
+            setValeAbertoPara(null);
+          }}
+          onCancelar={() => { setPendingErro409(null); setValeAbertoPara(null); }} />
+      )}
+
+      {desmarcandoVale !== null && (
+        <Modal title="Remover o vale deste item?" onClose={() => setDesmarcandoVale(null)} width="440px">
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            Este item ainda não foi salvo, então nenhum vale foi criado. Remover a marcação vai descartar os
+            dados informados (beneficiário e forma de desconto). Confirmar?
+          </p>
+          <div className="flex items-center gap-3 mt-3">
+            <button className="btn-primary" onClick={() => { atualizarItem(desmarcandoVale, { vale: null }); setDesmarcandoVale(null); }}>
+              <Check size={14} /> Sim, remover
+            </button>
+            <button className="btn-ghost" onClick={() => setDesmarcandoVale(null)}><X size={14} /> Não, manter</button>
+          </div>
+        </Modal>
       )}
     </>
   );

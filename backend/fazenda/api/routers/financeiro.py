@@ -18,10 +18,11 @@ from fastapi.responses import Response
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
-    SeedFlag, Servico, TipoDocumento, Usuario,
+    SeedFlag, Servico, TipoDocumento, Usuario, ValeAvulso, ValeFuncionario,
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale, valor_gerencial
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
@@ -201,6 +202,21 @@ class ParcelaIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
 
 
+class ValeItemNovoIn(BaseModel):
+    """Mesmos campos de ValeItemIn (fazenda/api/routers/cadastro/rh_vale_item.py)
+    — declarado aqui (não importado) para financeiro.py não importar `cadastro`
+    no topo do módulo (ciclo de import: rh_folha.py/rh_contratos.py já
+    importam de financeiro.py — ver §0.8)."""
+    pessoa_id: int
+    modo: str  # "folha" | "avulso"
+    parcelas: int = 1
+    competencia_inicio: Optional[str] = None
+    origem_tipo: Optional[str] = None
+    origem_id: Optional[int] = None
+    observacao: Optional[str] = None
+    confirmar: bool = False
+
+
 class ItemIn(BaseModel):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
@@ -210,6 +226,10 @@ class ItemIn(BaseModel):
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
     valor_total: float
+    # Este item é gasto pessoal de um funcionário/empreiteiro/diarista — ao
+    # salvar, gera o vale de verdade e o item sai dos relatórios gerenciais.
+    # None (padrão) = item normal da fazenda.
+    vale: Optional[ValeItemNovoIn] = None
 
 
 class PatrimonioIn(BaseModel):
@@ -370,8 +390,14 @@ def dre(
             if centro_custo is None or c.centro_custo == centro_custo:
                 filtradas.append(c)
 
+    # Vale de funcionário/empreiteiro lançado a partir de um item desta nota
+    # não é despesa da fazenda (é adiantamento a receber da pessoa) — vale
+    # nos DOIS regimes (competência e caixa), porque o DRE é resultado
+    # gerencial e vale nunca é despesa em regime nenhum (ver rules/vale_item.py).
+    ajustes = ajuste_vale_por_conta(session, filtradas, fazenda_id)
+
     receitas = sum(c.valor_total or 0 for c in filtradas if c.tipo == "receita")
-    despesas = sum(c.valor_total or 0 for c in filtradas if c.tipo == "despesa")
+    despesas = sum(valor_gerencial(c, ajustes) for c in filtradas if c.tipo == "despesa")
     resultado = receitas - despesas
 
     # Agrupa por código de conta
@@ -384,7 +410,7 @@ def dre(
         if c.tipo == "receita":
             por_conta[nivel1]["receitas"] += c.valor_total or 0
         else:
-            por_conta[nivel1]["despesas"] += c.valor_total or 0
+            por_conta[nivel1]["despesas"] += valor_gerencial(c, ajustes)
 
     return {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -406,14 +432,51 @@ def listar_lancamentos(
     O front filtra por regime (competência/caixa), ano e centro de custo.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # NÃO aplicar sem_itens_de_vale aqui — ver rules/vale_item.py. Este é o
+    # extrato: o item TEM que continuar aparecendo na nota (o caixa da
+    # fazenda continua batendo). Em vez de filtrar, enriquecemos cada item
+    # com os campos de vale logo abaixo.
     query_itens = select(LancamentoItem)
     query_contas = select(ContaGerencial)
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
         query_contas = query_contas.where(ContaGerencial.fazenda_id == fazenda_id)
 
+    itens_carregados = session.exec(query_itens).all()
+
+    # Resolve os dados de vale em lote (duas queries batch) — nunca N+1.
+    ids_vale_funcionario = {it.vale_funcionario_id for it in itens_carregados if it.vale_funcionario_id}
+    ids_vale_avulso = {it.vale_avulso_id for it in itens_carregados if it.vale_avulso_id}
+    vales_funcionario = {
+        v.id: v for v in (
+            session.exec(select(ValeFuncionario).where(ValeFuncionario.id.in_(ids_vale_funcionario))).all()
+            if ids_vale_funcionario else []
+        )
+    }
+    vales_avulso = {
+        v.id: v for v in (
+            session.exec(select(ValeAvulso).where(ValeAvulso.id.in_(ids_vale_avulso))).all()
+            if ids_vale_avulso else []
+        )
+    }
+    ids_pessoa = {v.pessoa_id for v in vales_funcionario.values()} | {v.pessoa_id for v in vales_avulso.values()}
+    nomes_pessoa = {
+        p.id: p.nome for p in (session.exec(select(Pessoa).where(Pessoa.id.in_(ids_pessoa))).all() if ids_pessoa else [])
+    }
+
     itens_por_lancamento: dict[str, list[dict]] = {}
-    for it in session.exec(query_itens).all():
+    for it in itens_carregados:
+        vale_tipo = None
+        vale_id = None
+        vale_pessoa_id = None
+        if it.vale_funcionario_id is not None:
+            vale_tipo, vale_id = "funcionario", it.vale_funcionario_id
+            vale = vales_funcionario.get(vale_id)
+            vale_pessoa_id = vale.pessoa_id if vale else None
+        elif it.vale_avulso_id is not None:
+            vale_tipo, vale_id = "avulso", it.vale_avulso_id
+            vale = vales_avulso.get(vale_id)
+            vale_pessoa_id = vale.pessoa_id if vale else None
         itens_por_lancamento.setdefault(it.numero_lancamento, []).append({
             "id": it.id,
             "codigo_conta_gerencial": it.codigo_conta_gerencial,
@@ -423,6 +486,11 @@ def listar_lancamentos(
             "quantidade": it.quantidade,
             "valor_unitario": it.valor_unitario,
             "valor_total": it.valor_total,
+            "eh_vale": vale_tipo is not None,
+            "vale_tipo": vale_tipo,
+            "vale_id": vale_id,
+            "vale_pessoa_id": vale_pessoa_id,
+            "vale_pessoa_nome": nomes_pessoa.get(vale_pessoa_id) if vale_pessoa_id else None,
         })
 
     contas = session.exec(query_contas).all()
@@ -544,7 +612,7 @@ def itens_por_conta(
     nota tem vários produtos com contas diferentes.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query = select(LancamentoItem)
+    query = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
         query = query.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = session.exec(query).all()
@@ -613,6 +681,9 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
     # ficam sempre disponíveis para seleção, mesmo antes de aparecerem num lançamento.
     centros_custo = sorted(centros_cadastrados | set(CENTROS_CANONICOS) | {c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
+    # NÃO aplicar sem_itens_de_vale aqui — é datalist de nomes de produto já
+    # usados (autocomplete); excluir os itens de vale só empobreceria as
+    # sugestões, sem nenhum ganho gerencial (ver rules/vale_item.py).
     produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
     query_contas_correntes = select(ContaCorrente).where(ContaCorrente.ativo == True)
     if fazenda_id is not None:
@@ -1092,7 +1163,7 @@ def rmca(
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
-    query_itens = select(LancamentoItem)
+    query_itens = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -1145,7 +1216,7 @@ def custo_litro_leite(
     plano = session.exec(query_plano).all()
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
-    query_itens = select(LancamentoItem)
+    query_itens = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -1504,6 +1575,19 @@ def criar_lancamento(
         if item.tipo_item is not None and item.tipo_item not in ("produto", "servico"):
             raise HTTPException(status_code=400, detail="tipo_item deve ser 'produto' ou 'servico'")
 
+    itens_com_vale = [item for item in dados.itens if item.vale]
+    if itens_com_vale:
+        if dados.tipo == "receita":
+            raise HTTPException(status_code=400, detail="Só item de despesa pode virar vale.")
+        # Import local — cadastro pode importar financeiro, o contrário não
+        # (ver §0.8: rh_folha.py/rh_contratos.py já importam deste módulo).
+        # Valida TODOS os itens marcados ANTES de gravar qualquer coisa —
+        # qualquer erro aqui aborta o lançamento inteiro sem criar nada.
+        from fazenda.api.routers.cadastro.rh_vale_item import validar_vale_item
+        item_data_vale = dados.data_emissao or dados.data_competencia or date.today()
+        for item in itens_com_vale:
+            validar_vale_item(session, item.valor_total, item_data_vale, item.vale, fazenda_id)
+
     valor_bruto = round(sum(i.valor_total for i in dados.itens), 2)
     valor_liquido = round(valor_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
     if valor_liquido <= 0:
@@ -1644,6 +1728,39 @@ def criar_lancamento(
             session.add(c)
         session.commit()
 
+    # Itens marcados como vale (checkbox "É vale de funcionário?") já
+    # passaram por `validar_vale_item` acima, ANTES de gravar nada — aqui só
+    # cria o vale de verdade (ValeFuncionario/ValeAvulso) reaproveitando
+    # criar_vale/criar_vale_avulso e grava o vínculo no item (ver
+    # fazenda/api/routers/cadastro/rh_vale_item.py).
+    vales_criados: list[dict] = []
+    if itens_com_vale:
+        from fazenda.api.routers.cadastro.rh_vale_item import aplicar_vale_item
+        try:
+            for item_in, item_criado in zip(dados.itens, itens_criados):
+                if not item_in.vale:
+                    continue
+                pessoa_vale = session.get(Pessoa, item_in.vale.pessoa_id)
+                resultado = aplicar_vale_item(session, item_criado, item_in.vale, user, fazenda_id)
+                vales_criados.append({
+                    "item_id": item_criado.id,
+                    "vale_tipo": resultado["vale_tipo"],
+                    "vale_id": resultado["vale_id"],
+                    "pessoa_nome": pessoa_vale.nome if pessoa_vale else None,
+                    "valor": item_criado.valor_total,
+                })
+        except HTTPException:
+            # Corrida rara (passou em validar_vale_item mas falhou de
+            # verdade ao aplicar — ex.: 40% do salário estourado por outro
+            # vale lançado nesse meio-tempo). A nota já foi commitada acima
+            # — desfaz por completo em vez de deixar uma nota "meio vale".
+            for it in itens_criados:
+                session.delete(it)
+            for c in criados:
+                session.delete(c)
+            session.commit()
+            raise
+
     # Compra de produto estocável dá entrada automática no estoque — só para
     # despesa e só quando NÃO está vinculada a um Pedido (nesse caso a
     # entrada física já é lançada manualmente via POST /estoque/movimentar
@@ -1655,6 +1772,9 @@ def criar_lancamento(
         data_movimento = dados.data_emissao or data_competencia or date.today()
         usuario_id = user.id if isinstance(user, Usuario) else None
         for item_in, item_criado in zip(dados.itens, itens_criados):
+            if item_in.vale:
+                # Ração do cachorro do funcionário não é estoque da fazenda.
+                continue
             if item_in.tipo_item != "produto" or not item_in.quantidade or item_in.quantidade <= 0:
                 continue
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
@@ -1674,6 +1794,7 @@ def criar_lancamento(
         "valor_bruto": valor_bruto,
         "valor_liquido": valor_liquido,
         "avisos_estoque": avisos_estoque,
+        "vales_criados": vales_criados,
     }
 
 
@@ -2092,6 +2213,15 @@ def editar_lancamento(
         ).all()
         if len(itens) == 1:
             item = itens[0]
+            # Este item já virou um vale de verdade (ValeFuncionario/ValeAvulso)
+            # com valor próprio — mudar o valor da nota por aqui deixaria o
+            # item e o vale divergentes em silêncio. O usuário precisa
+            # desmarcar o vale primeiro (ver /cadastro/vale-item/{item_id}).
+            if "valor_total" in enviados and eh_item_de_vale(item):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Este item gerou um vale de R$ {item.valor_total:.2f} — desmarque o vale antes de alterar o valor da nota.",
+                )
             if "descricao" in enviados:
                 item.descricao = registro.descricao
             if "valor_total" in enviados:

@@ -204,7 +204,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("rmca_custo_alimentacao", "BOOLEAN"),
         ("natureza", "VARCHAR"),
     ],
-    "lancamento_item": [("tipo_item", "VARCHAR")],
+    "lancamento_item": [
+        ("tipo_item", "VARCHAR"),
+        ("vale_funcionario_id", "INTEGER"), ("vale_avulso_id", "INTEGER"),
+    ],
     "folha_pagamento": [
         ("recorrente", "BOOLEAN"),
         ("dia_vencimento", "INTEGER"),

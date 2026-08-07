@@ -29,6 +29,7 @@ from . import (
     protocolos_sanitarios,
     rh_contratos,
     rh_folha,
+    rh_vale_item,
     sanitario,
     servicos,
 )
@@ -62,6 +63,7 @@ router.include_router(lida.router)
 router.include_router(servicos.router)
 router.include_router(rh_folha.router)
 router.include_router(rh_contratos.router)
+router.include_router(rh_vale_item.router)
 
 __all__ = [
     "router",

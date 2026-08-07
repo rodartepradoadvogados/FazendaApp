@@ -19,11 +19,12 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo, Pessoa, Usuario,
-    ValeFuncionario, ValeParcela,
+    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
+    Pessoa, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
 from fazenda.rules.parametros import (
     dias_ferias_padrao,
@@ -1264,6 +1265,7 @@ def listar_vales(
         query = query.where(ValeFuncionario.fazenda_id == fazenda_id)
     vales = session.exec(query.order_by(ValeFuncionario.data_pagamento.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {v.usuario_id for v in vales})
+    origens = origens_lancamento_por_vale(session, {v.id for v in vales}, "vale_funcionario_id")
     saida = []
     for v in vales:
         parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == v.id)).all()
@@ -1271,6 +1273,7 @@ def listar_vales(
             **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"),
             "usuario_nome": nomes_usuarios.get(v.usuario_id),
             "parcelas_detalhe": sorted(({**p.model_dump()} for p in parcelas), key=lambda p: p["competencia"]),
+            "origem_lancamento": origens.get(v.id),
         })
     return saida
 
@@ -1629,6 +1632,11 @@ def excluir_vale(
             session.delete(conta_gerada)
     for p in parcelas:
         session.delete(p)
+    # Zera o vínculo em qualquer LancamentoItem que apontava para este vale
+    # (caminho inverso: usuário excluiu o vale direto no Relatório de vales,
+    # não pelo checkbox do item) — sem isso ficaria FK pendurada e o item
+    # sumido dos relatórios gerenciais para sempre (ver rules/vale_item.py).
+    limpar_vinculo_de_itens(session, vale_funcionario_id=vale_id)
     session.delete(vale)
     session.commit()
     _reconciliar_vale_competencias(session, pessoa_id, competencias)
