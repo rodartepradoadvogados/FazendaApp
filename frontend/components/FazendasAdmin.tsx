@@ -9,15 +9,10 @@ import {
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
   type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin, type CicloPagamento, type AssinaturaZapSign,
+  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin, type AssinaturaZapSign,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
 import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
-
-const NOME_CICLO: Record<CicloPagamento, string> = {
-  mensal: "Mensal (sem desconto)", trimestral: "Trimestral (5% off)",
-  semestral: "Semestral — Pix Automático QR dinâmico (20% off)",
-};
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -26,6 +21,7 @@ const NOME_MODULO: Record<ModuloComercial, string> = {
   rebanho: "Rebanho", reprodutivo: "Reprodutivo", produtivo: "Produtivo", sanitario: "Sanitário",
   financeiro: "Financeiro (básico)", planejamento: "Planejamento", pedidos: "Pedidos", estoque: "Estoque",
   alimentacao: "Alimentação", agricultura: "Agricultura/Plantio", consultor: "Consultor (Diamond)",
+  formulacao_dietas: "Formulação de Dietas",
 };
 
 function formatarBytes(n: number): string {
@@ -63,7 +59,6 @@ export default function FazendasAdmin() {
 
   const [planoEscolhido, setPlanoEscolhido] = useState<PlanoNome | "custom">("standard");
   const [modulosCustom, setModulosCustom] = useState<Record<ModuloComercial, number | null>>({} as any);
-  const [cicloEscolhido, setCicloEscolhido] = useState<CicloPagamento>("mensal");
   const [salvando, setSalvando] = useState(false);
   const [aprovando, setAprovando] = useState(false);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
@@ -119,7 +114,6 @@ export default function FazendasAdmin() {
   function carregarContrato(fazendaId: number) {
     fetchContratoFazenda(fazendaId).then((ct) => {
       setContrato(ct);
-      setCicloEscolhido(ct.ciclo_pagamento || "mensal");
       if (ct.plano) setPlanoEscolhido(ct.plano);
       else {
         setPlanoEscolhido("custom");
@@ -207,8 +201,8 @@ export default function FazendasAdmin() {
     setSalvando(true); setErro(null); setMsg(null);
     try {
       const dados = planoEscolhido === "custom"
-        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: cicloEscolhido }
-        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: cicloEscolhido };
+        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: "mensal" as const }
+        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: "mensal" as const };
       const ct = await definirContratoFazenda(selecionada, dados);
       setContrato(ct);
       setMsg("Contrato atualizado. Lembre de aprovar/fechar para liberar os módulos.");
@@ -430,23 +424,12 @@ export default function FazendasAdmin() {
               </p>
             ) : null}
 
-            <label style={lbl}>Ciclo de pagamento (desconto por adiantamento)</label>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {(["mensal", "trimestral", "semestral"] as const).map((c) => (
-                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", fontWeight: cicloEscolhido === c ? 700 : 400, cursor: "pointer",
-                  border: "1px solid " + (cicloEscolhido === c ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.3rem 0.55rem",
-                  background: cicloEscolhido === c ? "var(--pill-active-bg)" : "transparent",
-                  color: cicloEscolhido === c ? "var(--pill-active-fg)" : "var(--text)" }}>
-                  <input type="radio" name="ciclo" checked={cicloEscolhido === c} onChange={() => setCicloEscolhido(c)} />
-                  {NOME_CICLO[c]}
-                </label>
-              ))}
-            </div>
+            {/* Trimestral/semestral saíram do catálogo (pedido explícito do
+                usuário, ago/2026) — assinatura é só mensal agora, sem
+                desconto por adiantamento; não há mais o que escolher aqui. */}
             {contrato.preco_mensal != null && (
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-                {cicloEscolhido === "mensal"
-                  ? <>R$ {contrato.preco_mensal.toFixed(2)}/mês.</>
-                  : <>R$ {contrato.preco_mensal.toFixed(2)}/mês — total do ciclo com desconto: <b style={{ color: "var(--text)" }}>R$ {contrato.valor_total_ciclo?.toFixed(2)}</b>.</>}
+                Ciclo de pagamento: Mensal — R$ {contrato.preco_mensal.toFixed(2)}/mês.
               </p>
             )}
 

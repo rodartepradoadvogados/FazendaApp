@@ -269,7 +269,8 @@ export type Fazenda = {
 };
 export type ModuloComercial =
   | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
-  | "planejamento" | "pedidos" | "estoque" | "alimentacao" | "agricultura" | "consultor";
+  | "planejamento" | "pedidos" | "estoque" | "alimentacao" | "agricultura" | "consultor"
+  | "formulacao_dietas";
 export type PlanoNome = "standard" | "silver" | "gold" | "diamond";
 export type ModuloDoContrato = { modulo: ModuloComercial; preco: number; ativo: boolean };
 export type ContratoFazenda = {

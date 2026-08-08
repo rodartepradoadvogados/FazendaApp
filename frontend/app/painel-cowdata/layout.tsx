@@ -8,7 +8,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X,
 } from "lucide-react";
@@ -101,8 +101,23 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
     </>
   );
 
+  // FazendasAdmin.tsx (única tela daqui que reaproveita .card/.card-header do
+  // site) herdava --surface/--text do TEMA DO SITE (claro/escuro/misto,
+  // configurável em Aparência) em vez da paleta fixa deste painel — com o
+  // site em tema claro, o texto (quase branco, pensado pra fundo escuro)
+  // ficava ilegível sobre o card branco. Redefinindo os tokens aqui, escopados
+  // a esta subárvore, qualquer coisa que use .card/.card-header sempre lê
+  // certo, independente do tema do site logado.
+  const tokensPainel = {
+    "--surface": COR.painel, "--surface-2": CORES_CONTADOR.painelAlt,
+    "--border": COR.borda, "--border-strong": CORES_CONTADOR.bordaClara,
+    "--text": COR.texto, "--text-muted": COR.mudo,
+    "--card-header-bg": CORES_CONTADOR.painelAlt, "--card-header-fg": COR.dourado,
+    "--pill-active-bg": COR.dourado, "--pill-active-fg": COR.bg,
+  } as CSSProperties;
+
   return (
-    <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif" }} className="md:flex">
+    <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }} className="md:flex">
       {/* Barra superior — só no mobile. Mesmo padrão do Sidebar.tsx do site. */}
       <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
         style={{ height: "3.25rem", background: COR.painel, borderBottom: `1px solid ${COR.borda}` }}>
