@@ -2,14 +2,15 @@
 // Casca do portal "Formulação de Dietas" (/dietas) — mesmo padrão estrutural
 // do InsightsLayout (cabeçalho com marca + faixa de navegação, casca própria
 // fora da Sidebar da fazenda, aberta numa aba nova de verdade do navegador —
-// ver Sidebar.tsx), mas com identidade própria: preto + branco + musgo, com
-// ouro reservado só para BOTÕES (pedido explícito do usuário, ago/2026 —
-// trocou o vinho/dourado institucional original só aqui; InsightsLayout
-// continua vinho/dourado, ninguém pediu mexer nele ainda). Musgo é para
-// navegação/estrutura (aba ativa, "Data" do wordmark); ouro é para ação
-// (Voltar, Criar e continuar, os círculos de etapa do WizardStepper,
-// Importar/Adicionar/Biblioteca em GradeAlimentos) — nunca os dois com o
-// mesmo papel.
+// ver Sidebar.tsx), mas com identidade própria: preto + branco + azul
+// petróleo, com ouro reservado só para BOTÕES (pedido explícito do usuário,
+// ago/2026 — trocou o vinho/dourado institucional original só aqui;
+// InsightsLayout continua vinho/dourado, ninguém pediu mexer nele ainda).
+// Era musgo (verde) na primeira versão; trocado para azul petróleo a pedido
+// do usuário logo em seguida. Azul petróleo é para navegação/estrutura (aba
+// ativa, "Data" do wordmark); ouro é para ação (Voltar, Criar e continuar,
+// os círculos de etapa do WizardStepper, Importar/Adicionar/Biblioteca em
+// GradeAlimentos) — nunca os dois com o mesmo papel.
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
@@ -18,7 +19,7 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { getFazendaAtual } from "@/lib/api";
 
-const MUSGO = "#6FAE7C";
+const PETROLEO = "#1F6F7D";
 
 // Todo token que os componentes do portal (DietasLayout, WizardStepper,
 // GradeAlimentos, PainelBalanco etc. — ver grep feito antes de escrever isto)
@@ -64,7 +65,7 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <CowDataMark size={34} />
             <div>
-              <CowDataWordmark size="1rem" cowColor="var(--cream)" dataColor={MUSGO} />
+              <CowDataWordmark size="1rem" cowColor="var(--cream)" dataColor={PETROLEO} />
               <p style={{ margin: 0, fontSize: "0.68rem", color: "rgba(243,231,211,0.7)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                 <FlaskConical size={11} /> Formulação de Dietas{fazendaNome ? ` · ${fazendaNome}` : ""}
               </p>
@@ -87,21 +88,21 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
           <Link href="/dietas" style={{
             padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
             color: path === "/dietas" ? "var(--cream)" : "rgba(243,231,211,0.62)",
-            borderBottom: path === "/dietas" ? `2px solid ${MUSGO}` : "2px solid transparent",
+            borderBottom: path === "/dietas" ? `2px solid ${PETROLEO}` : "2px solid transparent",
           }}>
             Simulações
           </Link>
           <Link href="/dietas/nova" style={{
             padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
             color: path === "/dietas/nova" ? "var(--cream)" : "rgba(243,231,211,0.62)",
-            borderBottom: path === "/dietas/nova" ? `2px solid ${MUSGO}` : "2px solid transparent",
+            borderBottom: path === "/dietas/nova" ? `2px solid ${PETROLEO}` : "2px solid transparent",
           }}>
             Nova simulação
           </Link>
           {emSimulacao && (
             <span style={{
               padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, whiteSpace: "nowrap",
-              color: "var(--cream)", borderBottom: `2px solid ${MUSGO}`,
+              color: "var(--cream)", borderBottom: `2px solid ${PETROLEO}`,
             }}>
               Simulação #{idSimulacao}
             </span>
