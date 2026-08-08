@@ -78,7 +78,7 @@ export default function RemediosPorDoenca({ onVoltar }: { onVoltar: () => void }
               <span style={{
                 fontSize: "0.72rem", fontWeight: 800, padding: "0.15rem 0.55rem", borderRadius: "999px", flexShrink: 0,
                 background: o.prioridade === 1 ? "var(--mob-verde)" : "var(--mob-surface-2)",
-                color: o.prioridade === 1 ? "#fff" : "var(--mob-muted)",
+                color: o.prioridade === 1 ? "var(--mob-verde-fg)" : "var(--mob-muted)",
                 border: o.prioridade === 1 ? "none" : "1px solid var(--mob-border)",
               }}>
                 {o.prioridade}ª escolha

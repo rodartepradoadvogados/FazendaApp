@@ -86,7 +86,7 @@ function EnviarDgForm({ numero, onFeito, onCancelar }: { numero: string; onFeito
     <div style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--mob-border)" }}>
       <div className="flex items-center gap-2">
         <input type="email" placeholder="e-mail do destinatário" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} />
-        <button onClick={enviar} disabled={enviando} style={{ border: "none", background: "var(--mob-dourado-2)", color: "#fff", borderRadius: "var(--r-app)", padding: "0.4rem 0.6rem" }}>
+        <button onClick={enviar} disabled={enviando} style={{ border: "none", background: "var(--mob-dourado-2)", color: "var(--mob-acao-fg)", borderRadius: "var(--r-app)", padding: "0.4rem 0.6rem" }}>
           <Check size={15} />
         </button>
         <button onClick={onCancelar} style={{ border: "1px solid var(--mob-border)", background: "transparent", color: "var(--mob-muted)", borderRadius: "var(--r-app)", padding: "0.4rem 0.6rem" }}>
@@ -168,7 +168,7 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
       <MobVoltar titulo="Agenda Reprodutiva" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_agenda_vet" mostrar={doCache} />
       {sucesso && (
-        <div className="mb-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-app)", padding: "0.5rem 0.8rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
+        <div className="mb-2" style={{ background: "color-mix(in srgb, var(--green-light) 15%, transparent)", border: "1px solid var(--green-light)", borderRadius: "var(--r-app)", padding: "0.5rem 0.8rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
           {sucesso}
         </div>
       )}

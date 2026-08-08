@@ -194,7 +194,7 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                         <input style={inp} value={vals.obs} onChange={(e) => setVals((s) => ({ ...s, obs: e.target.value }))} /></div>
                       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
                         <button type="button" disabled={ocupado === a.id} onClick={() => salvar(a)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "#fff", background: "var(--mob-verde)", border: "none", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-verde-fg)", background: "var(--mob-verde)", border: "none", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
                           <Check size={16} /> {ocupado === a.id ? "…" : "Salvar"}
                         </button>
                         <button type="button" disabled={ocupado === a.id} onClick={() => setEditId(null)}

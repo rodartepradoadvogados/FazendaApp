@@ -78,7 +78,7 @@ function ConversaView() {
             alignSelf: m.autor === "usuario" ? "flex-end" : "flex-start",
             maxWidth: "85%", padding: "0.6rem 0.8rem", borderRadius: "var(--r-app)", fontSize: "0.86rem", whiteSpace: "pre-wrap",
             background: m.autor === "usuario" ? "var(--mob-vinho)" : m.autor === "erro" ? "var(--mob-vermelho)" : "var(--mob-surface-2)",
-            color: m.autor === "usuario" ? "#F8E9B0" : m.autor === "erro" ? "#fff" : "var(--mob-text)",
+            color: m.autor === "usuario" ? "var(--mob-dourado-pale)" : m.autor === "erro" ? "#fff" : "var(--mob-text)",
           }}>
             {m.texto}
           </div>

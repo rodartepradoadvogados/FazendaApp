@@ -764,6 +764,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-acao-fg:   #1A1A1A;              /* texto escuro — contraste sobre o dourado */
   --mob-sombra:    0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
   --mob-verde:     #047857;         /* verde OK — escurecido p/ contraste AA em texto no sol forte (4.5:1+) */
+  --mob-verde-fg:  #fff;             /* texto sobre fundo --mob-verde — claro no escuro-de-marca */
   --mob-verde-neon:#00FF9D;
   --mob-vermelho:  #DC2626;
   --mob-azul:      #2563EB;
@@ -771,6 +772,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-roxo:      #7C3AED;
   --mob-laranja:   #C2410C;
   --mob-amarelo:   #A16207;
+  --mob-dourado-pale: #F8E9B0;       /* dourado pálido — usado sobre fundo vinho fixo (header/bolha), mesmo valor nos dois temas */
   /* Vinho/verde "fixos" — para a alternância de cor dos cartões (Agenda, Ficha
      do animal) no modo escuro. Ao contrário de --mob-vinho, NÃO são trocados
      pelo bloco de paleta "verde" abaixo: o contorno alterna vinho/verde sempre,
@@ -810,6 +812,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-acao-fg:   #1A1A1A;
   --mob-sombra:    none;
   --mob-verde:     #00E08C;
+  --mob-verde-fg:  #04200F;         /* verde escuro/quase-preto — contraste sobre o verde-neon do escuro */
   --mob-azul:      #5BA8E0;
   --mob-ambar:     #E8A33D;
   --mob-roxo:      #A78BFA;

@@ -52,7 +52,7 @@ export default function CalendarioSanitario({ onVoltar }: { onVoltar: () => void
                 style={{
                   fontSize: "0.68rem", fontWeight: 700, padding: "0.2rem 0.5rem", borderRadius: 6, whiteSpace: "nowrap",
                   color: j.sugerir_veterinario ? "var(--mob-verde)" : "var(--mob-muted)",
-                  background: j.sugerir_veterinario ? "rgba(4,120,87,0.12)" : "transparent",
+                  background: j.sugerir_veterinario ? "color-mix(in srgb, var(--mob-verde) 12%, transparent)" : "transparent",
                   border: j.sugerir_veterinario ? "none" : "1px solid var(--mob-border)",
                 }}
               >
@@ -82,7 +82,7 @@ function LinhaEvento({ evento: o, router }: { evento: JanelaCalendarioEvento; ro
       {(o.usa_cronograma && o.cronograma) || o.servico_financeiro ? (
         <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.35rem", flexWrap: "wrap" }}>
           {o.usa_cronograma && o.cronograma && (
-            <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--mob-azul)", background: "rgba(37,99,235,0.1)", borderRadius: 6, padding: "0.15rem 0.45rem" }}>
+            <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--mob-azul)", background: "color-mix(in srgb, var(--mob-azul) 10%, transparent)", borderRadius: 6, padding: "0.15rem 0.45rem" }}>
               Cronograma: {ROTULO_STATUS[o.cronograma.status] || o.cronograma.status}
             </span>
           )}
