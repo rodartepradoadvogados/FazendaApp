@@ -1677,6 +1677,55 @@ export async function responderAuditoriaDiaria(auditoriaId: number, diasTrabalha
   return res.json();
 }
 
+// Calendário "estilo Cinemark" de dias trabalhados/folga da diária — todo dia
+// nasce marcado como trabalhado (`trabalhado: true`), o usuário toca nos dias
+// de folga pra desmarcar. `dias` sempre vem denso (um item por dia corrido no
+// período), então o componente só precisa renderizar o que a API manda, sem
+// nenhuma lógica de "default" no cliente.
+export type DiaTrabalhadoDiaria = { data: string; trabalhado: boolean; pago: boolean };
+export type DiasDiariaResposta = {
+  diaria_id: number; pessoa_nome: string; valor_diaria: number;
+  data_inicio: string; data_fim: string | null; hoje: string;
+  modo: "ultimo_periodo" | "completo";
+  periodo_inicio: string; periodo_fim: string;
+  ultima_folga: string | null; controle_por_dia_desde: string | null;
+  nunca_auditado: boolean; pago_ate: string | null;
+  dias: DiaTrabalhadoDiaria[];
+  resumo_periodo: { dias_no_periodo: number; dias_trabalhados: number; dias_folga: number; valor_periodo: number };
+};
+export async function fetchDiasDiaria(
+  diariaId: number, params?: { modo?: "ultimo_periodo" | "completo"; desde?: string; ate?: string },
+): Promise<DiasDiariaResposta> {
+  const qs = new URLSearchParams();
+  if (params?.modo) qs.set("modo", params.modo);
+  if (params?.desde) qs.set("desde", params.desde);
+  if (params?.ate) qs.set("ate", params.ate);
+  const query = qs.toString();
+  const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/dias${query ? `?${query}` : ""}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Dias da diária error: ${res.status}`); }
+  return res.json();
+}
+/** Substitui (replace, não merge) o estado dos dias do período informado. Se
+ * o período já tem pagamento registrado, a API responde 409 com uma
+ * mensagem pronta em `detail` (`err.message`/`err.detail`) — reenviar com
+ * `confirmar_periodo_pago: true`; mesmo idioma de `atualizarParcelaVale` etc.
+ * (ver `err.status` nesta função). */
+export async function salvarDiasDiaria(diariaId: number, dados: {
+  periodo_inicio: string; periodo_fim: string; dias_nao_trabalhados: string[]; confirmar_periodo_pago?: boolean;
+}): Promise<unknown> {
+  const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/dias`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao salvar dias trabalhados");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // ── Férias (Financeiro > Ações > Folha de Pagamento > Férias / 13º) ──
 // Controle DENTRO do app (cálculo, lançamento e acompanhamento) — sem envio
 // ao eSocial (fora de escopo).

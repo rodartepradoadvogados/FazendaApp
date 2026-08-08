@@ -1,14 +1,16 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt } from "lucide-react";
+import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock } from "lucide-react";
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
   confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro,
+  fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
+import CalendarioDiasTrabalhados from "@/components/CalendarioDiasTrabalhados";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -24,6 +26,13 @@ type Diaria = {
   conta_dia_a_dia: boolean; auditar_periodicamente: boolean;
   frequencia_auditoria: string | null; dia_semana_auditoria: number | null; intervalo_dias_auditoria: number | null;
   auditorias_pendentes: AuditoriaPendente[];
+  // Calendário "estilo Cinemark" de dias trabalhados/folga (ver rh_contratos.py::_resumo_diaria).
+  // `controle_por_dia_desde` null = diária nunca tocou o calendário (só a
+  // contagem cega legada); uma vez setado, nunca mais volta a null.
+  controle_por_dia_desde: string | null;
+  dias_folga: number;
+  ultima_folga: string | null;
+  pago_ate: string | null;
 };
 
 const DIAS_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -246,6 +255,90 @@ export default function DiariaView() {
     }
   }
 
+  // Calendário "estilo Cinemark" de dias trabalhados/folga — abre em modo
+  // "completo" (nunca auditada ainda, ou "editar diárias já auditadas") ou
+  // "ultimo_periodo" ("corrigir último período"); ver rh_contratos.py.
+  const [calendarioAberto, setCalendarioAberto] = useState<{ diariaId: number; modo: "ultimo_periodo" | "completo" } | null>(null);
+  const [dadosCalendario, setDadosCalendario] = useState<DiasDiariaResposta | null>(null);
+  const [diasNaoTrabalhados, setDiasNaoTrabalhados] = useState<Set<string>>(new Set());
+  const [calendarioCarregando, setCalendarioCarregando] = useState(false);
+  const [calendarioSalvando, setCalendarioSalvando] = useState(false);
+  const [calendarioErro, setCalendarioErro] = useState<string | null>(null);
+  const [calendarioMsg, setCalendarioMsg] = useState<string | null>(null);
+  const [calendarioDesde, setCalendarioDesde] = useState("");
+  const [calendarioAte, setCalendarioAte] = useState("");
+
+  async function abrirCalendario(diariaId: number, modo: "ultimo_periodo" | "completo", opts?: { desde?: string; ate?: string }) {
+    setCalendarioAberto({ diariaId, modo });
+    setCalendarioErro(null);
+    setCalendarioMsg(null);
+    setCalendarioCarregando(true);
+    setDadosCalendario(null);
+    try {
+      const dados = await fetchDiasDiaria(diariaId, { modo, desde: opts?.desde, ate: opts?.ate });
+      setDadosCalendario(dados);
+      setDiasNaoTrabalhados(new Set(dados.dias.filter((d) => !d.trabalhado).map((d) => d.data)));
+      setCalendarioDesde(dados.periodo_inicio);
+      setCalendarioAte(dados.periodo_fim);
+    } catch (e: any) {
+      setCalendarioErro(e.message || "Erro ao carregar calendário");
+    } finally {
+      setCalendarioCarregando(false);
+    }
+  }
+
+  function fecharCalendario() {
+    setCalendarioAberto(null);
+    setDadosCalendario(null);
+    setDiasNaoTrabalhados(new Set());
+    setCalendarioErro(null);
+  }
+
+  function toggleDiaCalendario(iso: string) {
+    setDiasNaoTrabalhados((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(iso)) novo.delete(iso); else novo.add(iso);
+      return novo;
+    });
+  }
+
+  async function salvarCalendario() {
+    if (!calendarioAberto || !dadosCalendario) return;
+    setCalendarioErro(null);
+    setCalendarioSalvando(true);
+    const body = {
+      periodo_inicio: dadosCalendario.periodo_inicio,
+      periodo_fim: dadosCalendario.periodo_fim,
+      dias_nao_trabalhados: Array.from(diasNaoTrabalhados),
+    };
+    try {
+      await salvarDiasDiaria(calendarioAberto.diariaId, body);
+      fecharCalendario();
+      setCalendarioMsg("Dias trabalhados atualizados.");
+      carregar();
+    } catch (e: any) {
+      // 409 = período já tem pagamento registrado — o backend já manda a
+      // mensagem pronta em português; reenvia com confirmar_periodo_pago
+      // se o usuário confirmar (mesmo idioma de FolhaPagamentoView/ValeItemModal).
+      if (e.status === 409) {
+        if (window.confirm(e.message)) {
+          try {
+            await salvarDiasDiaria(calendarioAberto.diariaId, { ...body, confirmar_periodo_pago: true });
+            fecharCalendario();
+            setCalendarioMsg("Dias trabalhados atualizados.");
+            carregar();
+          } catch (e2: any) {
+            setCalendarioErro(e2.message || "Erro ao salvar dias trabalhados");
+          }
+        }
+      } else {
+        setCalendarioErro(e.message || "Erro ao salvar dias trabalhados");
+      }
+    } finally {
+      setCalendarioSalvando(false);
+    }
+  }
+
   const auditoriasPendentes = useMemo(
     () => (itens ?? []).flatMap((d) => (d.auditorias_pendentes ?? []).map((a) => ({ ...a, pessoa_nome: d.pessoa_nome }))),
     [itens],
@@ -428,6 +521,7 @@ export default function DiariaView() {
       <div className="card mt-4">
         <div className="card-header mb-3">Controle de diárias</div>
         {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erroExclusao}</p>}
+        {calendarioMsg && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{calendarioMsg}</p>}
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
         {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma diarista lançada ainda.</p>}
         {itens && itens.length > 0 && (
@@ -439,6 +533,7 @@ export default function DiariaView() {
                   <ThOrdenavel label="Início" campo="data_inicio" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Fim" campo="data_fim" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Nº diárias" campo="numero_diarias" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Folgas" campo="dias_folga" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Valor diária" campo="valor_diaria" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Total até hoje" campo="total_ate_hoje" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Pago" campo="valor_pago" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
@@ -455,6 +550,7 @@ export default function DiariaView() {
                     <td>{fmtDataBR(d.data_inicio)}</td>
                     <td>{fmtDataBR(d.data_fim)}</td>
                     <td>{d.numero_diarias}</td>
+                    <td>{d.dias_folga ?? 0}</td>
                     <td>{formatBRL(d.valor_diaria)}</td>
                     <td>{formatBRL(d.total_ate_hoje)}</td>
                     <td>{formatBRL(d.valor_pago)}</td>
@@ -474,6 +570,26 @@ export default function DiariaView() {
                           onClick={() => setPagamentosAbertoId(pagamentosAbertoId === d.id ? null : d.id)}>
                           <Receipt size={13} /> {d.pagamentos?.length ?? 0}
                         </button>
+                        {!d.controle_por_dia_desde ? (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                            title="Abrir calendário para marcar os dias trabalhados desde o início da diária (todo dia já nasce marcado — toque nos dias de folga)"
+                            onClick={() => abrirCalendario(d.id, "completo")}>
+                            <CalendarCheck2 size={13} /> Marcar dias trabalhados
+                          </button>
+                        ) : (
+                          <>
+                            <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                              title="Corrigir o último período (desde a última folga registrada até hoje)"
+                              onClick={() => abrirCalendario(d.id, "ultimo_periodo")}>
+                              <CalendarCheck2 size={13} /> Corrigir último período
+                            </button>
+                            <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                              title="Editar diárias já auditadas pelo calendário, num período à sua escolha"
+                              onClick={() => abrirCalendario(d.id, "completo")}>
+                              <CalendarClock size={13} /> Editar diárias já auditadas
+                            </button>
+                          </>
+                        )}
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir diária"
                           disabled={ocupadoExclusao === d.id} onClick={() => excluirDiaria(d)}>
                           <Trash2 size={13} />
@@ -483,7 +599,7 @@ export default function DiariaView() {
                   </tr>
                   {pagamentosAbertoId === d.id && (
                     <tr>
-                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                         <div style={{ fontSize: "0.75rem", fontWeight: 700, marginBottom: "0.4rem" }}>Pagamentos lançados</div>
                         {!d.pagamentos?.length && <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhum pagamento lançado ainda.</p>}
                         {d.pagamentos?.length > 0 && (
@@ -514,7 +630,7 @@ export default function DiariaView() {
                   )}
                   {editandoId === d.id && (
                     <tr>
-                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
                           <div><label style={lbl}>Data de início</label>
                             <input type="date" style={inputSm} value={editDataInicio} onChange={(e) => setEditDataInicio(e.target.value)} /></div>
@@ -564,6 +680,61 @@ export default function DiariaView() {
           <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} onClick={() => registrarPagamento(pagandoId)}>
             Confirmar pagamento
           </button>
+        </Modal>
+      )}
+
+      {calendarioAberto && (
+        <Modal title="Dias trabalhados" onClose={fecharCalendario} width="760px">
+          {calendarioCarregando && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+          {calendarioErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{calendarioErro}</p>}
+          {dadosCalendario && (
+            <div>
+              <div style={{ marginBottom: "0.75rem" }}>
+                <div style={{ fontWeight: 700 }}>{dadosCalendario.pessoa_nome}</div>
+                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                  Valor da diária: {formatBRL(dadosCalendario.valor_diaria)} · Período:{" "}
+                  {fmtDataBR(dadosCalendario.periodo_inicio)} a {fmtDataBR(dadosCalendario.periodo_fim)}
+                </div>
+                {dadosCalendario.modo === "ultimo_periodo" && dadosCalendario.ultima_folga && (
+                  <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    Última folga: {fmtDataBR(dadosCalendario.ultima_folga)} — mostrando a partir do dia seguinte
+                  </div>
+                )}
+              </div>
+
+              {calendarioAberto.modo === "completo" && (
+                <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+                  <div>
+                    <label style={lbl}>Desde</label>
+                    <input type="date" style={inputSm} value={calendarioDesde} onChange={(e) => setCalendarioDesde(e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Até</label>
+                    <input type="date" style={inputSm} value={calendarioAte} onChange={(e) => setCalendarioAte(e.target.value)} />
+                  </div>
+                  <button className="btn-ghost" style={{ fontSize: "0.75rem", marginTop: "1.2rem" }}
+                    onClick={() => abrirCalendario(calendarioAberto.diariaId, "completo", { desde: calendarioDesde, ate: calendarioAte })}>
+                    Buscar
+                  </button>
+                </div>
+              )}
+
+              <CalendarioDiasTrabalhados
+                dados={dadosCalendario}
+                diasNaoTrabalhados={diasNaoTrabalhados}
+                onToggleDia={toggleDiaCalendario}
+              />
+
+              <div className="flex items-center gap-2" style={{ marginTop: "1rem" }}>
+                <button className="btn-primary" style={{ fontSize: "0.8rem" }} disabled={calendarioSalvando} onClick={salvarCalendario}>
+                  {calendarioSalvando ? "Salvando…" : "Salvar"}
+                </button>
+                <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={fecharCalendario}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </div>
