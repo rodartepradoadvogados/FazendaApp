@@ -1770,11 +1770,6 @@ export type CalculoRescisao = {
   data_referencia_tempo_servico: string;
   valor_total: number;
 };
-export type RegistroRescisao = {
-  id: number; numero_lancamento: string | null; descricao: string; fornecedor_cliente: string | null;
-  valor_total: number; data_competencia: string; data_vencimento: string | null; valor_pago: number | null;
-};
-
 export async function simularRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
   const res = await authFetch(`${API}/cadastro/rescisao/calcular`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1782,16 +1777,81 @@ export async function simularRescisao(dados: RescisaoDados): Promise<CalculoResc
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular rescisão"); }
   return res.json();
 }
-export async function criarRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
-  const res = await authFetch(`${API}/cadastro/rescisao`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
-  });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar rescisão"); }
+
+// Simulação/fechamento persistidos de rescisão (fluxo em 4 etapas: simular →
+// editar verbas → fechar → acompanhar). Diferente de `simularRescisao`
+// acima (só calcula, não grava nada), estes endpoints (plural `/rescisoes`)
+// gravam um rascunho editável que só vira lançamento em Contas a Pagar
+// quando fechado.
+export type StatusRescisao = "simulacao" | "fechada";
+export type FormaLancamentoRescisao = "unico" | "detalhado";
+export type LinhaDetalheRescisao = { label: string; valor: number };
+
+export type RescisaoSimulacaoDados = {
+  pessoa_id: number; tipo_rescisao: TipoRescisao; data_desligamento: string;
+  dias_ferias_vencidas?: number; aviso_previo_trabalhado?: boolean;
+  observacao?: string | null; centro_custo?: string;
+  // Overrides das verbas calculadas — null/omitido = servidor usa o valor calculado.
+  valor_saldo_salario?: number | null; valor_aviso_previo?: number | null;
+  valor_ferias_vencidas?: number | null; valor_ferias_proporcionais?: number | null;
+  valor_decimo_terceiro_proporcional?: number | null; valor_multa_fgts?: number | null;
+  // Descontos — sempre manuais (o servidor nunca calcula sozinho).
+  valor_inss?: number; valor_ir?: number; valor_vale_em_aberto?: number;
+};
+
+export type RegistroRescisaoFuncionario = {
+  id: number; pessoa_id: number | null; tipo_rescisao: TipoRescisao | null;
+  data_desligamento: string; dias_ferias_vencidas: number; aviso_previo_trabalhado: boolean;
+  salario_base: number; data_admissao: string | null;
+  valor_saldo_salario: number; valor_aviso_previo: number; valor_ferias_vencidas: number;
+  valor_ferias_proporcionais: number; valor_decimo_terceiro_proporcional: number; valor_multa_fgts: number;
+  valor_inss: number; valor_ir: number; valor_vale_em_aberto: number;
+  valor_bruto: number; valor_total: number;
+  dias_saldo_salario: number; dias_aviso_previo: number; dias_aviso_previo_indenizados: number;
+  meses_ferias_proporcionais: number; meses_decimo_terceiro: number; percentual_multa_fgts: number;
+  status: StatusRescisao; forma_lancamento: FormaLancamentoRescisao | null;
+  data_fechamento: string | null; data_pagamento: string | null; inativou_pessoa: boolean;
+  observacao: string | null; numero_lancamento_gerado: string | null; centro_custo: string | null;
+  criado_em: string; usuario_id: number | null; fazenda_id: number;
+  pessoa_nome: string; usuario_nome: string | null; detalhe: LinhaDetalheRescisao[]; legado: boolean;
+  // Só presentes em linhas legado (projeção de ContaGerencial pré-migração).
+  legado_conta_id?: number; descricao?: string;
+};
+
+export type RescisaoFecharDados = {
+  forma_lancamento?: FormaLancamentoRescisao; status_pagamento?: "pendente" | "pago";
+  data_pagamento?: string | null; inativar_pessoa?: boolean; centro_custo?: string | null;
+};
+
+export async function fetchRescisoesFuncionario(): Promise<RegistroRescisaoFuncionario[]> {
+  const res = await authFetch(`${API}/cadastro/rescisoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Rescisões error: ${res.status}`);
   return res.json();
 }
-export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
-  const res = await authFetch(`${API}/cadastro/rescisao`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Rescisão error: ${res.status}`);
+export async function criarSimulacaoRescisao(dados: RescisaoSimulacaoDados): Promise<RegistroRescisaoFuncionario> {
+  const res = await authFetch(`${API}/cadastro/rescisoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar simulação de rescisão"); }
+  return res.json();
+}
+export async function atualizarSimulacaoRescisao(id: number, dados: RescisaoSimulacaoDados): Promise<RegistroRescisaoFuncionario> {
+  const res = await authFetch(`${API}/cadastro/rescisoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar simulação de rescisão"); }
+  return res.json();
+}
+export async function excluirSimulacaoRescisao(id: number) {
+  const res = await authFetch(`${API}/cadastro/rescisoes/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir simulação de rescisão"); }
+  return res.json();
+}
+export async function fecharRescisao(id: number, dados: RescisaoFecharDados): Promise<RegistroRescisaoFuncionario> {
+  const res = await authFetch(`${API}/cadastro/rescisoes/${id}/fechar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao fechar rescisão"); }
   return res.json();
 }
 
