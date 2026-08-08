@@ -118,7 +118,11 @@ export default function FazendasAdmin() {
       else {
         setPlanoEscolhido("custom");
         const mapa: Record<string, number> = {};
-        ct.modulos.forEach((m) => { mapa[m.modulo] = m.preco; });
+        // Só os ATIVOS — a lista inclui também módulos já desativados no
+        // passado (ct.modulos guarda todo o histórico, ver _publico_contrato
+        // no backend); marcar esses de novo na tela seria reativar sem querer.
+        ct.modulos.filter((m) => m.ativo).forEach((m) => { mapa[m.modulo] = m.preco; });
+        if (mapa.rebanho == null) mapa.rebanho = 0; // sempre obrigatório
         setModulosCustom(mapa as any);
       }
     }).catch((e) => setErro(e.message));
@@ -158,6 +162,22 @@ export default function FazendasAdmin() {
   }
 
   const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
+
+  // Trocar de um plano fechado (ex.: Diamond) para "Sob medida" NÃO herdava
+  // os módulos que a fazenda já tinha — modulosCustom ficava vazio, e como o
+  // checkbox de Rebanho é sempre `disabled` (é obrigatório, não dá pra
+  // desmarcar), ele nascia desmarcado e IMPOSSÍVEL de marcar na tela — ao
+  // salvar, o backend recusava com "Rebanho é obrigatório em todo contrato"
+  // sem nenhuma saída visível. Agora, ao entrar em "Sob medida", pré-marca
+  // com os módulos ATIVOS do contrato atual (preço herdado, ajustável) —
+  // Rebanho sempre entra, mesmo que por algum motivo não estivesse na lista.
+  function selecionarSobMedida() {
+    const semente: Record<string, number> = {};
+    (contrato?.modulos || []).filter((m) => m.ativo).forEach((m) => { semente[m.modulo] = m.preco; });
+    if (semente.rebanho == null) semente.rebanho = 0;
+    setModulosCustom(semente as any);
+    setPlanoEscolhido("custom");
+  }
 
   async function vincular() {
     if (selecionada == null || !novoUsername.trim()) { setErro("Informe o usuário (username)."); return; }
@@ -413,7 +433,7 @@ export default function FazendasAdmin() {
                 border: "1px solid " + (planoEscolhido === "custom" ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem",
                 background: planoEscolhido === "custom" ? "var(--pill-active-bg)" : "transparent",
                 color: planoEscolhido === "custom" ? "var(--pill-active-fg)" : "var(--text)" }}>
-                <input type="radio" name="plano" checked={planoEscolhido === "custom"} onChange={() => setPlanoEscolhido("custom")} />
+                <input type="radio" name="plano" checked={planoEscolhido === "custom"} onChange={selecionarSobMedida} />
                 Sob medida
               </label>
             </div>
