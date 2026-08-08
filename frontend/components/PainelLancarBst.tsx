@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
-import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas } from "@/lib/api";
+import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas, formatDate } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
 import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
@@ -41,7 +41,8 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
               <th style={th}></th>
               <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
               <ThOrdenavel label="Lote" campo="grupo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-              <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+              <ThOrdenavel label="DEL atual" campo="del_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+              <ThOrdenavel label="DEL projetado" campo="del_projetado" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
               <th style={th}>Obs.</th>
             </tr></thead>
             <tbody>{ord.linhasOrdenadas.map((b: any) => (
@@ -54,7 +55,8 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
                 </td>
                 <td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td>
                 <td style={td}>{b.grupo || "—"}</td>
-                <td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td>
+                <td style={{ ...td, textAlign: "right" }}>{b.del_atual ?? "—"}</td>
+                <td style={{ ...td, textAlign: "right" }}>{b.del_projetado ?? "—"}</td>
                 <td style={{ ...td, color: "var(--text-muted)", fontSize: "0.75rem" }}>
                   {b.requer_reanalise ? (b.motivo_exclusao || "Retirada do BST — revisar") : lista === nuncaAplicadas ? "Nunca aplicada — apta na próxima" : "—"}
                 </td>
@@ -68,10 +70,17 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
-      <Tabela titulo="BST — Incluir no próximo BST" lista={nuncaAplicadas} cor="var(--amber)" />
-      <Tabela titulo="BST — Inaptas p/ próxima aplicação" lista={inaptas} cor="var(--red)" />
+    <div className="space-y-2">
+      <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
+        "DEL atual" é o DEL de hoje; "DEL projetado" é o DEL que o animal terá na data da próxima aplicação de BST
+        {agenda?.proxima_visita_bst ? <> (<strong>{formatDate(agenda.proxima_visita_bst)}</strong>)</> : null} — é essa
+        projeção que decide se a vaca chega apta na hora certa.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
+        <Tabela titulo="BST — Incluir no próximo BST" lista={nuncaAplicadas} cor="var(--amber)" />
+        <Tabela titulo="BST — Inaptas p/ próxima aplicação" lista={inaptas} cor="var(--red)" />
+      </div>
     </div>
   );
 }

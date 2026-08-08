@@ -35,6 +35,18 @@ from fazenda.rules.parametros import (
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
 
 
+def _del_projetado_bst(del_atual: int | None, proxima_visita_bst: date | None, hoje: date) -> int | None:
+    """DEL que o animal terá na data da PRÓXIMA aplicação de BST agendada
+    (`proxima_visita_bst`) — mesma conta usada para 'DEL projetado' das
+    candidatas IATF (ver `del_dias_projetado` em
+    `api/routers/reproducao.py::candidatas_iatf_projetadas`): DEL de hoje +
+    dias até a data de referência futura. None quando falta um dos dois dados
+    (sem último parto → sem `del_atual`; sem aplicação de BST agendada ainda)."""
+    if del_atual is None or proxima_visita_bst is None:
+        return None
+    return del_atual + (proxima_visita_bst - hoje).days
+
+
 @dataclass
 class AgendaItem:
     data: date
@@ -114,6 +126,7 @@ class AgendaEngine:
         eventos_manuais: list[dict],
         dias_contas_a_pagar: int | None = None,
         proxima_visita_bst_real: date | None = None,
+        lotes: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -142,6 +155,15 @@ class AgendaEngine:
         intervalo_visita_reprodutiva = _intervalo_visita_reprodutiva_padrao()
         intervalo_bst = _intervalo_bst_padrao()
         dias_reinseminacao = _dias_reinseminacao_referencia()
+
+        # Grupos (Lote.codigo + " - " + Lote.nome, mesmo formato de
+        # Animal.grupo_primario) cujo cadastro já marca `pre_parto=True` —
+        # animal cujo grupo atual já é um desses não recebe o alerta "entrando
+        # no pré-parto" de novo (já foi movido manualmente/pela sugestão de
+        # movimentação; ver lote_criterios.py).
+        grupos_ja_pre_parto = {
+            f"{l['codigo']} - {l['nome']}" for l in (lotes or []) if l.get("pre_parto")
+        }
 
         # Índices auxiliares
         servico_por_animal: dict[str, dict] = {
@@ -307,7 +329,7 @@ class AgendaEngine:
                 # Vem DEPOIS da Secagem (ver abaixo) — pre_parto_max é sempre
                 # menor que periodo_seco_dias, então esta data cai depois.
                 data_pre_parto = data_parto_provavel - timedelta(days=pre_parto_max())
-                if data_pre_parto >= data_referencia:
+                if data_pre_parto >= data_referencia and grupo not in grupos_ja_pre_parto:
                     eventos.append(AgendaItem(
                         data=data_pre_parto,
                         categoria="Reprodutivo",
@@ -380,6 +402,8 @@ class AgendaEngine:
                         del_dias=del_dias,
                         data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
                         data_referencia=data_referencia,
+                        del_atual=del_dias,
+                        del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
                     )
                     res_bst.motivo_exclusao = (
                         "Excluída manualmente do BST — revisar na próxima aplicação"
@@ -401,6 +425,8 @@ class AgendaEngine:
                     del_dias=del_dias_bst,
                     data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
                     data_referencia=data_referencia,
+                    del_atual=del_dias,
+                    del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
                 )
                 if res_bst.elegivel:
                     bst_elegiveis.append(res_bst)

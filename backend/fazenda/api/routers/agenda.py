@@ -45,7 +45,6 @@ from fazenda.rules.lida import (
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
-from fazenda.rules.ponto_critico_recria import eventos_agenda as _eventos_ponto_critico_recria_agenda
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
@@ -282,6 +281,10 @@ def calcular_agenda(
     partos = [_model_to_dict(p) for p in session.exec(_da_fazenda(select(Parto), Parto)).all()]
     estoque = [_model_to_dict(e) for e in session.exec(_da_fazenda(select(Estoque), Estoque)).all()]
     contas = [_model_to_dict(c) for c in session.exec(_da_fazenda(select(ContaGerencial), ContaGerencial)).all()]
+    # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
+    # ver AgendaEngine.calcular, param `lotes`) para não repetir o alerta
+    # "Pré-parto" de quem já foi movido para esse lote.
+    lotes = [_model_to_dict(l) for l in session.exec(_da_fazenda(select(Lote), Lote)).all()]
     query_manuais = select(AgendaManual)
     if fazenda_id is not None:
         query_manuais = query_manuais.where(AgendaManual.fazenda_id.in_((fazenda_id, None)))
@@ -333,6 +336,7 @@ def calcular_agenda(
         eventos_manuais=manuais,
         dias_contas_a_pagar=dias,
         proxima_visita_bst_real=proxima_visita_bst_real,
+        lotes=lotes,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
@@ -605,11 +609,12 @@ def calcular_agenda(
     # propósito, mesmo espírito do protocolo personalizado acima.
     eventos_cronograma_sanitario = _cronograma_sanitario_rules.eventos_agenda(session, data, realizados, fazenda_id)
 
-    # Ponto crítico da recria (decisão do dono do produto): cada
-    # JanelaPontoCritico ATIVA vira aviso de verdade quando há animal (ativo,
-    # da fazenda) entrando na faixa de idade de risco. Fora do AgendaEngine de
-    # propósito, mesmo espírito do protocolo personalizado/lida acima.
-    eventos_ponto_critico_recria = _eventos_ponto_critico_recria_agenda(session, data, realizados, fazenda_id)
+    # NOTA: o alerta "bezerras entrando na janela de risco de doença" (Ponto
+    # Crítico da Recria) foi retirado da Agenda a pedido do dono do produto —
+    # o cadastro JanelaPontoCritico continua existindo/editável em Recria,
+    # só não gera mais esse aviso automático aqui (ver fazenda.rules.coorte.
+    # ponto_critico(), que é o cálculo ESTATÍSTICO usado no card do dashboard
+    # e não tem relação com isto).
 
     # Aplicações programadas ("aplicado? não" / data futura) ainda não baixadas.
     # Dar baixa aqui gera a aplicação de verdade e a saída de estoque.
@@ -985,7 +990,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_ponto_critico_recria
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

@@ -698,7 +698,8 @@ function PreventivoBst() {
                 <span style={{ color: "var(--mob-muted)", fontSize: "0.82rem" }}>Lote {b.grupo || "—"}</span>
               </div>
               <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>
-                DEL: {b.del_dias ?? "—"}{b.requer_reanalise ? ` · ${b.motivo_exclusao || "Revisar"}` : ""}
+                DEL atual: {b.del_atual ?? "—"} · DEL projetado: {b.del_projetado ?? "—"}
+                {b.requer_reanalise ? ` · ${b.motivo_exclusao || "Revisar"}` : ""}
               </div>
             </MobCard>
           ))

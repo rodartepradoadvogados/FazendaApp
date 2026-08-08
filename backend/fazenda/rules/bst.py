@@ -31,6 +31,14 @@ class ResultadoBST:
     dias_para_secar: int | None
     motivo_exclusao: str | None = None
     proxima_dose: date | None = None
+    # DEL de exibição — independentes do `del_dias` acima (que em alguns
+    # chamadores já vem projetado, pois é o valor usado no CRITÉRIO de
+    # elegibilidade). `del_atual` é sempre o DEL de hoje; `del_projetado` é o
+    # DEL que o animal terá na data da PRÓXIMA aplicação de BST agendada
+    # (`proxima_visita_bst`). Ambos None quando não há como calcular (sem
+    # último parto ou sem próxima aplicação agendada) — ver `agenda_engine.py`.
+    del_atual: int | None = None
+    del_projetado: int | None = None
 
 
 def avaliar_bst(
@@ -39,6 +47,8 @@ def avaliar_bst(
     del_dias: int | None,
     data_secagem: date | None,
     data_referencia: date | None = None,
+    del_atual: int | None = None,
+    del_projetado: int | None = None,
 ) -> ResultadoBST:
     """
     Avalia se um animal é elegível para receber BST.
@@ -46,9 +56,13 @@ def avaliar_bst(
     Args:
         numero_matriz: Identificador do animal.
         grupo_primario: Grupo atual do animal (ex. '01 - NOV. ALTA').
-        del_dias: Dias em lactação (DEL).
+        del_dias: Dias em lactação (DEL) usado no critério de elegibilidade —
+            pode já vir projetado para a próxima aplicação, conforme o chamador.
         data_secagem: Data calculada de secagem (ou None se não aplica).
         data_referencia: Data de referência (default: hoje).
+        del_atual: DEL de hoje, só para exibição (não entra no critério).
+        del_projetado: DEL projetado para a data da próxima aplicação de BST
+            agendada, só para exibição (não entra no critério).
 
     Returns:
         ResultadoBST com flag elegivel e motivo de exclusão se inelegível.
@@ -67,6 +81,8 @@ def avaliar_bst(
             grupo=grupo_primario,
             dias_para_secar=None,
             motivo_exclusao=f"Grupo {grupo_primario!r} não é de lactação (01/02/03)",
+            del_atual=del_atual,
+            del_projetado=del_projetado,
         )
 
     # Critério 2: DEL ≥ del_minimo_bst
@@ -78,6 +94,8 @@ def avaliar_bst(
             grupo=grupo_primario,
             dias_para_secar=None,
             motivo_exclusao=f"DEL {del_dias} < {del_minimo} dias",
+            del_atual=del_atual,
+            del_projetado=del_projetado,
         )
 
     # Critério 3: dias até secar > dias_antes_secagem_bst
@@ -92,6 +110,8 @@ def avaliar_bst(
                 grupo=grupo_primario,
                 dias_para_secar=dias_para_secar,
                 motivo_exclusao=f"Faltam apenas {dias_para_secar} dias para secar (mínimo {dias_antes_secagem_min})",
+                del_atual=del_atual,
+                del_projetado=del_projetado,
             )
 
     return ResultadoBST(
@@ -101,4 +121,6 @@ def avaliar_bst(
         grupo=grupo_primario,
         dias_para_secar=dias_para_secar,
         motivo_exclusao=None,
+        del_atual=del_atual,
+        del_projetado=del_projetado,
     )
