@@ -14,8 +14,8 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from fazenda.auth import (
-    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, exigir_dono, get_current_user,
-    get_fazenda_atual_id, hash_senha, token_manter_conectado, verificar_senha,
+    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_email_dono_equivalente,
+    exigir_dono, get_current_user, get_fazenda_atual_id, hash_senha, token_manter_conectado, verificar_senha,
 )
 from fazenda.config import settings
 from fazenda.database import get_session
@@ -81,14 +81,20 @@ class PreferenciasIn(BaseModel):
 def _publico(u: Usuario, session: Session | None = None) -> dict:
     perms = MODULOS if u.papel == "admin" else [m for m in (u.permissoes or "").split(",") if m]
     pessoa_nome = None
+    pessoa_tipo = None
     if u.pessoa_id and session is not None:
         pessoa = session.get(Pessoa, u.pessoa_id)
         pessoa_nome = pessoa.nome if pessoa else None
+        # CSV de TipoPessoa.nome (ex.: "Empreiteiro" ou "Funcionário,Diarista")
+        # — usado no app de campo (frontend/lib/api.ts::ehOperadorRestrito)
+        # pra restringir o Menu de operadores vinculados a certos tipos de
+        # Pessoa (empreiteiro/prestador/diarista/funcionário).
+        pessoa_tipo = pessoa.tipo if pessoa else None
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
             "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
-            "email": u.email, "eh_dono": (u.email or "").strip().lower() == EMAIL_DONO,
+            "email": u.email, "eh_dono": eh_email_dono_equivalente(u.email),
             "pode_publicar_materias_blog": u.pode_publicar_materias_blog,
-            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome}
+            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome, "pessoa_tipo": pessoa_tipo}
 
 
 def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario_id: int | None = None) -> Pessoa:
@@ -136,10 +142,14 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
     # funcionalidades sensíveis (ex.: botão de acesso ao banco de dados
     # externo em Relatórios financeiros) mesmo quando ele tem o módulo
     # "financeiro" liberado, ver frontend/lib/api.ts::ehConsultor().
+    # `vinculo_contratante` diz ao frontend que este usuário é o usuário
+    # mestre DESTA fazenda — usado por podeFormularDietas() (Formulação de
+    # Dietas), espelhando fazenda.auth.exigir_admin_ou_consultor_fazenda.
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
         "vinculo_contador": bool(vinculo and vinculo.contador),
         "vinculo_consultor": bool(vinculo and vinculo.consultor),
+        "vinculo_contratante": bool(vinculo and vinculo.contratante),
     }
 
 

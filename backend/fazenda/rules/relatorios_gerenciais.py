@@ -18,9 +18,20 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from fazenda.rules.gestation import dias_gestacao
 from fazenda.rules.parametros import dias_reinseminacao_max, dias_reinseminacao_min, get_param, meta_taxa_servico
 
-GESTACAO_DIAS = 280  # gestação média usada nas previsões de parto/secagem
+# Gestação média usada SÓ no IEP agregado do gráfico de distribuição de DEL
+# (estatística por faixa de todo o rebanho, sem animal associado — não dá
+# pra usar a gestação por raça aí). Toda previsão POR ANIMAL (parto/secagem
+# em `relatorios_manejo` e `fluxo_lactacao`, abaixo) usa a gestação
+# ESPECÍFICA da raça do bicho (`fazenda.rules.gestation.dias_gestacao`) — a
+# mesma regra usada pela Agenda (`agenda_engine.py`) e por `producao.py::
+# secagem-info`. Antes este módulo usava 280 dias fixos pra TODO animal,
+# inclusive Girolando (287) e Gir/Zebu/Nelore (295): a previsão de secagem
+# do Rebanho ficava até 15 dias adiantada em relação à da Agenda para
+# raças não-Holandês, fazendo as duas telas "discordarem" da mesma vaca.
+GESTACAO_DIAS = 280
 
 # Quando a previsão de secagem (baseada na concepção em curso) já passou há
 # mais que isso sem o animal ter sido secado, o atraso deixa de ser real —
@@ -216,7 +227,13 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         if prenhe and ups:
             concep = ups.get("data_servico")
             dias_gest = _dias(concep, hoje)
-            prev_parto = concep + timedelta(days=GESTACAO_DIAS) if concep else None
+            # Dias de gestação ESPECÍFICOS da raça do animal (280/287/295 —
+            # ver fazenda.rules.gestation), a mesma conta usada pela Agenda
+            # (agenda_engine.py) e por producao.py::secagem-info — não o
+            # GESTACAO_DIAS fixo de 280 daqui, que fazia esta previsão
+            # divergir da Agenda para qualquer raça não-Holandês.
+            dias_gest_raca = dias_gestacao(a.get("raca"))
+            prev_parto = concep + timedelta(days=dias_gest_raca) if concep else None
             if not eh_vaca:
                 cor = "branco"
                 dpp_conc = None
@@ -236,7 +253,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
 
             # 6) Secagem — vaca prenhe em lactação
             if eh_vaca and (a.get("del_dias") or 0) > 0 and concep:
-                prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
+                prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
                 d_secar = _dias(hoje, prev_secagem)
                 if d_secar is not None and d_secar < -LIMITE_SECAGEM_RETROATIVA_DIAS:
                     pass  # atraso implausível — considerada secada 60 dias antes do último parto, sai da pendência
@@ -513,8 +530,9 @@ def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict]
             continue
         concep = ups["data_servico"]
         reconf = bool(ups.get("data_reconfirmacao"))
-        prev_parto = concep + timedelta(days=GESTACAO_DIAS)
-        prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
+        dias_gest_raca = dias_gestacao(a.get("raca"))
+        prev_parto = concep + timedelta(days=dias_gest_raca)
+        prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
         eh_vaca = _eh_vaca(num, parto_idx)
         if eh_vaca and (a.get("del_dias") or 0) > 0 and prev_secagem >= hoje:
             k = prev_secagem.strftime("%Y-%m")

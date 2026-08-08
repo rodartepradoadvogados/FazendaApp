@@ -164,10 +164,16 @@ class TestCriarJanelaComDoencaId:
 
 
 # ---------------------------------------------------------------------------
-# Tarefa 2: motor de alerta do Ponto Crítico na Agenda.
+# Tarefa 2 (revisão): o alerta "bezerras entrando na janela de risco de
+# doença" (Ponto Crítico da Recria) foi RETIRADO da Agenda a pedido do dono
+# do produto ("não precisa aparecer na agenda mais. Pode tirar.") — o cadastro
+# JanelaPontoCritico continua existindo/editável em Recria (ver
+# TestCriarJanelaComDoencaId acima), só não gera mais esse evento automático;
+# o motor fazenda.rules.ponto_critico_recria que só existia para alimentar a
+# Agenda foi removido junto.
 # ---------------------------------------------------------------------------
-class TestAlertaPontoCriticoAgenda:
-    def test_alerta_aparece_quando_ha_animal_na_faixa(self, client):
+class TestAlertaPontoCriticoNaoApareceMaisNaAgenda:
+    def test_nunca_aparece_mesmo_com_animal_na_faixa_e_janela_ativa(self, client):
         c, engine = client
         _como_fazenda(1)
         data_ref = date(2026, 3, 1)
@@ -175,73 +181,30 @@ class TestAlertaPontoCriticoAgenda:
             s.add(JanelaPontoCritico(
                 fazenda_id=1, doenca="Diarreia", dia_min=5, dia_max=20, dias_antecedencia=3, ativo=True,
             ))
-            # idade em data_ref = 9 dias — dentro de [5-3, 20] = [2, 20].
+            # idade em data_ref = 9 dias — dentro de [5-3, 20] = [2, 20], o que
+            # antes gerava o alerta; agora não deve gerar nada na Agenda.
             s.add(Animal(numero="301", data_nasc=date(2026, 2, 20), ativo=True, sexo="F", fazenda_id=1))
             s.commit()
 
         r = c.get("/agenda/", params={"data": data_ref.isoformat()})
         assert r.status_code == 200, r.text
         eventos = [e for e in r.json()["eventos"] if e.get("tipo") == "ponto_critico_recria"]
-        assert len(eventos) == 1
-        assert "Diarreia" in eventos[0]["descricao"]
-        assert "301" in eventos[0]["animais"]
-
-    def test_alerta_nao_aparece_sem_animal_na_faixa(self, client):
-        c, engine = client
-        _como_fazenda(1)
-        data_ref = date(2026, 3, 1)
-        with Session(engine) as s:
-            s.add(JanelaPontoCritico(
-                fazenda_id=1, doenca="Diarreia", dia_min=5, dia_max=20, dias_antecedencia=3, ativo=True,
-            ))
-            # idade em data_ref = 200 dias — bem fora da janela.
-            s.add(Animal(numero="302", data_nasc=date(2025, 8, 13), ativo=True, sexo="F", fazenda_id=1))
-            s.commit()
-
-        r = c.get("/agenda/", params={"data": data_ref.isoformat()})
-        assert r.status_code == 200, r.text
-        eventos = [e for e in r.json()["eventos"] if e.get("tipo") == "ponto_critico_recria"]
         assert eventos == []
 
-    def test_sem_janela_ativa_nao_ha_evento(self, client):
+    def test_janela_continua_normalmente_cadastravel_em_recria(self, client):
+        """A remoção é só da Agenda — o CRUD de JanelaPontoCritico (Recria)
+        segue funcionando, incluindo o vínculo com o catálogo Doenca."""
         c, engine = client
         _como_fazenda(1)
-        data_ref = date(2026, 3, 1)
         with Session(engine) as s:
-            s.add(JanelaPontoCritico(
-                fazenda_id=1, doenca="Diarreia", dia_min=5, dia_max=20, dias_antecedencia=3, ativo=False,
-            ))
-            s.add(Animal(numero="303", data_nasc=date(2026, 2, 20), ativo=True, sexo="F", fazenda_id=1))
-            s.commit()
+            mastite_id = s.exec(select(Doenca).where(Doenca.nome == "Mastite")).first().id
 
-        r = c.get("/agenda/", params={"data": data_ref.isoformat()})
-        eventos = [e for e in r.json()["eventos"] if e.get("tipo") == "ponto_critico_recria"]
-        assert eventos == []
-
-    def test_alerta_respeita_fazenda(self, client):
-        c, engine = client
-        data_ref = date(2026, 3, 1)
-        with Session(engine) as s:
-            # Janela só da fazenda 1; animal dentro da faixa em CADA fazenda.
-            s.add(JanelaPontoCritico(
-                fazenda_id=1, doenca="Diarreia", dia_min=5, dia_max=20, dias_antecedencia=3, ativo=True,
-            ))
-            s.add(Animal(numero="401", data_nasc=date(2026, 2, 20), ativo=True, sexo="F", fazenda_id=1))
-            s.add(Animal(numero="402", data_nasc=date(2026, 2, 20), ativo=True, sexo="F", fazenda_id=2))
-            s.commit()
-
-        # Fazenda 1: vê o alerta, só com o animal dela (401), nunca o da fazenda 2 (402).
-        _como_fazenda(1)
-        r1 = c.get("/agenda/", params={"data": data_ref.isoformat()})
-        eventos1 = [e for e in r1.json()["eventos"] if e.get("tipo") == "ponto_critico_recria"]
-        assert len(eventos1) == 1
-        assert eventos1[0]["animais"] == ["401"]
-
-        # Fazenda 2: sem janela cadastrada lá — nenhum alerta, mesmo tendo animal na faixa.
-        _como_fazenda(2)
-        r2 = c.get("/agenda/", params={"data": data_ref.isoformat()})
-        eventos2 = [e for e in r2.json()["eventos"] if e.get("tipo") == "ponto_critico_recria"]
-        assert eventos2 == []
+        r = c.post("/recria/janelas", json={
+            "doenca": "texto digitado qualquer", "doenca_id": mastite_id,
+            "dia_min": 5, "dia_max": 20, "dias_antecedencia": 3,
+        })
+        assert r.status_code == 201, r.text
+        assert r.json()["doenca"] == "Mastite"
 
 
 # ---------------------------------------------------------------------------

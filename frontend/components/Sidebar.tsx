@@ -21,9 +21,10 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ExternalLink,
+  FlaskConical,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
+import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -150,6 +151,7 @@ export function Sidebar() {
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
   const [insightsHref, setInsightsHref] = useState("/indicadores");
+  const [formularDietas, setFormularDietas] = useState(false);
   // Nome exibido embaixo do logo CowData — vem da fazenda selecionada no
   // login (piloto conservador de multi-fazenda). "Jairo Nasser" é o valor
   // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
@@ -178,6 +180,7 @@ export function Sidebar() {
       podeModulo("reproducao") ? "/relatorios" :
       "/portal"
     );
+    setFormularDietas(podeFormularDietas());
   }, [path]);
 
   useEffect(() => {
@@ -334,6 +337,28 @@ export function Sidebar() {
           {!recolhida && <ExternalLink size={12} />}
         </a>
       </div>
+
+      {/* Atalho para o portal "Formulação de Dietas" (ver
+          components/dietas/DietasLayout.tsx) — mesmo padrão do atalho de
+          Insights acima (aba NOVA de verdade do navegador), só visível para
+          quem passa em podeFormularDietas() (admin/contratante/consultor
+          desta fazenda — eixo de acesso à parte, não módulo comum). */}
+      {formularDietas && (
+        <div className="p-2 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
+          <a href="/dietas" target="_blank" rel="noopener noreferrer"
+            title="Abrir Formulação de Dietas numa aba nova"
+            className="flex items-center gap-2 rounded-lg transition-all duration-150"
+            style={{
+              padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
+              color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+              border: "1px solid var(--sidebar-border)",
+            }}>
+            <FlaskConical size={16} />
+            {!recolhida && <span className="flex-1">Formulação de Dietas</span>}
+            {!recolhida && <ExternalLink size={12} />}
+          </a>
+        </div>
+      )}
 
       {/* Footer — recolhida: só o pontinho de status, sem texto (sem espaço
           para rótulo, usuário logado ou versão). */}

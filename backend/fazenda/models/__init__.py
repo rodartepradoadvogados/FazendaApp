@@ -151,6 +151,11 @@ from .alimentacao import (
     DietaRegistroReal,
     AlimentacaoEstado,
 )
+from .formulacao import (
+    AlimentoNutricional,
+    DietaSimulacao,
+    DietaSimulacaoItem,
+)
 from .recria import (
     OcorrenciaClinica,
     MetaRecria,
@@ -391,6 +396,9 @@ __all__ = [
     "AnaliseBromatologica",
     "DietaRegistroReal",
     "AlimentacaoEstado",
+    "AlimentoNutricional",
+    "DietaSimulacao",
+    "DietaSimulacaoItem",
     "OcorrenciaClinica",
     "MetaRecria",
     "PesoAlvoIdade",

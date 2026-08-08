@@ -12,9 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from fazenda.auth import (
-    bloquear_escrita_contador, exigir_contrato_ativo, exigir_modulo, exigir_modulo_contratado, exigir_modulo_qualquer,
-    get_current_user, seed_admin, seed_email_dono_backfill, seed_email_dono_correcao_202607c,
-    seed_permissao_publicar_dono,
+    bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_contrato_ativo, exigir_modulo,
+    exigir_modulo_contratado, exigir_modulo_qualquer, get_current_user, seed_admin, seed_email_dono_backfill,
+    seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine, get_session
 from fazenda.models import IdempotenciaChave
@@ -45,6 +45,7 @@ from fazenda.api.routers import (
     fazendas,
     filtros_salvos,
     financeiro,
+    formulacao_dietas,
     fotos,
     importar,
     indicadores,
@@ -550,6 +551,14 @@ app.include_router(nao_conformidades.router, dependencies=_protegido + _contrato
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])
+# Formulação de Dietas: eixo de acesso à parte (admin OU consultor desta
+# fazenda — NUNCA operador comum, mesmo com o módulo "alimentacao"
+# liberado), por isso não leva exigir_modulo nem entra em MODULOS/
+# ROTA_MODULO — ver fazenda/auth.py::exigir_admin_ou_consultor_fazenda.
+app.include_router(
+    formulacao_dietas.router,
+    dependencies=[Depends(exigir_admin_ou_consultor_fazenda()), Depends(exigir_modulo_contratado("formulacao_dietas"))],
+)
 app.include_router(producao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
 app.include_router(reproducao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
 app.include_router(relatorio_acasalamento.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])

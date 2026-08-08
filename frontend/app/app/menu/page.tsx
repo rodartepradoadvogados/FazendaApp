@@ -22,7 +22,7 @@ import {
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
   Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
+import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, sincronizar, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
@@ -281,10 +281,28 @@ export default function Pagina() {
     return <Sub onVoltar={() => setSub(null)} />;
   }
 
+  // Operador vinculado a uma Pessoa do tipo empreiteiro/prestador/diarista/
+  // funcionário (ver ehOperadorRestrito, lib/api.ts) — menu restrito do app
+  // de campo: sem Financeiro, sem "Lançar nova dieta", e Protocolos vira a
+  // 1ª seção do menu. Admin e operador não vinculado (ou vinculado a outro
+  // tipo de Pessoa) não são afetados por nenhuma checagem `restrito` abaixo.
+  const restrito = montado && ehOperadorRestrito();
+
   // No servidor / antes de montar não sabemos as permissões — só renderiza os
   // grupos após montar para não vazar itens sem permissão.
   const grupos = montado
-    ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
+    ? GRUPOS
+        // Financeiro fica de fora do menu restrito mesmo que o módulo esteja
+        // liberado para o usuário (restrição do TIPO de Pessoa, adicional à
+        // permissão de módulo — não substitui a checagem de podeModulo abaixo).
+        .filter((g) => !(restrito && g.secao === "financeiro"))
+        .map((g) => ({
+          ...g,
+          itens: g.itens
+            .filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota)))
+            .filter((i) => !(restrito && i.chave === "lancarDieta")),
+        }))
+        .filter((g) => g.itens.length)
     : [];
 
   // Estatísticas ao vivo (cache já escrito pela própria sub-tela) — só depois
@@ -330,10 +348,14 @@ export default function Pagina() {
 
   // Módulos — mesmo gate de permissão do site ("Estoque" ao lado de
   // "Financeiro" segue a permissão do módulo /estoque; Recria idem).
+  // Item "Protocolos" definido à parte porque, para o operador restrito (ver
+  // `restrito` acima), ele sai daqui e vira a 1ª seção do menu inteiro —
+  // para todo mundo mais, fica exatamente onde sempre esteve, dentro de Módulos.
+  const itemProtocolos = { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-roxo)" };
   const modulosOpcoes = [
     ...(montado && podeModulo("estoque") ? [{ id: "estoque" as const, titulo: "Estoque", subtitulo: statEstoqueValor || "Alimentação, medicamentos, sêmen…", icone: <Boxes size={20} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria" as const, titulo: "Recria", subtitulo: "Bezerras e novilhas em recria", icone: <Baby size={20} />, cor: "var(--cat-recria)" }] : []),
-    { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-roxo)" },
+    ...(!restrito ? [itemProtocolos] : []),
     { id: "portal" as const, titulo: "Portal", subtitulo: "Comunicação interna e fotos do campo", icone: <MessageSquare size={20} />, cor: "var(--mob-roxo)" },
   ];
 
@@ -355,6 +377,17 @@ export default function Pagina() {
   return (
     <div>
       <MobTitulo>Menu</MobTitulo>
+
+      {/* Operador restrito (ver `restrito` acima): Protocolos vira a 1ª seção
+          do menu, antes até de Reprodução — para todo mundo mais, o item
+          continua dentro de Módulos, mais abaixo, sem nenhuma mudança. */}
+      {restrito && (
+        <div>
+          <div className="mob-secao">{itemProtocolos.titulo}</div>
+          <LinhaMenu icone={itemProtocolos.icone} titulo={itemProtocolos.titulo} subtitulo={itemProtocolos.subtitulo}
+            cor={itemProtocolos.cor} onClick={() => aoEscolherModulo(itemProtocolos.id)} />
+        </div>
+      )}
 
       {grupos.map((g) => (
         <div key={g.secao}>
