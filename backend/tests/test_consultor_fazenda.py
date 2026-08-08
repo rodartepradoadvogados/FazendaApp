@@ -143,3 +143,50 @@ class TestVinculoConsultor:
         r = c.delete("/fazendas/1/vincular-usuario/1")
         assert r.status_code == 200
         assert c.get("/fazendas/1/usuarios").json() == []
+
+
+class TestEditarVinculo:
+    def test_troca_papel_de_um_vinculo_existente(self, client):
+        c, engine = client
+        _como_dono()
+        _como_fazenda(1)
+        c.post("/fazendas/1/vincular-usuario", json={"username": "vet_externo", "consultor": True})
+        r = c.put("/fazendas/1/vincular-usuario/1", json={"contratante": True})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"usuario_id": 1, "username": "vet_externo", "contratante": True, "consultor": False, "contador": False}
+        with Session(engine) as s:
+            v = s.exec(select(UsuarioFazenda).where(UsuarioFazenda.fazenda_id == 1)).first()
+            assert v.contratante is True and v.consultor is False
+
+    def test_editar_para_funcionario_zera_todas_as_flags(self, client):
+        c, engine = client
+        _como_dono()
+        _como_fazenda(1)
+        c.post("/fazendas/1/vincular-usuario", json={"username": "vet_externo", "consultor": True})
+        r = c.put("/fazendas/1/vincular-usuario/1", json={})
+        assert r.status_code == 200
+        assert r.json()["contratante"] is False and r.json()["consultor"] is False and r.json()["contador"] is False
+
+    def test_editar_rejeita_mais_de_um_papel(self, client):
+        c, engine = client
+        _como_dono()
+        _como_fazenda(1)
+        c.post("/fazendas/1/vincular-usuario", json={"username": "vet_externo", "consultor": True})
+        r = c.put("/fazendas/1/vincular-usuario/1", json={"contratante": True, "contador": True})
+        assert r.status_code == 400
+
+    def test_editar_consultor_exige_modulo_ativo(self, client):
+        c, engine = client
+        _como_dono()
+        _como_fazenda(2)
+        c.post("/fazendas/2/vincular-usuario", json={"username": "vet_externo"})
+        r = c.put("/fazendas/2/vincular-usuario/1", json={"consultor": True})
+        assert r.status_code == 403
+        assert "Diamond" in r.json()["detail"]
+
+    def test_editar_vinculo_inexistente_404(self, client):
+        c, engine = client
+        _como_dono()
+        _como_fazenda(1)
+        r = c.put("/fazendas/1/vincular-usuario/999", json={"contratante": True})
+        assert r.status_code == 404

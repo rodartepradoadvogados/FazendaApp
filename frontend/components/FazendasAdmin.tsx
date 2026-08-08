@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase, Download, PenLine, QrCode, Receipt, Repeat } from "lucide-react";
+import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase, Download, PenLine, QrCode, Receipt, Repeat, Pencil, X as XIcon } from "lucide-react";
 import {
   fetchFazendas, criarFazenda, atualizarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
-  baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
+  baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda, editarVinculoUsuarioFazenda,
   fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
@@ -83,6 +83,9 @@ export default function FazendasAdmin() {
   const [novoUsername, setNovoUsername] = useState("");
   const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
   const [vinculando, setVinculando] = useState(false);
+  const [editandoVinculoId, setEditandoVinculoId] = useState<number | null>(null);
+  const [papelEditando, setPapelEditando] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
+  const [salvandoVinculo, setSalvandoVinculo] = useState(false);
 
   // Assinaturas do produto de Consultor independente (Fase 2C) — fora de
   // qualquer fazenda-tenant, ver fazenda/models/consultores.py.
@@ -202,6 +205,33 @@ export default function FazendasAdmin() {
       await desvincularUsuarioFazenda(selecionada, usuarioId);
       fetchUsuariosVinculados(selecionada).then(setUsuarios);
     } catch (e: any) { setErro(e.message); }
+  }
+
+  function papelDoVinculo(u: UsuarioVinculado): "funcionario" | "contratante" | "consultor" | "contador" {
+    if (u.contratante) return "contratante";
+    if (u.consultor) return "consultor";
+    if (u.contador) return "contador";
+    return "funcionario";
+  }
+
+  function abrirEdicaoVinculo(u: UsuarioVinculado) {
+    setEditandoVinculoId(u.usuario_id);
+    setPapelEditando(papelDoVinculo(u));
+    setErro(null);
+  }
+
+  async function salvarEdicaoVinculo(usuarioId: number) {
+    if (selecionada == null) return;
+    setSalvandoVinculo(true); setErro(null);
+    try {
+      await editarVinculoUsuarioFazenda(selecionada, usuarioId, {
+        contratante: papelEditando === "contratante",
+        consultor: papelEditando === "consultor",
+        contador: papelEditando === "contador",
+      });
+      setEditandoVinculoId(null);
+      fetchUsuariosVinculados(selecionada).then(setUsuarios);
+    } catch (e: any) { setErro(e.message); } finally { setSalvandoVinculo(false); }
   }
 
   async function criarNovaFazenda() {
@@ -582,16 +612,49 @@ export default function FazendasAdmin() {
             {usuarios && usuarios.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {usuarios.map((u) => (
-                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
+                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <span>
                       {u.nome || u.username} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>(@{u.username})</span>
                       {u.contratante && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--dourado)", fontWeight: 700 }}>Contratante</span>}
                       {u.consultor && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--green-light)", fontWeight: 700 }}>Consultor</span>}
                       {u.contador && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--blue-light, #6fa8dc)", fontWeight: 700 }}>Contador</span>}
+                      {/* Sem nenhuma flag = funcionário comum — antes ficava mudo (nem
+                          dava pra saber se era funcionário ou se o dado nunca carregou);
+                          agora mostra explícito, num tom neutro. */}
+                      {!u.contratante && !u.consultor && !u.contador && (
+                        <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 700 }}>Funcionário</span>
+                      )}
                     </span>
-                    <button onClick={() => desvincular(u.usuario_id)} title="Desvincular" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
-                      <Trash2 size={14} />
-                    </button>
+                    {editandoVinculoId === u.usuario_id ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                        <select style={{ ...inp, width: "auto", padding: "0.25rem 0.4rem", fontSize: "0.75rem" }}
+                          value={papelEditando} onChange={(e) => setPapelEditando(e.target.value as any)}>
+                          <option value="funcionario">Funcionário (acesso normal)</option>
+                          <option value="contratante">Contratante (administra a fazenda)</option>
+                          <option value="consultor" disabled={!temModuloConsultor}>
+                            Consultor externo{!temModuloConsultor ? " — requer plano Diamond" : ""}
+                          </option>
+                          <option value="contador">Contador (Financeiro, só leitura)</option>
+                        </select>
+                        <button onClick={() => salvarEdicaoVinculo(u.usuario_id)} disabled={salvandoVinculo} title="Salvar"
+                          style={{ background: "transparent", border: "none", color: "var(--green-light)", cursor: "pointer" }}>
+                          <Check size={15} />
+                        </button>
+                        <button onClick={() => setEditandoVinculoId(null)} title="Cancelar"
+                          style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}>
+                          <XIcon size={15} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                        <button onClick={() => abrirEdicaoVinculo(u)} title="Editar tipo de acesso" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}>
+                          <Pencil size={14} />
+                        </button>
+                        <button onClick={() => desvincular(u.usuario_id)} title="Desvincular" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
