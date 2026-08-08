@@ -232,7 +232,13 @@ export function Sidebar() {
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
 
       <aside
-        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", position: "relative" }}
+        // paddingTop com safe-area-inset-top: o drawer mobile (fixed, inset-y-0)
+        // nasce colado no topo real da tela — sem essa reserva, o botão fechar
+        // e a logo ficavam por baixo da barra de status/notch do celular ao
+        // abrir o menu (a barra fixa de fora, acima, já tinha essa proteção —
+        // ver comentário mais abaixo — mas o CONTEÚDO do drawer em si não
+        // tinha). No desktop o valor é 0 (sem notch), então não muda nada lá.
+        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", position: "relative", paddingTop: "env(safe-area-inset-top, 0px)" }}
         // Recolhida só vale a partir do breakpoint md — no mobile o drawer
         // sempre abre na largura cheia (w-56 base), independente da
         // preferência de recolher salva (essa é só para a barra fixa do

@@ -20,7 +20,7 @@ import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
-  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, sincronizar, descartarPendente, lerCache } from "@/lib/offline";
@@ -211,9 +211,29 @@ function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
   );
 }
 
+const CHAVE_SECOES_COLAPSADAS = "mob_menu_secoes_colapsadas";
+
+/** Título de seção clicável (retrátil) — mesmo rótulo do .mob-secao de sempre,
+ *  agora com seta de estado; lembra a escolha do usuário entre visitas
+ *  (localStorage, chave CHAVE_SECOES_COLAPSADAS). */
+function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
+  chave: string; titulo: string; colapsada: boolean; onAlternar: (chave: string) => void; children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <button type="button" className="mob-secao-retratil" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}>
+        <span>{titulo}</span>
+        {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+      </button>
+      {!colapsada && children}
+    </div>
+  );
+}
+
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
+  const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(new Set());
   // Telas de tela cheia fora do inventário SUBTELAS (módulos, administração,
   // Aparência, News) — mesmo mecanismo de estado interno (sem navegar de
   // rota), só que sem passar pelo mapa SUBTELAS/SubKey.
@@ -225,7 +245,22 @@ export default function Pagina() {
   const [confirmarSair, setConfirmarSair] = useState(false);
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
 
-  useEffect(() => { setMontado(true); }, []);
+  useEffect(() => {
+    setMontado(true);
+    try {
+      const salvo = localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
+      if (salvo) setSecoesColapsadas(new Set(JSON.parse(salvo)));
+    } catch { /* localStorage indisponível ou valor corrompido — segue com tudo expandido */ }
+  }, []);
+
+  function alternarSecao(chave: string) {
+    setSecoesColapsadas((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+      try { localStorage.setItem(CHAVE_SECOES_COLAPSADAS, JSON.stringify([...novo])); } catch { /* melhor esforço — não impede o uso */ }
+      return novo;
+    });
+  }
 
   // Botão News do cabeçalho (app/layout.tsx) navega para /app/menu#news —
   // como é a mesma rota, o Next não remonta a página, então escutamos o hash
@@ -382,43 +417,38 @@ export default function Pagina() {
           do menu, antes até de Reprodução — para todo mundo mais, o item
           continua dentro de Módulos, mais abaixo, sem nenhuma mudança. */}
       {restrito && (
-        <div>
-          <div className="mob-secao">{itemProtocolos.titulo}</div>
+        <SecaoRetratil chave="protocolos-restrito" titulo={itemProtocolos.titulo} colapsada={secoesColapsadas.has("protocolos-restrito")} onAlternar={alternarSecao}>
           <LinhaMenu icone={itemProtocolos.icone} titulo={itemProtocolos.titulo} subtitulo={itemProtocolos.subtitulo}
             cor={itemProtocolos.cor} onClick={() => aoEscolherModulo(itemProtocolos.id)} />
-        </div>
+        </SecaoRetratil>
       )}
 
       {grupos.map((g) => (
-        <div key={g.secao}>
-          <div className="mob-secao">{g.titulo}</div>
+        <SecaoRetratil key={g.secao} chave={g.secao} titulo={g.titulo} colapsada={secoesColapsadas.has(g.secao)} onAlternar={alternarSecao}>
           {g.itens.map((i) => (
             <LinhaMenu key={i.chave} icone={i.icone} titulo={i.titulo} subtitulo={statsSub[i.chave] || i.subtitulo}
               cor={i.cor || g.cor} onClick={() => setSub(i.chave)} />
           ))}
-        </div>
+        </SecaoRetratil>
       ))}
 
       {modulosOpcoes.length > 0 && (
-        <div>
-          <div className="mob-secao">Módulos</div>
+        <SecaoRetratil chave="modulos" titulo="Módulos" colapsada={secoesColapsadas.has("modulos")} onAlternar={alternarSecao}>
           {modulosOpcoes.map((o) => (
             <LinhaMenu key={o.id} icone={o.icone} titulo={o.titulo} subtitulo={o.subtitulo} cor={o.cor} onClick={() => aoEscolherModulo(o.id)} />
           ))}
-        </div>
+        </SecaoRetratil>
       )}
 
       {administracaoOpcoes.length > 0 && (
-        <div>
-          <div className="mob-secao">Administração</div>
+        <SecaoRetratil chave="administracao" titulo="Administração" colapsada={secoesColapsadas.has("administracao")} onAlternar={alternarSecao}>
           {administracaoOpcoes.map((o) => (
             <LinhaMenu key={o.id} icone={o.icone} titulo={o.titulo} subtitulo={o.subtitulo} cor={o.cor} onClick={() => aoEscolherModulo(o.id)} />
           ))}
-        </div>
+        </SecaoRetratil>
       )}
 
-      <div>
-        <div className="mob-secao">App</div>
+      <SecaoRetratil chave="app" titulo="App" colapsada={secoesColapsadas.has("app")} onAlternar={alternarSecao}>
         <LinhaMenu icone={<Palette size={20} />} titulo="Aparência" subtitulo="Tema claro ou escuro" cor="var(--mob-dourado)" onClick={() => setTela("aparencia")} />
         {/* Escape hatch para as áreas que só existem no site (Configurações,
             Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios
@@ -428,11 +458,12 @@ export default function Pagina() {
             tela do celular — aceitável para uso ocasional/administrativo. */}
         <LinhaMenu icone={<Monitor size={20} />} titulo="Site completo" subtitulo="Abrir a versão completa do site" cor="var(--mob-azul)" onClick={() => router.push("/")} />
         <LinhaMenu icone={<LogOut size={20} />} titulo="Sair / trocar de usuário" subtitulo="Encerrar a sessão neste aparelho" cor="var(--mob-vermelho)" onClick={() => setConfirmarSair(true)} />
-      </div>
+      </SecaoRetratil>
 
-      {/* Sincronização offline — sempre visível, independente das seções acima. */}
+      {/* Sincronização offline — seção retrátil como as demais; a fila
+          continua sendo processada em segundo plano mesmo recolhida. */}
       <div id="pendentes" style={{ scrollMarginTop: "5rem", marginTop: "1.2rem" }}>
-        <div className="mob-secao">Sincronização</div>
+      <SecaoRetratil chave="sincronizacao" titulo="Sincronização" colapsada={secoesColapsadas.has("sincronizacao")} onAlternar={alternarSecao}>
         {fila.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>Nada aguardando envio ✓</p>}
 
         {fila.map((item) => (
@@ -478,6 +509,7 @@ export default function Pagina() {
             {resultadoEnvio.msg}
           </p>
         )}
+      </SecaoRetratil>
       </div>
 
       {/* Rodapé */}

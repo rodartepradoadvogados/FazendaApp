@@ -941,21 +941,21 @@ html, body { max-width: 100%; overflow-x: hidden; }
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem;
-  min-height: 7.5rem; border-radius: var(--r-app); cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem;
+  min-height: 6.5rem; border-radius: var(--r-app); cursor: pointer;
   background: var(--mob-surface); border: 1px solid var(--mob-border);
   box-shadow: var(--mob-sombra);
-  color: var(--mob-text); font-weight: 700; font-size: 0.9rem;
+  color: var(--mob-text); font-weight: 700; font-size: 0.88rem;
   text-align: center; padding: 0.8rem 0.5rem;
 }
-/* Contorno colorido + fundo leve (18% da cor) — cada bloco tinge seu ícone
-   via a variável --c definida inline (ex.: style={{ '--c': 'var(--mob-roxo)' }}).
-   Sem --c definido, cai no dourado da marca (comportamento anterior). */
+/* Ícone liso, sem anel nem fundo tingido (mesmo tratamento sóbrio dos cartões
+   de indicador do Rebanho) — cor por padrão dourada da marca; a variável --c
+   definida inline (ex.: style={{ '--c': 'var(--mob-vermelho)' }}) é reservada
+   para os poucos casos com significado semântico real (ações destrutivas:
+   Baixar animal, Excluir lançamento), não decoração por seção. */
 .mob-bloco .icone {
-  width: 46px; height: 46px; border-radius: 50%;
+  width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--c, var(--mob-dourado-2)) 18%, var(--mob-surface));
-  border: 1.6px solid var(--c, var(--mob-dourado-2));
   color: var(--c, var(--mob-dourado-2));
 }
 
@@ -989,6 +989,17 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-secao {
   font-size: var(--mob-fs-rotulo); font-weight: 700; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--mob-muted); margin: 1.1rem 0 0.5rem;
+}
+
+/* Variante clicável de .mob-secao (retrátil) — mesmo rótulo, agora um botão de
+   largura total com a seta de estado à direita; min-height 44px pelo mesmo
+   piso de alvo de toque do resto do app. */
+.mob-secao-retratil {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  width: 100%; min-height: 2.4rem; padding: 0; margin: 1.1rem 0 0.5rem;
+  background: transparent; border: none; cursor: pointer;
+  font-size: var(--mob-fs-rotulo); font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--mob-muted); text-align: left;
 }
 
 /* Linha de lista com seta. */

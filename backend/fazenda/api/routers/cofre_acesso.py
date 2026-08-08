@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_dono
+from fazenda.auth import criar_token, exigir_dono, token_manter_conectado
 from fazenda.database import get_session
 from fazenda.models import Fazenda, Usuario
 from fazenda.models.cofre_acesso import (
@@ -96,6 +96,7 @@ def _abrir_sessao(session: Session, pedido: PedidoAcessoSuporte) -> SessaoAcesso
 @router.post("/pedidos")
 def solicitar_acesso(
     dados: PedidoAcessoIn, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+    manter_conectado: bool = Depends(token_manter_conectado),
 ) -> dict:
     fazenda = session.get(Fazenda, dados.fazenda_id)
     if not fazenda or fazenda.eh_empresa_cowdata:
@@ -112,13 +113,36 @@ def solicitar_acesso(
     session.commit()
     session.refresh(pedido)
 
+    resultado = _publico_pedido(session, pedido)
     if pedido.status == "aprovado":
-        _abrir_sessao(session, pedido)
-    return _publico_pedido(session, pedido)
+        sessao = _abrir_sessao(session, pedido)
+        # Token novo, já com fid=fazenda + claim "suporte" — o frontend troca
+        # o token guardado por este e navega pra dentro da fazenda; daqui pra
+        # frente bloquear_em_modo_suporte (main.py) recusa ações destrutivas
+        # até a sessão expirar (DURACAO_SESSAO_MINUTOS) ou ser encerrada.
+        # Quando exige_aprovacao_suporte=True o pedido fica "aguardando" e
+        # nenhum token é emitido aqui — só quando /pedidos/{id}/aprovar rodar
+        # (ver limitação no docstring daquela rota).
+        resultado["token"] = criar_token(
+            user.username, fazenda_id=pedido.fazenda_id, suporte=True,
+            sessao_suporte_id=sessao.id, manter_conectado=manter_conectado,
+        )
+        resultado["sessao_id"] = sessao.id
+        resultado["sessao_expira_em"] = sessao.expira_em.isoformat()
+    return resultado
 
 
 @router.post("/pedidos/{pedido_id}/aprovar")
 def aprovar_pedido(pedido_id: int, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+    """LIMITAÇÃO CONHECIDA: ao contrário de solicitar_acesso (aprovação
+    automática), esta rota não emite um token de suporte — quem aprova pode
+    ser uma sessão/aba diferente de quem pediu, e o token pertence a quem vai
+    ENTRAR na fazenda, não a quem aprova. Só importa quando
+    Fazenda.exige_aprovacao_suporte=True (hoje nenhuma fazenda-piloto usa
+    isso — default False, ver models/multitenant.py); quem pediu precisa
+    recarregar/pedir de novo depois de aprovado para receber o token. Se essa
+    trava vier a ser usada de verdade, vale revisitar (ex.: polling do
+    solicitante pelo status do pedido, com o token vindo só quando "aprovado")."""
     pedido = session.get(PedidoAcessoSuporte, pedido_id)
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
