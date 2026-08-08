@@ -104,6 +104,17 @@ export function ehAdmin(): boolean {
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
 }
+// Tipos de Pessoa vinculados a um Usuario operador que recebem o menu
+// restrito do app de campo — empreiteiro/prestador/diarista/funcionário
+// não veem Aprovações nem Financeiro, e Protocolos sobe pro topo do menu.
+// (Ver frontend/app/app/menu/page.tsx.)
+const TIPOS_MENU_RESTRITO = ["Empreiteiro", "Prestador de serviços", "Diarista", "Funcionário"];
+export function ehOperadorRestrito(): boolean {
+  const u = getUsuario();
+  if (!u || u.papel !== "operador") return false;
+  const tipo = u.pessoa_tipo as string | null | undefined; // CSV de TipoPessoa.nome, ver backend/fazenda/api/routers/auth.py::_publico
+  return !!tipo && TIPOS_MENU_RESTRITO.some((t) => tipo.includes(t));
+}
 // Contador externo da fazenda (vínculo UsuarioFazenda.contador) — login cai
 // direto no Painel do Contador (/contador), casca própria, nunca a
 // navegação normal da fazenda. Ver components/AuthShell.tsx.
