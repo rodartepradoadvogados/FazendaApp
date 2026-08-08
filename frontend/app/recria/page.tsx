@@ -220,7 +220,7 @@ function CurvaBarras({ curva, janela }: { curva: { dia: number; casos: number }[
         const dentro = janela && p.dia >= janela[0] && p.dia <= janela[1];
         return (
           <div key={p.dia} title={`${p.dia} dias: ${p.casos} caso(s)`}
-            style={{ flex: 1, minWidth: 1, height: `${(100 * p.casos) / max}%`, background: dentro ? "var(--red)" : "var(--dourado)", borderRadius: "2px 2px 0 0", opacity: dentro ? 0.95 : 0.8 }} />
+            style={{ flex: 1, minWidth: 1, height: `${(100 * p.casos) / max}%`, background: dentro ? "var(--red)" : "var(--dourado)", borderRadius: "var(--r-sm) var(--r-sm) 0 0", opacity: dentro ? 0.95 : 0.8 }} />
         );
       })}
       <span style={{ position: "absolute", left: 2, bottom: -18, fontSize: "0.65rem", color: "var(--text-muted)" }}>{diaMin} d</span>
@@ -376,7 +376,7 @@ function AbaReproducao() {
               const naMeta = Math.round(d.meta_idade_parto) === x.mes;
               return (
                 <div key={x.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${x.mes} meses: ${x.n} (${x.pct}%)`}>
-                  <div style={{ width: "100%", height: `${(100 * x.pct) / max}%`, background: naMeta ? "var(--green-light)" : "var(--dourado)", borderRadius: "2px 2px 0 0", opacity: 0.85 }} />
+                  <div style={{ width: "100%", height: `${(100 * x.pct) / max}%`, background: naMeta ? "var(--green-light)" : "var(--dourado)", borderRadius: "var(--r-sm) var(--r-sm) 0 0", opacity: 0.85 }} />
                   <span style={{ fontSize: "0.6rem", color: "var(--text-muted)", marginTop: 2 }}>{x.mes}</span>
                 </div>
               );
@@ -494,7 +494,7 @@ function AbaNutricao() {
               const max = Math.max(...serie.map((x) => Math.max(x.ims_consumida_animal || 0, x.ims_formulada_animal || 0)), 1);
               return (
                 <div key={r.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${r.data.split("-").reverse().join("/")} — consumida ${r.ims_consumida_animal} kg`}>
-                  <div style={{ width: "100%", position: "relative", height: `${(100 * (r.ims_consumida_animal || 0)) / max}%`, background: "var(--green-light)", borderRadius: "2px 2px 0 0", minHeight: 2 }}>
+                  <div style={{ width: "100%", position: "relative", height: `${(100 * (r.ims_consumida_animal || 0)) / max}%`, background: "var(--green-light)", borderRadius: "var(--r-sm) var(--r-sm) 0 0", minHeight: 2 }}>
                     {r.ims_formulada_animal ? <div style={{ position: "absolute", left: 0, right: 0, top: `${100 - (100 * (r.ims_formulada_animal) / (r.ims_consumida_animal || r.ims_formulada_animal))}%`, borderTop: "2px dashed var(--dourado)" }} /> : null}
                   </div>
                   <span style={{ fontSize: "0.55rem", color: "var(--text-muted)", marginTop: 2 }}>{r.data.slice(8, 10)}/{r.data.slice(5, 7)}</span>
