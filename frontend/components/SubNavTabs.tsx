@@ -35,7 +35,22 @@ export function SubNavTabs() {
   }
 
   return (
-    <nav className="md:pr-52" style={{ position: "sticky", top: 0, zIndex: 5, background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "0 1.5rem" }}>
+    // paddingRight reserva o espaço da faixa fixa News/Tema/Sino
+    // (.site-top-actions, ver AuthShell.tsx) via --top-actions-width — ANTES
+    // disso a reserva vinha da classe Tailwind "md:pr-52" (13rem fixos, um
+    // chute que já nascia estreito demais para News+Tema+Sino) mas o
+    // `padding: "0 1.5rem"` inline logo abaixo, por ter maior especificidade
+    // que qualquer classe, ZERAVA esse padding-right sem avisar — na prática
+    // a reserva nunca existiu, e as abas coladas à direita ficavam por baixo
+    // dos botões (ou os botões por cima delas) sempre que a linha de abas
+    // tinha conteúdo suficiente pra chegar perto da borda direita.
+    <nav
+      style={{
+        position: "sticky", top: 0, zIndex: 5, background: "var(--surface)", borderBottom: "1px solid var(--border)",
+        paddingTop: 0, paddingBottom: 0, paddingLeft: "1.5rem",
+        paddingRight: "calc(var(--top-actions-width, 240px) + 2rem)",
+      }}
+    >
       {linhas.map((nos, i) => (
         <SubNavTabsLinha key={i} nos={nos} primaria={i === 0}
           subNav={subNav} pathname={pathname} caminho={caminho} />

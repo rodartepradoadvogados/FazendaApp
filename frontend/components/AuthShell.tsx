@@ -1,6 +1,6 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getToken, podeModulo, ehDono, ehContador, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
@@ -116,6 +116,21 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     return iniciarMonitorInatividade();
   }, [estado]);
 
+  // Largura real da faixa fixa News/Tema/Sino (.site-top-actions) — varia
+  // (o Manual da Fazenda só aparece na Capa) e SubNavTabs precisa saber esse
+  // valor para reservar espaço à direita e nunca desenhar abas por baixo dos
+  // botões (ver --top-actions-width usado em SubNavTabs.tsx). Mesma técnica
+  // de "medir e reservar" do cabeçalho fixo do app móvel (ver headerRef em
+  // app/app/layout.tsx) — só que aqui é a LARGURA, não a altura.
+  const topActionsRef = useRef<HTMLDivElement | null>(null);
+  const [larguraTopActions, setLarguraTopActions] = useState(240);
+  useEffect(() => {
+    const medir = () => { if (topActionsRef.current) setLarguraTopActions(topActionsRef.current.offsetWidth); };
+    medir();
+    window.addEventListener("resize", medir);
+    return () => window.removeEventListener("resize", medir);
+  }, [path]); // path: Manual da Fazenda só em "/", muda a largura da faixa
+
   // /sobre/* já vem com a própria casca pública (PublicPage) — igual /login,
   // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
   if (path === "/login" || path.startsWith("/sobre/")) return <>{children}</>;
@@ -156,14 +171,21 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   if (ehInsightsPortal) return <>{children}</>;
 
   return (
-    <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
+    <div
+      className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden"
+      // --top-actions-width: exposta aqui (ancestral comum) porque
+      // .site-top-actions e <main>/SubNavTabs são IRMÃOS — uma custom
+      // property só herda para descendentes, nunca entre irmãos, então
+      // declarar isso dentro de .site-top-actions nunca chegaria à SubNavTabs.
+      style={{ ["--top-actions-width" as any]: `${larguraTopActions}px` }}
+    >
       <Sidebar />
       {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
           sino de notificações também moram aqui — os quatro num único
           container fixed com gap (.site-top-actions, ver globals.css) em vez
           de cada um calcular sua própria posição (era assim que ficavam
           sobrepostos, ver comentário em globals.css). */}
-      <div className="site-top-actions">
+      <div className="site-top-actions" ref={topActionsRef}>
         {path === "/" && <ManualFazendaButton />}
         <NewsButton />
         <ThemeSwitcher />
