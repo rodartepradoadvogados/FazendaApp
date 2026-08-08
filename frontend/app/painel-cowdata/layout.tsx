@@ -1,9 +1,12 @@
 "use client";
 // Painel CowData — administração da EMPRESA de software (isolado da Fazenda
-// Jairo Nasser, ver AuthShell.tsx::ehPainelCowData). Paleta e estrutura
-// deliberadamente distintas do app da fazenda (navy + dourado, à parte da
-// paleta vinho/verde do resto do sistema) para que nunca pareça "mais uma
-// tela da fazenda" — reforça visualmente a separação de dados/negócio.
+// Jairo Nasser, ver AuthShell.tsx::ehPainelCowData). Migrado para a paleta
+// "Institucional" do redesign (mesma família marinho+ouro do resto do
+// sistema), mas com uma variação própria — fundo creme em vez de branco no
+// conteúdo, e o marinho mais profundo (#0A1F36, "marinho profundo" da
+// marca) em vez do marinho padrão (#0E2A47) na navegação — para continuar
+// se lendo como um painel à parte, nunca "mais uma tela da fazenda".
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -15,8 +18,12 @@ import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { ehAppOuPwa } from "@/lib/nativo";
 
 const COR = {
-  bg: "#0a0e1a", painel: "#0d1220", borda: "#1c2438", texto: "#e8ecf5",
-  mudo: "#7c8aa8", dourado: "#d4a017", doradoClaro: "#e8c256",
+  // Conteúdo (fundo creme + texto escuro) — ver comentário no topo do arquivo.
+  bg: "#F2E8D5", texto: "#1B2A3A",
+  // Painel/navegação (marinho profundo + texto claro) e acentos em ouro,
+  // mesma família de cor do resto do redesign (globals.css, paleta azul/claro).
+  painel: "#0A1F36", borda: "#173049", textoPainel: "#FFFFFF",
+  mudo: "#8DA2B8", dourado: "#8A6D2F", doradoClaro: "#C9A44C",
 };
 
 const GRUPOS = [
@@ -63,7 +70,7 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
         </Link>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
           <CowDataMark size={40} />
-          <CowDataWordmark size="1.1rem" cowColor={COR.texto} dataColor={COR.doradoClaro} />
+          <CowDataWordmark size="1.1rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
         </div>
         <p style={{ fontSize: "0.62rem", color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.4rem" }}>
           Painel da empresa
@@ -84,8 +91,8 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
                     display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.45rem 0.6rem", borderRadius: "8px",
                     fontSize: "0.8rem", textDecoration: "none", marginBottom: "0.15rem",
                     color: ativo ? COR.doradoClaro : "#c3cbde",
-                    background: ativo ? "rgba(212,160,23,0.12)" : "transparent",
-                    borderLeft: ativo ? `2px solid ${COR.dourado}` : "2px solid transparent",
+                    background: ativo ? "rgba(201,164,76,0.14)" : "transparent",
+                    borderLeft: ativo ? `2px solid ${COR.doradoClaro}` : "2px solid transparent",
                   }}>
                   <Icon size={15} /> {item.label}
                 </Link>
@@ -103,10 +110,10 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
       <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
         style={{ height: "3.25rem", background: COR.painel, borderBottom: `1px solid ${COR.borda}` }}>
         <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu do Painel CowData"
-          style={{ background: "none", border: "none", color: COR.texto, cursor: "pointer", display: "flex" }}>
+          style={{ background: "none", border: "none", color: COR.textoPainel, cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
         </button>
-        <CowDataWordmark size="0.85rem" cowColor={COR.texto} dataColor={COR.doradoClaro} />
+        <CowDataWordmark size="0.85rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
         <span style={{ color: COR.mudo, fontSize: "0.7rem" }}>· Painel da empresa</span>
       </div>
       <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />

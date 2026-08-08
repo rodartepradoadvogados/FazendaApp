@@ -493,12 +493,7 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
       ) : (
         <>
           <MobCampo label="Medicamento aplicado">
-            <select className="mob-input" value={produto} onChange={(e) => escolherProduto(e.target.value)}>
-              <option value="">Selecione o produto…</option>
-              {estoque.map((e) => (
-                <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>
-              ))}
-            </select>
+            <EstoquePicker itens={estoque} value={produto} onChange={escolherProduto} placeholder="Selecione o produto…" incluirNaoEstocaveis />
           </MobCampo>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <MobCampo label="Dose">
