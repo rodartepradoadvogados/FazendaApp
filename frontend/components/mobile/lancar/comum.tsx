@@ -172,7 +172,7 @@ export function BotoesEscolha<T extends string>({ opcoes, valor, onChange }:
         return (
           <button key={o.valor} type="button" onClick={() => onChange(o.valor)}
             style={{
-              padding: "1rem 0.5rem", borderRadius: 14, fontSize: "1rem", fontWeight: 700, cursor: "pointer",
+              padding: "1rem 0.5rem", borderRadius: "var(--r-app)", fontSize: "1rem", fontWeight: 700, cursor: "pointer",
               border: `2px solid ${ativo ? cor : "var(--mob-border)"}`,
               background: ativo ? cor : "var(--mob-surface)",
               color: ativo ? "#FFFFFF" : "var(--mob-text)",

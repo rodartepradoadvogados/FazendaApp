@@ -71,7 +71,7 @@ function EnviarDgForm({ numero, onFeito, onCancelar }: { numero: string; onFeito
   const [email, setEmail] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const inputStyle: React.CSSProperties = { flex: 1, background: "var(--mob-surface-2)", color: "var(--mob-text)", border: "1px solid var(--mob-border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
+  const inputStyle: React.CSSProperties = { flex: 1, background: "var(--mob-surface-2)", color: "var(--mob-text)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 
   async function enviar() {
     if (!email.trim()) { setErro("Informe o e-mail."); return; }
@@ -86,10 +86,10 @@ function EnviarDgForm({ numero, onFeito, onCancelar }: { numero: string; onFeito
     <div style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--mob-border)" }}>
       <div className="flex items-center gap-2">
         <input type="email" placeholder="e-mail do destinatário" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} />
-        <button onClick={enviar} disabled={enviando} style={{ border: "none", background: "var(--mob-dourado-2)", color: "#fff", borderRadius: "6px", padding: "0.4rem 0.6rem" }}>
+        <button onClick={enviar} disabled={enviando} style={{ border: "none", background: "var(--mob-dourado-2)", color: "#fff", borderRadius: "var(--r-app)", padding: "0.4rem 0.6rem" }}>
           <Check size={15} />
         </button>
-        <button onClick={onCancelar} style={{ border: "1px solid var(--mob-border)", background: "transparent", color: "var(--mob-muted)", borderRadius: "6px", padding: "0.4rem 0.6rem" }}>
+        <button onClick={onCancelar} style={{ border: "1px solid var(--mob-border)", background: "transparent", color: "var(--mob-muted)", borderRadius: "var(--r-app)", padding: "0.4rem 0.6rem" }}>
           <X size={15} />
         </button>
       </div>
@@ -139,7 +139,7 @@ function ListaSecao({ chave, rotulo, animais, enviandoDg, setEnviandoDg, onFicha
               </button>
               <button onClick={() => setEnviandoDg(enviandoDg === a.numero_matriz ? null : a.numero_matriz)}
                 title="Enviar último diagnóstico de gestação por e-mail"
-                style={{ border: "1px solid var(--mob-border)", background: "transparent", color: "var(--mob-muted)", borderRadius: "6px", padding: "0.35rem", flexShrink: 0 }}>
+                style={{ border: "1px solid var(--mob-border)", background: "transparent", color: "var(--mob-muted)", borderRadius: "var(--r-app)", padding: "0.35rem", flexShrink: 0 }}>
                 <Mail size={16} />
               </button>
             </div>
@@ -168,7 +168,7 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
       <MobVoltar titulo="Agenda Reprodutiva" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_agenda_vet" mostrar={doCache} />
       {sucesso && (
-        <div className="mb-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.5rem 0.8rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
+        <div className="mb-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-app)", padding: "0.5rem 0.8rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
           {sucesso}
         </div>
       )}

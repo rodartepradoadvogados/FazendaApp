@@ -76,7 +76,7 @@ function ConversaView() {
         {mensagens.map((m, i) => (
           <div key={i} style={{
             alignSelf: m.autor === "usuario" ? "flex-end" : "flex-start",
-            maxWidth: "85%", padding: "0.6rem 0.8rem", borderRadius: 12, fontSize: "0.86rem", whiteSpace: "pre-wrap",
+            maxWidth: "85%", padding: "0.6rem 0.8rem", borderRadius: "var(--r-app)", fontSize: "0.86rem", whiteSpace: "pre-wrap",
             background: m.autor === "usuario" ? "var(--mob-vinho)" : m.autor === "erro" ? "var(--mob-vermelho)" : "var(--mob-surface-2)",
             color: m.autor === "usuario" ? "#F8E9B0" : m.autor === "erro" ? "#fff" : "var(--mob-text)",
           }}>

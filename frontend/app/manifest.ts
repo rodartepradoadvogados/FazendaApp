@@ -12,8 +12,8 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    background_color: COR_TOPO.vinho.clara,
-    theme_color: COR_TOPO.vinho.clara,
+    background_color: COR_TOPO.azul.clara,
+    theme_color: COR_TOPO.azul.clara,
     icons: [
       { src: "/icons/icone-192.png", sizes: "192x192", type: "image/png" },
       { src: "/icons/icone-512.png", sizes: "512x512", type: "image/png" },

@@ -918,23 +918,23 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-nav a {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 0.55rem 0 0.5rem; font-size: 0.8rem; font-weight: 700;
-  color: var(--mob-muted); text-decoration: none;
+  color: var(--mob-nav-inativa); text-decoration: none;
 }
-.mob-nav a.ativo { color: var(--mob-acao); }
+.mob-nav a.ativo { color: var(--aba, var(--mob-acao)); }
 .mob-nav-icone {
   width: 42px; height: 26px; border-radius: 999px;
   display: flex; align-items: center; justify-content: center;
   transition: background-color 0.15s ease;
 }
-.mob-nav a.ativo .mob-nav-icone { background: color-mix(in srgb, var(--mob-acao) 16%, transparent); }
-/* "Lançar" — botão mais evidente, cheio na cor da paleta, saltando acima da barra. */
+.mob-nav a.ativo .mob-nav-icone { background: color-mix(in srgb, var(--aba, var(--mob-acao)) 16%, transparent); }
+/* "Lançar" — botão mais evidente, cheio de dourado, saltando acima da barra. */
 .mob-nav-lancar {
   width: 50px; height: 50px; margin-top: -20px;
-  background: var(--mob-vinho); color: #fff;
+  background: var(--mob-nav-lancar); color: #fff;
   border: 3px solid var(--mob-surface);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
 }
-.mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-vinho); color: #fff; }
+.mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-nav-lancar); color: #fff; }
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {

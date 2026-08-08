@@ -85,7 +85,7 @@ export default function ConsultarDietas({ onVoltar }: { onVoltar: () => void }) 
                           </div>
                         </div>
                       ))}
-                      <div style={{ marginTop: "0.6rem", padding: "0.55rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 10, fontSize: "0.85rem", fontWeight: 800 }}>
+                      <div style={{ marginTop: "0.6rem", padding: "0.55rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", fontSize: "0.85rem", fontWeight: 800 }}>
                         Vagão: <span style={{ color: "var(--mob-verde)" }}>{num(a.vagao_kg_trato)} kg/trato</span> · {num(a.vagao_kg_dia)} kg/dia
                       </div>
                     </>

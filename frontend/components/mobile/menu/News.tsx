@@ -26,7 +26,7 @@ function dominio(url: string): string {
 
 const inp: React.CSSProperties = {
   width: "100%", background: "var(--mob-surface-2)", color: "var(--mob-text)",
-  border: "1px solid var(--mob-border)", borderRadius: 10, padding: "0.55rem 0.7rem", fontSize: "0.9rem",
+  border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.55rem 0.7rem", fontSize: "0.9rem",
 };
 
 const ABAS = [

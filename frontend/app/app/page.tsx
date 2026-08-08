@@ -57,7 +57,7 @@ function SeletorFrasco({ itens, escolhas, onEscolher }: {
 }) {
   if (!itens.length) return null;
   return (
-    <div style={{ marginBottom: "0.7rem", background: "var(--mob-surface-2)", border: "1px solid var(--mob-dourado)", borderRadius: 12, padding: "0.7rem 0.8rem" }}>
+    <div style={{ marginBottom: "0.7rem", background: "var(--mob-surface-2)", border: "1px solid var(--mob-dourado)", borderRadius: "var(--r-app)", padding: "0.7rem 0.8rem" }}>
       <div style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--mob-dourado)", marginBottom: "0.5rem" }}>
         Qual frasco você está usando?
       </div>
@@ -724,7 +724,7 @@ export default function AgendaMovel() {
     return (
       <button type="button" onClick={() => abrirDiaCal(iso)}
         style={{
-          minHeight: grande ? "4.6rem" : "3.1rem", padding: "0.3rem 0.3rem", borderRadius: 10, textAlign: "left", cursor: "pointer",
+          minHeight: grande ? "4.6rem" : "3.1rem", padding: "0.3rem 0.3rem", borderRadius: "var(--r-app)", textAlign: "left", cursor: "pointer",
           display: "flex", flexDirection: "column", gap: "0.2rem",
           border: "1px solid " + (ehSelecionado ? "var(--mob-dourado-2)" : ehHoje ? "var(--mob-dourado)" : "var(--mob-border)"),
           background: ehSelecionado ? "color-mix(in srgb, var(--mob-dourado-2) 18%, transparent)" : ehHoje ? "color-mix(in srgb, var(--mob-dourado) 10%, transparent)" : "var(--mob-surface)",
@@ -854,8 +854,9 @@ export default function AgendaMovel() {
     const modo = sanModo[g.grupo];
     const feitasCount = g.itens.filter((it) => feitos.has(it.id)).length;
     const tudoFeito = feitasCount === g.itens.length;
+    const grupoAtrasado = g.data < hoje;
     return (
-      <MobCard key={g.grupo} alt={alt} style={{ marginBottom: "0.6rem" }}>
+      <MobCard key={g.grupo} alt={alt} style={{ marginBottom: "0.6rem" }} estado={tudoFeito ? "feito" : grupoAtrasado ? "atrasado" : "normal"}>
         <button type="button" onClick={() => abrirSan(g.grupo)}
           style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
           <IconeCategoria chave={chave} />
@@ -933,7 +934,7 @@ export default function AgendaMovel() {
       const aberto = iatfAberto.has(e.id);
       const sel = iatfChecks[e.id] || new Set(e.animais);
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1026,7 +1027,7 @@ export default function AgendaMovel() {
       const aberto = iatfAberto.has(e.id);
       const sel = iatfChecks[e.id] || new Set(e.animais);
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1112,7 +1113,7 @@ export default function AgendaMovel() {
       const aberto = protocoloCustomAberto.has(e.id);
       const sel = protocoloCustomChecks[e.id] || new Set(e.animais);
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => abrirProtocoloCustom(e.id, e.animais!)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1189,7 +1190,7 @@ export default function AgendaMovel() {
     // incluir/excluir no cronograma da regra, sem opções de aplicação aqui.
     if (e.tipo === "cronograma_sanitario_animal") {
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", marginBottom: feito ? 0 : "0.7rem" }}>
             <IconeCategoria chave={chave} />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -1221,7 +1222,7 @@ export default function AgendaMovel() {
       const aberto = cronModoAberto.has(e.id);
       const sub = cronSubTela[e.id];
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem", ...(urgente && !feito ? { border: "1px solid var(--mob-vermelho)" } : {}) }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem", ...(urgente && !feito ? { border: "1px solid var(--mob-vermelho)" } : {}) }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => { setCronModoAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; }); carregarPessoas(); }}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1313,7 +1314,7 @@ export default function AgendaMovel() {
       const feitosAnimal = cronAplicarFeitos[e.id] || new Set<string>();
       const pendentes = animais.filter((n) => !feitosAnimal.has(n));
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => setCronAplicarAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; })}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1442,7 +1443,7 @@ export default function AgendaMovel() {
                       </div>
                     </div>
                   ))}
-                  <div style={{ marginTop: "0.6rem", padding: "0.55rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 10, fontSize: "0.85rem", fontWeight: 800 }}>
+                  <div style={{ marginTop: "0.6rem", padding: "0.55rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", fontSize: "0.85rem", fontWeight: 800 }}>
                     Vagão do lote: <span style={{ color: "var(--mob-verde)" }}>{num(a.vagao_kg_trato)} kg/trato</span> · {num(a.vagao_kg_dia)} kg/dia
                   </div>
                 </>
@@ -1465,7 +1466,7 @@ export default function AgendaMovel() {
       const sugeridos: any[] = (e as any).lotes_sugeridos || [];
       const outros = lotesTodosMov.filter((l: any) => !sugeridos.some((s) => s.codigo === l.codigo));
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => abrirSugestaoMov(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1524,7 +1525,7 @@ export default function AgendaMovel() {
       const destacar = e.tipo === "colostragem_pendente" ? "colostragem" : "igg";
       return (
         <Link key={e.id} href={`/app/rebanho?numero=${encodeURIComponent(e.numero_animal || "")}&destacar=${destacar}`} style={{ textDecoration: "none", color: "inherit" }}>
-          <MobCard alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <MobCard alt={alt} style={{ marginBottom: "0.6rem" }} estado={atrasada ? "atrasado" : "normal"}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
               <IconeCategoria chave={chave} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -1560,7 +1561,7 @@ export default function AgendaMovel() {
       const exame = ehExameSanitario(e);
       const set = (campo: keyof CampoBaixa, valor: string) => atualizarCampoBaixa(e.id, campo, valor);
       return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
           <button type="button" onClick={() => abrirBaixa(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <IconeCategoria chave={chave} />
@@ -1664,7 +1665,7 @@ export default function AgendaMovel() {
 
     const { principal, detalhe } = linhas(e);
     return (
-      <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+      <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
           <IconeCategoria chave={chave} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -1694,7 +1695,7 @@ export default function AgendaMovel() {
     const evs = eventosDe(dia);
     return (
       <details style={{ marginTop: "0.7rem" }}>
-        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
           <span>{prefixo}, {fmtData(dia, { day: "numeric", month: "long" })}</span>
           <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{evs.length}</span>
         </summary>

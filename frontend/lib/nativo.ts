@@ -49,8 +49,8 @@ export async function ajustarStatusBar(escuro: boolean) {
   if (!(await ehApp())) return;
   const { StatusBar, Style } = await import("@capacitor/status-bar");
   await StatusBar.setStyle({ style: escuro ? Style.Dark : Style.Dark }).catch(() => {});
-  // Sempre Style.Dark (ícones claros) — o header do app é sempre escuro
-  // (vinho/verde/azul), em ambos os temas claro/escuro do app.
+  // Sempre Style.Dark (ícones claros) — o header do app é sempre marinho,
+  // em ambos os temas claro/escuro do app.
 }
 
 /** Registra o botão voltar físico do Android: navega como o navegador

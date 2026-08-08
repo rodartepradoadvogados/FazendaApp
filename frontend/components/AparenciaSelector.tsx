@@ -49,11 +49,12 @@ export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "ap
   }
 
   if (variant === "app") {
+    // Sem seletor de Paleta aqui: o app de campo não segue mais data-paleta
+    // (ver comentário em globals.css) — o picker viraria um no-op dentro do
+    // app, então só sobra Tema (Claro/Escuro).
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "1.6rem", minHeight: "calc(100dvh - 150px)" }}>
         <TileGroup titulo="Tema" opcoes={TEMAS_APP} ativa={tema} onEscolher={mudarTema} />
-        <TileGroup titulo="Paleta" opcoes={PALETAS} ativa={paleta} onEscolher={mudarPaleta}
-          swatch={{ vinho: "var(--mob-vinho-fixo)", verde: "var(--mob-verde-fixo)", azul: "var(--mob-azul)" }} />
         <ReivindicarProprietario variant="app" />
       </div>
     );
