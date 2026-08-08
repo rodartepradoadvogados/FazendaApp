@@ -1361,6 +1361,9 @@ type FolhaPagamentoDados = {
   percentual_fgts?: number | null; valor_fgts?: number | null;
   percentual_dctf?: number | null; valor_dctf?: number | null;
   data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null;
+  // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente
+  // no backend); preenche ContaGerencial.conta_bancaria, usado pelos relatórios gerenciais.
+  conta_corrente_id?: number | null;
 };
 export async function criarFolhaPagamento(dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, {
@@ -1638,7 +1641,11 @@ export async function atualizarDiaria(diariaId: number, dados: { data_inicio: st
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar diária"); }
   return res.json();
 }
-export async function registrarPagamentoDiaria(diariaId: number, dados: { data_pagamento: string; valor: number; observacao?: string }) {
+export async function registrarPagamentoDiaria(diariaId: number, dados: {
+  data_pagamento: string; valor: number; observacao?: string;
+  // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
+  conta_corrente_id?: number | null;
+}) {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -1678,6 +1685,8 @@ export type FeriasDados = {
   dias_direito?: number; dias_gozados: number; data_inicio_gozo: string; data_fim_gozo: string;
   abono_pecuniario_dias?: number; data_pagamento?: string; status?: string; observacao?: string;
   centro_custo?: string;
+  // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
+  conta_corrente_id?: number | null;
 };
 export type RegistroFerias = FeriasDados & {
   id: number; pessoa_nome: string; valor_ferias: number; valor_terco_constitucional: number;
@@ -1714,6 +1723,8 @@ export type DecimoTerceiroDados = {
   pessoa_id: number; ano: number; parcela?: string; meses_trabalhados: number;
   valor_inss?: number; valor_ir?: number; data_pagamento?: string; status?: string;
   observacao?: string; centro_custo?: string;
+  // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
+  conta_corrente_id?: number | null;
 };
 export type RegistroDecimoTerceiro = DecimoTerceiroDados & {
   id: number; pessoa_nome: string; valor_bruto: number; valor_liquido: number;
@@ -1821,6 +1832,9 @@ export type RegistroRescisaoFuncionario = {
 export type RescisaoFecharDados = {
   forma_lancamento?: FormaLancamentoRescisao; status_pagamento?: "pendente" | "pago";
   data_pagamento?: string | null; inativar_pessoa?: boolean; centro_custo?: string | null;
+  // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente
+  // no backend); aplicada a todas as contas geradas, mesmo no fechamento "detalhado".
+  conta_corrente_id?: number | null;
 };
 
 export async function fetchRescisoesFuncionario(): Promise<RegistroRescisaoFuncionario[]> {

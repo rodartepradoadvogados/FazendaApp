@@ -149,6 +149,12 @@ class FolhaPagamento(SQLModel, table=True):
     # Centro de custo de TODAS as contas a pagar geradas por esta folha —
     # nasce em "Pecuária Leiteira" (perfil típico da folha), mas é editável.
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente da fazenda de onde sai o pagamento — vínculo RELACIONAL
+    # (não string), mesmo padrão de ValeFuncionario.conta_corrente_id: OPCIONAL
+    # (ao contrário do vale, aqui nunca é obrigatória), preenche
+    # ContaGerencial.conta_bancaria (o que os relatórios gerenciais filtram) e
+    # permite a um formulário de edição pré-selecionar a conta já escolhida.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -191,6 +197,8 @@ class FeriasFuncionario(SQLModel, table=True):
     # Centro de custo da conta a pagar gerada — nasce em "Pecuária Leiteira",
     # mas é editável (mesmo padrão de FolhaPagamento).
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -217,6 +225,8 @@ class DecimoTerceiro(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     numero_lancamento_gerado: Optional[str] = None
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -288,6 +298,8 @@ class RescisaoFuncionario(SQLModel, table=True):
     # padrão de FeriasFuncionario/DecimoTerceiro.numero_lancamento_gerado.
     numero_lancamento_gerado: Optional[str] = None
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -542,6 +554,13 @@ class Diaria(SQLModel, table=True):
     dia_semana_auditoria: Optional[int] = None  # 0=segunda ... 6=domingo (frequencia == semanal)
     intervalo_dias_auditoria: Optional[int] = None  # frequencia == intervalo_dias
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Marco do controle por calendário: NULL = esta diária nunca passou pelo
+    # calendário de dias trabalhados e continua 100% na regra antiga
+    # (auditorias agregadas + ajuste manual + contagem cega). Quando o usuário
+    # salva o calendário pela primeira vez, vira a data mais antiga já coberta
+    # por um envio — a partir dela quem manda é DiariaDia; antes dela, o
+    # histórico legado permanece intacto. Só anda para trás, nunca para frente.
+    controle_por_dia_desde: Optional[date] = None
 
 
 class DiariaPagamento(SQLModel, table=True):
@@ -555,6 +574,8 @@ class DiariaPagamento(SQLModel, table=True):
     valor: float
     observacao: Optional[str] = None
     numero_lancamento_gerado: Optional[str] = None
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
@@ -577,6 +598,23 @@ class DiariaAuditoria(SQLModel, table=True):
     confirmado_em: Optional[datetime] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class DiariaDia(SQLModel, table=True):
+    """Exceção do dia a dia de uma diária — só existe linha para o dia que
+    FOGE do padrão. Sem linha = dia trabalhado (o calendário nasce todo
+    marcado, e o usuário só toca no dia em que o diarista não veio)."""
+    __tablename__ = "diaria_dia"
+    __table_args__ = (UniqueConstraint("diaria_id", "data", name="uq_diaria_dia_diaria_data"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    diaria_id: int = Field(foreign_key="diaria.id", index=True)
+    data: date = Field(index=True)
+    trabalhado: bool = False
+    observacao: Optional[str] = None
+    registrado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 

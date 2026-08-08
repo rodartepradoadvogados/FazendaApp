@@ -36,6 +36,32 @@ FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_
 
 router = APIRouter()
 
+
+def _resolver_conta_corrente(
+    session: Session, conta_corrente_id: int | None, fazenda_id: int | None,
+) -> ContaCorrente | None:
+    """
+    Resolve (com checagem de fazenda) a conta bancária OPCIONAL de um
+    lançamento de RH (Folha/Férias/13º/Rescisão/Diária) — usada para
+    preencher `ContaGerencial.conta_bancaria`, o campo que os relatórios
+    gerenciais realmente filtram/agrupam (ver rotulo_conta_corrente).
+
+    Ao contrário de `_validar_conta_vale` (só o Vale de funcionário, onde a
+    conta é obrigatória quando a forma de pagamento implica saída de caixa
+    AGORA), aqui a conta NUNCA é obrigatória: estes fluxos não têm o conceito
+    de forma_pagamento do Vale — quando não informada, o lançamento segue
+    funcionando normalmente, só sem `conta_bancaria` preenchida. Quando
+    informada mas inválida (id inexistente ou de outra fazenda), rejeita —
+    nunca falha silenciosamente.
+    """
+    if not conta_corrente_id:
+        return None
+    conta = session.get(ContaCorrente, conta_corrente_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
+    return conta
+
+
 # ---------------------------------------------------------------------------
 # Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
 # ---------------------------------------------------------------------------
@@ -60,6 +86,10 @@ class FolhaPagamentoIn(BaseModel):
     recorrente: bool = False
     dia_vencimento: int | None = None  # obrigatório quando recorrente=True (1-28)
     centro_custo: str = "Pecuária Leiteira"
+    # Conta bancária da fazenda de onde sai o pagamento — OPCIONAL (ver
+    # _resolver_conta_corrente): quando informada, preenche
+    # ContaGerencial.conta_bancaria (o que os relatórios gerenciais filtram).
+    conta_corrente_id: int | None = None
 
 
 def _competencia_seguinte(competencia: str) -> str:
@@ -339,6 +369,7 @@ def criar_folha_pagamento(
         raise HTTPException(status_code=400, detail="Status inválido")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
     valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
     _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
@@ -366,6 +397,7 @@ def criar_folha_pagamento(
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
         numero_lancamento_gerado=numero_lancamento,
         centro_custo=dados.centro_custo,
+        conta_corrente_id=conta_corrente.id if conta_corrente else None,
         usuario_id=user.id,
         fazenda_id=fazenda_id,
     )
@@ -383,6 +415,7 @@ def criar_folha_pagamento(
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=valor_liquido if dados.status == "pago" else None,
+        conta_bancaria=rotulo_conta_corrente(conta_corrente) if conta_corrente else None,
         fazenda_id=fazenda_id,
     ))
     session.commit()
@@ -416,6 +449,7 @@ def atualizar_folha_pagamento(
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     valor_fgts = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_fgts, dados.valor_fgts)
     valor_dctf = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_dctf, dados.valor_dctf)
     registro.pessoa_id = dados.pessoa_id
@@ -438,6 +472,7 @@ def atualizar_folha_pagamento(
     registro.recorrente = dados.recorrente
     registro.dia_vencimento = dados.dia_vencimento if dados.recorrente else None
     registro.centro_custo = dados.centro_custo
+    registro.conta_corrente_id = conta_corrente.id if conta_corrente else None
     session.add(registro)
 
     # Mantém a conta a pagar gerada automaticamente em sincronia com a edição.
@@ -454,6 +489,7 @@ def atualizar_folha_pagamento(
             conta.data_competencia = date(ano, mes, 1)
             conta.centro_custo = dados.centro_custo
             conta.valor_total = valor_liquido
+            conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
             if dados.status == "pago":
                 conta.data_pagamento = dados.data_pagamento
                 conta.valor_pago = valor_liquido
@@ -610,6 +646,8 @@ class FeriasIn(BaseModel):
     status: str = "pendente"
     observacao: str | None = None
     centro_custo: str = "Pecuária Leiteira"
+    # Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente).
+    conta_corrente_id: int | None = None
 
 
 def _validar_ferias(dados: FeriasIn) -> None:
@@ -655,6 +693,7 @@ def criar_ferias(
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
     _validar_ferias(dados)
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
     calculo = calcular_ferias(
         pessoa.salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
@@ -670,7 +709,8 @@ def criar_ferias(
         valor_ferias=calculo["valor_ferias"], valor_terco_constitucional=calculo["valor_terco_constitucional"],
         valor_total=calculo["valor_total"],
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
-        numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo, usuario_id=user.id,
+        numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo,
+        conta_corrente_id=conta_corrente.id if conta_corrente else None, usuario_id=user.id,
         fazenda_id=fazenda_id,
     )
     session.add(registro)
@@ -687,6 +727,7 @@ def criar_ferias(
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=calculo["valor_total"] if dados.status == "pago" else None,
+        conta_bancaria=rotulo_conta_corrente(conta_corrente) if conta_corrente else None,
         fazenda_id=fazenda_id,
     ))
     session.commit()
@@ -711,6 +752,7 @@ def atualizar_ferias(
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
     _validar_ferias(dados)
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
     calculo = calcular_ferias(
         pessoa.salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
@@ -730,6 +772,7 @@ def atualizar_ferias(
     registro.status = dados.status
     registro.observacao = dados.observacao
     registro.centro_custo = dados.centro_custo
+    registro.conta_corrente_id = conta_corrente.id if conta_corrente else None
     session.add(registro)
 
     if registro.numero_lancamento_gerado:
@@ -743,6 +786,7 @@ def atualizar_ferias(
             conta.data_competencia = dados.data_fim_gozo
             conta.centro_custo = dados.centro_custo
             conta.valor_total = calculo["valor_total"]
+            conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
             if dados.status == "pago":
                 conta.data_pagamento = dados.data_pagamento
                 conta.valor_pago = calculo["valor_total"]
@@ -790,6 +834,8 @@ class DecimoTerceiroIn(BaseModel):
     status: str = "pendente"
     observacao: str | None = None
     centro_custo: str = "Pecuária Leiteira"
+    # Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente).
+    conta_corrente_id: int | None = None
 
 
 PARCELAS_DECIMO_TERCEIRO = ("unica", "primeira", "segunda")
@@ -835,6 +881,7 @@ def criar_decimo_terceiro(
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
     _validar_decimo_terceiro(dados)
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
     valor_bruto = calcular_decimo_terceiro(pessoa.salario_base, dados.meses_trabalhados)
     valor_inss = round(dados.valor_inss, 2)
@@ -850,7 +897,8 @@ def criar_decimo_terceiro(
         pessoa_id=dados.pessoa_id, ano=dados.ano, parcela=dados.parcela, meses_trabalhados=dados.meses_trabalhados,
         valor_bruto=valor_bruto, valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
-        numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo, usuario_id=user.id,
+        numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo,
+        conta_corrente_id=conta_corrente.id if conta_corrente else None, usuario_id=user.id,
         fazenda_id=fazenda_id,
     )
     session.add(registro)
@@ -867,6 +915,7 @@ def criar_decimo_terceiro(
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=valor_liquido if dados.status == "pago" else None,
+        conta_bancaria=rotulo_conta_corrente(conta_corrente) if conta_corrente else None,
         fazenda_id=fazenda_id,
     ))
     session.commit()
@@ -891,6 +940,7 @@ def atualizar_decimo_terceiro(
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
     _validar_decimo_terceiro(dados)
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
 
     valor_bruto = calcular_decimo_terceiro(pessoa.salario_base, dados.meses_trabalhados)
     valor_inss = round(dados.valor_inss, 2)
@@ -911,6 +961,7 @@ def atualizar_decimo_terceiro(
     registro.status = dados.status
     registro.observacao = dados.observacao
     registro.centro_custo = dados.centro_custo
+    registro.conta_corrente_id = conta_corrente.id if conta_corrente else None
     session.add(registro)
 
     vencimento_padrao = date(dados.ano, 12, 20) if dados.parcela in ("unica", "segunda") else date(dados.ano, 11, 30)
@@ -925,6 +976,7 @@ def atualizar_decimo_terceiro(
             conta.data_competencia = date(dados.ano, 12, 1)
             conta.centro_custo = dados.centro_custo
             conta.valor_total = valor_liquido
+            conta.conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
             if dados.status == "pago":
                 conta.data_pagamento = dados.data_pagamento
                 conta.valor_pago = valor_liquido
@@ -1073,6 +1125,10 @@ class RescisaoFecharIn(BaseModel):
     data_pagamento: date | None = None
     inativar_pessoa: bool = False
     centro_custo: str | None = None
+    # Conta bancária de onde sai o pagamento — OPCIONAL (ver
+    # _resolver_conta_corrente); aplicada a TODAS as ContaGerencial geradas,
+    # mesmo no fechamento "detalhado" (uma por verba).
+    conta_corrente_id: int | None = None
 
 
 def _validar_simulacao_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa) -> None:
@@ -1419,6 +1475,8 @@ def fechar_rescisao(
     pessoa = session.get(Pessoa, registro.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
+    conta_bancaria = rotulo_conta_corrente(conta_corrente) if conta_corrente else None
 
     centro_custo = dados.centro_custo or registro.centro_custo
     numero_lancamento = _proximo_numero_lancamento(session, registro.data_desligamento.year)
@@ -1443,6 +1501,7 @@ def fechar_rescisao(
             tipo="despesa", origem="auto",
             data_pagamento=data_pagamento_conta,
             valor_pago=registro.valor_total if dados.status_pagamento == "pago" else None,
+            conta_bancaria=conta_bancaria,
             fazenda_id=fazenda_id,
         ))
     else:
@@ -1465,6 +1524,7 @@ def fechar_rescisao(
                 tipo="despesa", origem="auto",
                 data_pagamento=data_pagamento_conta,
                 valor_pago=valor if dados.status_pagamento == "pago" else None,
+                conta_bancaria=conta_bancaria,
                 fazenda_id=fazenda_id,
             ))
         # Garantia da cascata da decisão do plano: a soma das parcelas geradas
@@ -1480,6 +1540,7 @@ def fechar_rescisao(
     registro.data_fechamento = date.today()
     registro.data_pagamento = dados.data_pagamento
     registro.centro_custo = centro_custo
+    registro.conta_corrente_id = conta_corrente.id if conta_corrente else None
     if dados.inativar_pessoa:
         pessoa.ativo = False
         session.add(pessoa)
