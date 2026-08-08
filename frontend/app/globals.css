@@ -545,6 +545,22 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 .btn-secondary:hover { background: var(--surface); color: var(--text); border-color: var(--gold-deep); }
 
+/* Botões do portal Formulação de Dietas (ver components/dietas/DietasLayout.tsx)
+   são todos ouro — inclusive os "secundários" (Excel/PDF, Salvar, Recarregar,
+   Importar do cadastro, Adicionar linha manual, Biblioteca de referência em
+   GradeAlimentos), não só o botão principal — pedido explícito do usuário.
+   .btn-secondary sozinho só fica dourado no hover; aqui vira o padrão. */
+.dietas-portal .btn-secondary {
+  background: transparent;
+  color: var(--gold-deep);
+  border-color: var(--gold-deep);
+}
+.dietas-portal .btn-secondary:hover {
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  color: var(--gold-deep);
+  border-color: var(--gold-deep);
+}
+
 /* ── KPI cards ──
    Proposta "Institucional" (1A): a faixa de 3px em gradiente no topo vira um
    filete de 3px à esquerda, sólido — marinho por padrão. Indicadores de
