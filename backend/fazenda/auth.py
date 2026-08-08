@@ -43,7 +43,25 @@ DESBLOQUEIO_VALIDADE_S = 15 * 60  # 15 minutos
 # acesso principal do proprietário; rodartepradoadvogados@gmail.com continua
 # funcionando como login/contato alternativo da mesma pessoa, só não é mais o
 # valor que `eh_dono` compara.
+#
+# Usado sozinho (não via EMAILS_DONO_EQUIVALENTE) em contextos que precisam de
+# UM único e-mail "de contato do proprietário" — VAPID_SUBJECT (push.py),
+# destinatário do backup semanal (rules/backup.py) e as seed_* que provisionam
+# a conta inicial — nunca em checagem de permissão.
 EMAIL_DONO = "jairodarte@gmail.com"
+
+# E-mails com o MESMO nível de acesso do proprietário (`eh_dono`) — hoje o
+# próprio dono e o Alexandre Scarpa, sócio, a pedido explícito do proprietário
+# ("ele precisa exatamente do mesmo acesso que eu dentro do site"). Lista
+# pequena e nomeada de propósito: Painel CowData administra TODAS as fazendas
+# clientes da SaaS, não só esta, então ampliar quem passa por `exigir_dono`
+# além de contas específicas e conhecidas seria abrir uma brecha de segurança
+# entre clientes (ver painel_cowdata.py, 100% gated por exigir_dono).
+EMAILS_DONO_EQUIVALENTE = {EMAIL_DONO, "alexandrescarpazoo@yahoo.com.br"}
+
+
+def eh_email_dono_equivalente(email: str | None) -> bool:
+    return (email or "").strip().lower() in EMAILS_DONO_EQUIVALENTE
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +219,10 @@ def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
 
 
 def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
-    """Restringe a UM único usuário — o proprietário — por e-mail cadastrado.
-    Independente de papel/admin: mesmo outro admin não passa por aqui."""
-    if (user.email or "").strip().lower() != EMAIL_DONO:
+    """Restringe a quem tem acesso equivalente ao do proprietário (ver
+    EMAILS_DONO_EQUIVALENTE), por e-mail cadastrado. Independente de
+    papel/admin: mesmo outro admin não passa por aqui."""
+    if not eh_email_dono_equivalente(user.email):
         raise HTTPException(status_code=403, detail="Acesso restrito ao proprietário")
     return user
 
@@ -218,7 +237,7 @@ def exigir_contratante_ou_dono(
     vincular/desvincular usuários), mas não as ações reservadas só ao dono da
     plataforma (exigir_dono), como criar fazenda nova ou administrar News/Blog.
     O dono sempre passa, independente de fazenda selecionada."""
-    if (user.email or "").strip().lower() == EMAIL_DONO:
+    if eh_email_dono_equivalente(user.email):
         return user
     if fazenda_id is None:
         raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")

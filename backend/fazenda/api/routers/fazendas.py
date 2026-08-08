@@ -16,7 +16,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import EMAIL_DONO, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id
+from fazenda.auth import (
+    eh_email_dono_equivalente, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id,
+)
 from fazenda.database import get_session
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContratoAnexo, ContratoAssinaturaZapSign, ContratoFazenda, ContratoFazendaModulo,
@@ -96,7 +98,7 @@ def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token
     dono passa sempre) — evita que um contratante da fazenda A manipule
     vínculos da fazenda B só porque exigir_contratante_ou_dono validou seu
     vínculo de contratante contra o token, sem saber qual fazenda a URL pede."""
-    if (user.email or "").strip().lower() == EMAIL_DONO:
+    if eh_email_dono_equivalente(user.email):
         return
     if fazenda_id_token != fazenda_id:
         raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")

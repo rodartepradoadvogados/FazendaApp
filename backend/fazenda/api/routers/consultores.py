@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import EMAIL_DONO, exigir_consultor_ativo, exigir_dono, get_current_user
+from fazenda.auth import eh_email_dono_equivalente, exigir_consultor_ativo, exigir_dono, get_current_user
 from fazenda.database import get_session
 from fazenda.models import ContratoConsultor, FazendaGerenciada, RegistroImportado, Usuario
 from fazenda.models.consultores import CATEGORIAS_IMPORTACAO, PLANOS_CONSULTOR_CATALOGO
@@ -153,7 +153,7 @@ def _minha_fazenda_gerenciada(session: Session, user: Usuario, fazenda_gerenciad
     f = session.get(FazendaGerenciada, fazenda_gerenciada_id)
     if not f:
         raise HTTPException(status_code=404, detail="Fazenda gerenciada não encontrada")
-    eh_dono = (user.email or "").strip().lower() == EMAIL_DONO
+    eh_dono = eh_email_dono_equivalente(user.email)
     if not eh_dono and f.consultor_usuario_id != user.id:
         raise HTTPException(status_code=403, detail="Esta fazenda gerenciada não pertence a você")
     return f
