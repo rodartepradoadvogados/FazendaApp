@@ -11,6 +11,7 @@ import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
+import { SubNavTabs } from "@/components/SubNavTabs";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
@@ -170,6 +171,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       </div>
       <AssistenteClaude />
       <main className="flex-1 md:overflow-y-auto app-main">
+        <SubNavTabs />
         <SectionBackground />
         <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
       </main>
