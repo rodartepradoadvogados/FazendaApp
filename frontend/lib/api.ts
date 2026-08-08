@@ -637,6 +637,15 @@ export async function desvincularUsuarioFazenda(fazendaId: number, usuarioId: nu
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario/${usuarioId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desvincular usuário"); }
 }
+export async function editarVinculoUsuarioFazenda(
+  fazendaId: number, usuarioId: number, dados: { contratante?: boolean; consultor?: boolean; contador?: boolean },
+): Promise<UsuarioVinculado> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario/${usuarioId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o vínculo"); }
+  return res.json();
+}
 
 // ── Consultor independente (Fase 2C) — assinatura própria (fora de qualquer
 // fazenda-tenant), fazendas gerenciadas por importação de planilha, e o modo
