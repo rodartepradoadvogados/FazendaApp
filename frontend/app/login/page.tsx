@@ -362,19 +362,19 @@ function MilkNewsCallout() {
           <span style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             width: "3.2rem", height: "3.2rem", borderRadius: "999px",
-            background: "rgba(255,224,102,0.15)", flexShrink: 0,
+            background: "rgba(201,164,76,0.15)", flexShrink: 0,
           }}>
-            <Newspaper size={26} style={{ color: "#FFE066" }} />
+            <Newspaper size={26} style={{ color: "#C9A44C" }} />
           </span>
           <span style={{ flex: 1, minWidth: "16rem" }}>
-            <span style={{ display: "block", color: "#FFE066", fontWeight: 800, fontSize: "1.15rem" }}>Milk News — nosso blog de pecuária leiteira</span>
+            <span style={{ display: "block", color: "#C9A44C", fontWeight: 800, fontSize: "1.15rem" }}>Milk News — nosso blog de pecuária leiteira</span>
             <span style={{ display: "block", color: "rgba(255,255,255,0.8)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
               {noticia === undefined && "Carregando a última matéria…"}
               {noticia === null && "Cotação do leite, mercado, genética e manejo — aberto a qualquer visitante, sem precisar de login."}
               {noticia && <>Última matéria: <strong>{noticia.manchete}</strong></>}
             </span>
           </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", color: "#FFE066", fontWeight: 700, fontSize: "0.9rem", flexShrink: 0 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", color: "#C9A44C", fontWeight: 700, fontSize: "0.9rem", flexShrink: 0 }}>
             Ler o blog <ArrowRight size={18} />
           </span>
         </Link>
