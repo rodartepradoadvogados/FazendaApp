@@ -254,13 +254,20 @@
    paleta "Verde"; azul-escuro (navy) como cor de marca, azul claro só nos
    poucos destaques pontuais (--dourado-light), nunca como fundo. */
 :root[data-theme="escuro"][data-paleta="azul"] {
-  --vinho:       #153A66;
-  --vinho-light: #2563EB;
-  --vinho-dark:  #0D2340;
-  --dourado:     #2563EB;
-  --dourado-light: #7DD3FC;
-  --sidebar-active-bg: rgba(21, 58, 102, 0.4);
-  --pill-active-bg: rgba(21, 58, 102, 0.4);
+  /* Mesma direção "Institucional" do claro (ver bloco abaixo), adaptada ao
+     fundo escuro: marinho mais claro que o do claro (precisa se destacar do
+     --bg quase preto, não escurecer ainda mais), azul-aço mais claro para
+     continuar lendo como dado sobre fundo escuro, ouro claro assume o papel
+     de "ouro escurecido" (o par --dourado/--dourado-light do claro existe
+     pelo contraste no CLARO — no escuro o mais claro dos dois já è o que
+     rende contraste suficiente pros dois usos). */
+  --vinho:       #1B3A5C; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #5B85A8; /* azul-aço — série de dados primária, hovers */
+  --vinho-dark:  #081627; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #C9A44C; /* ouro — números de destaque, réguas, "salvar" */
+  --dourado-light: #E3C077; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
+  --sidebar-active-bg: rgba(27, 58, 92, 0.4);
+  --pill-active-bg: rgba(27, 58, 92, 0.4);
 }
 :root[data-theme="claro"][data-paleta="azul"] {
   /* Direção "Institucional" (proposta 1A): cor reservada à estrutura, não ao
