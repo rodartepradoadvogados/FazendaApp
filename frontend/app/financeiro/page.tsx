@@ -347,12 +347,22 @@ export default function FinanceiroPage() {
     // Contas em aberto/pagas (CONTAS_IDS) não ganham período padrão: a lista
     // "filtrados" já trata ausência de período como "mostra tudo" — contas
     // vencidas ou a vencer não podem sumir por um filtro implícito de hoje.
-    // O padrão hoje-hoje vale só para os relatórios (Fluxo, DRE, Livro Caixa
-    // etc.), que precisam de algum período para não ficar vazios.
+    // O padrão vale só para os relatórios (Fluxo, DRE, Livro Caixa etc.),
+    // que precisam de algum período para não ficar vazios.
+    //
+    // BUG corrigido: o padrão era literalmente hoje-hoje (1 dia só). Isso
+    // esconde qualquer lançamento cuja data de competência não seja HOJE —
+    // o que é o caso da imensa maioria dos lançamentos "automáticos" de RH
+    // (Rescisão/Férias/13º/Folha usam a data do evento — desligamento,
+    // competência etc. — não o dia em que o usuário clicou em "Fechar"), e
+    // foi relatado como "rescisão fechada não aparece na DRE". Mês corrente
+    // (1º dia até hoje) é um padrão muito mais útil e ainda "só um período",
+    // sem virar uma varredura de todo o histórico.
     if (regs && !inicio && !CONTAS_IDS.has(rel)) {
-      const hoje = new Date().toISOString().slice(0, 10);
-      setInicio(hoje);
-      setFim(hoje);
+      const hoje = new Date();
+      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+      setInicio(inicioMes);
+      setFim(hoje.toISOString().slice(0, 10));
     }
   }, [regs, inicio, rel]);
 

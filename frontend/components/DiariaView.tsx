@@ -4,7 +4,7 @@ import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt } from "lucide-reac
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
-  confirmarExclusao,
+  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
@@ -60,6 +60,8 @@ export default function DiariaView() {
   const [valorPagamento, setValorPagamento] = useState("");
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [pagoErro, setPagoErro] = useState<string | null>(null);
+  const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
+  const [pagamentoContaCorrenteId, setPagamentoContaCorrenteId] = useState("");
 
   const [diasTrabalhadosPorAuditoria, setDiasTrabalhadosPorAuditoria] = useState<Record<number, string>>({});
   const [auditoriaErro, setAuditoriaErro] = useState<string | null>(null);
@@ -98,6 +100,7 @@ export default function DiariaView() {
     carregar();
     fetchPessoas().then(setPessoas).catch(() => {});
     fetchParametroDiariaPadrao().then(setParametroPadrao).catch(() => {});
+    fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
   }, []);
 
   async function salvar() {
@@ -157,8 +160,11 @@ export default function DiariaView() {
     setPagoErro(null);
     if (!valorPagamento || parseFloat(valorPagamento) <= 0) { setPagoErro("Informe o valor do pagamento."); return; }
     try {
-      await registrarPagamentoDiaria(diariaId, { data_pagamento: dataPagamento, valor: parseFloat(valorPagamento) });
-      setPagandoId(null); setValorPagamento("");
+      await registrarPagamentoDiaria(diariaId, {
+        data_pagamento: dataPagamento, valor: parseFloat(valorPagamento),
+        conta_corrente_id: pagamentoContaCorrenteId ? Number(pagamentoContaCorrenteId) : undefined,
+      });
+      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setPagoErro(e.message || "Erro ao registrar pagamento");
@@ -461,7 +467,7 @@ export default function DiariaView() {
                           <Pencil size={13} />
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagoErro(null); }}>
+                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setPagoErro(null); }}>
                           <DollarSign size={13} /> Pagar
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem" }} title="Ver pagamentos lançados"
@@ -546,6 +552,13 @@ export default function DiariaView() {
           <div style={{ marginTop: "0.6rem" }}>
             <label style={lbl}>Valor (R$)</label>
             <CampoMoeda style={inputSm} value={Number(valorPagamento) || 0} onChange={(v) => setValorPagamento(v ? String(v) : "")} />
+          </div>
+          <div style={{ marginTop: "0.6rem" }}>
+            <label style={lbl}>Conta bancária (opcional)</label>
+            <select style={inputSm} value={pagamentoContaCorrenteId} onChange={(e) => setPagamentoContaCorrenteId(e.target.value)}>
+              <option value="">Não informar</option>
+              {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+            </select>
           </div>
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
           <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} onClick={() => registrarPagamento(pagandoId)}>

@@ -3,9 +3,9 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Printer, X } from "lucide-react";
 import {
   simularRescisao, fetchRescisoesFuncionario, criarSimulacaoRescisao, atualizarSimulacaoRescisao,
-  excluirSimulacaoRescisao, fecharRescisao, formatBRL,
+  excluirSimulacaoRescisao, fecharRescisao, formatBRL, fetchContasCorrentes,
   type TipoRescisao, type CalculoRescisao, type RegistroRescisaoFuncionario,
-  type RescisaoSimulacaoDados, type FormaLancamentoRescisao,
+  type RescisaoSimulacaoDados, type FormaLancamentoRescisao, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
@@ -63,7 +63,7 @@ function paraNumero(v: string): number {
   return isNaN(n) ? 0 : n;
 }
 
-export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
+export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: Pessoa[]; onPessoaInativada?: () => void }) {
   const [itens, setItens] = useState<RegistroRescisaoFuncionario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -101,6 +101,8 @@ export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
   const [statusPagamentoFechar, setStatusPagamentoFechar] = useState<"pendente" | "pago">("pendente");
   const [dataPagamentoFechar, setDataPagamentoFechar] = useState(hoje());
   const [inativarPessoa, setInativarPessoa] = useState(true);
+  const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [fechando, setFechando] = useState(false);
   const [fecharMsg, setFecharMsg] = useState<string | null>(null);
 
@@ -112,7 +114,7 @@ export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
   const carregar = () => fetchRescisoesFuncionario().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => { carregar(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
 
   const pessoaSelecionada = useMemo(() => pessoas.find((p) => String(p.id) === pessoaId), [pessoas, pessoaId]);
 
@@ -129,6 +131,7 @@ export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
     setDiasFeriasVencidas("0"); setAvisoPrevioTrabalhado(false); setObservacao(""); setCentroCusto(undefined);
     setMsg(null); setFecharMsg(null);
     setFormaLancamento("unico"); setStatusPagamentoFechar("pendente"); setDataPagamentoFechar(hoje()); setInativarPessoa(true);
+    setContaCorrenteId("");
     resetVerbas();
   }
 
@@ -236,6 +239,7 @@ export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
   function irParaFechar(r?: RegistroRescisaoFuncionario) {
     if (r) editarRascunho(r);
     setFormaLancamento("unico"); setStatusPagamentoFechar("pendente"); setDataPagamentoFechar(hoje()); setInativarPessoa(true);
+    setContaCorrenteId("");
     setFecharMsg(null);
     setEtapa("fechar");
   }
@@ -245,13 +249,20 @@ export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
     setFecharMsg(null);
     setFechando(true);
     try {
+      const marcouInativo = inativarPessoa;
       await fecharRescisao(rascunhoId, {
         forma_lancamento: formaLancamento, status_pagamento: statusPagamentoFechar,
         data_pagamento: statusPagamentoFechar === "pago" ? dataPagamentoFechar : null,
         inativar_pessoa: inativarPessoa,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       resetTudo();
       carregar();
+      // Sem isto, a lista `pessoas` do componente pai (buscada 1x no mount)
+      // continua mostrando o funcionário como ativo em qualquer dropdown
+      // desta página até um F5 — mesmo com o backend já tendo gravado
+      // ativo=False (ver comentário em FeriasDecimoTerceiroView.tsx).
+      if (marcouInativo) onPessoaInativada?.();
     } catch (e: any) {
       setFecharMsg(e.message || "Erro ao fechar rescisão");
     } finally {
@@ -497,6 +508,19 @@ export default function RescisaoView({ pessoas }: { pessoas: Pessoa[] }) {
                   <input type="date" style={inputSm} value={dataPagamentoFechar} onChange={(e) => setDataPagamentoFechar(e.target.value)} />
                 </div>
               )}
+            </div>
+            <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "-0.4rem", marginBottom: "0.8rem" }}>
+              {statusPagamentoFechar === "pendente"
+                ? "Pendente: entra em Financeiro › Contas › Contas a pagar. Só aparece em Contas pagas depois de dar baixa no pagamento."
+                : "Já pago: entra direto em Financeiro › Contas › Contas pagas, com a data de pagamento informada."}
+            </div>
+
+            <div className="mb-3" style={{ maxWidth: 320 }}>
+              <label style={lbl}>Conta bancária (opcional)</label>
+              <select style={inputSm} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+                <option value="">Não informar</option>
+                {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+              </select>
             </div>
 
             <label style={{ ...lbl, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.8rem" }}>

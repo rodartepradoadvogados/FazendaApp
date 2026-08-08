@@ -4,7 +4,8 @@ import { Plus, Check } from "lucide-react";
 import {
   fetchPessoas, fetchFerias, criarFerias, atualizarFerias,
   fetchDecimoTerceiro, criarDecimoTerceiro, atualizarDecimoTerceiro,
-  formatBRL, type RegistroFerias, type RegistroDecimoTerceiro,
+  fetchContasCorrentes,
+  formatBRL, type RegistroFerias, type RegistroDecimoTerceiro, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
@@ -37,7 +38,7 @@ function StatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 // Sub-seção: Férias
 // ---------------------------------------------------------------------------
-function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
+function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
   const [itens, setItens] = useState<RegistroFerias[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +51,7 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
   const [dataFimGozo, setDataFimGozo] = useState("");
   const [abonoDias, setAbonoDias] = useState("0");
   const [observacao, setObservacao] = useState("");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [calculo, setCalculo] = useState<{ valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number } | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -97,10 +99,11 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
         dias_direito: parseInt(diasDireito, 10) || 30, dias_gozados: parseInt(diasGozados, 10) || 0,
         data_inicio_gozo: dataInicioGozo, data_fim_gozo: dataFimGozo,
         abono_pecuniario_dias: parseInt(abonoDias, 10) || 0, observacao: observacao || undefined,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({ tipo: "sucesso", texto: "Férias lançadas." });
       setPessoaId(""); setPeriodoInicio(""); setPeriodoFim(""); setDataInicioGozo(""); setDataFimGozo("");
-      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null);
+      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar férias" });
@@ -118,6 +121,7 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
         data_inicio_gozo: r.data_inicio_gozo, data_fim_gozo: r.data_fim_gozo,
         abono_pecuniario_dias: r.abono_pecuniario_dias, observacao: r.observacao || undefined,
         status: "pago", data_pagamento: dataPagamento, centro_custo: r.centro_custo,
+        conta_corrente_id: r.conta_corrente_id,
       });
       setPagandoId(null);
       carregar();
@@ -170,6 +174,14 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
         </div>
         <div><label style={lbl}>Observação</label>
           <textarea style={{ ...inputSm, minHeight: "2.4rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+
+        <div className="mt-2" style={{ maxWidth: 320 }}>
+          <label style={lbl}>Conta bancária (opcional)</label>
+          <select style={inputSm} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+            <option value="">Não informar</option>
+            {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+          </select>
+        </div>
 
         <div className="flex items-center gap-2" style={{ marginTop: "0.6rem" }}>
           <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={calcular}>Calcular valor sugerido</button>
@@ -255,7 +267,7 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
 // ---------------------------------------------------------------------------
 // Sub-seção: 13º salário
 // ---------------------------------------------------------------------------
-function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
+function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
   const [itens, setItens] = useState<RegistroDecimoTerceiro[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -264,6 +276,7 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
   const [parcela, setParcela] = useState("unica");
   const [mesesTrabalhados, setMesesTrabalhados] = useState("12");
   const [observacao, setObservacao] = useState("");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [valorCalculado, setValorCalculado] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -314,9 +327,10 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
       await criarDecimoTerceiro({
         pessoa_id: Number(pessoaId), ano: parseInt(ano, 10), parcela, meses_trabalhados: meses,
         observacao: observacao || undefined,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({ tipo: "sucesso", texto: "13º salário lançado." });
-      setPessoaId(""); setObservacao(""); setValorCalculado(null);
+      setPessoaId(""); setObservacao(""); setValorCalculado(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar 13º salário" });
@@ -332,6 +346,7 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
         pessoa_id: r.pessoa_id, ano: r.ano, parcela: r.parcela, meses_trabalhados: r.meses_trabalhados,
         valor_inss: r.valor_inss, valor_ir: r.valor_ir, observacao: r.observacao || undefined,
         status: "pago", data_pagamento: dataPagamento, centro_custo: r.centro_custo,
+        conta_corrente_id: r.conta_corrente_id,
       });
       setPagandoId(null);
       carregar();
@@ -375,6 +390,14 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
         </div>
         <div><label style={lbl}>Observação</label>
           <textarea style={{ ...inputSm, minHeight: "2.4rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+
+        <div className="mt-2" style={{ maxWidth: 320 }}>
+          <label style={lbl}>Conta bancária (opcional)</label>
+          <select style={inputSm} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+            <option value="">Não informar</option>
+            {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+          </select>
+        </div>
 
         <div className="flex items-center gap-2" style={{ marginTop: "0.6rem" }}>
           <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={calcular}>Calcular valor sugerido</button>
@@ -461,8 +484,13 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
 export default function FeriasDecimoTerceiroView() {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [subaba, setSubaba] = useState<"ferias" | "decimo" | "rescisao">("ferias");
+  // Contas correntes (id + rótulo) — para o seletor opcional "Conta bancária"
+  // de Férias/13º/Rescisão, mesmo padrão do Vale de funcionário: carregado
+  // uma vez aqui e repassado às 3 sub-seções.
+  const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
 
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
+  useEffect(() => { carregarPessoas(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
 
   return (
     <div>
@@ -471,9 +499,15 @@ export default function FeriasDecimoTerceiroView() {
         <button className={subaba === "decimo" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("decimo")}>13º salário</button>
         <button className={subaba === "rescisao" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("rescisao")}>Rescisão</button>
       </div>
-      {subaba === "ferias" && <FeriasSection pessoas={pessoas} />}
-      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} />}
-      {subaba === "rescisao" && <RescisaoView pessoas={pessoas} />}
+      {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
+      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
+      {/* onPessoaInativada: fechar rescisão com "marcar como inativo" muda
+          Pessoa.ativo no banco (confirmado em backend/tests/test_rescisao_fluxo.py),
+          mas esta lista `pessoas` só era buscada 1x no mount — sem isso, o
+          funcionário recém-inativado continuava aparecendo como ativo em
+          qualquer dropdown desta página (Férias/13º/nova Rescisão) até um
+          F5, dando a falsa impressão de que a caixinha não fez nada. */}
+      {subaba === "rescisao" && <RescisaoView pessoas={pessoas} onPessoaInativada={carregarPessoas} />}
     </div>
   );
 }

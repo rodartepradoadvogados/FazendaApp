@@ -73,6 +73,7 @@ type RegistroFolha = {
   valor_liquido: number;
   data_pagamento: string | null; data_vencimento?: string | null; status: string; observacao: string | null;
   recorrente: boolean; dia_vencimento: number | null;
+  conta_corrente_id?: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
   detalhe: { label: string; valor: number }[];
   usuario_nome?: string | null;
@@ -122,6 +123,7 @@ export default function FolhaPagamentoView() {
   const [observacao, setObservacao] = useState("");
   const [recorrente, setRecorrente] = useState(false);
   const [diaVencimento, setDiaVencimento] = useState("5");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -158,6 +160,7 @@ export default function FolhaPagamentoView() {
   const [editObservacao, setEditObservacao] = useState("");
   const [editRecorrente, setEditRecorrente] = useState(false);
   const [editDiaVencimento, setEditDiaVencimento] = useState("5");
+  const [editContaCorrenteId, setEditContaCorrenteId] = useState("");
   const [editSalvando, setEditSalvando] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [editValorVale, setEditValorVale] = useState(0);
@@ -611,6 +614,7 @@ export default function FolhaPagamentoView() {
         valor_inss: parseFloat(valorInss) || 0, valor_ir: parseFloat(valorIr) || 0,
         observacao: observacao || undefined,
         recorrente, dia_vencimento: recorrente ? Number(diaVencimento) : null,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({
         tipo: "sucesso",
@@ -618,7 +622,7 @@ export default function FolhaPagamentoView() {
           ? "Lançamento de folha criado — as próximas competências serão geradas automaticamente em Contas a Pagar."
           : "Lançamento de folha criado.",
       });
-      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5");
+      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5"); setContaCorrenteId("");
       setPercentualInss(""); setValorInss(""); setInssManual(false);
       setPercentualIr(""); setValorIr(""); setIrManual(false);
       carregar();
@@ -640,6 +644,7 @@ export default function FolhaPagamentoView() {
         percentual_dctf: r.percentual_dctf, valor_dctf: r.valor_dctf,
         data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
         recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
+        conta_corrente_id: r.conta_corrente_id,
       });
       setPagandoId(null);
       carregar();
@@ -670,6 +675,7 @@ export default function FolhaPagamentoView() {
     setEditObservacao(r.observacao || "");
     setEditRecorrente(r.recorrente);
     setEditDiaVencimento(r.dia_vencimento ? String(r.dia_vencimento) : "5");
+    setEditContaCorrenteId(r.conta_corrente_id ? String(r.conta_corrente_id) : "");
     setEditValorVale(arredonda2(r.valor_vale || 0));
     setEditValorLiquidoOriginal(r.valor_liquido);
     setEditMsg(null);
@@ -702,6 +708,7 @@ export default function FolhaPagamentoView() {
         valor_dctf: editValorDctf ? parseFloat(editValorDctf) : undefined,
         observacao: editObservacao || undefined,
         recorrente: editRecorrente, dia_vencimento: editRecorrente ? Number(editDiaVencimento) : null,
+        conta_corrente_id: editContaCorrenteId ? Number(editContaCorrenteId) : undefined,
         status: r.status, data_pagamento: r.data_pagamento || undefined,
       });
       setEditingId(null);
@@ -870,6 +877,13 @@ export default function FolhaPagamentoView() {
           <div><label style={labelStyleLote}>Observação</label>
             <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
           <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong></span></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Conta bancária (opcional)</label>
+            <select style={selStyleLote} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+              <option value="">Não informar</option>
+              {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+            </select></div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
           <div className="flex items-center gap-2" style={{ paddingBottom: "0.4rem" }}>
@@ -1246,6 +1260,13 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Observação</label>
                               <input style={selStyleLote} value={editObservacao} onChange={(e) => setEditObservacao(e.target.value)} /></div>
                             <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Conta bancária (opcional)</label>
+                              <select style={selStyleLote} value={editContaCorrenteId} onChange={(e) => setEditContaCorrenteId(e.target.value)}>
+                                <option value="">Não informar</option>
+                                {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+                              </select></div>
                           </div>
                           {editValorVale > 0 && (
                             <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
