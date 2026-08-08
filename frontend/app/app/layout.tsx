@@ -125,7 +125,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
-              <CowDataMark size={22} />
+              <CowDataMark size={22} legado />
               <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
               {/* Bolinha de conexão: verde luminoso online, vermelha offline */}
               <span

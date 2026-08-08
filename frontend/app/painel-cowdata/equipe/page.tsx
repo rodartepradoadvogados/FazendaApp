@@ -9,9 +9,9 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
-const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", verde: "#1F9D5C", vermelho: "#B91C1C", texto: "#1B2A3A" };
+const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
 const inputStyle: React.CSSProperties = {
-  background: "#F3EAD8", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
+  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
   color: COR.texto, fontSize: "0.82rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
@@ -118,7 +118,7 @@ export default function EquipeCowData() {
           </div>
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvarNovo}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#F3EAD8", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
               Cadastrar
             </button>
             <button onClick={() => setMostrarForm(false)}
@@ -205,7 +205,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
       </tr>
       {expandido && (
         <tr>
-          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: "#F3EAD8", borderBottom: `1px solid ${COR.borda}` }}>
+          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: "#1A2028", borderBottom: `1px solid ${COR.borda}` }}>
             {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.6rem" }}>{erro}</p>}
             <div style={{ fontSize: "0.75rem", color: COR.mudo, marginBottom: "0.6rem" }}>
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
@@ -232,7 +232,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
                 </select>
               </div>
               <button onClick={lancar}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#F3EAD8", fontWeight: 700, cursor: "pointer" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
                 <Plus size={12} /> Lançar folha
               </button>
             </div>

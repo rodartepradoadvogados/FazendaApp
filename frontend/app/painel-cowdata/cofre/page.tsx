@@ -10,11 +10,11 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COR = {
-  cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", texto: "#1B2A3A",
-  verde: "#1F9D5C", vermelho: "#B91C1C",
+  cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", texto: "#F1F3F5",
+  verde: "#8faa7b", vermelho: "#b5544a",
 };
 const inputStyle: React.CSSProperties = {
-  background: "#F3EAD8", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
+  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
 };
 
 function formatarData(iso: string): string {
@@ -114,7 +114,7 @@ export default function CofreAcessoCowData() {
           </p>
         </div>
         <button onClick={() => setMostrarForm((v) => !v)} style={{
-          background: COR.dourado, color: "#F3EAD8", border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 1rem",
+          background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 1rem",
           fontSize: "0.82rem", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
         }}>
           {mostrarForm ? "Cancelar" : "+ Solicitar acesso"}
@@ -140,7 +140,7 @@ export default function CofreAcessoCowData() {
             </select>
           </div>
           <button onClick={enviarPedido} disabled={enviando} style={{
-            background: COR.dourado, color: "#F3EAD8", border: "none", borderRadius: "var(--r-sm)", padding: "0.5rem 1rem",
+            background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.5rem 1rem",
             fontSize: "0.8rem", fontWeight: 700, cursor: enviando ? "default" : "pointer", opacity: enviando ? 0.6 : 1,
           }}>
             {enviando ? "Enviando…" : "Solicitar"}
