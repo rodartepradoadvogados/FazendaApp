@@ -25,6 +25,7 @@ from fazenda.models import (
     ContaGerencial,
     Diaria,
     DiariaAuditoria,
+    DiariaDia,
     DiariaPagamento,
     Empreitada,
     EmpreitadaEtapa,
@@ -325,17 +326,21 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
         )
 
     auditorias = session.exec(select(DiariaAuditoria).where(DiariaAuditoria.diaria_id == diaria.id)).all()
+    dias_calendario = session.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria.id)).all()
 
     impacto = [f"Diária de {nome} — R$ {diaria.valor_diaria:,.2f}/dia desde {_br(diaria.data_inicio)}"]
     if auditorias:
         impacto.append(f"{len(auditorias)} auditoria(s) de dias trabalhados")
+    if dias_calendario:
+        impacto.append(f"{len(dias_calendario)} dia(s) marcado(s) no calendário de dias trabalhados")
     if vales:
         impacto.append(f"{len(vales)} vale(s) avulso(s)")
 
     # Sem pagamento e sem vale de saída de caixa: excluir livremente,
-    # levando auditorias e vale(s) de desconto (sem ValeAvulsoAbatimento —
-    # _aplicar_vale_avulso retorna cedo para "diaria") junto.
-    objetos: list = [diaria, *auditorias]
+    # levando auditorias, dias do calendário e vale(s) de desconto (sem
+    # ValeAvulsoAbatimento — _aplicar_vale_avulso retorna cedo para "diaria")
+    # junto.
+    objetos: list = [diaria, *auditorias, *dias_calendario]
     for vale in vales:
         limpar_vinculo_de_itens(session, vale_avulso_id=vale.id)
         objetos.append(vale)

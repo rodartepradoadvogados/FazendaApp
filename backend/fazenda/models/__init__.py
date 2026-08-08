@@ -109,6 +109,7 @@ from .pessoal import (
     Diaria,
     DiariaPagamento,
     DiariaAuditoria,
+    DiariaDia,
     ParametroDiariaPadrao,
     GuiaFolhaEncargo,
 )
@@ -353,6 +354,7 @@ __all__ = [
     "Diaria",
     "DiariaPagamento",
     "DiariaAuditoria",
+    "DiariaDia",
     "ParametroDiariaPadrao",
     "GuiaFolhaEncargo",
     "Sanidade",

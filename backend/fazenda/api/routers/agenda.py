@@ -16,7 +16,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, DietaLancamento, Diaria,
-    DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, Lote, ParametroSugestaoMovimentacao, Parto,
+    DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, ParametroSugestaoMovimentacao, Parto,
     Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
@@ -152,7 +152,10 @@ def _gerar_auditorias_diarias(session: Session) -> None:
     """
     hoje = date.today()
     diarias = session.exec(
-        select(Diaria).where(Diaria.status == "ativo", Diaria.auditar_periodicamente == True)  # noqa: E712
+        select(Diaria).where(
+            Diaria.status == "ativo", Diaria.auditar_periodicamente == True,  # noqa: E712
+            Diaria.controle_por_dia_desde.is_(None),
+        )
     ).all()
     for d in diarias:
         freq = d.frequencia_auditoria or "semanal"
@@ -191,7 +194,9 @@ def _gerar_auditorias_diarias(session: Session) -> None:
             ).first()
             if ja_existe:
                 continue
-            session.add(DiariaAuditoria(diaria_id=d.id, periodo_inicio=periodo_inicio, periodo_fim=periodo_fim))
+            session.add(DiariaAuditoria(
+                diaria_id=d.id, periodo_inicio=periodo_inicio, periodo_fim=periodo_fim, fazenda_id=d.fazenda_id,
+            ))
             session.commit()
 
 
@@ -905,14 +910,48 @@ def calcular_agenda(
             "tipo": "patrimonio_valor_mercado", "patrimonio_id": item.id,
         })
 
+    # Diarista com diária ativa cobrindo `data` e sem folga marcada nesse dia —
+    # a Agenda passa a refletir o mesmo estado do controle de diárias.
+    eventos_diaria_trabalho = []
+    q_diaria_trabalho = select(Diaria, Pessoa).join(Pessoa, Diaria.pessoa_id == Pessoa.id).where(
+        Diaria.status == "ativo",
+        Diaria.data_inicio <= data,
+        (Diaria.data_fim == None) | (Diaria.data_fim >= data),  # noqa: E711
+    )
+    if fazenda_id is not None:
+        q_diaria_trabalho = q_diaria_trabalho.where(Diaria.fazenda_id == fazenda_id)
+    folgas_hoje = {
+        r.diaria_id for r in session.exec(
+            select(DiariaDia).where(DiariaDia.data == data, DiariaDia.trabalhado == False)  # noqa: E712
+        ).all()
+    }
+    for diaria, pessoa in session.exec(q_diaria_trabalho).all():
+        if diaria.id in folgas_hoje:
+            continue
+        chave = f"diaria_trabalho_{diaria.id}_{data.isoformat()}"
+        if chave in realizados:
+            continue
+        eventos_diaria_trabalho.append({
+            "id": chave, "data": data.isoformat(), "categoria": "Gestão/Financeiro",
+            "descricao": f"{pessoa.nome} — diária de hoje ({diaria.valor_diaria:.2f}/dia)",
+            "numero_animal": None,
+            "observacao": "Se não veio hoje, marque como folga no controle de diárias.",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            "tipo": "diaria_trabalho", "diaria_id": diaria.id,
+            "link": f"/financeiro?aba=folha&categoria=diarias&diaria={diaria.id}&calendario=ultimo_periodo",
+        })
+
     # Diária com data de fim prevista chegando hoje — avisa no próprio dia
     # (não antes, não depois) para o usuário decidir se encerra ou estende.
     eventos_diaria_fim = []
-    diarias_com_fim = session.exec(
+    diarias_com_fim_query = (
         select(Diaria, Pessoa)
         .join(Pessoa, Diaria.pessoa_id == Pessoa.id)
         .where(Diaria.status == "ativo", Diaria.data_fim == data)
-    ).all()
+    )
+    if fazenda_id is not None:
+        diarias_com_fim_query = diarias_com_fim_query.where(Diaria.fazenda_id == fazenda_id)
+    diarias_com_fim = session.exec(diarias_com_fim_query).all()
     for diaria, pessoa in diarias_com_fim:
         chave = f"diaria_fim_{diaria.id}_{data.isoformat()}"
         if chave in realizados:
@@ -946,7 +985,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_ponto_critico_recria
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_ponto_critico_recria
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -959,13 +998,16 @@ def calcular_agenda(
 
     diaria_auditorias_pendentes = []
     if tem_financeiro:
-        pendentes = session.exec(
+        query_pendentes = (
             select(DiariaAuditoria, Diaria, Pessoa)
             .join(Diaria, DiariaAuditoria.diaria_id == Diaria.id)
             .join(Pessoa, Diaria.pessoa_id == Pessoa.id)
             .where(DiariaAuditoria.dias_trabalhados.is_(None))
             .order_by(DiariaAuditoria.periodo_fim)
-        ).all()
+        )
+        if fazenda_id is not None:
+            query_pendentes = query_pendentes.where(DiariaAuditoria.fazenda_id == fazenda_id)
+        pendentes = session.exec(query_pendentes).all()
         diaria_auditorias_pendentes = [
             {
                 "id": auditoria.id,

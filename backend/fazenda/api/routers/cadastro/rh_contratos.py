@@ -10,7 +10,7 @@ Extraído do antigo `cadastro.py` monolítico.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -20,14 +20,14 @@ from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria, DiariaAuditoria,
-    DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, ParametroDiariaPadrao, Pessoa,
-    Usuario, ValeAvulso, ValeAvulsoAbatimento,
+    DiariaDia, DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, ParametroDiariaPadrao,
+    Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
-from .rh_folha import _competencia_seguinte, listar_folha_pagamento
+from .rh_folha import _competencia_seguinte, _resolver_conta_corrente, listar_folha_pagamento
 
 router = APIRouter()
 
@@ -753,22 +753,104 @@ class DiariaPagamentoIn(BaseModel):
     data_pagamento: date
     valor: float
     observacao: str | None = None
+    # Conta bancária de onde sai o pagamento — OPCIONAL (ver
+    # _resolver_conta_corrente em rh_folha.py).
+    conta_corrente_id: int | None = None
 
 
-def _dias_confirmados_diaria(session: Session, diaria_id: int) -> tuple[int, date | None]:
+def _dias_confirmados_diaria(session: Session, diaria_id: int, ate: date | None = None) -> tuple[int, date | None]:
     """Soma os dias efetivamente confirmados nas auditorias JÁ RESPONDIDAS
     desta diária, e devolve também até que data essa contagem cobre
     (`periodo_fim` da última auditoria respondida — os dias corridos depois
     dela ainda não foram auditados, então continuam contados no "olho" pela
-    regra antiga, dia a dia, até a próxima resposta)."""
-    respondidas = session.exec(
-        select(DiariaAuditoria)
-        .where(DiariaAuditoria.diaria_id == diaria_id, DiariaAuditoria.dias_trabalhados.is_not(None))
-        .order_by(DiariaAuditoria.periodo_fim)
-    ).all()
+    regra antiga, dia a dia, até a próxima resposta).
+
+    `ate` (opcional): descarta auditorias cujo `periodo_fim` passa de `ate` —
+    usado por `_dias_legado_ate` para truncar a contagem legada num corte
+    diferente de hoje. `ate=None` mantém o comportamento de sempre
+    (considera todas as auditorias respondidas, sem limite)."""
+    query = select(DiariaAuditoria).where(
+        DiariaAuditoria.diaria_id == diaria_id, DiariaAuditoria.dias_trabalhados.is_not(None)
+    )
+    if ate is not None:
+        query = query.where(DiariaAuditoria.periodo_fim <= ate)
+    respondidas = session.exec(query.order_by(DiariaAuditoria.periodo_fim)).all()
     if not respondidas:
         return 0, None
     return sum(a.dias_trabalhados for a in respondidas), respondidas[-1].periodo_fim
+
+
+def _dias_legado_ate(session: Session, d: Diaria, ate: date) -> int:
+    """O mesmo cálculo do bloco legado abaixo (auditorias respondidas +
+    ajuste manual + dias corridos), truncado em `ate` em vez de
+    `hoje_ou_fim` — usado para somar a parte "antes do corte" de uma diária
+    que passou a ser controlada por calendário (ver `controle_por_dia_desde`).
+    """
+    if ate < d.data_inicio:
+        return 0
+    dias_confirmados, cobertura_ate = _dias_confirmados_diaria(session, d.id, ate=ate)
+    if d.ajuste_numero_diarias is not None and d.ajuste_numero_diarias_em is not None and (
+        cobertura_ate is None or d.ajuste_numero_diarias_em >= cobertura_ate
+    ):
+        base, desde = d.ajuste_numero_diarias, d.ajuste_numero_diarias_em
+    else:
+        base, desde = dias_confirmados, cobertura_ate
+    if desde is not None:
+        return max(base + max((ate - desde).days, 0), 0)
+    return max((ate - d.data_inicio).days + 1, 0)
+
+
+def _dias_por_dia(session: Session, d: Diaria, desde: date, ate: date) -> tuple[int, int]:
+    """(dias_trabalhados, dias_folga) no intervalo [desde, ate], pelo modelo
+    esparso de `DiariaDia`: todo dia corrido é trabalhado por padrão — só os
+    dias com uma linha `trabalhado=False` (folga) reduzem a contagem."""
+    corridos = max((ate - desde).days + 1, 0)
+    if corridos == 0:
+        return 0, 0
+    folgas = session.exec(
+        select(DiariaDia).where(
+            DiariaDia.diaria_id == d.id, DiariaDia.trabalhado == False,  # noqa: E712
+            DiariaDia.data >= desde, DiariaDia.data <= ate,
+        )
+    ).all()
+    dias_folga = len(folgas)
+    return max(corridos - dias_folga, 0), dias_folga
+
+
+def _pago_ate_diaria(session: Session, diaria_id: int) -> date | None:
+    """Data do pagamento mais recente registrado para esta diária, ou None
+    se nunca houve pagamento — usado para travar a edição do calendário num
+    período já quitado (ver `salvar_dias_diaria`) sem confirmação explícita."""
+    ultimo = session.exec(
+        select(DiariaPagamento)
+        .where(DiariaPagamento.diaria_id == diaria_id)
+        .order_by(DiariaPagamento.data_pagamento.desc())
+    ).first()
+    return ultimo.data_pagamento if ultimo else None
+
+
+def _ultima_folga_diaria(session: Session, diaria_id: int, antes_de: date) -> date | None:
+    """Data da folga (`DiariaDia.trabalhado=False`) mais recente ANTES de
+    `antes_de` (estritamente — não inclui o próprio dia). Usado tanto no
+    resumo (`ultima_folga`) quanto no modo `ultimo_periodo` do calendário: ao
+    excluir o próprio dia de hoje, uma folga marcada hoje nunca colapsa a
+    janela editável a vazio (senão o usuário ficaria travado sem conseguir
+    desfazer o próprio toque)."""
+    return session.exec(
+        select(DiariaDia.data)
+        .where(
+            DiariaDia.diaria_id == diaria_id, DiariaDia.trabalhado == False,  # noqa: E712
+            DiariaDia.data < antes_de,
+        )
+        .order_by(DiariaDia.data.desc())
+    ).first()
+
+
+def _diaria_ou_404(session: Session, diaria_id: int, fazenda_id: int | None) -> Diaria:
+    diaria = session.get(Diaria, diaria_id)
+    if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Diária não encontrada")
+    return diaria
 
 
 def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
@@ -777,20 +859,34 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
     # "encerrado" manualmente no dia certo pra não seguir somando diárias).
     hoje = date.today()
     hoje_ou_fim = min(hoje, d.data_fim) if d.data_fim else hoje
-    dias_confirmados, cobertura_ate = _dias_confirmados_diaria(session, d.id)
-    # O ajuste manual (botão de editar) e a cobertura de auditoria são dois
-    # "checkpoints" concorrentes — o mais recente vence como base da
-    # contagem, e os dias corridos desde ele são somados por cima.
-    if d.ajuste_numero_diarias is not None and d.ajuste_numero_diarias_em is not None and (
-        cobertura_ate is None or d.ajuste_numero_diarias_em >= cobertura_ate
-    ):
-        base, desde = d.ajuste_numero_diarias, d.ajuste_numero_diarias_em
+    if d.controle_por_dia_desde is None:
+        # bloco atual, byte-for-byte intocado — os 5 testes existentes de
+        # TestDiaria dependem deste caminho continuar idêntico ao de sempre.
+        dias_confirmados, cobertura_ate = _dias_confirmados_diaria(session, d.id)
+        # O ajuste manual (botão de editar) e a cobertura de auditoria são dois
+        # "checkpoints" concorrentes — o mais recente vence como base da
+        # contagem, e os dias corridos desde ele são somados por cima.
+        if d.ajuste_numero_diarias is not None and d.ajuste_numero_diarias_em is not None and (
+            cobertura_ate is None or d.ajuste_numero_diarias_em >= cobertura_ate
+        ):
+            base, desde = d.ajuste_numero_diarias, d.ajuste_numero_diarias_em
+        else:
+            base, desde = dias_confirmados, cobertura_ate
+        if desde is not None:
+            numero_diarias = base + max((hoje_ou_fim - desde).days, 0)
+        else:
+            numero_diarias = max((hoje_ou_fim - d.data_inicio).days + 1, 0)
+        dias_folga = 0
     else:
-        base, desde = dias_confirmados, cobertura_ate
-    if desde is not None:
-        numero_diarias = base + max((hoje_ou_fim - desde).days, 0)
-    else:
-        numero_diarias = max((hoje_ou_fim - d.data_inicio).days + 1, 0)
+        # Calendário assumiu o controle a partir de `controle_por_dia_desde`
+        # — tudo antes do corte continua pela regra legada (auditorias +
+        # ajuste manual + dias corridos), tudo a partir dele vem do
+        # calendário esparso de DiariaDia. As duas janelas são disjuntas por
+        # construção (ver `salvar_dias_diaria`), então soma sem sobreposição.
+        corte = d.controle_por_dia_desde
+        legado = _dias_legado_ate(session, d, corte - timedelta(days=1))
+        por_dia, dias_folga = _dias_por_dia(session, d, corte, hoje_ou_fim)
+        numero_diarias = legado + por_dia
     total_ate_hoje = round(numero_diarias * d.valor_diaria, 2)
     pagamentos = sorted(
         session.exec(select(DiariaPagamento).where(DiariaPagamento.diaria_id == d.id)).all(),
@@ -815,6 +911,9 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         "pagamentos": [p.model_dump() for p in pagamentos],
         "vales": vales,
         "auditorias_pendentes": [a.model_dump() for a in auditorias_pendentes],
+        "dias_folga": dias_folga,
+        "ultima_folga": _ultima_folga_diaria(session, d.id, hoje_ou_fim),
+        "pago_ate": pagamentos[-1].data_pagamento if pagamentos else None,
     }
 
 
@@ -977,11 +1076,13 @@ def registrar_pagamento_diaria(
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor do pagamento deve ser positivo")
+    conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     pessoa = session.get(Pessoa, diaria.pessoa_id)
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_pagamento.year)
     session.add(DiariaPagamento(
         diaria_id=diaria_id, data_pagamento=dados.data_pagamento, valor=dados.valor,
-        observacao=dados.observacao, numero_lancamento_gerado=numero_lancamento, fazenda_id=fazenda_id,
+        observacao=dados.observacao, numero_lancamento_gerado=numero_lancamento,
+        conta_corrente_id=conta_corrente.id if conta_corrente else None, fazenda_id=fazenda_id,
     ))
     # Pagamento de diária já nasce quitado — reflete direto em Contas Pagas/relatórios.
     session.add(ContaGerencial(
@@ -997,10 +1098,163 @@ def registrar_pagamento_diaria(
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento,
         valor_pago=dados.valor,
+        conta_bancaria=rotulo_conta_corrente(conta_corrente) if conta_corrente else None,
         fazenda_id=fazenda_id,
     ))
     session.commit()
     return _resumo_diaria(session, diaria, pessoa.nome)
+
+
+# ---------------------------------------------------------------------------
+# Calendário de dias trabalhados/folga da diária — modelo esparso (só existe
+# linha de exceção pro dia que FOGE do padrão trabalhado). Convive com o
+# modelo legado de contagem cega: `Diaria.controle_por_dia_desde` marca a
+# partir de quando o calendário manda (None = diária nunca tocou o
+# calendário, 100% regra antiga). Ver `_resumo_diaria` para o dispatch entre
+# as duas regras.
+# ---------------------------------------------------------------------------
+class DiariaDiasPutIn(BaseModel):
+    periodo_inicio: date
+    periodo_fim: date
+    dias_nao_trabalhados: list[date] = []
+    confirmar_periodo_pago: bool = False
+
+
+@router.get("/diarias/{diaria_id}/dias")
+def obter_dias_diaria(
+    diaria_id: int, modo: str = "completo", desde: date | None = None, ate: date | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
+    hoje = date.today()
+    hoje_ou_fim = min(hoje, diaria.data_fim) if diaria.data_fim else hoje
+    ultima_folga = _ultima_folga_diaria(session, diaria.id, hoje_ou_fim)
+    if modo == "ultimo_periodo":
+        periodo_inicio = (ultima_folga + timedelta(days=1)) if ultima_folga else diaria.data_inicio
+        periodo_fim = hoje_ou_fim
+    else:
+        modo = "completo"
+        periodo_inicio = max(desde or diaria.data_inicio, diaria.data_inicio)
+        periodo_fim = min(ate or hoje_ou_fim, hoje_ou_fim)
+    pago_ate = _pago_ate_diaria(session, diaria.id)
+    folgas_no_periodo = {
+        f for f in session.exec(
+            select(DiariaDia.data).where(
+                DiariaDia.diaria_id == diaria.id, DiariaDia.trabalhado == False,  # noqa: E712
+                DiariaDia.data >= periodo_inicio, DiariaDia.data <= periodo_fim,
+            )
+        ).all()
+    }
+    dias = []
+    cursor = periodo_inicio
+    while cursor <= periodo_fim:
+        dias.append({
+            "data": cursor,
+            "trabalhado": cursor not in folgas_no_periodo,
+            "pago": pago_ate is not None and cursor <= pago_ate,
+        })
+        cursor += timedelta(days=1)
+    dias_trabalhados_periodo = sum(1 for x in dias if x["trabalhado"])
+    dias_folga_periodo = len(dias) - dias_trabalhados_periodo
+    return {
+        "diaria_id": diaria.id,
+        "pessoa_nome": pessoa.nome if pessoa else "—",
+        "valor_diaria": diaria.valor_diaria,
+        "data_inicio": diaria.data_inicio,
+        "data_fim": diaria.data_fim,
+        "hoje": hoje,
+        "modo": modo,
+        "periodo_inicio": periodo_inicio,
+        "periodo_fim": periodo_fim,
+        "ultima_folga": ultima_folga,
+        "controle_por_dia_desde": diaria.controle_por_dia_desde,
+        "nunca_auditado": diaria.controle_por_dia_desde is None,
+        "pago_ate": pago_ate,
+        "dias": dias,
+        "resumo_periodo": {
+            "dias_no_periodo": len(dias),
+            "dias_trabalhados": dias_trabalhados_periodo,
+            "dias_folga": dias_folga_periodo,
+            "valor_periodo": round(dias_trabalhados_periodo * diaria.valor_diaria, 2),
+        },
+    }
+
+
+@router.put("/diarias/{diaria_id}/dias")
+def salvar_dias_diaria(
+    diaria_id: int, dados: DiariaDiasPutIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Substitui (replace, não merge) o estado dos dias no período informado
+    — o cliente sempre manda o estado corrigido inteiro da janela visível."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
+    if dados.periodo_inicio > dados.periodo_fim:
+        raise HTTPException(status_code=400, detail="Período inválido: início não pode ser depois do fim")
+    hoje = date.today()
+    hoje_ou_fim = min(hoje, diaria.data_fim) if diaria.data_fim else hoje
+    if dados.periodo_inicio < diaria.data_inicio:
+        raise HTTPException(status_code=400, detail="Não dá para auditar dia antes do início da diária")
+    if dados.periodo_fim > hoje_ou_fim:
+        raise HTTPException(status_code=400, detail="Não dá para auditar dia que ainda não aconteceu")
+    dias_informados: set[date] = set()
+    for dia in dados.dias_nao_trabalhados:
+        if dia < dados.periodo_inicio or dia > dados.periodo_fim:
+            raise HTTPException(status_code=400, detail=f"Data {dia.isoformat()} fora do período informado")
+        if dia in dias_informados:
+            raise HTTPException(status_code=400, detail=f"Data {dia.isoformat()} duplicada em dias_nao_trabalhados")
+        dias_informados.add(dia)
+    pago_ate = _pago_ate_diaria(session, diaria_id)
+    if pago_ate is not None and dados.periodo_inicio <= pago_ate and not dados.confirmar_periodo_pago:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Este período já tem pagamento registrado (até {pago_ate}). Alterar os dias trabalhados vai "
+                   "mudar o total apurado e o saldo devedor de um período já quitado. Confirme se quiser prosseguir.",
+        )
+
+    # 1) Substitui as exceções do período (replace, não merge).
+    existentes = session.exec(
+        select(DiariaDia).where(
+            DiariaDia.diaria_id == diaria_id,
+            DiariaDia.data >= dados.periodo_inicio, DiariaDia.data <= dados.periodo_fim,
+        )
+    ).all()
+    for e in existentes:
+        session.delete(e)
+    for dia in sorted(dias_informados):
+        session.add(DiariaDia(
+            diaria_id=diaria_id, data=dia, trabalhado=False, usuario_id=user.id, fazenda_id=fazenda_id,
+        ))
+
+    # 2) Marca/recua o marco do calendário — nunca avança, só recua, e nunca
+    # invade um período de auditoria legada já RESPONDIDO (mantém as duas
+    # janelas disjuntas).
+    _, ultimo_respondido_fim = _dias_confirmados_diaria(session, diaria_id)
+    corte_candidato = dados.periodo_inicio
+    if ultimo_respondido_fim is not None and ultimo_respondido_fim >= corte_candidato:
+        corte_candidato = ultimo_respondido_fim + timedelta(days=1)
+    diaria.controle_por_dia_desde = (
+        min(diaria.controle_por_dia_desde, corte_candidato) if diaria.controle_por_dia_desde else corte_candidato
+    )
+    session.add(diaria)
+
+    # 3) Descarta auditorias pendentes (nunca respondidas) que ficaram
+    # cobertas pelo calendário — nada se perde porque nunca foram respondidas.
+    pendentes_superadas = session.exec(
+        select(DiariaAuditoria).where(
+            DiariaAuditoria.diaria_id == diaria_id, DiariaAuditoria.dias_trabalhados.is_(None),
+            DiariaAuditoria.periodo_fim >= diaria.controle_por_dia_desde,
+        )
+    ).all()
+    for a in pendentes_superadas:
+        session.delete(a)
+
+    session.commit()
+    session.refresh(diaria)
+    return _resumo_diaria(session, diaria, pessoa.nome if pessoa else "—")
 
 
 # ---------------------------------------------------------------------------
