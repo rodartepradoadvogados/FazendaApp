@@ -9,7 +9,7 @@ Extraído do antigo `cadastro.py` monolítico.
 from __future__ import annotations
 
 import calendar
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,7 +20,7 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
-    Pessoa, Usuario, ValeFuncionario, ValeParcela,
+    Pessoa, RescisaoFuncionario, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -961,10 +961,18 @@ def excluir_decimo_terceiro(
 # Rescisão contratual (CLT) — cálculo das verbas rescisórias (saldo de
 # salário, aviso prévio, férias vencidas/proporcionais, 13º proporcional,
 # multa do FGTS estimada) para as 4 modalidades mais comuns. Sem eSocial/TRCT
-# oficial (fora de escopo, mesma linha de férias/13º). Diferente de férias/
-# 13º, não existe uma tabela de acompanhamento dedicada — o registro fica só
-# no lançamento em Contas a Pagar (`tipo_documento == "Rescisão"`), reusado
-# pela listagem abaixo.
+# oficial (fora de escopo, mesma linha de férias/13º). Diferente do modelo
+# antigo (que só gravava direto uma ContaGerencial, sem tabela própria), a
+# rescisão agora É persistida e rastreada (`RescisaoFuncionario`), com um
+# fluxo de duas etapas: nasce `simulacao` (`POST/PUT/DELETE /rescisoes`,
+# livre para editar/recalcular, nada lançado em Financeiro) e só vira
+# lançamento real ao FECHAR (`POST /rescisoes/{id}/fechar`, gera 1 conta a
+# pagar — `forma_lancamento="unico"` — ou N, uma por verba —
+# `forma_lancamento="detalhado"`). Não há endpoint de "reabrir" (v1): desfazer
+# uma rescisão fechada é excluir o(s) lançamento(s) em Financeiro › Lançamentos,
+# mesmo padrão já usado para Férias/13º pagos. Rescisões criadas pelo antigo
+# `POST /cadastro/rescisao` (removido) continuam visíveis, só leitura, na
+# listagem nova (ver `legado` em `GET /cadastro/rescisoes`).
 # ---------------------------------------------------------------------------
 LABELS_TIPO_RESCISAO = {
     "sem_justa_causa": "Dispensa sem justa causa",
@@ -1027,62 +1035,459 @@ def simular_rescisao(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Só calcula e devolve o detalhamento das verbas — não gera lançamento
-    financeiro nenhum (usado pela tela para o usuário conferir antes de
-    lançar em `POST /cadastro/rescisao`)."""
+    financeiro nem grava nada (usado pela tela para o usuário conferir os
+    números antes de lançar a simulação persistida em
+    `POST /cadastro/rescisoes`)."""
     pessoa, calculo = _calcular_rescisao_pessoa(dados, session, fazenda_id_seguro(fazenda_id))
     return {**calculo, "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome}
 
 
-@router.get("/rescisao")
+# ---------------------------------------------------------------------------
+# Rescisão — persistência (simulação editável → fechamento com lançamento).
+# ---------------------------------------------------------------------------
+class RescisaoSimulacaoIn(BaseModel):
+    pessoa_id: int
+    tipo_rescisao: str
+    data_desligamento: date
+    dias_ferias_vencidas: int = 0
+    aviso_previo_trabalhado: bool = False
+    observacao: str | None = None
+    centro_custo: str = "Pecuária Leiteira"
+    # Override manual de qualquer uma das 6 verbas calculadas — quando None,
+    # usa o valor de `calcular_rescisao` (ver _aplicar_calculo_rescisao).
+    valor_saldo_salario: float | None = None
+    valor_aviso_previo: float | None = None
+    valor_ferias_vencidas: float | None = None
+    valor_ferias_proporcionais: float | None = None
+    valor_decimo_terceiro_proporcional: float | None = None
+    valor_multa_fgts: float | None = None
+    # Deduções — sempre informadas pelo usuário, nunca calculadas sozinhas.
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
+    valor_vale_em_aberto: float = 0.0
+
+
+class RescisaoFecharIn(BaseModel):
+    forma_lancamento: str = "unico"  # unico | detalhado
+    status_pagamento: str = "pendente"  # pendente | pago
+    data_pagamento: date | None = None
+    inativar_pessoa: bool = False
+    centro_custo: str | None = None
+
+
+def _validar_simulacao_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa) -> None:
+    if dados.tipo_rescisao not in LABELS_TIPO_RESCISAO:
+        raise HTTPException(status_code=400, detail="Tipo de rescisão inválido")
+    if dados.data_desligamento < pessoa.data_admissao:
+        raise HTTPException(status_code=400, detail="Data de desligamento não pode ser anterior à data de admissão")
+    limite_ferias_vencidas = dias_ferias_padrao()
+    if dados.dias_ferias_vencidas < 0 or dados.dias_ferias_vencidas > limite_ferias_vencidas:
+        raise HTTPException(status_code=400, detail=f"Dias de férias vencidas deve estar entre 0 e {limite_ferias_vencidas}")
+    overrides = (
+        ("saldo de salário", dados.valor_saldo_salario),
+        ("aviso prévio", dados.valor_aviso_previo),
+        ("férias vencidas", dados.valor_ferias_vencidas),
+        ("férias proporcionais", dados.valor_ferias_proporcionais),
+        ("13º proporcional", dados.valor_decimo_terceiro_proporcional),
+        ("multa do FGTS", dados.valor_multa_fgts),
+    )
+    for campo, valor in overrides:
+        if valor is not None and valor < 0:
+            raise HTTPException(status_code=400, detail=f"Valor de {campo} não pode ser negativo")
+    deducoes = (
+        ("INSS", dados.valor_inss),
+        ("IR", dados.valor_ir),
+        ("vale em aberto", dados.valor_vale_em_aberto),
+    )
+    for campo, valor in deducoes:
+        if valor < 0:
+            raise HTTPException(status_code=400, detail=f"Valor de {campo} não pode ser negativo")
+
+
+def _pessoa_para_rescisao(dados: RescisaoSimulacaoIn, session: Session, fazenda_id: int | None) -> Pessoa:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if not pessoa.salario_base:
+        raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
+    if not pessoa.data_admissao:
+        raise HTTPException(status_code=400, detail="Pessoa não tem data de admissão cadastrada")
+    _validar_simulacao_rescisao(dados, pessoa)
+    return pessoa
+
+
+def _aplicar_calculo_rescisao(dados: RescisaoSimulacaoIn, pessoa: Pessoa, registro: RescisaoFuncionario) -> None:
+    """Roda o cálculo puro `calcular_rescisao` (inalterado) e grava o
+    resultado no `registro`: cada uma das 6 verbas usa o valor informado por
+    `dados` quando presente (override manual), senão o valor calculado.
+    `valor_bruto`/`valor_total` são SEMPRE recomputados aqui a partir das 6
+    verbas já resolvidas e das deduções — nunca aceitos prontos do cliente."""
+    calculo = calcular_rescisao(
+        pessoa.salario_base,
+        pessoa.data_admissao,
+        dados.data_desligamento,
+        dados.tipo_rescisao,
+        dados.dias_ferias_vencidas,
+        dados.aviso_previo_trabalhado,
+        percentual_terco_constitucional_ferias(),
+        percentual_estimado_fgts_mensal(),
+    )
+
+    def _resolver(override: float | None, calculado: float) -> float:
+        return round(override, 2) if override is not None else round(calculado, 2)
+
+    registro.pessoa_id = dados.pessoa_id
+    registro.tipo_rescisao = dados.tipo_rescisao
+    registro.data_desligamento = dados.data_desligamento
+    registro.dias_ferias_vencidas = dados.dias_ferias_vencidas
+    registro.aviso_previo_trabalhado = dados.aviso_previo_trabalhado
+    registro.observacao = dados.observacao
+    registro.centro_custo = dados.centro_custo
+    registro.salario_base = pessoa.salario_base
+    registro.data_admissao = pessoa.data_admissao
+
+    registro.valor_saldo_salario = _resolver(dados.valor_saldo_salario, calculo["saldo_salario"]["valor"])
+    registro.valor_aviso_previo = _resolver(dados.valor_aviso_previo, calculo["aviso_previo"]["valor"])
+    registro.valor_ferias_vencidas = _resolver(dados.valor_ferias_vencidas, calculo["ferias_vencidas"]["valor_total"])
+    registro.valor_ferias_proporcionais = _resolver(
+        dados.valor_ferias_proporcionais, calculo["ferias_proporcionais"]["valor_total"]
+    )
+    registro.valor_decimo_terceiro_proporcional = _resolver(
+        dados.valor_decimo_terceiro_proporcional, calculo["decimo_terceiro_proporcional"]["valor"]
+    )
+    registro.valor_multa_fgts = _resolver(dados.valor_multa_fgts, calculo["fgts"]["multa"])
+
+    registro.valor_inss = round(dados.valor_inss, 2)
+    registro.valor_ir = round(dados.valor_ir, 2)
+    registro.valor_vale_em_aberto = round(dados.valor_vale_em_aberto, 2)
+
+    registro.dias_saldo_salario = calculo["saldo_salario"]["dias_trabalhados_mes"]
+    registro.dias_aviso_previo = calculo["aviso_previo"]["dias"]
+    registro.dias_aviso_previo_indenizados = calculo["aviso_previo"]["dias_indenizados"]
+    registro.meses_ferias_proporcionais = calculo["ferias_proporcionais"]["meses"]
+    registro.meses_decimo_terceiro = calculo["decimo_terceiro_proporcional"]["meses"]
+    registro.percentual_multa_fgts = calculo["fgts"]["percentual_multa"]
+
+    registro.valor_bruto = round(
+        registro.valor_saldo_salario
+        + registro.valor_aviso_previo
+        + registro.valor_ferias_vencidas
+        + registro.valor_ferias_proporcionais
+        + registro.valor_decimo_terceiro_proporcional
+        + registro.valor_multa_fgts,
+        2,
+    )
+    registro.valor_total = round(
+        registro.valor_bruto - registro.valor_inss - registro.valor_ir - registro.valor_vale_em_aberto, 2
+    )
+
+
+def _linhas_verbas_rescisao(registro: RescisaoFuncionario) -> dict[str, tuple[str, float]]:
+    """Label + valor de cada uma das 6 verbas, chaveado pelo nome interno —
+    fonte única usada tanto por `_detalhe_rescisao` (ordem de exibição) quanto
+    pela cascata de dedução do fechamento detalhado (ordem fixa definida no
+    plano: saldo → 13º → férias proporcionais → férias vencidas → aviso
+    prévio → multa do FGTS)."""
+    return {
+        "saldo_salario": (f"Saldo de salário ({registro.dias_saldo_salario} dia(s))", registro.valor_saldo_salario),
+        "aviso_previo": (
+            f"Aviso prévio indenizado ({registro.dias_aviso_previo_indenizados} dia(s))", registro.valor_aviso_previo,
+        ),
+        "ferias_vencidas": ("Férias vencidas + 1/3", registro.valor_ferias_vencidas),
+        "ferias_proporcionais": (
+            f"Férias proporcionais + 1/3 ({registro.meses_ferias_proporcionais} mês(es))",
+            registro.valor_ferias_proporcionais,
+        ),
+        "decimo_terceiro_proporcional": (
+            f"13º proporcional ({registro.meses_decimo_terceiro} mês(es))", registro.valor_decimo_terceiro_proporcional,
+        ),
+        "multa_fgts": (
+            f"Multa do FGTS estimada ({registro.percentual_multa_fgts:.0%})", registro.valor_multa_fgts,
+        ),
+    }
+
+
+# Ordem de EXIBIÇÃO em `_detalhe_rescisao` (mesma ordem em que `calcular_rescisao`
+# devolve as verbas) — diferente da ordem de CASCATA abaixo (decisão do plano).
+_ORDEM_EXIBICAO_VERBAS_RESCISAO = [
+    "saldo_salario", "aviso_previo", "ferias_vencidas", "ferias_proporcionais", "decimo_terceiro_proporcional", "multa_fgts",
+]
+# Ordem em que INSS+IR+vale em aberto abatem as verbas no fechamento
+# "detalhado" (decisão já aprovada do plano — não alterar).
+_ORDEM_CASCATA_DEDUCAO_RESCISAO = [
+    "saldo_salario", "decimo_terceiro_proporcional", "ferias_proporcionais", "ferias_vencidas", "aviso_previo", "multa_fgts",
+]
+
+
+def _detalhe_rescisao(registro: RescisaoFuncionario) -> list[dict]:
+    """Discriminação completa da rescisão — mesma forma de `_detalhe_folha`
+    ({"label", "valor"}). Saldo de salário sempre aparece (mesmo que zero);
+    as demais verbas e as deduções só aparecem quando != 0. A última linha é
+    SEMPRE `{"label": "Valor líquido", ...}` — string usada pelo frontend
+    para negrito na última linha."""
+    linhas = _linhas_verbas_rescisao(registro)
+    label_saldo, valor_saldo = linhas["saldo_salario"]
+    detalhe = [{"label": label_saldo, "valor": valor_saldo}]
+    for chave in _ORDEM_EXIBICAO_VERBAS_RESCISAO[1:]:
+        label, valor = linhas[chave]
+        if valor:
+            detalhe.append({"label": label, "valor": valor})
+    if registro.valor_inss:
+        detalhe.append({"label": "INSS", "valor": -registro.valor_inss})
+    if registro.valor_ir:
+        detalhe.append({"label": "IRRF", "valor": -registro.valor_ir})
+    if registro.valor_vale_em_aberto:
+        detalhe.append({"label": "Vale em aberto", "valor": -registro.valor_vale_em_aberto})
+    detalhe.append({"label": "Valor líquido", "valor": registro.valor_total})
+    return detalhe
+
+
+def _parcelas_detalhado_rescisao(registro: RescisaoFuncionario) -> list[tuple[str, float, bool]]:
+    """Cascata de dedução (INSS+IR+vale em aberto) sobre as verbas positivas,
+    na ordem fixa `_ORDEM_CASCATA_DEDUCAO_RESCISAO`, cada uma flor no 0 e o
+    restante da dedução carregado para a próxima. Devolve só as verbas que
+    sobraram > 0 — (label, valor_final, foi_reduzida)."""
+    linhas = _linhas_verbas_rescisao(registro)
+    restante = round(registro.valor_inss + registro.valor_ir + registro.valor_vale_em_aberto, 2)
+    parcelas: list[tuple[str, float, bool]] = []
+    for chave in _ORDEM_CASCATA_DEDUCAO_RESCISAO:
+        label, valor = linhas[chave]
+        if valor <= 0:
+            continue
+        deduzido = min(valor, restante)
+        valor_final = round(valor - deduzido, 2)
+        restante = round(restante - deduzido, 2)
+        if valor_final <= 0:
+            continue
+        parcelas.append((label, valor_final, deduzido > 0))
+    return parcelas
+
+
+@router.get("/rescisoes")
 def listar_rescisoes(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query = select(ContaGerencial).where(ContaGerencial.tipo_documento == "Rescisão")
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+
+    query = select(RescisaoFuncionario)
     if fazenda_id is not None:
-        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
-    contas = session.exec(query.order_by(ContaGerencial.data_competencia.desc())).all()
-    return [c.model_dump() for c in contas]
+        query = query.where(RescisaoFuncionario.fazenda_id == fazenda_id)
+    registros = session.exec(query).all()
+    nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
+    numeros_cobertos = {r.numero_lancamento_gerado for r in registros if r.numero_lancamento_gerado}
+
+    itens = [
+        {
+            **r.model_dump(),
+            "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
+            "usuario_nome": nomes_usuarios.get(r.usuario_id),
+            "detalhe": _detalhe_rescisao(r),
+            "legado": False,
+        }
+        for r in registros
+    ]
+
+    # Rescisões lançadas pelo antigo POST /cadastro/rescisao (removido nesta
+    # migração) — sem RescisaoFuncionario correspondente. Continuam visíveis,
+    # só leitura, para o histórico não sumir da listagem nova.
+    query_legado = select(ContaGerencial).where(ContaGerencial.tipo_documento == "Rescisão")
+    if fazenda_id is not None:
+        query_legado = query_legado.where(ContaGerencial.fazenda_id == fazenda_id)
+    for c in session.exec(query_legado).all():
+        if c.numero_lancamento and c.numero_lancamento in numeros_cobertos:
+            continue
+        itens.append({
+            "id": -(1_000_000 + (c.id or 0)),  # sintético — nunca colide com um id real de RescisaoFuncionario
+            "legado_conta_id": c.id,
+            "pessoa_id": None,
+            "pessoa_nome": c.fornecedor_cliente or "—",
+            "usuario_nome": None,
+            "tipo_rescisao": None,
+            "data_desligamento": c.data_competencia,
+            "status": "fechada",
+            "forma_lancamento": "unico",
+            "valor_bruto": c.valor_total,
+            "valor_total": c.valor_total,
+            "numero_lancamento_gerado": c.numero_lancamento,
+            "data_pagamento": c.data_pagamento,
+            "data_fechamento": None,
+            "centro_custo": c.centro_custo,
+            "observacao": None,
+            "descricao": c.descricao,
+            "inativou_pessoa": False,
+            "criado_em": None,
+            "detalhe": [],
+            "legado": True,
+        })
+
+    itens.sort(key=lambda i: (i.get("data_desligamento") or date.min, i.get("criado_em") or datetime.min), reverse=True)
+    return itens
 
 
-@router.post("/rescisao")
-def criar_rescisao(
-    dados: RescisaoIn,
+@router.post("/rescisoes")
+def criar_rescisao_simulacao(
+    dados: RescisaoSimulacaoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    pessoa, calculo = _calcular_rescisao_pessoa(dados, session, fazenda_id)
+    pessoa = _pessoa_para_rescisao(dados, session, fazenda_id)
 
-    numero_lancamento = _proximo_numero_lancamento(session, dados.data_desligamento.year)
-    conta = ContaGerencial(
-        numero_lancamento=numero_lancamento,
-        descricao=f"Rescisão — {LABELS_TIPO_RESCISAO[dados.tipo_rescisao]} — {pessoa.nome} ({dados.data_desligamento.isoformat()})",
-        data_vencimento=dados.data_pagamento or dados.data_desligamento,
-        data_competencia=dados.data_desligamento,
-        fornecedor_cliente=pessoa.nome,
-        tipo_documento="Rescisão",
-        centro_custo=dados.centro_custo,
-        valor_total=calculo["valor_total"],
-        parcela_num=1, parcela_total=1,
-        tipo="despesa", origem="auto",
-        data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
-        valor_pago=calculo["valor_total"] if dados.status == "pago" else None,
+    registro = RescisaoFuncionario(
+        pessoa_id=dados.pessoa_id,
+        tipo_rescisao=dados.tipo_rescisao,
+        data_desligamento=dados.data_desligamento,
+        salario_base=pessoa.salario_base,
+        data_admissao=pessoa.data_admissao,
+        status="simulacao",
+        forma_lancamento=None,
+        usuario_id=user.id,
         fazenda_id=fazenda_id,
     )
-    session.add(conta)
+    _aplicar_calculo_rescisao(dados, pessoa, registro)
+    if registro.valor_total < 0:
+        raise HTTPException(status_code=400, detail="O valor líquido da rescisão não pode ser negativo")
+
+    session.add(registro)
     session.commit()
-    session.refresh(conta)
-    return {
-        **calculo,
-        "pessoa_id": pessoa.id,
-        "pessoa_nome": pessoa.nome,
-        "observacao": dados.observacao,
-        "status": dados.status,
-        "numero_lancamento_gerado": numero_lancamento,
-        **conta.model_dump(),
-    }
+    session.refresh(registro)
+    return {**registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro)}
+
+
+@router.put("/rescisoes/{registro_id}")
+def atualizar_rescisao_simulacao(
+    registro_id: int, dados: RescisaoSimulacaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(RescisaoFuncionario, registro_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Rescisão não encontrada")
+    if registro.status != "simulacao":
+        raise HTTPException(status_code=400, detail="Esta rescisão já está fechada.")
+    pessoa = _pessoa_para_rescisao(dados, session, fazenda_id)
+
+    _aplicar_calculo_rescisao(dados, pessoa, registro)
+    if registro.valor_total < 0:
+        raise HTTPException(status_code=400, detail="O valor líquido da rescisão não pode ser negativo")
+
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return {**registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro)}
+
+
+@router.delete("/rescisoes/{registro_id}")
+def excluir_rescisao_simulacao(
+    registro_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(RescisaoFuncionario, registro_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Rescisão não encontrada")
+    if registro.status != "simulacao":
+        raise HTTPException(status_code=400, detail="Esta rescisão já está fechada.")
+    # Simulação nunca gera ContaGerencial — só apagar o registro mesmo.
+    session.delete(registro)
+    session.commit()
+    return {"ok": True}
+
+
+@router.post("/rescisoes/{registro_id}/fechar")
+def fechar_rescisao(
+    registro_id: int, dados: RescisaoFecharIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(RescisaoFuncionario, registro_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Rescisão não encontrada")
+    if registro.status != "simulacao":
+        raise HTTPException(status_code=400, detail="Esta rescisão já está fechada.")
+    if dados.forma_lancamento not in ("unico", "detalhado"):
+        raise HTTPException(status_code=400, detail="Forma de lançamento inválida")
+    if dados.status_pagamento not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status de pagamento inválido")
+    if registro.valor_total <= 0:
+        raise HTTPException(status_code=400, detail="O valor líquido da rescisão deve ser positivo para fechar")
+
+    # Defesa em profundidade — mesma checagem de fazenda feita na criação,
+    # mesmo que a Pessoa não devesse ter mudado de fazenda nesse meio tempo.
+    pessoa = session.get(Pessoa, registro.pessoa_id)
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+
+    centro_custo = dados.centro_custo or registro.centro_custo
+    numero_lancamento = _proximo_numero_lancamento(session, registro.data_desligamento.year)
+    data_vencimento = dados.data_pagamento or registro.data_desligamento
+    data_pagamento_conta = dados.data_pagamento if dados.status_pagamento == "pago" else None
+
+    contas: list[ContaGerencial] = []
+    if dados.forma_lancamento == "unico":
+        contas.append(ContaGerencial(
+            numero_lancamento=numero_lancamento,
+            descricao=(
+                f"Rescisão — {LABELS_TIPO_RESCISAO[registro.tipo_rescisao]} — "
+                f"{pessoa.nome} ({registro.data_desligamento.isoformat()})"
+            ),
+            data_vencimento=data_vencimento,
+            data_competencia=registro.data_desligamento,
+            fornecedor_cliente=pessoa.nome,
+            tipo_documento="Rescisão",
+            centro_custo=centro_custo,
+            valor_total=registro.valor_total,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            data_pagamento=data_pagamento_conta,
+            valor_pago=registro.valor_total if dados.status_pagamento == "pago" else None,
+            fazenda_id=fazenda_id,
+        ))
+    else:
+        parcelas = _parcelas_detalhado_rescisao(registro)
+        n = len(parcelas)
+        for i, (label, valor, reduzido) in enumerate(parcelas, start=1):
+            descricao_label = f"{label} (líquido de descontos)" if reduzido else label
+            contas.append(ContaGerencial(
+                numero_lancamento=numero_lancamento,
+                descricao=(
+                    f"Rescisão — {descricao_label} — {pessoa.nome} ({registro.data_desligamento.isoformat()})"
+                ),
+                data_vencimento=data_vencimento,
+                data_competencia=registro.data_desligamento,
+                fornecedor_cliente=pessoa.nome,
+                tipo_documento="Rescisão",
+                centro_custo=centro_custo,
+                valor_total=valor,
+                parcela_num=i, parcela_total=n,
+                tipo="despesa", origem="auto",
+                data_pagamento=data_pagamento_conta,
+                valor_pago=valor if dados.status_pagamento == "pago" else None,
+                fazenda_id=fazenda_id,
+            ))
+        # Garantia da cascata da decisão do plano: a soma das parcelas geradas
+        # tem que bater exatamente com o líquido do registro.
+        assert round(sum(c.valor_total for c in contas), 2) == registro.valor_total
+
+    for conta in contas:
+        session.add(conta)
+
+    registro.status = "fechada"
+    registro.forma_lancamento = dados.forma_lancamento
+    registro.numero_lancamento_gerado = numero_lancamento
+    registro.data_fechamento = date.today()
+    registro.data_pagamento = dados.data_pagamento
+    registro.centro_custo = centro_custo
+    if dados.inativar_pessoa:
+        pessoa.ativo = False
+        session.add(pessoa)
+        registro.inativou_pessoa = True
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return {**registro.model_dump(), "pessoa_nome": pessoa.nome, "detalhe": _detalhe_rescisao(registro)}
 
 
 # ---------------------------------------------------------------------------

@@ -221,6 +221,79 @@ class DecimoTerceiro(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Rescisão contratual (CLT) — mesma família de férias/13º acima, mas com um
+# passo a mais: nasce como `simulacao` (livre para editar/recalcular, nada
+# lançado em Financeiro) e só vira lançamento real ao `fechar` (status muda
+# para `fechada`, gera 1 ou N ContaGerencial conforme `forma_lancamento`).
+# ---------------------------------------------------------------------------
+class RescisaoFuncionario(SQLModel, table=True):
+    """Uma rescisão contratual (CLT) de uma pessoa — verbas calculadas
+    (saldo de salário, aviso prévio, férias vencidas/proporcionais, 13º
+    proporcional, multa do FGTS estimada), com deduções (INSS/IR/vale em
+    aberto) e o fluxo `simulacao` → `fechada`. Diferente de férias/13º, o
+    lançamento em Contas a Pagar só é criado ao FECHAR (a simulação é livre
+    para editar/excluir sem gerar nada em Financeiro) — ver
+    `_aplicar_calculo_rescisao`/`POST /cadastro/rescisoes/{id}/fechar` em
+    `routers/cadastro/rh_folha.py`. Substitui o antigo par
+    `GET/POST /cadastro/rescisao` (removido), que só gravava a conta a pagar,
+    sem tabela de acompanhamento própria — rescisões criadas por aquele
+    endpoint legado continuam visíveis, como registro somente-leitura, na
+    listagem nova (ver `legado` no retorno de `GET /cadastro/rescisoes`)."""
+
+    __tablename__ = "rescisao_funcionario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    tipo_rescisao: str  # sem_justa_causa | pedido_demissao | justa_causa | acordo_mutuo
+    data_desligamento: date
+    dias_ferias_vencidas: int = 0
+    aviso_previo_trabalhado: bool = False
+    # Snapshot do salário/admissão da Pessoa no momento do cálculo — para a
+    # simulação/registro fechado não mudar de valor se a Pessoa for editada
+    # depois (mesmo motivo de qualquer outro snapshot deste arquivo).
+    salario_base: float
+    data_admissao: date
+    # Seis verbas — cada uma é `override do usuário if informado else valor
+    # calculado por calcular_rescisao()` (ver _aplicar_calculo_rescisao).
+    valor_saldo_salario: float = 0.0
+    valor_aviso_previo: float = 0.0
+    valor_ferias_vencidas: float = 0.0
+    valor_ferias_proporcionais: float = 0.0
+    valor_decimo_terceiro_proporcional: float = 0.0
+    valor_multa_fgts: float = 0.0
+    # Deduções — sempre informadas pelo usuário (nunca calculadas automaticamente).
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
+    valor_vale_em_aberto: float = 0.0
+    # valor_bruto = soma das 6 verbas; valor_total = bruto - deduções — ambos
+    # SEMPRE recomputados pelo servidor (nunca aceitos do cliente).
+    valor_bruto: float = 0.0
+    valor_total: float = 0.0
+    # Metadados de exibição (dias/meses/percentual por trás de cada verba,
+    # devolvidos por calcular_rescisao) — guardados para não recalcular ao
+    # montar `_detalhe_rescisao`.
+    dias_saldo_salario: int = 0
+    dias_aviso_previo: int = 0
+    dias_aviso_previo_indenizados: int = 0
+    meses_ferias_proporcionais: int = 0
+    meses_decimo_terceiro: int = 0
+    percentual_multa_fgts: float = 0.0
+    status: str = "simulacao"  # simulacao | fechada
+    forma_lancamento: Optional[str] = None  # unico | detalhado — só definido ao fechar
+    data_fechamento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    inativou_pessoa: bool = False
+    observacao: Optional[str] = None
+    # nº do lançamento (LC-...) criado em Contas a Pagar ao fechar — mesmo
+    # padrão de FeriasFuncionario/DecimoTerceiro.numero_lancamento_gerado.
+    numero_lancamento_gerado: Optional[str] = None
+    centro_custo: str = "Pecuária Leiteira"
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
 # Vale de funcionário — adiantamento pago à parte, descontado da folha em uma
 # ou mais competências futuras (ver ValeParcela).
 # ---------------------------------------------------------------------------
