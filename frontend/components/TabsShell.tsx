@@ -18,7 +18,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { X, Plus } from "lucide-react";
 import { MENSAGEM_ABRIR_ABA, MENSAGEM_TITULO_ABA, avisarTituloAba, estaDentroDeAba } from "@/lib/tabs";
-import { rotuloDaPagina, caminhoLabels } from "@/components/Sidebar";
+import { rotuloDaPagina } from "@/components/Sidebar";
+import { caminhoLabels } from "@/components/SubNavTree";
 import { useSubNav } from "@/components/SubNavContext";
 
 const LIMITE_ABAS = 5;
