@@ -1,7 +1,7 @@
 "use client";
 import { Bot } from "lucide-react";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8" };
+const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280" };
 
 export default function ProdutoRobosCowData() {
   return (

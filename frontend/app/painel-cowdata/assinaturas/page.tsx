@@ -7,7 +7,7 @@ import {
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c" };
+const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", verde: "#1F9D5C", vermelho: "#B91C1C" };
 
 const STATUS_LABEL: Record<string, { label: string; cor: string }> = {
   ativo: { label: "Ativo", cor: COR.verde },

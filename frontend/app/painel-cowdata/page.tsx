@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CreditCard, Building2, Clock, TrendingUp } from "lucide-react";
 import { fetchResumoCowData, type ResumoCowData } from "@/lib/api";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e" };
+const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", verde: "#1F9D5C" };
 
 function Cartao({ titulo, valor, icon: Icon, cor }: { titulo: string; valor: string; icon: any; cor?: string }) {
   return (
@@ -12,7 +12,7 @@ function Cartao({ titulo, valor, icon: Icon, cor }: { titulo: string; valor: str
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, marginBottom: "0.5rem" }}>
         <Icon size={13} /> {titulo}
       </div>
-      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: cor || "#e8ecf5", fontVariantNumeric: "tabular-nums" }}>{valor}</div>
+      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: cor || "#1B2A3A", fontVariantNumeric: "tabular-nums" }}>{valor}</div>
     </div>
   );
 }
@@ -30,7 +30,7 @@ export default function CockpitCowData() {
         Visão geral do negócio CowData — separado dos dados operacionais da Fazenda Jairo Nasser.
       </p>
 
-      {erro && <p style={{ color: "#e05c5c", fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
+      {erro && <p style={{ color: "#B91C1C", fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginBottom: "1.8rem" }}>
         <Cartao titulo="MRR (receita mensal recorrente)" valor={resumo ? `R$ ${resumo.mrr.toFixed(2)}` : "—"} icon={TrendingUp} cor={COR.verde} />

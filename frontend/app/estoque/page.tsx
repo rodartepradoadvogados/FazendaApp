@@ -53,7 +53,7 @@ type Item = {
 } & Record<string, any>;
 
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
-const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)"];
+const CORES = ["var(--vinho-light, #416180)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)"];
 
 const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 

@@ -416,7 +416,7 @@ function RebanhoVisaoGeral() {
                   <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
                   <YAxis type="category" dataKey="grupo" tick={{ fill: "var(--text-muted)", fontSize: 9 }} width={150} />
                   <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
+                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #416180)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
                     onClick={(e: any) => e?.grupo && setModal({ title: e.grupo, list: filtrados.filter((a) => (a.grupo_primario || "(sem grupo)") === e.grupo) })} />
                 </BarChart>
               </ResponsiveContainer>

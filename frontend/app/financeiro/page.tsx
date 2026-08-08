@@ -1889,7 +1889,7 @@ const cartaoLabelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var
 function CartaoVisual({ cartao }: { cartao: CartaoCredito }) {
   return (
     <div style={{
-      background: "linear-gradient(135deg, var(--vinho, #5E1A2E) 0%, var(--vinho-forte, #431322) 100%)",
+      background: "linear-gradient(135deg, var(--vinho, #0E2A47) 0%, var(--vinho-dark, #0A1F36) 100%)",
       borderRadius: "var(--r-sm)", padding: "1rem 1.1rem", color: "#fff", display: "grid", gap: "0.5rem",
       position: "relative", overflow: "hidden", minHeight: "110px",
     }}>
@@ -1900,7 +1900,7 @@ function CartaoVisual({ cartao }: { cartao: CartaoCredito }) {
       <div style={{ fontSize: "1.05rem", fontWeight: 700, position: "relative" }}>{cartao.apelido}</div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", opacity: 0.9, position: "relative" }}>
         <span>Fecha dia {cartao.dia_fechamento} · Vence dia {cartao.dia_vencimento}</span>
-        {cartao.bandeira && <span style={{ fontStyle: "italic", color: "#E8C766" }}>{cartao.bandeira}</span>}
+        {cartao.bandeira && <span style={{ fontStyle: "italic", color: "#C9A44C" }}>{cartao.bandeira}</span>}
       </div>
       {!cartao.ativo && <span style={{ fontSize: "0.68rem", opacity: 0.85, position: "relative" }}>Inativo</span>}
     </div>

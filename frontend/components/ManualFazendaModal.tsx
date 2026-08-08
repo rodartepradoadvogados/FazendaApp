@@ -29,7 +29,7 @@ export function ManualFazendaButton() {
         title="Manual da Fazenda — sua rotina automática e resultados"
         style={{
           display: "inline-flex", alignItems: "center", gap: "0.5rem",
-          background: "linear-gradient(135deg, var(--vinho, #3A0F1A), var(--vinho-light, #6B2438))",
+          background: "linear-gradient(135deg, var(--vinho, #0E2A47), var(--vinho-light, #416180))",
           color: "var(--dourado-light)", border: "none", borderRadius: "999px",
           padding: "0.55rem 1.1rem", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
           boxShadow: "0 4px 14px rgba(58,15,26,0.35)", whiteSpace: "nowrap",
@@ -59,7 +59,7 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
       <div onClick={(e) => e.stopPropagation()} className="card" role="dialog" aria-modal="true"
         style={{ width: "760px", maxWidth: "95vw", maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
 
-        <div style={{ background: "linear-gradient(135deg, var(--vinho, #3A0F1A), var(--vinho-light, #6B2438))", padding: "1.1rem 1.4rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+        <div style={{ background: "linear-gradient(135deg, var(--vinho, #0E2A47), var(--vinho-light, #416180))", padding: "1.1rem 1.4rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
           <div>
             <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--dourado-light)" }}>Manual da Fazenda</div>
             <div style={{ fontSize: "0.72rem", color: "rgba(240,200,120,0.8)" }}>

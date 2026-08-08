@@ -806,7 +806,7 @@ export default function FolhaPagamentoView() {
             style={{ fontSize: "0.82rem", fontWeight: 600, padding: "0.45rem 0.9rem", borderRadius: "999px",
               border: `1px solid ${categoria === cat ? "var(--dourado)" : "var(--border)"}`,
               background: categoria === cat ? "var(--dourado)" : "var(--surface)",
-              color: categoria === cat ? "var(--vinho-dark, #2A0D16)" : "var(--text-muted)", cursor: "pointer" }}>
+              color: categoria === cat ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)", cursor: "pointer" }}>
             {cat === "todos" ? "Todos" : LABEL_TIPO[cat === "diarias" ? "diaria" : cat]}
           </button>
         ))}

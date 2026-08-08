@@ -9,9 +9,9 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
+const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", verde: "#1F9D5C", vermelho: "#B91C1C", texto: "#1B2A3A" };
 const inputStyle: React.CSSProperties = {
-  background: "#0a0e1a", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
+  background: "#F3EAD8", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
 const ABAS = ["lancamentos", "dre", "fluxo", "livro"] as const;
@@ -191,7 +191,7 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
           </div>
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvar}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#0a0e1a", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#F3EAD8", fontWeight: 700, cursor: "pointer" }}>
               Lançar
             </button>
             <button onClick={() => setMostrarForm(false)}

@@ -861,7 +861,7 @@ type Aplic = {
   usuario_nome?: string | null;
 };
 
-const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
+const CORES = ["var(--vinho-light, #416180)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
 const UNIDADES_APLIC = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 
 function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { natureza?: "curativo" | "preventivo"; autoEditarId?: number | null }) {
