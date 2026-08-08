@@ -354,14 +354,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     setDataEmissao(valor);
     // O <input type="date"> dispara onChange a cada dígito digitado (não só
     // quando a data fica completa) — ao digitar o ano dígito a dígito, o
-    // primeiro dígito chega aqui como um ano de 1 dígito só (ex.: "0002-08-05"
-    // ao digitar o "2" de 2026, já com dia/mês prontos). Os campos abaixo só
-    // preenchem se ainda estiverem vazios, então sem esta checagem eles
-    // travavam com esse ano incompleto/errado do primeiro dígito, e nunca
-    // mais eram corrigidos mesmo com a emissão completa depois (bug relatado:
-    // vencimento/previsão de entrada/data do pedido nascendo em "0002").
-    // Só propaga para os campos dependentes com a data de emissão COMPLETA.
+    // primeiro dígito chega aqui como um ano de 1 dígito só, zero-padado pelo
+    // próprio input (ex.: "0002-08-05" ao digitar o "2" de 2026, já com
+    // dia/mês prontos). O regex sozinho NÃO pega esse caso — "0002-08-05" já
+    // tem 4 dígitos no ano, então batia como "completo" mesmo sendo um ano
+    // ainda em digitação — por isso o bug persistia mesmo com a checagem de
+    // formato (relatado: vencimento/previsão de entrada/data do pedido
+    // nascendo em "0002"). Precisa também rejeitar ano implausível.
     if (!/^\d{4}-\d{2}-\d{2}$/.test(valor)) return;
+    if (Number(valor.slice(0, 4)) < 1900) return;
     setDataVencimento((atual) => atual || valor);
     if (itens.some((i) => i.tipo_item === "produto")) {
       setDataPrevistaEntrada((atual) => atual || valor);
