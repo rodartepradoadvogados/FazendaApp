@@ -16,7 +16,7 @@ export function AvisoSalvo({ texto, aviso2 = "Pronto para um novo lançamento." 
   }, [texto]);
   if (!texto) return null;
   return (
-    <div ref={ref} className="mb-3" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem" }}>
+    <div ref={ref} className="mb-3" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem" }}>
       <div className="flex items-center gap-2" style={{ color: "var(--green-light)", fontSize: "0.85rem", fontWeight: 600 }}>
         <Check size={16} /> {texto}
       </div>

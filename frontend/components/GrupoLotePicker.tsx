@@ -56,7 +56,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: selecionados.length ? "var(--text)" : "var(--text-muted)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
     textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.3rem",
   };
 
@@ -81,7 +81,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
             <div style={{ position: "relative", marginBottom: "0.6rem" }}>
               <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
               <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar grupo/lote…"
-                style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
+                style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
             </div>
             <div style={{ overflowY: "auto", flex: 1 }}>
               <table className="fazenda-table">

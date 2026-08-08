@@ -15,13 +15,13 @@ import { CampoMoeda } from "@/components/CampoMoeda";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 const hoje = () => new Date().toISOString().split("T")[0];
 
 const cardBtn = (ativo: boolean): React.CSSProperties => ({
-  display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.55rem 0.9rem", borderRadius: "8px",
+  display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.55rem 0.9rem", borderRadius: "var(--r-sm)",
   border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
   background: ativo ? "var(--dourado-transp, rgba(197,160,74,0.12))" : "var(--surface-2)",
   color: ativo ? "var(--dourado-light)" : "var(--text)", cursor: "pointer", fontSize: "0.85rem", fontWeight: ativo ? 700 : 400,
@@ -251,7 +251,7 @@ export default function CompraSemenForm() {
     }
   };
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="animate-in">

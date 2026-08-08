@@ -351,7 +351,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       )}
 
       {animaisComAviso.length > 0 && (
-        <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+        <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--amber)", marginTop: "0.1rem" }} />
           <span style={{ fontSize: "0.8rem" }}>
             {animaisComAviso.length} animal(is) com menos de 30 dias da última inseminação/cobertura: {animaisComAviso.join(", ")}. Deseja confirmar mesmo assim?

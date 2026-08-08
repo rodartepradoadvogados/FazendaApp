@@ -48,7 +48,7 @@ function destinoEditar(tipoReal: string, id: string): string | null {
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 
 type Candidato = { id: string; titulo: string; subtitulo: string; tipo_real?: string };
@@ -175,7 +175,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
           ) : (
             <div className="space-y-2">
               {pendentes.map((p) => (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", borderRadius: "8px" }}>
+                <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
                   <div>
                     <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{p.titulo || `${p.tipo} #${p.id_alvo}`}</div>
                     <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
@@ -286,7 +286,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
               <div className="card-header" style={{ margin: 0, color: "var(--red)" }}>{souAdmin ? "Confirmar exclusão" : "Solicitar exclusão"}</div>
               <button onClick={() => { setAlvo(null); setImpacto(null); }} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
             </div>
-            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem", marginBottom: "0.7rem", background: "var(--surface-2)" }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem", marginBottom: "0.7rem", background: "var(--surface-2)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>Confira o lançamento</div>
               <p style={{ fontSize: "0.86rem", fontWeight: 700, marginBottom: "0.15rem" }}>{alvo.titulo}</p>
               {alvo.subtitulo && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{alvo.subtitulo}</p>}

@@ -2,11 +2,11 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", texto: "#e8ecf5" };
+const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", texto: "#1B2A3A" };
 
 function Bloco({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.2rem 1.4rem" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.2rem 1.4rem" }}>
       <h2 style={{ fontSize: "0.92rem", fontWeight: 700, marginBottom: "0.5rem" }}>{titulo}</h2>
       <div style={{ fontSize: "0.82rem", color: "#c3cbde", lineHeight: 1.55 }}>{children}</div>
     </div>
@@ -24,7 +24,7 @@ export default function ConfiancaLgpdCowData() {
       <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem", maxWidth: "48rem" }}>
         <Bloco titulo="Isolamento por fazenda">
           Cada fazenda-cliente cadastrada só enxerga os próprios dados. Todo modelo de negócio do sistema (animais,
-          reprodutivo, sanitário, produção, financeiro, estoque, pessoal) carrega um <code style={{ background: "#0a0e1a", padding: "0.05rem 0.35rem", borderRadius: "4px" }}>fazenda_id</code> obrigatório,
+          reprodutivo, sanitário, produção, financeiro, estoque, pessoal) carrega um <code style={{ background: "#F3EAD8", padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>fazenda_id</code> obrigatório,
           denormalizado propositalmente para tornar "toda consulta filtra por fazenda_id" uma regra mecânica e
           auditável — desde a fundação multi-fazenda do sistema.
         </Bloco>
@@ -40,7 +40,7 @@ export default function ConfiancaLgpdCowData() {
 
         <Bloco titulo="Próximo passo: nível de sigilo por conta">
           O modelo de dados para um controle de sigilo mais fino — por conta da Equipe CowData — já existe
-          (<code style={{ background: "#0a0e1a", padding: "0.05rem 0.35rem", borderRadius: "4px" }}>Usuario.nivel_sigilo_maximo</code>),
+          (<code style={{ background: "#F3EAD8", padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>Usuario.nivel_sigilo_maximo</code>),
           mas ainda não está ativo em nenhuma tela.
           <br /><br />
           É aditivo e dormente: hoje ninguém alcança nível de sigilo diferenciado por causa dele, e nenhum
@@ -49,7 +49,7 @@ export default function ConfiancaLgpdCowData() {
         </Bloco>
       </div>
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.4rem", display: "flex", flexDirection: "column", gap: "0.7rem", marginTop: "1.4rem", maxWidth: "48rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.4rem", display: "flex", flexDirection: "column", gap: "0.7rem", marginTop: "1.4rem", maxWidth: "48rem" }}>
         <p style={{ fontSize: "0.78rem", color: COR.mudo, marginBottom: "0.1rem" }}>
           Compromissos contratuais (ver Cláusula 6 do contrato-modelo, em Fazendas → Contrato → Baixar contrato) —
           o que a CowData se compromete a respeitar sobre os dados de cada fazenda-cliente:

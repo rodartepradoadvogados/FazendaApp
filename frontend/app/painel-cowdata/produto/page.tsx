@@ -1,7 +1,7 @@
 "use client";
 import { Bot } from "lucide-react";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8" };
+const COR = { cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280" };
 
 export default function ProdutoRobosCowData() {
   return (
@@ -12,7 +12,7 @@ export default function ProdutoRobosCowData() {
         despacho de push. Hoje esses status só existem em log/console do servidor; agrupar aqui é
         trabalho futuro.
       </p>
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "2rem", textAlign: "center", color: COR.mudo, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.6rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "2rem", textAlign: "center", color: COR.mudo, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.6rem" }}>
         <Bot size={28} />
         Em construção.
       </div>

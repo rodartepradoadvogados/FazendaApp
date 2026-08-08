@@ -13,7 +13,7 @@ import { Dropzone } from "@/components/Dropzone";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
 };
 const labelStyle: React.CSSProperties = {
   fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem",

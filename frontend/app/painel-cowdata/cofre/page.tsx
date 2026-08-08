@@ -10,11 +10,11 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COR = {
-  cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", texto: "#e8ecf5",
-  verde: "#3ecf8e", vermelho: "#e05c5c",
+  cartao: "#FFFFFF", borda: "#E4D6B8", mudo: "#6B7280", dourado: "#8A6D2F", texto: "#1B2A3A",
+  verde: "#1F9D5C", vermelho: "#B91C1C",
 };
 const inputStyle: React.CSSProperties = {
-  background: "#0a0e1a", border: `1px solid ${COR.borda}`, borderRadius: "6px", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
+  background: "#F3EAD8", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
 };
 
 function formatarData(iso: string): string {
@@ -33,7 +33,7 @@ const LABEL_STATUS: Record<string, string> = { aprovado: "Aprovado", aguardando_
 
 function Cartao({ titulo, subtitulo, children }: { titulo: string; subtitulo: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", marginBottom: "1.2rem", overflow: "hidden" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", marginBottom: "1.2rem", overflow: "hidden" }}>
       <div style={{ padding: "1rem 1.2rem 0.7rem" }}>
         <h2 style={{ fontSize: "0.95rem", fontWeight: 700 }}>{titulo}</h2>
         <p style={{ fontSize: "0.76rem", color: COR.mudo, marginTop: "0.15rem" }}>{subtitulo}</p>
@@ -114,7 +114,7 @@ export default function CofreAcessoCowData() {
           </p>
         </div>
         <button onClick={() => setMostrarForm((v) => !v)} style={{
-          background: COR.dourado, color: "#0a0e1a", border: "none", borderRadius: "8px", padding: "0.55rem 1rem",
+          background: COR.dourado, color: "#F3EAD8", border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 1rem",
           fontSize: "0.82rem", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
         }}>
           {mostrarForm ? "Cancelar" : "+ Solicitar acesso"}
@@ -124,7 +124,7 @@ export default function CofreAcessoCowData() {
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.82rem", margin: "0.8rem 0" }}>{erro}</p>}
 
       {mostrarForm && (
-        <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.1rem 1.2rem", margin: "1rem 0", display: "flex", gap: "0.9rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.2rem", margin: "1rem 0", display: "flex", gap: "0.9rem", flexWrap: "wrap", alignItems: "flex-end" }}>
           <div>
             <label style={{ fontSize: "0.7rem", color: COR.mudo, display: "block", marginBottom: "0.25rem" }}>Fazenda</label>
             <select value={fazendaId} onChange={(e) => setFazendaId(e.target.value ? Number(e.target.value) : "")} style={{ ...inputStyle, minWidth: "14rem" }}>
@@ -140,7 +140,7 @@ export default function CofreAcessoCowData() {
             </select>
           </div>
           <button onClick={enviarPedido} disabled={enviando} style={{
-            background: COR.dourado, color: "#0a0e1a", border: "none", borderRadius: "6px", padding: "0.5rem 1rem",
+            background: COR.dourado, color: "#F3EAD8", border: "none", borderRadius: "var(--r-sm)", padding: "0.5rem 1rem",
             fontSize: "0.8rem", fontWeight: 700, cursor: enviando ? "default" : "pointer", opacity: enviando ? 0.6 : 1,
           }}>
             {enviando ? "Enviando…" : "Solicitar"}
@@ -178,7 +178,7 @@ export default function CofreAcessoCowData() {
                   <Td style={{ color: s.segundos_restantes <= 300 ? COR.vermelho : COR.mudo }}>{expiraLabel(s)}</Td>
                   <Td>
                     <button onClick={() => encerrar(s.id)} title="Encerrar sessão" style={{
-                      background: "transparent", border: `1px solid ${COR.borda}`, borderRadius: "6px", color: COR.mudo,
+                      background: "transparent", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", color: COR.mudo,
                       cursor: "pointer", padding: "0.3rem 0.55rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.72rem",
                     }}>
                       <LogOut size={12} /> Encerrar
@@ -221,10 +221,10 @@ export default function CofreAcessoCowData() {
                   <Td>
                     {p.status === "aguardando_aprovacao" && (
                       <div style={{ display: "flex", gap: "0.4rem" }}>
-                        <button onClick={() => aprovar(p.id)} title="Aprovar" style={{ background: "transparent", border: `1px solid ${COR.verde}`, borderRadius: "6px", color: COR.verde, cursor: "pointer", padding: "0.25rem 0.4rem" }}>
+                        <button onClick={() => aprovar(p.id)} title="Aprovar" style={{ background: "transparent", border: `1px solid ${COR.verde}`, borderRadius: "var(--r-sm)", color: COR.verde, cursor: "pointer", padding: "0.25rem 0.4rem" }}>
                           <CheckCircle2 size={13} />
                         </button>
-                        <button onClick={() => negar(p.id)} title="Negar" style={{ background: "transparent", border: `1px solid ${COR.vermelho}`, borderRadius: "6px", color: COR.vermelho, cursor: "pointer", padding: "0.25rem 0.4rem" }}>
+                        <button onClick={() => negar(p.id)} title="Negar" style={{ background: "transparent", border: `1px solid ${COR.vermelho}`, borderRadius: "var(--r-sm)", color: COR.vermelho, cursor: "pointer", padding: "0.25rem 0.4rem" }}>
                           <XCircle size={13} />
                         </button>
                       </div>

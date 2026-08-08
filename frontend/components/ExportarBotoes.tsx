@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { FileSpreadsheet, FileText, Loader2 } from "lucide-react";
 import { exportarExcel, exportarPDF, ColunaExport } from "@/lib/export";
+import { useExportRegister } from "@/components/ExportContext";
 
 /**
  * Par de botões "Excel" / "PDF" para exportar uma lista/relatório já
@@ -20,6 +21,10 @@ export function ExportarBotoes({
 }) {
   const [gerando, setGerando] = useState<"excel" | "pdf" | null>(null);
   const semDados = disabled || linhas.length === 0;
+  // Registra os mesmos dados no ExportContext — sem efeito hoje na maioria
+  // das telas (nada os consome ali); o cabeçalho do portal Insights e
+  // Administração usa isso para oferecer um único "Exportar" no topo.
+  useExportRegister(disabled ? null : { titulo, colunas, linhas, nomeArquivoBase });
 
   const rodar = async (formato: "excel" | "pdf") => {
     setGerando(formato);
@@ -34,7 +39,7 @@ export function ExportarBotoes({
   };
 
   const btn: React.CSSProperties = {
-    display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "6px",
+    display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "var(--r-sm)",
     border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)",
     fontSize: "0.78rem", fontWeight: 600, cursor: semDados ? "not-allowed" : "pointer", opacity: semDados ? 0.5 : 1,
   };

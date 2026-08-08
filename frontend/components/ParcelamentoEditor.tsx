@@ -50,7 +50,7 @@ export function dividirParcelasPorFrequencia(valorTotal: number, qtd: number, pr
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 const inputSm: React.CSSProperties = {
   fontSize: "0.8rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem",
 };
 
 /**

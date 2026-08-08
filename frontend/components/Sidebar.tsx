@@ -9,17 +9,11 @@ import {
   BarChart3,
   Package,
   Home,
-  LineChart,
   Milk,
   Wheat,
   Syringe,
-  Settings,
   ClipboardList,
-  FileBarChart,
   ShoppingCart,
-  MessageSquare,
-  Users,
-  Briefcase,
   Menu,
   X,
   Search,
@@ -27,6 +21,9 @@ import {
   ListChecks,
   ChevronDown,
   ChevronUp,
+  ChevronsLeft,
+  ChevronsRight,
+  ExternalLink,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
@@ -42,8 +39,8 @@ import { useCliqueOuDuploClique, abrirNovaAba } from "@/lib/tabs";
 // meio passa direto (abre nova guia do NAVEGADOR, comportamento nativo do
 // <a> preservado) — só o clique simples é interceptado para navegar por
 // dentro do app como hoje, e o duplo clique vira aba interna.
-function SidebarLink({ href, title, label, active, children }: {
-  href: string; title?: string; label: string; active: boolean; children: React.ReactNode;
+function SidebarLink({ href, title, label, active, recolhida, children }: {
+  href: string; title?: string; label: string; active: boolean; recolhida?: boolean; children: React.ReactNode;
 }) {
   const router = useRouter();
   const aoClicar = useCliqueOuDuploClique(
@@ -60,6 +57,9 @@ function SidebarLink({ href, title, label, active, children }: {
         color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
         borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
         fontSize: "10px",
+        justifyContent: recolhida ? "center" : "flex-start",
+        paddingLeft: recolhida ? "0.4rem" : undefined,
+        paddingRight: recolhida ? "0.4rem" : undefined,
       }}
       onClick={(e) => {
         if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // deixa o navegador tratar normalmente
@@ -75,10 +75,12 @@ function SidebarLink({ href, title, label, active, children }: {
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
 // ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
 // insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) financeiro
-// (Controle Financeiro + Pedidos); (6) administração (Configurações, sempre
-// por último — Aprovações virou sub-aba de Configurações). Recria não tem
+// (Controle Financeiro + Pedidos). Análise e Administração não têm mais
+// grupo aqui — viraram o portal "Insights e Administração" (ver
+// components/insights/InsightsLayout.tsx), aberto por um único atalho no
+// rodapé desta barra, numa aba nova de verdade do navegador. Recria não tem
 // mais item próprio aqui — virou sub-aba de Indicadores.
-const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Análise", "Financeiro", "Administração"] as const;
+const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Financeiro"] as const;
 
 const links = [
   // ── Ciclo diário ──
@@ -93,10 +95,6 @@ const links = [
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },
   { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo", grupo: "Insumos e sanidade" },
-  // ── Análise ──
-  { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro", grupo: "Análise" },
-  { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)", grupo: "Análise" },
-  { href: "/analise-relatorios", label: "Relatórios", icon: FileBarChart, title: "Relatórios — análise reprodutiva e relatório personalizado", grupo: "Análise" },
   // ── Financeiro ──
   { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
   { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },
@@ -110,6 +108,9 @@ const EXTRAS_TITULO_SIDEBAR: Record<string, string> = {
   "/portal": "Portal",
   "/consultor": "Consultor",
   "/usuarios": "Controle de Acesso",
+  "/indicadores": "Indicadores",
+  "/relatorios": "Listas",
+  "/analise-relatorios": "Relatórios",
 };
 export function rotuloDaPagina(path: string): string {
   return links.find((l) => l.href === path)?.label ?? EXTRAS_TITULO_SIDEBAR[path] ?? path;
@@ -119,11 +120,40 @@ export function Sidebar() {
   const path = usePathname();
   const [online, setOnline] = useState<boolean | null>(null);
   const [aberto, setAberto] = useState(false); // drawer no mobile
+  // Recolher a barra inteira (só desktop) para ícones — preferência do
+  // usuário, persistida entre sessões. Começa expandida (false) para não
+  // "piscar" recolhida no primeiro paint; sincroniza com o localStorage já
+  // no mount seguinte (undefined/erro = expandida).
+  const [recolhidaPref, setRecolhidaPref] = useState(false);
+  useEffect(() => {
+    try { setRecolhidaPref(localStorage.getItem("sidebar-recolhida") === "1"); } catch { /* ignore */ }
+  }, []);
+  function alternarRecolhida() {
+    setRecolhidaPref((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("sidebar-recolhida", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }
+  // A preferência de recolher só existe no desktop (breakpoint md, 768px) —
+  // no mobile o drawer é sempre cheio, então o conteúdo (rótulos, wordmark,
+  // sub-navegação) não pode virar "só ícone" ali mesmo com a preferência
+  // salva de uma sessão desktop anterior.
+  const [ehDesktop, setEhDesktop] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    setEhDesktop(mq.matches);
+    const ouvir = (e: MediaQueryListEvent) => setEhDesktop(e.matches);
+    mq.addEventListener("change", ouvir);
+    return () => mq.removeEventListener("change", ouvir);
+  }, []);
+  const recolhida = recolhidaPref && ehDesktop;
   const [visiveis, setVisiveis] = useState(links);
   const [admin, setAdmin] = useState(false);
   const [dono, setDono] = useState(false);
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+  const [insightsHref, setInsightsHref] = useState("/indicadores");
   // Nome exibido embaixo do logo CowData — vem da fazenda selecionada no
   // login (piloto conservador de multi-fazenda). "Jairo Nasser" é o valor
   // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
@@ -162,6 +192,17 @@ export function Sidebar() {
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    // Destino do atalho "Insights e Administração" (ver botão no rodapé) —
+    // primeira aba que o usuário realmente enxerga dentro do portal, na
+    // mesma ordem da barra de abas do portal (ver InsightsLayout.tsx:
+    // Indicadores e Relatórios usam o módulo "indicadores"; Listas usa
+    // "reproducao"). Portal é o único item de lá sem nenhuma permissão de
+    // módulo — garante que o atalho sempre leva a algum lugar válido.
+    setInsightsHref(
+      podeModulo("indicadores") ? "/indicadores" :
+      podeModulo("reproducao") ? "/relatorios" :
+      "/portal"
+    );
   }, [path]);
 
   useEffect(() => {
@@ -225,8 +266,12 @@ export function Sidebar() {
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
 
       <aside
-        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)" }}
-        className={`w-56 flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-transform duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", position: "relative" }}
+        // Recolhida só vale a partir do breakpoint md — no mobile o drawer
+        // sempre abre na largura cheia (w-56 base), independente da
+        // preferência de recolher salva (essa é só para a barra fixa do
+        // desktop; no mobile o menu já fecha inteiro depois de navegar).
+        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-56"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
       {/* Botão fechar — só no mobile */}
       <button onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu de navegação"
@@ -234,17 +279,34 @@ export function Sidebar() {
         style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: "var(--sidebar-muted)", cursor: "pointer" }}>
         <X size={20} />
       </button>
+      {/* Recolher/expandir a barra inteira — só desktop (no mobile o menu já
+          fecha/abre como drawer, não faz sentido também recolher). Preso à
+          borda direita da barra, sempre visível independente do scroll. */}
+      <button onClick={alternarRecolhida} aria-label={recolhida ? "Expandir menu" : "Recolher menu"}
+        title={recolhida ? "Expandir menu" : "Recolher menu"}
+        className="hidden md:flex"
+        style={{
+          position: "absolute", top: "1.1rem", right: "-11px", zIndex: 10,
+          width: 22, height: 22, borderRadius: "50%", alignItems: "center", justifyContent: "center",
+          background: "var(--sidebar-bg)", border: "1px solid var(--sidebar-border)", color: "var(--sidebar-muted)", cursor: "pointer",
+        }}>
+        {recolhida ? <ChevronsRight size={12} /> : <ChevronsLeft size={12} />}
+      </button>
       {/* Logo */}
       <div
         className="p-4 border-b"
         style={{ borderColor: "var(--sidebar-border)" }}
       >
-        <div className="flex flex-col gap-1 px-2 py-2">
-          <CowDataMark size={56} />
-          <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
-          <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
-            {fazendaNome}
-          </p>
+        <div className="flex flex-col gap-1 px-2 py-2" style={recolhida ? { alignItems: "center", padding: 0 } : undefined}>
+          <CowDataMark size={recolhida ? 32 : 56} />
+          {!recolhida && (
+            <>
+              <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
+              <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
+                {fazendaNome}
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -254,9 +316,10 @@ export function Sidebar() {
           navegação dentro de uma página. As duas listas rolam de forma
           independente (cada uma no seu próprio container com overflow), para
           que abrir um grupo grande de sub-abas não empurre/role o menu
-          principal junto. */}
+          principal junto. Recolhida: sem espaço para a árvore de sub-abas
+          nem para os títulos de grupo — só os ícones dos módulos. */}
       <nav className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
-        {subNav && (
+        {subNav && !recolhida && (
           <div className="p-3" style={{ background: "var(--sidebar-subnav-bg)", maxHeight: "55%", overflowY: "auto", flexShrink: 0, borderBottom: "4px double var(--sidebar-border)" }}>
             {totalFolhasSubNav > 6 && (
               <div style={{ position: "relative", marginBottom: "0.5rem" }}>
@@ -268,7 +331,7 @@ export function Sidebar() {
                   title="Digite parte do nome para pular direto a uma sub-aba, sem abrir grupo por grupo"
                   style={{
                     width: "100%", boxSizing: "border-box", padding: "0.3rem 0.5rem 0.3rem 1.6rem", fontSize: "10px",
-                    borderRadius: "6px", border: "1px solid var(--sidebar-border)",
+                    borderRadius: "var(--r-sm)", border: "1px solid var(--sidebar-border)",
                     background: "var(--sidebar-bg)", color: "var(--sidebar-fg)",
                   }}
                 />
@@ -287,7 +350,7 @@ export function Sidebar() {
                       title={f.caminho ? `${f.caminho} › ${f.label}` : f.label}
                       style={{
                         width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", textAlign: "left", cursor: "pointer",
-                        padding: "0.4rem 0.6rem", borderRadius: "8px",
+                        padding: "0.4rem 0.6rem", borderRadius: "var(--r-sm)",
                         border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
                         background: ativo ? "var(--sidebar-active-bg)" : "transparent",
                         color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
@@ -311,31 +374,29 @@ export function Sidebar() {
         )}
         <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
           {(() => {
-            const todos = [...visiveis,
-              ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
-              ...(dono ? [{ href: "/painel-cowdata", label: "Painel CowData", icon: Building2, title: "Painel CowData — administração da empresa de software (assinaturas, financeiro, equipe), separado dos dados da fazenda", grupo: "Administração" }] : []),
-              ...(dono ? [{ href: "/contador", label: "Painel do Contador", icon: FileBarChart, title: "Visão do proprietário sobre o Painel do Contador — a mesma tela que o contador externo vê (Financeiro somente leitura, arquivo fiscal-contábil)", grupo: "Administração" }] : []),
-              { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
-              { href: "/consultor", label: "Consultor", icon: Briefcase, title: "Área do consultor — fazendas gerenciadas por planilha e modo Simulação", grupo: "Administração" },
-              ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
-            ];
+            // Administração (Controle de Acesso, Painel CowData, Painel do
+            // Contador, Portal, Consultor, Configurações) saiu daqui — mora
+            // no portal Insights e Administração agora (atalho no rodapé).
+            const todos = visiveis;
             return GRUPOS.map((grupo, i) => {
               const itens = todos.filter((l) => l.grupo === grupo);
               if (!itens.length) return null;
               return (
                 <div key={grupo}>
-                  <p style={{
-                    fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
-                    color: "var(--sidebar-muted)", margin: i === 0 ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
-                  }}>
-                    {grupo}
-                  </p>
+                  {!recolhida && (
+                    <p style={{
+                      fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                      color: "var(--sidebar-muted)", margin: i === 0 ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
+                    }}>
+                      {grupo}
+                    </p>
+                  )}
                   {itens.map(({ href, label, icon: Icon, title }) => {
                     const active = path === href || (href !== "/" && path.startsWith(href));
                     return (
-                      <SidebarLink key={href} href={href} title={title} label={label} active={active}>
+                      <SidebarLink key={href} href={href} title={title} label={label} active={active} recolhida={recolhida}>
                         <Icon size={16} />
-                        {label}
+                        {!recolhida && label}
                       </SidebarLink>
                     );
                   })}
@@ -346,10 +407,34 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Footer */}
+      {/* Atalho para o portal "Insights e Administração" (Indicadores,
+          Listas, Relatórios, Controle de Acesso, Painel CowData, Painel do
+          Contador, Portal, Consultor, Configurações — ver
+          components/insights/InsightsLayout.tsx). Abre numa aba NOVA de
+          verdade do navegador (target="_blank"), não uma aba interna
+          simulada (ver lib/tabs.ts) — pedido explícito do usuário para este
+          portal "parecer um novo portal". */}
+      <div className="p-2 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
+        <a href={insightsHref} target="_blank" rel="noopener noreferrer"
+          title="Abrir Insights e Administração numa aba nova"
+          className="flex items-center gap-2 rounded-lg transition-all duration-150"
+          style={{
+            padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
+            color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+            border: "1px solid var(--sidebar-border)",
+          }}>
+          <Building2 size={16} />
+          {!recolhida && <span className="flex-1">Insights e Administração</span>}
+          {!recolhida && <ExternalLink size={12} />}
+        </a>
+      </div>
+
+      {/* Footer — recolhida: só o pontinho de status, sem texto (sem espaço
+          para rótulo, usuário logado ou versão). */}
       <div
         className="p-2 border-t text-center"
         style={{ borderColor: "var(--sidebar-border)", fontSize: "0.65rem", color: "var(--sidebar-muted)" }}
+        title={recolhida ? statusLabel : undefined}
       >
         <div className="flex items-center justify-center gap-1.5" style={{ color: statusColor }}>
           <span
@@ -360,10 +445,14 @@ export function Sidebar() {
                 : undefined
             }
           />
-          {statusLabel}
+          {!recolhida && statusLabel}
         </div>
-        <UsuarioLogado />
-        <p className="mt-0.5">v1.0.0 · Sprint 1</p>
+        {!recolhida && (
+          <>
+            <UsuarioLogado />
+            <p className="mt-0.5">v1.0.0 · Sprint 1</p>
+          </>
+        )}
       </div>
       </aside>
     </>
@@ -421,7 +510,11 @@ const normalizarBusca = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}
 
 // Árvore de sub-navegação genérica (N níveis) — usada pela Sidebar no lugar
 // da lista de módulos quando a página atual registra uma (piloto: Lançamentos).
-function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
+// Exportado para reuso no rail esquerdo do portal "Insights e Administração"
+// (ver components/insights/InsightsLayout.tsx) — mesma árvore de sub-abas,
+// só que lá fica na lateral esquerda em vez de acima da lista de módulos
+// (o portal inverte onde cada nível de navegação mora, ver InsightsLayout).
+export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
   nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void;
   raiz: SubNavNode[]; pathname: string; paginaLabel: string; depth?: number;
   recolhidos: Set<string>; onToggleRecolhido: (id: string) => void;
@@ -445,7 +538,7 @@ function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, de
         return (
           <div key={n.id}
             style={grupoAberto ? {
-              border: "1.5px solid var(--sidebar-subnav-outline)", borderRadius: "10px",
+              border: "1.5px solid var(--sidebar-subnav-outline)", borderRadius: "var(--r-sm)",
               padding: "0.3rem", background: "var(--sidebar-subnav-outline-bg)",
             } : undefined}>
             <SubNavItem node={n} depth={depth} ativo={ativo} temFilhos={temFilhos} activeId={activeId}
@@ -490,7 +583,7 @@ function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, p
       <button onClick={aoClicar}
         style={{
           flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
-          padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
+          padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer", textAlign: "left",
           border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
           background: ativo ? "var(--sidebar-active-bg)" : "transparent",
           color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
@@ -506,7 +599,7 @@ function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, p
           title={recolhido ? "Expandir sub-menu" : "Recolher sub-menu"}
           style={{
             display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            width: "1.3rem", background: "none", border: "none", borderRadius: "6px",
+            width: "1.3rem", background: "none", border: "none", borderRadius: "var(--r-sm)",
             color: "var(--sidebar-muted)", opacity: 0.55, cursor: "pointer",
           }}
         >
@@ -528,7 +621,7 @@ function UsuarioLogado() {
       </div>
       <button onClick={logout} title="Encerra a sessão — a próxima pessoa faz login com o próprio usuário"
         className="flex items-center justify-center gap-1.5 mx-auto"
-        style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "6px", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
+        style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "var(--r-sm)", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
         <LogOut size={12} /> Sair / trocar de usuário
       </button>
     </div>

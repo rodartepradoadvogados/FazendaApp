@@ -258,7 +258,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
           const estoqueItem = estoque.find((e) => e.nome === item.produto);
           const compativeis = unidadesCompativeis(estoqueItem?.unidade);
           return (
-            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem", position: "relative" }}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ marginBottom: "0.6rem" }}>
                 <Campo label="Definir medicamento por">
                   <select style={inputStyle} value={item.definirPor} onChange={(e) => escolherDefinirPor(idx, e.target.value as ItemSanidade["definirPor"])}>

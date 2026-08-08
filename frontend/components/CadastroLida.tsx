@@ -9,9 +9,9 @@ import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 
-const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
+const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
-const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
 
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
@@ -241,7 +241,7 @@ function FormLida({ form, setForm, onSalvar, onCancelar, salvando, msg, acrescen
   estoque: EstoqueItem[];
 }) {
   return (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
           <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Limpar cocho de água" /></div>
@@ -254,7 +254,7 @@ function FormLida({ form, setForm, onSalvar, onCancelar, salvando, msg, acrescen
           const ativo = form.modo === m;
           return (
             <button key={m} type="button" onClick={() => setForm({ ...form, modo: m })}
-              style={{ textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "8px", cursor: "pointer",
+              style={{ textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
                 border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
                 background: ativo ? "var(--pill-active-bg)" : "transparent",
                 color: ativo ? "var(--dourado-light)" : "var(--text)" }}>
@@ -297,7 +297,7 @@ function FormLida({ form, setForm, onSalvar, onCancelar, salvando, msg, acrescen
           <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas</p>
           <div className="space-y-2 mb-2">
             {form.etapas.map((e, idx) => (
-              <div key={idx} style={{ background: "var(--surface)", padding: "0.6rem", borderRadius: "6px", marginBottom: "0.4rem" }}>
+              <div key={idx} style={{ background: "var(--surface)", padding: "0.6rem", borderRadius: "var(--r-sm)", marginBottom: "0.4rem" }}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
                   <div><label style={labelStyle}>Dia início</label><input type="number" min={0} style={inputStyle} value={e.dia_inicio} onChange={(ev) => atualizarEtapa(idx, { dia_inicio: Number(ev.target.value) })} /></div>
                   <div><label style={labelStyle}>Dia fim (opcional)</label><input type="number" min={0} style={inputStyle} value={e.dia_fim ?? ""} onChange={(ev) => atualizarEtapa(idx, { dia_fim: ev.target.value ? Number(ev.target.value) : null })} placeholder="repete até este dia" /></div>

@@ -9,8 +9,8 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 
 // Tokens locais fixos — a área pública é uma vitrine, não a área logada (que
 // segue o tema claro/escuro/misto escolhido em Aparência). Ela assume sempre
-// o visual de marca (fundo vinho escuro, texto claro), sobrescrevendo
-// --surface/--text/etc. só dentro desta árvore.
+// o visual de marca — agora a paleta "Institucional" (fundo marinho escuro,
+// texto claro) — sobrescrevendo --surface/--text/etc. só dentro desta árvore.
 export const marcaVars = {
   "--surface": "rgba(255,255,255,0.05)",
   "--surface-2": "rgba(255,255,255,0.045)",
@@ -25,7 +25,7 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
   return (
     <header style={{
       position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "0.9rem 1.5rem", background: "rgba(20,10,14,0.55)", backdropFilter: "blur(10px)",
+      padding: "0.9rem 1.5rem", background: "rgba(8,20,33,0.6)", backdropFilter: "blur(10px)",
       borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap", gap: "0.6rem",
     }}>
       <Link href="/login" style={{ display: "flex", alignItems: "center", gap: "0.55rem", textDecoration: "none" }}>
@@ -38,7 +38,7 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
       <nav style={{ display: "flex", alignItems: "center", gap: "1.4rem" }}>
         <a href={`${base}#recursos`} style={linkStyle} className="login-nav-link">Recursos</a>
         <a href={`${base}#simulador`} style={linkStyle} className="login-nav-link">Simulador</a>
-        <Link href="/news" style={{ ...linkStyle, color: "#FFE066" }} className="login-nav-link">Milk News</Link>
+        <Link href="/news" style={{ ...linkStyle, color: "#C9A44C" }} className="login-nav-link">Milk News</Link>
         {variant === "institucional" && (
           <Link href="/login" className="btn-primary" style={{ fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>Entrar</Link>
         )}
@@ -57,7 +57,7 @@ export function PublicFooter() {
 
 export function PublicPage({ variant = "institucional", children }: { variant?: "login" | "institucional"; children: React.ReactNode }) {
   return (
-    <div style={{ ...marcaVars, minHeight: "100vh", background: "linear-gradient(180deg, #2a1219 0%, #1c0d12 45%, #150a0e 100%)" }}>
+    <div style={{ ...marcaVars, minHeight: "100vh", background: "linear-gradient(180deg, #14385A 0%, #0E2A47 45%, #081A2C 100%)" }}>
       <PublicHeader variant={variant} />
       {children}
       <PublicFooter />

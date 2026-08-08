@@ -354,8 +354,8 @@ function RebanhoVisaoGeral() {
     [ordenarPorNumeracao, porNumero, grupoLista, estadosPorNumero]
   );
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
-  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
@@ -416,7 +416,7 @@ function RebanhoVisaoGeral() {
                   <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
                   <YAxis type="category" dataKey="grupo" tick={{ fill: "var(--text-muted)", fontSize: 9 }} width={150} />
                   <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
+                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #416180)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
                     onClick={(e: any) => e?.grupo && setModal({ title: e.grupo, list: filtrados.filter((a) => (a.grupo_primario || "(sem grupo)") === e.grupo) })} />
                 </BarChart>
               </ResponsiveContainer>
@@ -499,7 +499,7 @@ function RebanhoVisaoGeral() {
                 {grupoLista.map(([grupo, lista]) => {
                   const aberto = abertos.has(grupo);
                   return (
-                    <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+                    <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
                       <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                         {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                         <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>

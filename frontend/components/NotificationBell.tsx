@@ -191,7 +191,7 @@ export function NotificationBell() {
               <div className="space-y-2">
                 {itensExibidos.map((i, idx) => (
                   <div key={idx} onClick={() => irPara(i)} title="Ir para a página relacionada"
-                    style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", padding: "0.45rem 0.5rem", borderRadius: "6px", background: "var(--surface-2)", cursor: "pointer", boxShadow: "inset 0 0 0 1px transparent", transition: "box-shadow 0.15s" }}
+                    style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", padding: "0.45rem 0.5rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", cursor: "pointer", boxShadow: "inset 0 0 0 1px transparent", transition: "box-shadow 0.15s" }}
                     onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; e.currentTarget.style.boxShadow = "inset 3px 0 0 var(--dourado)"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "inset 0 0 0 1px transparent"; }}
                   >

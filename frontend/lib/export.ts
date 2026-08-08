@@ -6,10 +6,14 @@ import { baixarArquivo } from "./nativo";
 
 const NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra";
 
-const COR_VINHO = "3A0F1A";
-const COR_VINHO_RGB: [number, number, number] = [58, 15, 26];
-const COR_DOURADO_RGB: [number, number, number] = [224, 166, 60];
-const COR_GRAFITE_RGB: [number, number, number] = [21, 11, 16];
+// Paleta "Institucional" do redesign (ver globals.css, data-paleta="azul"):
+// marinho estrutural no lugar do vinho, ouro escurecido no lugar do dourado
+// antigo — mesma família de cor de toda a interface, agora também nos
+// documentos exportados.
+const COR_VINHO = "0E2A47";
+const COR_VINHO_RGB: [number, number, number] = [14, 42, 71];
+const COR_DOURADO_RGB: [number, number, number] = [138, 109, 47];
+const COR_GRAFITE_RGB: [number, number, number] = [10, 31, 54];
 const COR_MUTED_RGB: [number, number, number] = [107, 114, 128];
 const COR_MUTED_CLARO_RGB: [number, number, number] = [156, 163, 175];
 const COR_LINHA_RGB: [number, number, number] = [229, 231, 235];

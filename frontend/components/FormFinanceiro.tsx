@@ -23,7 +23,7 @@ import { onPedidoLancamentoFinanceiroDeEvento, type OrigemVinculoSanitarioReprod
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
@@ -1134,7 +1134,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                     {p.pago && (
                       <tr>
                         <td colSpan={5} style={{ padding: 0, border: 0 }}>
-                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "6px", margin: "0.2rem 0 0.5rem" }}>
+                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "var(--r-sm)", margin: "0.2rem 0 0.5rem" }}>
                             <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
                               <Campo label="Data de pagamento">
                                 <input type="date" style={inputStyle} value={p.data_pagamento || ""}

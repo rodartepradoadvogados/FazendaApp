@@ -20,7 +20,7 @@ export function SelecaoAnimaisTabela({ animais, selecionados, toggle, toggleTodo
   const base = [...animais].sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
   const ord = useOrdenacao(base);
   return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+    <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
       <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
         <span style={{ fontSize: "0.85rem" }}>{base.length} animal(is) — {selecionados.size} selecionado(s)</span>
         <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!base.length}>

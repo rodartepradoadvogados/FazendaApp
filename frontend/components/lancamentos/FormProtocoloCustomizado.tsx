@@ -37,7 +37,7 @@ function ProtocolosCustomizadosAtivos({ recarregarRef }: { recarregarRef: React.
         {ativos.map((p) => {
           const aberto = abertos.has(p.lancamento_id);
           return (
-            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
               <div style={{ display: "flex", alignItems: "center", background: "var(--surface)" }}>
                 <button onClick={() => toggle(p.lancamento_id)} style={{ flex: 1, display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                   {aberto ? <ChevronDown size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} /> : <ChevronRight size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}

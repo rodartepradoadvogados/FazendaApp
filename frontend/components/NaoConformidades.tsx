@@ -135,7 +135,7 @@ export default function NaoConformidades() {
                 fontSize: "0.78rem", fontWeight: 600, padding: "0.35rem 0.7rem", borderRadius: 999,
                 border: `1px solid ${dominio === d ? "var(--dourado)" : "var(--border)"}`,
                 background: dominio === d ? "var(--dourado)" : "var(--surface)",
-                color: dominio === d ? "var(--vinho-dark, #2A0D16)" : "var(--text-muted)",
+                color: dominio === d ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)",
                 cursor: "pointer",
               }}
             >

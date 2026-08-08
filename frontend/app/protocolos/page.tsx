@@ -39,7 +39,7 @@ const FormLida = dynamic(() => import("@/components/lancamentos/FormLida").then(
 
 const inputStyle: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
@@ -239,7 +239,7 @@ function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange 
             <button
               key={t.id} type="button" onClick={() => onChange(t.id)} title={t.desc}
               style={{
-                textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "8px", cursor: "pointer",
+                textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
                 border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
                 background: ativo ? "var(--pill-active-bg)" : "transparent",
                 color: ativo ? "var(--dourado-light)" : "var(--text)",
@@ -534,7 +534,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
       )}
 
       {editando ? (
-        <div className="mb-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.8rem" }}>
+        <div className="mb-3" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.8rem" }}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
             <div><label style={labelStyle}>Data de início</label>
               <input type="date" style={inputStyle} value={editForm.data_inicio}

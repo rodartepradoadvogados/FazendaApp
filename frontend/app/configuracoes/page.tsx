@@ -115,7 +115,7 @@ export default function ConfiguracoesPage() {
         <Link href="/painel-cowdata"
           className="mb-4 flex items-center justify-between"
           style={{
-            border: "1px solid var(--dourado)", borderRadius: "10px", padding: "0.9rem 1.1rem", textDecoration: "none",
+            border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.9rem 1.1rem", textDecoration: "none",
             background: "color-mix(in srgb, var(--dourado) 8%, transparent)",
           }}>
           <div>

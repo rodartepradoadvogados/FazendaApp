@@ -7,7 +7,7 @@ import { gerarReciboPDF, type LancamentoRecibo } from "@/lib/export";
 import { baixarArquivo } from "@/lib/nativo";
 
 const inputStyle: React.CSSProperties = {
-  padding: "0.5rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)",
+  padding: "0.5rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)",
   background: "var(--surface-2)", color: "var(--text)", fontSize: "0.85rem", width: "100%",
 };
 

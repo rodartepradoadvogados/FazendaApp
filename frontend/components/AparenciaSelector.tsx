@@ -113,7 +113,7 @@ function ReivindicarProprietario({ variant }: { variant: "site" | "app" }) {
         <button type="button" onClick={() => setConfirmando(true)}
           title="Assuma o Controle de Acesso e o relatório de Acessos e Auditoria — só é possível se ninguém mais já for o proprietário"
           className="flex items-center gap-2"
-          style={{ background: "none", border: `1px dashed ${corBorda}`, borderRadius: "10px", padding: "0.5rem 0.8rem", color: corMuted, cursor: "pointer", fontSize: "0.82rem" }}>
+          style={{ background: "none", border: `1px dashed ${corBorda}`, borderRadius: "var(--r-sm)", padding: "0.5rem 0.8rem", color: corMuted, cursor: "pointer", fontSize: "0.82rem" }}>
           <Mail size={15} /> Sou o proprietário — assumir Controle de Acesso
         </button>
       ) : (
@@ -155,7 +155,7 @@ function TileGroup<T extends string>({ titulo, opcoes, ativa, onEscolher, swatch
             <button key={o.id} type="button" onClick={() => onEscolher(o.id)} title={o.title}
               style={{
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "0.7rem",
-                borderRadius: "20px", cursor: "pointer", padding: "1rem",
+                borderRadius: "var(--r-sm)", cursor: "pointer", padding: "1rem",
                 border: ativo ? `2px solid ${cor || "var(--mob-dourado-2)"}` : "1px solid var(--mob-border)",
                 background: ativo ? `color-mix(in srgb, ${cor || "var(--mob-dourado-2)"} 16%, var(--mob-surface))` : "var(--mob-surface)",
                 color: "var(--mob-text)", fontWeight: 700, fontSize: "1rem",

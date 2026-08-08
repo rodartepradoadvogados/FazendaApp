@@ -29,7 +29,7 @@ export function ManualFazendaButton() {
         title="Manual da Fazenda — sua rotina automática e resultados"
         style={{
           display: "inline-flex", alignItems: "center", gap: "0.5rem",
-          background: "linear-gradient(135deg, var(--vinho, #3A0F1A), var(--vinho-light, #6B2438))",
+          background: "linear-gradient(135deg, var(--vinho, #0E2A47), var(--vinho-light, #416180))",
           color: "var(--dourado-light)", border: "none", borderRadius: "999px",
           padding: "0.55rem 1.1rem", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
           boxShadow: "0 4px 14px rgba(58,15,26,0.35)", whiteSpace: "nowrap",
@@ -59,7 +59,7 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
       <div onClick={(e) => e.stopPropagation()} className="card" role="dialog" aria-modal="true"
         style={{ width: "760px", maxWidth: "95vw", maxHeight: "88vh", display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}>
 
-        <div style={{ background: "linear-gradient(135deg, var(--vinho, #3A0F1A), var(--vinho-light, #6B2438))", padding: "1.1rem 1.4rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+        <div style={{ background: "linear-gradient(135deg, var(--vinho, #0E2A47), var(--vinho-light, #416180))", padding: "1.1rem 1.4rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
           <div>
             <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--dourado-light)" }}>Manual da Fazenda</div>
             <div style={{ fontSize: "0.72rem", color: "rgba(240,200,120,0.8)" }}>
@@ -68,7 +68,7 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="flex items-center gap-2">
             <button onClick={exportarPDF} disabled={exportando || !manual} title="Exportar PDF"
-              style={{ display: "flex", alignItems: "center", gap: "0.35rem", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.28)", color: "var(--dourado-light)", borderRadius: "8px", padding: "0.4rem 0.7rem", fontSize: "0.78rem", fontWeight: 600, cursor: exportando ? "wait" : "pointer" }}>
+              style={{ display: "flex", alignItems: "center", gap: "0.35rem", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.28)", color: "var(--dourado-light)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", fontSize: "0.78rem", fontWeight: 600, cursor: exportando ? "wait" : "pointer" }}>
               <Download size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
             </button>
             <button onClick={onClose} aria-label="Fechar" style={{ background: "none", border: "none", color: "var(--dourado-light)", cursor: "pointer", padding: "0.3rem" }}>
@@ -104,7 +104,7 @@ function ManualFazendaModal({ onClose }: { onClose: () => void }) {
 function ItemRotina({ titulo, descricao, datas }: { titulo: string; descricao: string; datas: string[] }) {
   return (
     <div style={{ display: "flex", gap: "0.9rem", padding: "0.9rem 0", borderBottom: "1px solid var(--border)" }}>
-      <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "rgba(224,166,60,0.16)", color: "var(--dourado-light)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <div style={{ width: "38px", height: "38px", borderRadius: "var(--r-sm)", background: "rgba(224,166,60,0.16)", color: "var(--dourado-light)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Activity size={18} />
       </div>
       <div style={{ flex: 1 }}>
@@ -133,7 +133,7 @@ function AbaRotina({ manual }: { manual: ManualFazenda }) {
       {rotina.visita_reprodutiva && <ItemRotina titulo={rotina.visita_reprodutiva.titulo} descricao={rotina.visita_reprodutiva.descricao} datas={rotina.visita_reprodutiva.proximas_datas} />}
       {rotina.sanitario.proxima && (
         <div style={{ display: "flex", gap: "0.9rem", padding: "0.9rem 0", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "rgba(224,166,60,0.16)", color: "var(--dourado-light)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <div style={{ width: "38px", height: "38px", borderRadius: "var(--r-sm)", background: "rgba(224,166,60,0.16)", color: "var(--dourado-light)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Activity size={18} />
           </div>
           <div style={{ flex: 1 }}>
@@ -147,7 +147,7 @@ function AbaRotina({ manual }: { manual: ManualFazenda }) {
       )}
       {!!rotina.compras.length && (
         <div style={{ display: "flex", gap: "0.9rem", padding: "0.9rem 0" }}>
-          <div style={{ width: "38px", height: "38px", borderRadius: "10px", background: "rgba(224,166,60,0.16)", color: "var(--dourado-light)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <div style={{ width: "38px", height: "38px", borderRadius: "var(--r-sm)", background: "rgba(224,166,60,0.16)", color: "var(--dourado-light)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <Activity size={18} />
           </div>
           <div style={{ flex: 1 }}>
@@ -169,7 +169,7 @@ function AbaRotina({ manual }: { manual: ManualFazenda }) {
 
 function CardResultado({ valor, label }: { valor: string | number | null; label: string }) {
   return (
-    <div style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.7rem 0.9rem" }}>
+    <div style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
       <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--dourado-light)" }}>{valor ?? "—"}</div>
       <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{label}</div>
     </div>
@@ -200,7 +200,7 @@ function AbaInsights({ manual }: { manual: ManualFazenda }) {
     <div>
       {manual.insights.map((ins, i) => (
         <div key={i} style={{ display: "flex", gap: "0.8rem", padding: "0.85rem 0", borderBottom: i < manual.insights.length - 1 ? "1px solid var(--border)" : "none" }}>
-          <div style={{ width: "34px", height: "34px", borderRadius: "8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+          <div style={{ width: "34px", height: "34px", borderRadius: "var(--r-sm)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
             background: ins.tendencia === "alta" ? "rgba(74,122,78,0.16)" : "rgba(179,120,31,0.16)",
             color: ins.tendencia === "alta" ? "var(--green-light)" : "var(--amber)" }}>
             {ins.tendencia === "alta" ? <TrendingUp size={17} /> : <TrendingDown size={17} />}
@@ -222,7 +222,7 @@ function AbaSugestoes({ manual }: { manual: ManualFazenda }) {
   return (
     <div className="space-y-2">
       {manual.sugestoes.map((s, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", background: "var(--surface-2)", borderRadius: "8px", padding: "0.65rem 0.85rem" }}>
+        <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.65rem 0.85rem" }}>
           <Sparkles size={15} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
           <div style={{ fontSize: "0.83rem" }}>
             {s.texto}

@@ -359,7 +359,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
       )}
 
       {ehExame && (
-        <div style={{ marginTop: "0.9rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem 1rem" }}>
+        <div style={{ marginTop: "0.9rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.9rem 1rem" }}>
           <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.6rem" }}>Diagnóstico do exame{exameDef ? ` — ${exameDef.nome}` : ""}</p>
           {!modoNumerico ? (
             <>

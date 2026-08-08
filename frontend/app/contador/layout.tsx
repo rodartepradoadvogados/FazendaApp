@@ -60,7 +60,7 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
             <div style={{ display: "flex", alignItems: "center", gap: "0.9rem" }}>
               <span style={{
                 fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
-                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "3px", padding: "0.2rem 0.5rem",
+                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "var(--r-sm)", padding: "0.2rem 0.5rem",
               }}>
                 Somente leitura
               </span>

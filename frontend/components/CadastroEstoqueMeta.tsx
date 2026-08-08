@@ -25,7 +25,7 @@ type Conta = { codigo: string; nome: string };
 // dentro dela) — não é mais uma marcação manual por item.
 const entraNoRmca = (it: Item) => (it.conta_gerencial_despesa_padrao || "").startsWith("3.01.01");
 
-const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
 
 // Normaliza texto para busca insensível a maiúsculas e acentos.
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");

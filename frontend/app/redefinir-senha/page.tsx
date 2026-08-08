@@ -20,7 +20,7 @@ function Formulario() {
 
   const input: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
   };
 
   const enviar = async (e: React.FormEvent) => {
