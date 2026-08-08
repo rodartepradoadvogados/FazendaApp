@@ -27,6 +27,8 @@ import {
   ListChecks,
   ChevronDown,
   ChevronUp,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
@@ -42,8 +44,8 @@ import { useCliqueOuDuploClique, abrirNovaAba } from "@/lib/tabs";
 // meio passa direto (abre nova guia do NAVEGADOR, comportamento nativo do
 // <a> preservado) — só o clique simples é interceptado para navegar por
 // dentro do app como hoje, e o duplo clique vira aba interna.
-function SidebarLink({ href, title, label, active, children }: {
-  href: string; title?: string; label: string; active: boolean; children: React.ReactNode;
+function SidebarLink({ href, title, label, active, recolhida, children }: {
+  href: string; title?: string; label: string; active: boolean; recolhida?: boolean; children: React.ReactNode;
 }) {
   const router = useRouter();
   const aoClicar = useCliqueOuDuploClique(
@@ -60,6 +62,9 @@ function SidebarLink({ href, title, label, active, children }: {
         color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
         borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
         fontSize: "10px",
+        justifyContent: recolhida ? "center" : "flex-start",
+        paddingLeft: recolhida ? "0.4rem" : undefined,
+        paddingRight: recolhida ? "0.4rem" : undefined,
       }}
       onClick={(e) => {
         if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // deixa o navegador tratar normalmente
@@ -119,6 +124,34 @@ export function Sidebar() {
   const path = usePathname();
   const [online, setOnline] = useState<boolean | null>(null);
   const [aberto, setAberto] = useState(false); // drawer no mobile
+  // Recolher a barra inteira (só desktop) para ícones — preferência do
+  // usuário, persistida entre sessões. Começa expandida (false) para não
+  // "piscar" recolhida no primeiro paint; sincroniza com o localStorage já
+  // no mount seguinte (undefined/erro = expandida).
+  const [recolhidaPref, setRecolhidaPref] = useState(false);
+  useEffect(() => {
+    try { setRecolhidaPref(localStorage.getItem("sidebar-recolhida") === "1"); } catch { /* ignore */ }
+  }, []);
+  function alternarRecolhida() {
+    setRecolhidaPref((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("sidebar-recolhida", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }
+  // A preferência de recolher só existe no desktop (breakpoint md, 768px) —
+  // no mobile o drawer é sempre cheio, então o conteúdo (rótulos, wordmark,
+  // sub-navegação) não pode virar "só ícone" ali mesmo com a preferência
+  // salva de uma sessão desktop anterior.
+  const [ehDesktop, setEhDesktop] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    setEhDesktop(mq.matches);
+    const ouvir = (e: MediaQueryListEvent) => setEhDesktop(e.matches);
+    mq.addEventListener("change", ouvir);
+    return () => mq.removeEventListener("change", ouvir);
+  }, []);
+  const recolhida = recolhidaPref && ehDesktop;
   const [visiveis, setVisiveis] = useState(links);
   const [admin, setAdmin] = useState(false);
   const [dono, setDono] = useState(false);
@@ -225,8 +258,12 @@ export function Sidebar() {
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
 
       <aside
-        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)" }}
-        className={`w-56 flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-transform duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+        style={{ background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)", position: "relative" }}
+        // Recolhida só vale a partir do breakpoint md — no mobile o drawer
+        // sempre abre na largura cheia (w-56 base), independente da
+        // preferência de recolher salva (essa é só para a barra fixa do
+        // desktop; no mobile o menu já fecha inteiro depois de navegar).
+        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-56"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
       {/* Botão fechar — só no mobile */}
       <button onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu de navegação"
@@ -234,17 +271,34 @@ export function Sidebar() {
         style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: "var(--sidebar-muted)", cursor: "pointer" }}>
         <X size={20} />
       </button>
+      {/* Recolher/expandir a barra inteira — só desktop (no mobile o menu já
+          fecha/abre como drawer, não faz sentido também recolher). Preso à
+          borda direita da barra, sempre visível independente do scroll. */}
+      <button onClick={alternarRecolhida} aria-label={recolhida ? "Expandir menu" : "Recolher menu"}
+        title={recolhida ? "Expandir menu" : "Recolher menu"}
+        className="hidden md:flex"
+        style={{
+          position: "absolute", top: "1.1rem", right: "-11px", zIndex: 10,
+          width: 22, height: 22, borderRadius: "50%", alignItems: "center", justifyContent: "center",
+          background: "var(--sidebar-bg)", border: "1px solid var(--sidebar-border)", color: "var(--sidebar-muted)", cursor: "pointer",
+        }}>
+        {recolhida ? <ChevronsRight size={12} /> : <ChevronsLeft size={12} />}
+      </button>
       {/* Logo */}
       <div
         className="p-4 border-b"
         style={{ borderColor: "var(--sidebar-border)" }}
       >
-        <div className="flex flex-col gap-1 px-2 py-2">
-          <CowDataMark size={56} />
-          <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
-          <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
-            {fazendaNome}
-          </p>
+        <div className="flex flex-col gap-1 px-2 py-2" style={recolhida ? { alignItems: "center", padding: 0 } : undefined}>
+          <CowDataMark size={recolhida ? 32 : 56} />
+          {!recolhida && (
+            <>
+              <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
+              <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
+                {fazendaNome}
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -254,9 +308,10 @@ export function Sidebar() {
           navegação dentro de uma página. As duas listas rolam de forma
           independente (cada uma no seu próprio container com overflow), para
           que abrir um grupo grande de sub-abas não empurre/role o menu
-          principal junto. */}
+          principal junto. Recolhida: sem espaço para a árvore de sub-abas
+          nem para os títulos de grupo — só os ícones dos módulos. */}
       <nav className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
-        {subNav && (
+        {subNav && !recolhida && (
           <div className="p-3" style={{ background: "var(--sidebar-subnav-bg)", maxHeight: "55%", overflowY: "auto", flexShrink: 0, borderBottom: "4px double var(--sidebar-border)" }}>
             {totalFolhasSubNav > 6 && (
               <div style={{ position: "relative", marginBottom: "0.5rem" }}>
@@ -324,18 +379,20 @@ export function Sidebar() {
               if (!itens.length) return null;
               return (
                 <div key={grupo}>
-                  <p style={{
-                    fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
-                    color: "var(--sidebar-muted)", margin: i === 0 ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
-                  }}>
-                    {grupo}
-                  </p>
+                  {!recolhida && (
+                    <p style={{
+                      fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                      color: "var(--sidebar-muted)", margin: i === 0 ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
+                    }}>
+                      {grupo}
+                    </p>
+                  )}
                   {itens.map(({ href, label, icon: Icon, title }) => {
                     const active = path === href || (href !== "/" && path.startsWith(href));
                     return (
-                      <SidebarLink key={href} href={href} title={title} label={label} active={active}>
+                      <SidebarLink key={href} href={href} title={title} label={label} active={active} recolhida={recolhida}>
                         <Icon size={16} />
-                        {label}
+                        {!recolhida && label}
                       </SidebarLink>
                     );
                   })}
@@ -346,10 +403,12 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Footer */}
+      {/* Footer — recolhida: só o pontinho de status, sem texto (sem espaço
+          para rótulo, usuário logado ou versão). */}
       <div
         className="p-2 border-t text-center"
         style={{ borderColor: "var(--sidebar-border)", fontSize: "0.65rem", color: "var(--sidebar-muted)" }}
+        title={recolhida ? statusLabel : undefined}
       >
         <div className="flex items-center justify-center gap-1.5" style={{ color: statusColor }}>
           <span
@@ -360,10 +419,14 @@ export function Sidebar() {
                 : undefined
             }
           />
-          {statusLabel}
+          {!recolhida && statusLabel}
         </div>
-        <UsuarioLogado />
-        <p className="mt-0.5">v1.0.0 · Sprint 1</p>
+        {!recolhida && (
+          <>
+            <UsuarioLogado />
+            <p className="mt-0.5">v1.0.0 · Sprint 1</p>
+          </>
+        )}
       </div>
       </aside>
     </>
