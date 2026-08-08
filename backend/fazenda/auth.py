@@ -93,7 +93,10 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def criar_token(username: str, fazenda_id: int | None = None, manter_conectado: bool = False) -> str:
+def criar_token(
+    username: str, fazenda_id: int | None = None, manter_conectado: bool = False,
+    suporte: bool = False, sessao_suporte_id: int | None = None,
+) -> str:
     """`fazenda_id` (piloto conservador de multi-fazenda, ver
     fazenda/models/multitenant.py) só é gravado quando já foi selecionado —
     login com um usuário vinculado a uma única fazenda auto-seleciona; um
@@ -104,12 +107,32 @@ def criar_token(username: str, fazenda_id: int | None = None, manter_conectado: 
     `manter_conectado` estende a validade para TOKEN_VALIDADE_LONGA_S e grava
     "lembrar" no payload — assim /auth/selecionar-fazenda (que reemite o
     token já com a fazenda escolhida) consegue preservar a mesma validade
-    longa em vez de voltar para as 12h padrão (ver token_manter_conectado)."""
-    payload_dict = {"sub": username, "exp": int(time.time()) + (TOKEN_VALIDADE_LONGA_S if manter_conectado else TOKEN_VALIDADE_S)}
+    longa em vez de voltar para as 12h padrão (ver token_manter_conectado).
+
+    `suporte`/`sessao_suporte_id`: token emitido ao entrar numa fazenda a
+    partir do Painel CowData (ver fazenda/api/routers/cofre_acesso.py) — o
+    request bloqueando_em_modo_suporte usa a claim "suporte" pra recusar
+    ações destrutivas, e a validade AQUI é sempre a da própria sessão de
+    suporte (DURACAO_SESSAO_MINUTOS, ver models/cofre_acesso.py), nunca a
+    longa de "manter conectado" — sessão de suporte é sempre curta, mesmo
+    que o dono tenha "manter conectado" marcado no login."""
+    from fazenda.models.cofre_acesso import DURACAO_SESSAO_MINUTOS
+
+    if suporte:
+        validade_s = DURACAO_SESSAO_MINUTOS * 60
+    elif manter_conectado:
+        validade_s = TOKEN_VALIDADE_LONGA_S
+    else:
+        validade_s = TOKEN_VALIDADE_S
+    payload_dict = {"sub": username, "exp": int(time.time()) + validade_s}
     if fazenda_id is not None:
         payload_dict["fid"] = fazenda_id
-    if manter_conectado:
+    if manter_conectado and not suporte:
         payload_dict["lembrar"] = True
+    if suporte:
+        payload_dict["suporte"] = True
+        if sessao_suporte_id is not None:
+            payload_dict["ssid"] = sessao_suporte_id
     payload = _b64(json.dumps(payload_dict).encode())
     sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
@@ -181,6 +204,20 @@ def get_fazenda_atual_id(
         return None
     dados = _validar_token_payload(authorization.split(" ", 1)[1])
     return dados.get("fid") if dados else None
+
+
+def get_suporte_do_token(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Lê as claims "suporte"/"ssid" do token atual (ver criar_token) — usado
+    pelo middleware de bloqueio_modo_suporte (main.py) e por /auth/me, pra o
+    frontend saber se deve mostrar o aviso "modo suporte CowData"."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return {"ativo": False, "sessao_id": None}
+    dados = _validar_token_payload(authorization.split(" ", 1)[1])
+    if not dados or not dados.get("suporte"):
+        return {"ativo": False, "sessao_id": None}
+    return {"ativo": True, "sessao_id": dados.get("ssid")}
 
 
 def token_manter_conectado(

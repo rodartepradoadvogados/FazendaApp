@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
+import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X, ShieldCheck } from "lucide-react";
 import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type NoticiaNews, type FazendaAtual } from "@/lib/api";
 import { ehAppOuPwa } from "@/lib/nativo";
 import { Building2 } from "lucide-react";
@@ -176,10 +176,17 @@ function Hero() {
     }
   };
 
-  const escolherFazenda = async (fazendaId: number) => {
+  const escolherFazenda = async (f: FazendaAtual) => {
     setEscolhendoFazenda(true); setErro(null);
     try {
-      await selecionarFazenda(fazendaId);
+      if (f.cowdata) {
+        // "Painel CowData" é uma entrada sintética (id=0, sem fazenda de
+        // verdade por trás) — o token do login() já serve (sem "fid"), só
+        // falta navegar. Nada de /auth/selecionar-fazenda aqui.
+        router.replace("/painel-cowdata");
+        return;
+      }
+      await selecionarFazenda(f.id);
       await irParaDestino();
     } catch (err: any) {
       setErro(err.message || "Não foi possível selecionar a fazenda");
@@ -257,16 +264,22 @@ function Hero() {
           {fazendasParaEscolher ? (
             <>
               <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
-                Você tem acesso a mais de uma fazenda — qual delas?
+                {fazendasParaEscolher.some((f) => f.cowdata)
+                  ? "Entrar como administrador de uma fazenda, ou no Painel CowData?"
+                  : "Você tem acesso a mais de uma fazenda — qual delas?"}
               </p>
               <div className="space-y-2">
                 {fazendasParaEscolher.map((f) => (
-                  <button key={f.id} type="button" disabled={escolhendoFazenda} onClick={() => escolherFazenda(f.id)}
+                  <button key={f.id} type="button" disabled={escolhendoFazenda} onClick={() => escolherFazenda(f)}
                     className="btn-ghost" style={{ width: "100%", justifyContent: "flex-start", gap: "0.6rem", border: "1px solid var(--border)", padding: "0.7rem 0.9rem" }}>
-                    <Building2 size={16} style={{ color: "var(--dourado-light)" }} />
+                    {f.cowdata
+                      ? <ShieldCheck size={16} style={{ color: "var(--dourado-light)" }} />
+                      : <Building2 size={16} style={{ color: "var(--dourado-light)" }} />}
                     <span style={{ textAlign: "left" }}>
                       <strong style={{ display: "block" }}>{f.nome}</strong>
-                      {(f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
+                      {f.cowdata
+                        ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Administração da CowData — acesso de suporte às fazendas-clientes</span>
+                        : (f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
                     </span>
                   </button>
                 ))}

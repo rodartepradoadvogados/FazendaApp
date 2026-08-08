@@ -368,6 +368,44 @@ async def _carimbar_fazenda_atual(request, call_next):
         fazenda_atual.reset(token)
 
 
+# Prefixos de rota tratados como "dados sensíveis" em modo suporte (ver
+# _bloquear_modo_suporte, abaixo) — escrita bloqueada mesmo com a claim
+# "suporte" válida. financeiro.py e cartao_credito.py dividem o mesmo
+# prefixo "/financeiro" (cobre Folha/Férias/13º/Rescisão/Diária também,
+# todas sub-telas do módulo Financeiro — ver fazenda/api/routers/financeiro.py).
+_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas")
+
+
+@app.middleware("http")
+async def _bloquear_modo_suporte(request, call_next):
+    """Sessão aberta a partir do Painel CowData (ver cofre_acesso.py) carrega
+    a claim "suporte" no token — quem entra assim NÃO pode excluir nada (é o
+    caso mais irreversível) nem escrever em dados financeiros, mesmo sendo
+    dono-equivalente. Quem entra DIRETO na fazenda (token sem essa claim)
+    continua com acesso total de administrador, sem nenhuma mudança.
+    Pedido explícito do usuário ("restringir ações" no modo suporte, não só
+    marcar/auditar)."""
+    from fastapi.responses import JSONResponse
+
+    from fazenda.auth import _validar_token_payload
+
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        dados = _validar_token_payload(auth.split(" ", 1)[1])
+        if dados and dados.get("suporte"):
+            path = request.url.path
+            bloquear = request.method == "DELETE" or (
+                request.method in ("POST", "PUT", "PATCH")
+                and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
+            )
+            if bloquear:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Ação bloqueada em modo suporte CowData — para isso, entre na fazenda como administrador."},
+                )
+    return await call_next(request)
+
+
 @contextlib.contextmanager
 def _sessao_idempotencia(request):
     """Sessão de banco pro middleware de idempotência abaixo — respeita

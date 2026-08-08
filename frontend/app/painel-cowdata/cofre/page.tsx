@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CheckCircle2, Clock, Lock, LogIn, LogOut, ShieldAlert, XCircle } from "lucide-react";
 import {
   fetchMotivosAcessoSuporte, fetchFazendasCofre, fetchSessoesAtivasCofre, fetchPedidosRecentesCofre,
-  fetchAuditoriaRecenteCofre, solicitarAcessoCofre, aprovarPedidoCofre, negarPedidoCofre, encerrarSessaoCofre,
-  atualizarFazenda,
+  fetchAuditoriaRecenteCofre, aprovarPedidoCofre, negarPedidoCofre, encerrarSessaoCofre,
+  atualizarFazenda, entrarComoSuporte,
   type FazendaCofre, type SessaoAcessoSuporte, type PedidoAcessoSuporte, type AuditoriaAcessoSuporte,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -53,6 +54,7 @@ function Vazio({ colSpan, texto }: { colSpan: number; texto: string }) {
 }
 
 export default function CofreAcessoCowData() {
+  const router = useRouter();
   const [fazendas, setFazendas] = useState<FazendaCofre[]>([]);
   const [motivos, setMotivos] = useState<string[]>([]);
   const [sessoes, setSessoes] = useState<SessaoAcessoSuporte[]>([]);
@@ -79,14 +81,22 @@ export default function CofreAcessoCowData() {
 
   const fazendaSelecionada = fazendas.find((f) => f.id === fazendaId);
 
-  async function enviarPedido() {
+  async function enviarPedidoEEntrar() {
     if (!fazendaId || !motivo) { setErro("Escolha a fazenda e o motivo."); return; }
     setEnviando(true); setErro(null);
     try {
-      await solicitarAcessoCofre({ fazenda_id: fazendaId, motivo });
-      setMostrarForm(false); setFazendaId(""); setMotivo("");
-      carregarTudo();
-    } catch (e: any) { setErro(e.message); } finally { setEnviando(false); }
+      // entrarComoSuporte já pede o acesso (fica registrado no Cofre) E,
+      // quando aprovado na hora (caso comum — ver Fazenda.exige_aprovacao_
+      // suporte), troca o token guardado por um com a claim "suporte" e
+      // devolve a fazenda pronta pra navegar — dali em diante o aviso fixo
+      // (SuporteBanner) some e ações destrutivas ficam bloqueadas até
+      // encerrar ou expirar (ver main.py::_bloquear_modo_suporte).
+      await entrarComoSuporte(fazendaId, motivo);
+      router.push("/");
+    } catch (e: any) {
+      setErro(e.message);
+      carregarTudo(); // pedido ficou "aguardando_aprovacao" — mostra na tabela
+    } finally { setEnviando(false); }
   }
   async function alternarAprovacao(f: FazendaCofre) {
     await atualizarFazenda(f.id, { exige_aprovacao_suporte: !f.exige_aprovacao_suporte });
@@ -139,11 +149,12 @@ export default function CofreAcessoCowData() {
               {motivos.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
-          <button onClick={enviarPedido} disabled={enviando} style={{
+          <button onClick={enviarPedidoEEntrar} disabled={enviando} style={{
             background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.5rem 1rem",
             fontSize: "0.8rem", fontWeight: 700, cursor: enviando ? "default" : "pointer", opacity: enviando ? 0.6 : 1,
+            display: "flex", alignItems: "center", gap: "0.35rem",
           }}>
-            {enviando ? "Enviando…" : "Solicitar"}
+            <LogIn size={14} /> {enviando ? "Entrando…" : "Entrar como suporte"}
           </button>
           {fazendaSelecionada && (
             <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.76rem", color: COR.mudo, cursor: "pointer", marginLeft: "auto" }}>

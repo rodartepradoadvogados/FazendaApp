@@ -15,7 +15,8 @@ from datetime import datetime, timedelta
 
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_email_dono_equivalente,
-    exigir_dono, get_current_user, get_fazenda_atual_id, hash_senha, token_manter_conectado, verificar_senha,
+    exigir_dono, get_current_user, get_fazenda_atual_id, get_suporte_do_token, hash_senha, token_manter_conectado,
+    verificar_senha,
 )
 from fazenda.config import settings
 from fazenda.database import get_session
@@ -172,18 +173,35 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
     # 0 ou 1 fazenda vinculada → auto-seleciona (ou nenhuma) e segue como
     # sempre seguiu, sem tela nova. Só aparece a seleção quando há de fato
-    # mais de uma fazenda vinculada ao mesmo usuário.
+    # mais de uma fazenda vinculada ao mesmo usuário — EXCETO para os
+    # administradores CowData (ver EMAILS_DONO_EQUIVALENTE), que sempre
+    # escolhem entre a fazenda direto (administrador) e o Painel CowData
+    # (suporte auditado, ver cofre_acesso.py), mesmo tendo só 1 fazenda —
+    # pedido explícito do usuário: nunca cair direto numa fazenda-cliente
+    # sem escolher conscientemente "como quem". Só força essa tela quando
+    # existe pelo menos 1 fazenda de verdade pra oferecer ao lado do Painel
+    # CowData — sem isso (dono-equivalente sem nenhum UsuarioFazenda gravado,
+    # só o bypass por e-mail) mantém o comportamento de sempre, pra nunca
+    # arriscar travar quem só tinha esse acesso indireto.
     fazendas = _fazendas_vinculadas(session, user.id)
-    fazenda_auto = fazendas[0] if len(fazendas) == 1 else None
+    eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
+    fazenda_auto = fazendas[0] if (len(fazendas) == 1 and not eh_admin_cowdata) else None
     resposta = {
         "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None, manter_conectado=dados.manter_conectado),
         "usuario": _publico(user, session),
     }
     if fazenda_auto:
         resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id))
-    if len(fazendas) > 1:
+    if len(fazendas) > 1 or eh_admin_cowdata:
         resposta["selecao_fazenda_necessaria"] = True
-        resposta["fazendas_disponiveis"] = [_fazenda_publica(f) for f in fazendas]
+        opcoes = [_fazenda_publica(f) for f in fazendas]
+        if eh_admin_cowdata:
+            # Sentinela id=0 (fazendas de verdade começam em 1) — o frontend
+            # reconhece pelo campo "cowdata" e, ao escolher, só navega pro
+            # Painel CowData usando o token já emitido acima (fid=None), sem
+            # chamar /auth/selecionar-fazenda (essa "fazenda" não existe).
+            opcoes.append({"id": 0, "nome": "Painel CowData", "cowdata": True})
+        resposta["fazendas_disponiveis"] = opcoes
     return resposta
 
 
@@ -299,6 +317,7 @@ def redefinir_senha(dados: RedefinirSenhaIn, session: Session = Depends(get_sess
 def me(
     user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    suporte: dict = Depends(get_suporte_do_token),
     session: Session = Depends(get_session),
 ) -> dict:
     dados = _publico(user, session)
@@ -306,6 +325,11 @@ def me(
         fazenda = session.get(Fazenda, fazenda_id)
         if fazenda:
             dados["fazenda_atual"] = _fazenda_publica(fazenda, _vinculo(session, user.id, fazenda_id))
+    # Sessão aberta a partir do Painel CowData (ver cofre_acesso.py) — o
+    # frontend usa isso pra mostrar o aviso "modo suporte" com o botão de
+    # encerrar (POST /painel-cowdata/cofre/sessoes/{id}/encerrar).
+    dados["suporte_ativo"] = suporte["ativo"]
+    dados["sessao_suporte_id"] = suporte["sessao_id"]
     return dados
 
 

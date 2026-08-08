@@ -56,7 +56,14 @@ export function manterConectadoAtivo(): boolean {
 // Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
 // — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
 // que nunca teve mais de uma fazenda vinculada (o caso de hoje).
-export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean; vinculo_consultor?: boolean; vinculo_contratante?: boolean };
+export type FazendaAtual = {
+  id: number; nome: string; cidade?: string | null; uf?: string | null;
+  vinculo_contador?: boolean; vinculo_consultor?: boolean; vinculo_contratante?: boolean;
+  // Entrada sintética "Painel CowData" na tela de escolha do login (só para
+  // EMAILS_DONO_EQUIVALENTE) — id=0 sentinela, nunca uma fazenda de verdade.
+  // Ver fazenda/api/routers/auth.py::login.
+  cowdata?: boolean;
+};
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
@@ -75,7 +82,7 @@ export function logout() {
       limparSessaoNativa();
     }).catch(() => {});
     localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
-    localStorage.removeItem("manter_conectado");
+    localStorage.removeItem("manter_conectado"); localStorage.removeItem("modo_suporte");
     location.href = "/login";
   }
 }
@@ -210,6 +217,9 @@ export async function login(username: string, senha: string, manterConectado = f
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
   if (data.fazenda_atual) localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
   else localStorage.removeItem("fazenda_atual");
+  // Login de verdade encerra qualquer marcador de modo suporte de uma sessão
+  // anterior — nunca deve sobreviver a um novo login.
+  localStorage.removeItem("modo_suporte");
   // Sessão de validade longa (90 dias) — ver TOKEN_VALIDADE_LONGA_S no backend.
   if (manterConectado) localStorage.setItem("manter_conectado", "1");
   else localStorage.removeItem("manter_conectado");
@@ -243,6 +253,8 @@ export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  // Escolher a fazenda DIRETO (administrador) nunca carrega modo suporte.
+  localStorage.removeItem("modo_suporte");
   // Mantém a cópia nativa sincronizada com o token novo (o backend reemite o
   // token ao trocar de fazenda) — mesma lógica de login(), ver lib/nativo.ts.
   if (manterConectadoAtivo()) {
@@ -478,6 +490,11 @@ export type PedidoAcessoSuporte = {
   id: number; fazenda_id: number; fazenda_nome: string; usuario_id: number; solicitante_nome: string | null;
   motivo: string; status: "aguardando_aprovacao" | "aprovado" | "negado";
   aprovador_nome: string | null; pedido_em: string; decidido_em: string | null;
+  // Presentes só quando status vira "aprovado" na hora (fazenda sem
+  // exige_aprovacao_suporte — ver POST /cofre/pedidos): token novo, já
+  // com a claim "suporte", pronto pra substituir o token guardado e entrar
+  // na fazenda como suporte.
+  token?: string; sessao_id?: number; sessao_expira_em?: string;
 };
 export type SessaoAcessoSuporte = {
   id: number; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
@@ -498,6 +515,46 @@ export const solicitarAcessoCofre = (d: { fazenda_id: number; motivo: string }):
   _pcSend(`/cofre/pedidos`, "POST", d);
 export const aprovarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _pcSend(`/cofre/pedidos/${id}/aprovar`, "POST");
 export const negarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _pcSend(`/cofre/pedidos/${id}/negar`, "POST");
+
+// Marcador local de "estou numa fazenda como suporte CowData agora" — não
+// vem de /auth/me (a claim "suporte" mora só no token, decodificá-lo no
+// cliente pra isso seria mais complexo que só guardar o que a própria
+// resposta de solicitarAcessoCofre já devolve). Gravado no momento em que o
+// pedido de acesso é aprovado (entrarComoSuporte, abaixo) e limpo ao
+// encerrar a sessão, fazer logout, ou logar/trocar de fazenda de novo.
+export type ModoSuporte = { sessaoId: number; fazendaNome: string; expiraEm: string };
+export function getModoSuporte(): ModoSuporte | null {
+  if (typeof window === "undefined") return null;
+  try { return JSON.parse(localStorage.getItem("modo_suporte") || "null"); } catch { return null; }
+}
+function limparModoSuporte() {
+  localStorage.removeItem("modo_suporte");
+}
+
+/** Pede acesso de suporte a uma fazenda a partir do Painel CowData e, se
+ *  aprovado na hora (caso normal — ver Fazenda.exige_aprovacao_suporte),
+ *  já troca o token guardado pelo de suporte e devolve a fazenda pra
+ *  navegar pra dentro dela. Lança se ficar "aguardando_aprovacao" (fazenda
+ *  rara com essa trava ligada) — quem chamar deve tratar esse caso à parte. */
+export async function entrarComoSuporte(fazendaId: number, motivo: string): Promise<FazendaAtual> {
+  const pedido = await solicitarAcessoCofre({ fazenda_id: fazendaId, motivo });
+  if (pedido.status !== "aprovado" || !pedido.token || !pedido.sessao_id || !pedido.sessao_expira_em) {
+    throw new Error("Pedido enviado, mas aguardando aprovação — essa fazenda exige aprovação prévia de acesso de suporte.");
+  }
+  localStorage.setItem("token", pedido.token);
+  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome };
+  localStorage.setItem("fazenda_atual", JSON.stringify(fazendaAtual));
+  localStorage.setItem("modo_suporte", JSON.stringify({
+    sessaoId: pedido.sessao_id, fazendaNome: pedido.fazenda_nome, expiraEm: pedido.sessao_expira_em,
+  } satisfies ModoSuporte));
+  return fazendaAtual;
+}
+
+export async function encerrarModoSuporte(): Promise<void> {
+  const modo = getModoSuporte();
+  if (modo) await encerrarSessaoCofre(modo.sessaoId).catch(() => {});
+  limparModoSuporte();
+}
 export const encerrarSessaoCofre = (id: number): Promise<SessaoAcessoSuporte> => _pcSend(`/cofre/sessoes/${id}/encerrar`, "POST");
 
 // Contrato-modelo CowData ("Baixar contrato") e assinatura eletrônica via
