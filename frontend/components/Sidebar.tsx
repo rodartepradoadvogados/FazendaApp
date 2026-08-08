@@ -9,17 +9,11 @@ import {
   BarChart3,
   Package,
   Home,
-  LineChart,
   Milk,
   Wheat,
   Syringe,
-  Settings,
   ClipboardList,
-  FileBarChart,
   ShoppingCart,
-  MessageSquare,
-  Users,
-  Briefcase,
   Menu,
   X,
   Search,
@@ -29,6 +23,7 @@ import {
   ChevronUp,
   ChevronsLeft,
   ChevronsRight,
+  ExternalLink,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
@@ -80,10 +75,12 @@ function SidebarLink({ href, title, label, active, recolhida, children }: {
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
 // ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
 // insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) financeiro
-// (Controle Financeiro + Pedidos); (6) administração (Configurações, sempre
-// por último — Aprovações virou sub-aba de Configurações). Recria não tem
+// (Controle Financeiro + Pedidos). Análise e Administração não têm mais
+// grupo aqui — viraram o portal "Insights e Administração" (ver
+// components/insights/InsightsLayout.tsx), aberto por um único atalho no
+// rodapé desta barra, numa aba nova de verdade do navegador. Recria não tem
 // mais item próprio aqui — virou sub-aba de Indicadores.
-const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Análise", "Financeiro", "Administração"] as const;
+const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Financeiro"] as const;
 
 const links = [
   // ── Ciclo diário ──
@@ -98,10 +95,6 @@ const links = [
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },
   { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo", grupo: "Insumos e sanidade" },
-  // ── Análise ──
-  { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro", grupo: "Análise" },
-  { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)", grupo: "Análise" },
-  { href: "/analise-relatorios", label: "Relatórios", icon: FileBarChart, title: "Relatórios — análise reprodutiva e relatório personalizado", grupo: "Análise" },
   // ── Financeiro ──
   { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
   { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },
@@ -115,6 +108,9 @@ const EXTRAS_TITULO_SIDEBAR: Record<string, string> = {
   "/portal": "Portal",
   "/consultor": "Consultor",
   "/usuarios": "Controle de Acesso",
+  "/indicadores": "Indicadores",
+  "/relatorios": "Listas",
+  "/analise-relatorios": "Relatórios",
 };
 export function rotuloDaPagina(path: string): string {
   return links.find((l) => l.href === path)?.label ?? EXTRAS_TITULO_SIDEBAR[path] ?? path;
@@ -157,6 +153,7 @@ export function Sidebar() {
   const [dono, setDono] = useState(false);
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+  const [insightsHref, setInsightsHref] = useState("/indicadores");
   // Nome exibido embaixo do logo CowData — vem da fazenda selecionada no
   // login (piloto conservador de multi-fazenda). "Jairo Nasser" é o valor
   // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
@@ -195,6 +192,17 @@ export function Sidebar() {
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    // Destino do atalho "Insights e Administração" (ver botão no rodapé) —
+    // primeira aba que o usuário realmente enxerga dentro do portal, na
+    // mesma ordem da barra de abas do portal (ver InsightsLayout.tsx:
+    // Indicadores e Relatórios usam o módulo "indicadores"; Listas usa
+    // "reproducao"). Portal é o único item de lá sem nenhuma permissão de
+    // módulo — garante que o atalho sempre leva a algum lugar válido.
+    setInsightsHref(
+      podeModulo("indicadores") ? "/indicadores" :
+      podeModulo("reproducao") ? "/relatorios" :
+      "/portal"
+    );
   }, [path]);
 
   useEffect(() => {
@@ -366,14 +374,10 @@ export function Sidebar() {
         )}
         <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
           {(() => {
-            const todos = [...visiveis,
-              ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
-              ...(dono ? [{ href: "/painel-cowdata", label: "Painel CowData", icon: Building2, title: "Painel CowData — administração da empresa de software (assinaturas, financeiro, equipe), separado dos dados da fazenda", grupo: "Administração" }] : []),
-              ...(dono ? [{ href: "/contador", label: "Painel do Contador", icon: FileBarChart, title: "Visão do proprietário sobre o Painel do Contador — a mesma tela que o contador externo vê (Financeiro somente leitura, arquivo fiscal-contábil)", grupo: "Administração" }] : []),
-              { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
-              { href: "/consultor", label: "Consultor", icon: Briefcase, title: "Área do consultor — fazendas gerenciadas por planilha e modo Simulação", grupo: "Administração" },
-              ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
-            ];
+            // Administração (Controle de Acesso, Painel CowData, Painel do
+            // Contador, Portal, Consultor, Configurações) saiu daqui — mora
+            // no portal Insights e Administração agora (atalho no rodapé).
+            const todos = visiveis;
             return GRUPOS.map((grupo, i) => {
               const itens = todos.filter((l) => l.grupo === grupo);
               if (!itens.length) return null;
@@ -402,6 +406,28 @@ export function Sidebar() {
           })()}
         </div>
       </nav>
+
+      {/* Atalho para o portal "Insights e Administração" (Indicadores,
+          Listas, Relatórios, Controle de Acesso, Painel CowData, Painel do
+          Contador, Portal, Consultor, Configurações — ver
+          components/insights/InsightsLayout.tsx). Abre numa aba NOVA de
+          verdade do navegador (target="_blank"), não uma aba interna
+          simulada (ver lib/tabs.ts) — pedido explícito do usuário para este
+          portal "parecer um novo portal". */}
+      <div className="p-2 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
+        <a href={insightsHref} target="_blank" rel="noopener noreferrer"
+          title="Abrir Insights e Administração numa aba nova"
+          className="flex items-center gap-2 rounded-lg transition-all duration-150"
+          style={{
+            padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
+            color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+            border: "1px solid var(--sidebar-border)",
+          }}>
+          <Building2 size={16} />
+          {!recolhida && <span className="flex-1">Insights e Administração</span>}
+          {!recolhida && <ExternalLink size={12} />}
+        </a>
+      </div>
 
       {/* Footer — recolhida: só o pontinho de status, sem texto (sem espaço
           para rótulo, usuário logado ou versão). */}
@@ -484,7 +510,11 @@ const normalizarBusca = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}
 
 // Árvore de sub-navegação genérica (N níveis) — usada pela Sidebar no lugar
 // da lista de módulos quando a página atual registra uma (piloto: Lançamentos).
-function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
+// Exportado para reuso no rail esquerdo do portal "Insights e Administração"
+// (ver components/insights/InsightsLayout.tsx) — mesma árvore de sub-abas,
+// só que lá fica na lateral esquerda em vez de acima da lista de módulos
+// (o portal inverte onde cada nível de navegação mora, ver InsightsLayout).
+export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
   nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void;
   raiz: SubNavNode[]; pathname: string; paginaLabel: string; depth?: number;
   recolhidos: Set<string>; onToggleRecolhido: (id: string) => void;

@@ -67,6 +67,15 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // contador (Financeiro somente leitura/exportação, sem app móvel) — casca
   // própria (ver frontend/app/contador/layout.tsx), nunca a Sidebar da fazenda.
   const ehPainelContador = path.startsWith("/contador");
+  // Portal "Insights e Administração" (Indicadores, Listas, Relatórios,
+  // Controle de Acesso, Portal, Consultor, Configurações): casca própria
+  // (ver components/insights/InsightsLayout.tsx, aplicada via layout.tsx
+  // dessas 7 rotas), nunca a Sidebar da fazenda — aberto pela Sidebar numa
+  // aba nova de verdade do navegador (ver Sidebar.tsx). Painel CowData e
+  // Painel do Contador são checados à parte acima: têm a própria casca
+  // bespoke, não a deste portal.
+  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/consultor", "/configuracoes"];
+  const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
 
   useEffect(() => {
     if (!hidratado) return; // aguarda a tentativa de restaurar a sessão nativa (ver acima)
@@ -140,6 +149,10 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // nunca a Sidebar da fazenda nem a casca do app móvel — ver comentário
   // no topo deste componente.
   if (ehPainelContador) return <>{children}</>;
+
+  // Portal Insights e Administração: casca própria (InsightsLayout via
+  // layout.tsx da rota) — ver comentário no topo deste componente.
+  if (ehInsightsPortal) return <>{children}</>;
 
   return (
     <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">

@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthShell } from "@/components/AuthShell";
 import { TabsShell } from "@/components/TabsShell";
 import { SubNavProvider } from "@/components/SubNavContext";
+import { ExportProvider } from "@/components/ExportContext";
 import { COR_TOPO } from "@/lib/themeColorTopo";
 
 // Nenhuma dessas quatro usa .className — só .variable (expõe uma CSS custom
@@ -65,9 +66,11 @@ export default function RootLayout({
       </head>
       <body className={`${inter.variable} ${barlow.variable} ${barlowCondensed.variable} ${dancingScript.variable} ${sora.variable}`}>
         <SubNavProvider>
-          <TabsShell>
-            <AuthShell>{children}</AuthShell>
-          </TabsShell>
+          <ExportProvider>
+            <TabsShell>
+              <AuthShell>{children}</AuthShell>
+            </TabsShell>
+          </ExportProvider>
         </SubNavProvider>
       </body>
     </html>
