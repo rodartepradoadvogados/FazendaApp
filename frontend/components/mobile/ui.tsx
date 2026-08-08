@@ -114,7 +114,7 @@ export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; lab
 export function MobLinha({ icone, titulo, subtitulo, href, onClick, alt, categoria }: { icone?: ReactNode; titulo: ReactNode; subtitulo?: ReactNode; href?: string; onClick?: () => void; alt?: 0 | 1; categoria?: string }) {
   const classe = ["mob-linha", alt === 0 ? "mob-card-a" : alt === 1 ? "mob-card-b" : ""].filter(Boolean).join(" ");
   const corIcone = categoria ? corCategoria(categoria) : "var(--mob-dourado-2)";
-  const fundoIcone = categoria ? `color-mix(in srgb, ${corIcone} 14%, transparent)` : "rgba(184,134,11,0.12)";
+  const fundoIcone = categoria ? `color-mix(in srgb, ${corIcone} 14%, transparent)` : "color-mix(in srgb, var(--mob-dourado-2) 14%, transparent)";
   const conteudo = (
     <>
       {icone && <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: fundoIcone, color: corIcone, flexShrink: 0 }}>{icone}</span>}
