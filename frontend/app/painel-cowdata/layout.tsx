@@ -1,11 +1,10 @@
 "use client";
 // Painel CowData — administração da EMPRESA de software (isolado da Fazenda
-// Jairo Nasser, ver AuthShell.tsx::ehPainelCowData). Migrado para a paleta
-// "Institucional" do redesign (mesma família marinho+ouro do resto do
-// sistema), mas com uma variação própria — fundo creme em vez de branco no
-// conteúdo, e o marinho mais profundo (#0A1F36, "marinho profundo" da
-// marca) em vez do marinho padrão (#0E2A47) na navegação — para continuar
-// se lendo como um painel à parte, nunca "mais uma tela da fazenda".
+// Jairo Nasser, ver AuthShell.tsx::ehPainelCowData). Mesma paleta do Painel
+// do Contador (CORES_CONTADOR, ver app/contador/layout.tsx) — pedido
+// explícito do usuário: os dois painéis administrativos "à parte" da
+// fazenda devem se ler como a mesma família visual entre si (cinza-azulado
+// neutro sobre grafite), não duas identidades diferentes.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -16,14 +15,12 @@ import {
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { ehAppOuPwa } from "@/lib/nativo";
+import { CORES_CONTADOR } from "@/app/contador/layout";
 
 const COR = {
-  // Conteúdo (fundo creme + texto escuro) — ver comentário no topo do arquivo.
-  bg: "#F2E8D5", texto: "#1B2A3A",
-  // Painel/navegação (marinho profundo + texto claro) e acentos em ouro,
-  // mesma família de cor do resto do redesign (globals.css, paleta azul/claro).
-  painel: "#0A1F36", borda: "#173049", textoPainel: "#FFFFFF",
-  mudo: "#8DA2B8", dourado: "#8A6D2F", doradoClaro: "#C9A44C",
+  bg: CORES_CONTADOR.bg, texto: CORES_CONTADOR.texto,
+  painel: CORES_CONTADOR.painel, borda: CORES_CONTADOR.borda, textoPainel: CORES_CONTADOR.texto,
+  mudo: CORES_CONTADOR.mudo, dourado: CORES_CONTADOR.cobre, doradoClaro: CORES_CONTADOR.cobreClaro,
 };
 
 const GRUPOS = [
@@ -91,7 +88,7 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
                     display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.45rem 0.6rem", borderRadius: "var(--r-sm)",
                     fontSize: "0.8rem", textDecoration: "none", marginBottom: "0.15rem",
                     color: ativo ? COR.doradoClaro : "#c3cbde",
-                    background: ativo ? "rgba(201,164,76,0.14)" : "transparent",
+                    background: ativo ? "rgba(143,160,181,0.14)" : "transparent",
                     borderLeft: ativo ? `2px solid ${COR.doradoClaro}` : "2px solid transparent",
                   }}>
                   <Icon size={15} /> {item.label}

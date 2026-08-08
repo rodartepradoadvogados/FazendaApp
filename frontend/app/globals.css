@@ -278,7 +278,13 @@
   --vinho-dark:  #0A1F36; /* marinho profundo — selo da marca, gradientes */
   --dourado:     #8A6D2F; /* ouro escurecido — números de destaque, réguas, "salvar" */
   --dourado-light: #C9A44C; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
+  /* BUG corrigido: --sidebar-active-bg escureceu (marinho sólido) mas
+     --sidebar-active-fg continuava herdando var(--vinho) do bloco claro base
+     (linha ~137) — também marinho escuro, texto ilegível sobre o próprio
+     fundo. Aba ativa agora tem texto claro (dourado, mesmo tratamento do
+     tema misto/escuro para pílula ativa sobre fundo marinho sólido). */
   --sidebar-active-bg: #17385A;
+  --sidebar-active-fg: var(--dourado-light);
   --sidebar-subnav-outline-bg: rgba(14, 42, 71, 0.06);
   --sidebar-subnav-bg: #E4E7EB;
 }
