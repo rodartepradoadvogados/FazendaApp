@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchLotes } from "@/lib/api";
+import { fetchLotes, logout } from "@/lib/api";
 import { criarSimulacao } from "@/lib/dietas";
 
 type LoteOpcao = { codigo: string; nome?: string | null };
@@ -64,7 +64,23 @@ export default function NovaSimulacaoPage() {
           </select>
         </div>
 
-        {erro && <div className="alert-critico">{erro}</div>}
+        {erro && (
+          <div className="alert-critico" style={{ flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
+            <span>{erro}</span>
+            {/* Essa mensagem específica (backend: get_fazenda_atual_id sem "fid" no
+                token) não tem nenhuma saída na própria tela — a fazenda vem do
+                LOGIN, não de um seletor aqui dentro. O jeito de resolver é sair e
+                entrar de novo (o login pede pra escolher a fazenda explicitamente
+                quando há mais de uma vinculada, ou auto-seleciona quando só há uma
+                — ver POST /auth/login). Vale também abrir esta aba de novo depois,
+                nunca reaproveitar uma já aberta antes do login novo. */}
+            {erro.includes("Selecione a fazenda") && (
+              <button type="button" className="btn-primary-gold" onClick={() => logout()}>
+                Sair e entrar de novo
+              </button>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: "0.6rem", justifyContent: "flex-end" }}>
           <button type="button" className="btn-ghost" onClick={() => router.push("/dietas")}>Cancelar</button>
