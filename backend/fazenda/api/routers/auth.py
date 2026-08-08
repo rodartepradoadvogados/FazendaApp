@@ -142,10 +142,14 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
     # funcionalidades sensíveis (ex.: botão de acesso ao banco de dados
     # externo em Relatórios financeiros) mesmo quando ele tem o módulo
     # "financeiro" liberado, ver frontend/lib/api.ts::ehConsultor().
+    # `vinculo_contratante` diz ao frontend que este usuário é o usuário
+    # mestre DESTA fazenda — usado por podeFormularDietas() (Formulação de
+    # Dietas), espelhando fazenda.auth.exigir_admin_ou_consultor_fazenda.
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
         "vinculo_contador": bool(vinculo and vinculo.contador),
         "vinculo_consultor": bool(vinculo and vinculo.consultor),
+        "vinculo_contratante": bool(vinculo and vinculo.contratante),
     }
 
 

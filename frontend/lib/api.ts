@@ -56,7 +56,7 @@ export function manterConectadoAtivo(): boolean {
 // Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
 // — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
 // que nunca teve mais de uma fazenda vinculada (o caso de hoje).
-export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean; vinculo_consultor?: boolean };
+export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean; vinculo_consultor?: boolean; vinculo_contratante?: boolean };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
@@ -127,6 +127,17 @@ export function ehContador(): boolean {
 // externo em Relatórios financeiros), mesmo com o módulo financeiro liberado.
 export function ehConsultor(): boolean {
   return getFazendaAtual()?.vinculo_consultor === true;
+}
+// Formulação de Dietas (/dietas — portal próprio, ver components/dietas/
+// DietasLayout.tsx): administrador desta fazenda (papel admin ou vínculo
+// contratante) OU consultor desta fazenda. Espelha
+// backend/fazenda/auth.py::exigir_admin_ou_consultor_fazenda — eixo de
+// acesso à parte, deliberadamente FORA de ROTA_MODULO/podeModulo (ver
+// comentário no backend sobre por que isso não empilha com permissão comum).
+export function podeFormularDietas(): boolean {
+  return ehDono() || ehAdmin()
+    || getFazendaAtual()?.vinculo_contratante === true
+    || getFazendaAtual()?.vinculo_consultor === true;
 }
 // Administração de News/Blog (matérias: criar, editar, revisar, aprovar) —
 // o dono sempre pode; além dele, só quem o dono designar via o toggle

@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { getToken, podeModulo, ehDono, ehContador, ROTA_MODULO } from "@/lib/api";
+import { getToken, podeModulo, ehDono, ehContador, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -77,6 +77,13 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // bespoke, não a deste portal.
   const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/consultor", "/configuracoes"];
   const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
+  // Portal "Formulação de Dietas" (/dietas): casca própria
+  // (components/dietas/DietasLayout.tsx via app/dietas/layout.tsx), nunca a
+  // Sidebar da fazenda — aberto pela Sidebar numa aba nova de verdade do
+  // navegador. Mesmo padrão do portal Insights e Administração, com gate de
+  // acesso próprio (admin desta fazenda OU consultor desta fazenda — ver
+  // podeFormularDietas em lib/api.ts).
+  const ehDietasPortal = path === "/dietas" || path.startsWith("/dietas/");
 
   useEffect(() => {
     if (!hidratado) return; // aguarda a tentativa de restaurar a sessão nativa (ver acima)
@@ -99,6 +106,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace(destinoRaiz); return; }
     if (ehPainelCowData && !ehDono()) { router.replace(destinoRaiz); return; }
+    if (ehDietasPortal && !podeFormularDietas()) { router.replace(destinoRaiz); return; }
     // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
     // duas (a página em si esconde a sub-aba sem permissão).
     if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace(destinoRaiz); return; }
@@ -169,6 +177,10 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // Portal Insights e Administração: casca própria (InsightsLayout via
   // layout.tsx da rota) — ver comentário no topo deste componente.
   if (ehInsightsPortal) return <>{children}</>;
+
+  // Portal Formulação de Dietas: casca própria (DietasLayout via
+  // app/dietas/layout.tsx) — ver comentário no topo deste componente.
+  if (ehDietasPortal) return <>{children}</>;
 
   return (
     <div

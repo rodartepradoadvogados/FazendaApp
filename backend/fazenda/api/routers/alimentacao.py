@@ -24,6 +24,7 @@ from fazenda.models import (
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.dieta_lancamento import criar_lancamento_programado
 from fazenda.rules import estoque_baixa
 from fazenda.rules.farmacia import pode_baixar_estoque
 
@@ -929,65 +930,13 @@ def criar_dieta(
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not dados.itens:
-        raise HTTPException(status_code=400, detail="Informe ao menos um alimento do plano programado")
-    query_ms = select(IngredienteMS)
-    if fazenda_id is not None:
-        query_ms = query_ms.where(IngredienteMS.fazenda_id == fazenda_id)
-    ms_por_nome = {i.nome: i.ms_pct for i in session.exec(query_ms).all()}
-    for item in dados.itens:
-        if item.ms_pct is None:
-            item.ms_pct = ms_por_nome.get(item.alimento)
-        if item.base == "MS" and not item.ms_pct:
-            raise HTTPException(
-                status_code=400,
-                detail=f'Informe o % de matéria seca de "{item.alimento}" em Configurações > Cadastro > '
-                       f'Alimentação > Matéria seca antes de lançar em base MS.',
-            )
-        if item.ms_pct is not None and not (0 < item.ms_pct <= 100):
-            raise HTTPException(status_code=400, detail=f'% de matéria seca inválido para "{item.alimento}" — deve ser entre 0 e 100.')
-    query_ativa = select(DietaLancamento).where(
-        DietaLancamento.lote == dados.lote, DietaLancamento.data_efetivo_encerramento == None  # noqa: E711
-    )
-    if fazenda_id is not None:
-        query_ativa = query_ativa.where(DietaLancamento.fazenda_id == fazenda_id)
-    ativa_existente = session.exec(query_ativa).first()
-    if ativa_existente:
-        if dados.encerrar_anterior:
-            ativa_existente.data_efetivo_encerramento = dados.data_abertura
-            session.add(ativa_existente)
-            session.commit()
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Já existe uma dieta ativa para o lote {dados.lote} — encerre-a antes de lançar uma nova",
-            )
-    dieta = DietaLancamento(
+    dieta = criar_lancamento_programado(
+        session, fazenda_id, user.id,
         lote=dados.lote, responsavel=dados.responsavel, data_abertura=dados.data_abertura,
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=dados.observacao,
-        base_quantidade=dados.base_quantidade or "total",
-        leite_bezerros_kg_dia=dados.leite_bezerros_kg_dia,
-        usuario_id=user.id, fazenda_id=fazenda_id,
+        base_quantidade=dados.base_quantidade, leite_bezerros_kg_dia=dados.leite_bezerros_kg_dia,
+        itens=[item.model_dump() for item in dados.itens], encerrar_anterior=dados.encerrar_anterior,
     )
-    session.add(dieta)
-    session.commit()
-    session.refresh(dieta)
-    # Resolve o alimento_id automaticamente pelo nome do item de Estoque
-    # escolhido no formulário (EstoquePicker) — sem exigir nenhuma mudança na
-    # tela de lançamento: se existir um Alimento com esse mesmo nome (ou um
-    # item de Estoque já vinculado a um Alimento), o vínculo entra sozinho.
-    query_estoque = select(Estoque)
-    query_alimento = select(Alimento)
-    if fazenda_id is not None:
-        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
-        query_alimento = query_alimento.where(Alimento.fazenda_id == fazenda_id)
-    estoque_por_nome = {e.nome: e for e in session.exec(query_estoque).all()}
-    alimento_por_nome = {a.nome: a.id for a in session.exec(query_alimento).all()}
-    for item in dados.itens:
-        estoque_item = estoque_por_nome.get(item.alimento)
-        alimento_id = (estoque_item.alimento_id if estoque_item else None) or alimento_por_nome.get(item.alimento)
-        session.add(DietaItemProgramado(dieta_lancamento_id=dieta.id, alimento_id=alimento_id, fazenda_id=fazenda_id, **item.model_dump()))
-    session.commit()
     return _serializar_dieta(session, dieta, fazenda_id)
 
 

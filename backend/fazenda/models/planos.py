@@ -28,9 +28,14 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 MODULO_REBANHO = "rebanho"
 
 # Módulos comerciais vendáveis — vocabulário fechado (validado no router).
+# "formulacao_dietas" fica de propósito FORA de todo plano do catálogo
+# abaixo (nem Diamond) — é módulo avulso, contratado "sob medida" por
+# fazenda (ContratoFazendaModulo direto), não incluso automaticamente em
+# nenhum pacote existente. Ver fazenda/api/routers/formulacao_dietas.py.
 MODULOS_COMERCIAIS = [
     MODULO_REBANHO, "reprodutivo", "produtivo", "sanitario", "financeiro",
     "planejamento", "pedidos", "estoque", "alimentacao", "agricultura", "consultor",
+    "formulacao_dietas",
 ]
 
 # Catálogo fechado de planos — nome de exibição, preço padrão e módulos
