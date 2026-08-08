@@ -595,7 +595,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           </div>
         )}
 
-        <div className="mt-3" style={{ background: "rgba(22,101,52,0.12)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+        <div className="mt-3" style={{ background: "rgba(22,101,52,0.12)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
           <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--green-light)" }}>Colostragem da cria</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
             <Campo label="Hora do parto"><input type="time" style={inputStyle} value={horaParto} onChange={(e) => setHoraParto(e.target.value)} /></Campo>
@@ -628,7 +628,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
             <div className="mt-2" style={{ fontSize: "0.82rem" }}>
               Qualidade: <strong style={{ color: cls.cor }}>{cls.txt}</strong>
               {enriquecer && (
-                <div style={{ marginTop: "0.5rem", background: "rgba(94,26,46,0.2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+                <div style={{ marginTop: "0.5rem", background: "rgba(94,26,46,0.2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
                   <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
                     <span>Enriquecer até</span>
                     <select style={{ ...inputStyle, width: "auto", padding: "0.2rem 0.4rem" }} value={alvo} onChange={(e) => setAlvo(e.target.value)}>
@@ -650,7 +650,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           </div>
         </div>
 
-        <div className="mt-3" style={{ background: "rgba(30,111,168,0.1)", border: "1px solid var(--blue)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+        <div className="mt-3" style={{ background: "rgba(30,111,168,0.1)", border: "1px solid var(--blue)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
           <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--blue)" }}>Exame de sangue (IgG) da cria</p>
           <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
             Colher entre <strong>24h e 48h</strong> após o nascimento. Pode informar <strong>Brix sérico</strong> OU

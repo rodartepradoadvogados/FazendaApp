@@ -21,11 +21,11 @@ export function NewsButton() {
         display: "inline-flex", alignItems: "center", gap: "0.35rem",
         padding: "0.4rem 0.8rem", borderRadius: "999px",
         background: "var(--vinho)", border: "1px solid var(--vinho-light)",
-        color: "#FFE066", fontWeight: 700, fontSize: "0.78rem", letterSpacing: "0.01em",
+        color: "#C9A44C", fontWeight: 700, fontSize: "0.78rem", letterSpacing: "0.01em",
         textDecoration: "none", boxShadow: "0 2px 6px rgba(0,0,0,0.25)", whiteSpace: "nowrap",
       }}
     >
-      <Newspaper size={15} style={{ color: "#FFE066" }} />
+      <Newspaper size={15} style={{ color: "#C9A44C" }} />
       News
     </Link>
   );

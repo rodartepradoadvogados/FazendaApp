@@ -22,6 +22,10 @@ from fazenda.rules.parametros import (
     gestacao_dias_referencia,
     get_param,
     idade_apta_min_meses,
+    meta_concepcao_novilha,
+    meta_taxa_concepcao,
+    meta_taxa_prenhez,
+    meta_taxa_servico,
     peso_apta_min,
     pev_dias,
 )
@@ -165,7 +169,23 @@ _BENCH_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dict], desde: date) -> list[dict]:
+def _metas_benchmark(categoria: str) -> dict[str, dict]:
+    """Metas do benchmark reprodutivo por categoria. taxa_servico/
+    taxa_concepcao/taxa_prenhez_ciclo vêm de Configurações > Parâmetros
+    (editáveis, ver `parametros.meta_taxa_servico/meta_taxa_prenhez/
+    meta_taxa_concepcao/meta_concepcao_novilha`) — as demais ainda usam a
+    referência fixa de `BENCHMARK_METAS` (sem parâmetro equivalente hoje).
+    Novilha usa sua própria meta de concepção, distinta da meta de vacas."""
+    metas = {chave: dict(valor) for chave, valor in BENCHMARK_METAS.items()}
+    metas["taxa_servico"]["meta"] = meta_taxa_servico()
+    metas["taxa_prenhez_ciclo"]["meta"] = meta_taxa_prenhez()
+    metas["taxa_concepcao"]["meta"] = meta_concepcao_novilha() if categoria == "novilha" else meta_taxa_concepcao()
+    return metas
+
+
+def _repro_benchmark(
+    animais: list[dict], servicos: list[dict], partos: list[dict], desde: date, categoria: str = "todas",
+) -> list[dict]:
     """Painel de benchmark reprodutivo (Prenhez = Serviço × Concepção) para um
     subconjunto do rebanho — usado para 'todas', 'vaca' e 'novilha'."""
     prenhes = vazias = inseminadas = 0
@@ -217,9 +237,10 @@ def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dic
         "servicos_por_prenhez": servicos_por_prenhez, "del_1a_ia": del_1a,
         "dias_abertos": dias_abertos, "iep_meses": iep_meses,
     }
+    metas = _metas_benchmark(categoria)
     lista = []
     for chave, (label, unidade) in _BENCH_LABELS.items():
-        m = BENCHMARK_METAS.get(chave, {})
+        m = metas.get(chave, {})
         lista.append({
             "chave": chave, "label": label, "unidade": unidade,
             "valor": valores.get(chave), "meta": m.get("meta"),
@@ -237,9 +258,9 @@ def _benchmark_categorias(
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
     serv_novilha = [s for s in servicos if (s.get("ordem_parto") or 0) < 1]
     return {
-        "todas": _repro_benchmark(animais, servicos, partos, desde),
-        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde),
-        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde),
+        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas"),
+        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca"),
+        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha"),
     }
 
 
@@ -487,12 +508,21 @@ def calcular_indicadores(
         animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal, vacas_nums, hoje,
     )
 
+    # Números das gestantes pelo MESMO critério ao vivo usado para contar
+    # `prenhes` logo abaixo — reaproveitado no drill-down (`gestantes_detalhe`/
+    # `partos_previstos`) mais adiante para o card e a lista baterem sempre.
+    # Antes o card usava este critério (estado ao vivo, com fallback pro
+    # sit_rep congelado do CSV) e o drill-down usava só o sit_rep cru — uma
+    # matriz cujo estado ao vivo virou "gestante" antes do próximo import do
+    # CSV entrava no card mas sumia da lista que abre ao clicar nele.
+    numeros_gestantes_vivo: set[str] = set()
     prenhes = vazias = inseminadas = 0
     for a in animais:
         estado = estados_por_animal.get(a.get("numero"))
         if estado is not None:
             if estado == "gestante":
                 prenhes += 1
+                numeros_gestantes_vivo.add(a.get("numero"))
             elif estado == "inseminada":
                 inseminadas += 1
             else:
@@ -501,6 +531,7 @@ def calcular_indicadores(
         sit = (a.get("sit_rep") or "").strip()
         if sit == "Ges.":
             prenhes += 1
+            numeros_gestantes_vivo.add(a.get("numero"))
         elif sit.startswith("Vaz."):
             vazias += 1
         elif sit == "Ins.":
@@ -575,7 +606,10 @@ def calcular_indicadores(
     iep_meses = round(iep_dias / 30.44, 1) if iep_dias else None
 
     # ---------------------------------------------------------------
-    # Partos previstos — só matrizes ATUALMENTE prenhes (sit_rep = "Ges.").
+    # Partos previstos — só matrizes ATUALMENTE prenhes, pelo mesmo critério
+    # ao vivo de `numeros_gestantes_vivo` (não o sit_rep cru — ver comentário
+    # acima de onde o set é montado, é o que faz o card "Gestantes" bater com
+    # esta lista).
     # Parto provável = data do último serviço POSITIVO + gestacao_dias_referencia()
     # (ponto médio da faixa editável gestacao_dias_min/max).
     # Uma matriz por linha (não conta serviços antigos nem vazias/PEV).
@@ -598,9 +632,9 @@ def calcular_indicadores(
     # não importa o quão distante esteja do parto.
     gestantes_detalhe: list[dict] = []
     for a in animais:
-        if (a.get("sit_rep") or "").strip() != "Ges.":
-            continue
         num = a.get("numero")
+        if num not in numeros_gestantes_vivo:
+            continue
         data_serv = ult_pos.get(num)
         if not data_serv:
             continue

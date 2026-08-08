@@ -18,7 +18,7 @@ export default function BannerGrid() {
             className="banner-grid-card"
             style={{
               display: "flex", alignItems: "flex-start", gap: "0.8rem", textDecoration: "none",
-              padding: "1rem", borderRadius: "12px", background: "var(--surface)", border: "1px solid var(--border)",
+              padding: "1rem", borderRadius: "var(--r-sm)", background: "var(--surface)", border: "1px solid var(--border)",
             }}
           >
             <div style={{

@@ -22,6 +22,7 @@ from fazenda.database import get_session
 from fazenda.models import ContaGerencial
 from fazenda.rules.custo_hectare import calcular_custo_por_hectare
 from fazenda.rules.parametros import area_total_hectares
+from fazenda.rules.vale_item import ajuste_vale_por_conta, valor_gerencial
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -38,13 +39,19 @@ def custo_por_hectare(
     com filtro opcional de centro de custo) dividido pela área total da
     fazenda em hectares (Configurações > Parâmetros).
     """
+    # NOTA: este endpoint não filtra por fazenda_id no select(ContaGerencial)
+    # abaixo — comportamento pré-existente (achado, fora do escopo desta
+    # feature), preservado tal como estava.
     contas = session.exec(select(ContaGerencial)).all()
     filtradas = [
         c for c in contas
         if c.data_competencia and data_inicio <= c.data_competencia <= data_fim
         and (centro_custo is None or c.centro_custo == centro_custo)
     ]
-    despesas_total = sum(c.valor_total or 0 for c in filtradas if c.tipo == "despesa")
+    # Vale de funcionário/empreiteiro lançado a partir de um item não é
+    # despesa da fazenda — ver rules/vale_item.py.
+    ajustes = ajuste_vale_por_conta(session, filtradas, None)
+    despesas_total = sum(valor_gerencial(c, ajustes) for c in filtradas if c.tipo == "despesa")
     area = area_total_hectares()
 
     return {

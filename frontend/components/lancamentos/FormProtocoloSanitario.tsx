@@ -199,8 +199,18 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
           ...etapasFixas.filter((e) => substitutosAtivos.has(e.id as number) && escolhasMed[e.id as number]).map((e) => [String(e.id), escolhasMed[e.id as number]]),
         ]),
       });
+      // `pulados > 0` = o backend achou, animal a animal, um lançamento ativo
+      // idêntico (mesmo protocolo/data/matriz) e pulou esse animal em vez de
+      // duplicar — duplo clique ou retry da fila offline reenviando os mesmos
+      // animais (o aviso do backend já entra em `r.avisos`, ver avisoTxt
+      // abaixo). Quando TODOS foram pulados (`r.criados === 0`), a frase
+      // principal não pode dizer "lançado para 0 animal(is)" — isso parece
+      // defeito (mesmo padrão de FormInducaoLactacao); em vez disso, o aviso
+      // já explica sozinho que nada foi duplicado.
       const avisoTxt = (r.avisos && r.avisos.length) ? " ⚠️ " + r.avisos.join(" ") : "";
-      setSucesso(`Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.${avisoTxt}`);
+      setSucesso(r.criados === 0
+        ? (r.avisos?.[0] || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
+        : `Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.${avisoTxt}`);
       setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setGrauMastite(""); setAgente(""); setResultadoCmt(""); setTetosSel(new Set());
       setAnimaisSelecionados(new Set()); setLotesSelecionados(new Set()); setCategoriaId("");
     } catch (e: any) {
@@ -236,7 +246,7 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
             <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Escolha o medicamento de cada etapa (cadastrada por critério)</p>
             <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
               <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
-              Incluir itens sem estoque
+              Incluir todos os medicamentos/hormônios (inclusive sem estoque)
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {etapasCriterio.map((e) => (

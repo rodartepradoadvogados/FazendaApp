@@ -18,7 +18,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { X, Plus } from "lucide-react";
 import { MENSAGEM_ABRIR_ABA, MENSAGEM_TITULO_ABA, avisarTituloAba, estaDentroDeAba } from "@/lib/tabs";
-import { rotuloDaPagina, caminhoLabels } from "@/components/Sidebar";
+import { rotuloDaPagina } from "@/components/Sidebar";
+import { caminhoLabels } from "@/components/SubNavTree";
 import { useSubNav } from "@/components/SubNavContext";
 
 const LIMITE_ABAS = 5;
@@ -29,7 +30,7 @@ type MenuContexto = { id: string; x: number; y: number };
 const itemMenu: React.CSSProperties = {
   display: "block", width: "100%", textAlign: "left", padding: "0.4rem 0.7rem",
   border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem",
-  color: "var(--text)", borderRadius: "5px",
+  color: "var(--text)", borderRadius: "var(--r-sm)",
 };
 
 export function TabsShell({ children }: { children: React.ReactNode }) {
@@ -238,7 +239,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
               // uso, pra distinguir de cara qual está ativa ao navegar.
               style={{
                 display: "flex", alignItems: "center", gap: "0.35rem", padding: "0 0.5rem 0 0.9rem",
-                margin: "0.25rem 0.3rem", borderRadius: "6px",
+                margin: "0.25rem 0.3rem", borderRadius: "var(--r-sm)",
                 border: `1.5px solid ${ativaId === aba.id ? "var(--sidebar-active-border)" : "var(--dourado)"}`,
                 cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
                 background: ativaId === aba.id ? "var(--sidebar-active-bg)" : "transparent",
@@ -271,7 +272,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
           <div
             style={{
               position: "fixed", top: menu.y, left: menu.x, zIndex: 71, minWidth: "13rem",
-              background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
+              background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
               boxShadow: "0 4px 16px rgba(0,0,0,0.25)", padding: "0.3rem",
             }}
           >

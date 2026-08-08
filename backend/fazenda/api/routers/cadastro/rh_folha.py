@@ -19,11 +19,12 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, Pessoa, Usuario, ValeFuncionario,
-    ValeParcela,
+    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
+    Pessoa, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
 from fazenda.rules.parametros import (
     dias_ferias_padrao,
@@ -486,175 +487,109 @@ def excluir_folha_pagamento(
 
 
 # ---------------------------------------------------------------------------
-# Guias consolidadas de FGTS/DCTF — projeção de contas a pagar somando o
-# `valor_fgts`/`valor_dctf` de TODOS os lançamentos de folha de uma
-# competência (todos os funcionários), fora de escopo qualquer fórmula legal
-# real ou integração com sistemas do governo: é só uma soma decidida pelo
-# usuário/contador, para antecipar o fluxo de caixa. As contas a pagar
-# geradas são registros comuns de ContaGerencial (mesmo padrão de Folha/
-# Férias/13º) — por isso já são editáveis (valor e vencimento) pelo fluxo
-# normal de "Contas a Pagar" / "Lançamentos", sem precisar de endpoint
-# especial de edição.
+# Guia de FGTS/DCTF — lançamento manual ou por leitura automática do PDF/foto
+# da guia real (ver fazenda.rules.leitura_documento, tipo_documento
+# 'guia_fgts'/'guia_dctf'). Substitui o antigo "Gerar guias de FGTS/DCTF"
+# (soma automática projetada dos lançamentos de folha, sem vínculo com uma
+# guia real, sem cálculo de fórmula legal — decisão do usuário: excluir essa
+# projeção e lançar a guia de verdade, com seus campos estruturados
+# (GuiaFolhaEncargo) para permitir relatório depois). A conta a pagar criada
+# é um registro comum de ContaGerencial (mesmo padrão de Folha/Férias/13º) —
+# editável pelo fluxo normal de Contas a Pagar/Lançamentos.
 # ---------------------------------------------------------------------------
 TIPO_DOCUMENTO_GUIA_FGTS = "Guia FGTS"
 TIPO_DOCUMENTO_GUIA_DCTF = "Guia DCTF"
 
 
-class GerarGuiasFgtsDctfIn(BaseModel):
-    competencia: str  # "AAAA-MM" — mesma competência dos lançamentos de folha somados
-    # Ajuste opcional do valor projetado (preview) antes de confirmar a
-    # geração — se omitido, usa a soma calculada dos lançamentos da folha.
-    valor_fgts: float | None = None
-    valor_dctf: float | None = None
-    # Vencimento das guias — se omitido, usa o dia 20 do mês SEGUINTE à
-    # competência (editável antes ou depois de gerar, nas duas contas).
-    data_vencimento: date | None = None
+class GuiaFolhaEncargoIn(BaseModel):
+    tipo: str  # "fgts" | "dctf"
+    competencia: str  # "AAAA-MM"
+    codigo_receita: str | None = None  # só DCTF
+    valor_principal: float
+    valor_multa: float = 0.0
+    valor_juros: float = 0.0
+    data_vencimento: date
+    linha_digitavel: str | None = None
+    # "manual" (usuário digitou) ou "leitura_automatica" (veio pré-preenchido
+    # de POST /financeiro/ler-documento e o usuário só confirmou/ajustou).
+    origem: str = "manual"
     centro_custo: str = "Pecuária Leiteira"
 
 
-def _lancamentos_folha_competencia(session: Session, competencia: str, fazenda_id: int | None = None) -> list[FolhaPagamento]:
-    """TODOS os lançamentos de folha (de qualquer funcionário) de uma
-    competência — usado para somar valor_fgts/valor_dctf; registros sem o
-    campo preenchido simplesmente não contribuem (ver
-    `_calcular_encargo_projetado`)."""
-    query = select(FolhaPagamento).where(FolhaPagamento.competencia == competencia)
-    if fazenda_id is not None:
-        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
-    return session.exec(query).all()
-
-
-def _guias_ja_geradas(session: Session, competencia: str, fazenda_id: int | None = None) -> bool:
-    """
-    Proteção simples contra geração duplicada: as guias já existem para essa
-    competência se houver alguma ContaGerencial com tipo_documento "Guia FGTS"
-    ou "Guia DCTF" cuja data_competencia seja o 1º dia do mês da competência
-    informada — o mesmo campo/convenção já usado para vincular a folha
-    individual à sua competência (`data_competencia=date(ano, mes, 1)`).
-    """
-    ano, mes = (int(x) for x in competencia.split("-"))
-    primeiro_dia = date(ano, mes, 1)
-    query = select(ContaGerencial).where(
-        ContaGerencial.tipo_documento.in_([TIPO_DOCUMENTO_GUIA_FGTS, TIPO_DOCUMENTO_GUIA_DCTF]),
-        ContaGerencial.data_competencia == primeiro_dia,
-    )
-    if fazenda_id is not None:
-        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
-    existente = session.exec(query).first()
-    return existente is not None
-
-
-@router.get("/folha-pagamento/guias-preview")
-def preview_guias_fgts_dctf(
-    competencia: str, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
-) -> dict:
-    """
-    Pré-visualização da soma projetada de FGTS/DCTF de uma competência (todos
-    os funcionários) — usada pelo frontend para MOSTRAR os valores antes do
-    usuário confirmar a geração das guias (que ele ainda pode ajustar).
-    """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    registros = _lancamentos_folha_competencia(session, competencia, fazenda_id)
-    valor_fgts = round(sum(r.valor_fgts or 0.0 for r in registros), 2)
-    valor_dctf = round(sum(r.valor_dctf or 0.0 for r in registros), 2)
-    ano_venc, mes_venc = (int(x) for x in _competencia_seguinte(competencia).split("-"))
-    return {
-        "competencia": competencia,
-        "quantidade_lancamentos": len(registros),
-        "valor_fgts": valor_fgts,
-        "valor_dctf": valor_dctf,
-        "data_vencimento_sugerida": date(ano_venc, mes_venc, 20),
-        "ja_gerado": _guias_ja_geradas(session, competencia, fazenda_id),
-    }
-
-
-@router.post("/folha-pagamento/gerar-guias")
-def gerar_guias_fgts_dctf(
-    dados: GerarGuiasFgtsDctfIn,
+@router.post("/folha-pagamento/guias")
+def lancar_guia_folha_encargo(
+    dados: GuiaFolhaEncargoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
-    Cria as DUAS contas a pagar consolidadas (Guia FGTS e Guia DCTF) de uma
-    competência, somando o valor_fgts/valor_dctf de todos os lançamentos de
-    folha daquela competência (a soma pode ser sobrescrita em `dados` — é só
-    o valor inicial sugerido). Vencimento padrão: dia 20 do mês seguinte à
-    competência, também sobrescrevível. Bloqueia geração duplicada — se as
-    guias já existirem para a competência, aponta para editá-las em Contas a
-    Pagar em vez de gerar de novo.
+    Lança uma guia de FGTS ou DCTF: cria a conta a pagar (mesmo padrão de
+    sempre) E grava os campos estruturados da guia numa tabela própria
+    (GuiaFolhaEncargo), para dar pra montar relatório em cima disso depois —
+    não fica só um PDF anexado sem dado nenhum extraído. O PDF/foto original,
+    se o usuário anexar, é vinculado depois ao numero_lancamento devolvido
+    aqui via POST /financeiro/lancamentos/{numero_lancamento}/anexos (mesmo
+    mecanismo de qualquer outro anexo financeiro).
     """
+    if dados.tipo not in ("fgts", "dctf"):
+        raise HTTPException(status_code=400, detail="tipo deve ser 'fgts' ou 'dctf'")
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if _guias_ja_geradas(session, dados.competencia, fazenda_id):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"As guias de FGTS/DCTF da competência {dados.competencia} já foram geradas. "
-                "Edite os lançamentos existentes em Contas a Pagar em vez de gerar novamente."
-            ),
-        )
-    registros = _lancamentos_folha_competencia(session, dados.competencia, fazenda_id)
-    if not registros:
-        raise HTTPException(status_code=404, detail=f"Nenhum lançamento de folha encontrado para a competência {dados.competencia}")
-
-    valor_fgts = round(dados.valor_fgts, 2) if dados.valor_fgts is not None else round(sum(r.valor_fgts or 0.0 for r in registros), 2)
-    valor_dctf = round(dados.valor_dctf, 2) if dados.valor_dctf is not None else round(sum(r.valor_dctf or 0.0 for r in registros), 2)
-    if valor_fgts <= 0 and valor_dctf <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Nenhum valor de FGTS/DCTF foi lançado nos funcionários dessa competência — informe percentual ou valor no lançamento de folha, ou preencha manualmente aqui.",
-        )
+    valor_total = round(dados.valor_principal + dados.valor_multa + dados.valor_juros, 2)
+    if valor_total <= 0:
+        raise HTTPException(status_code=400, detail="O valor total da guia deve ser positivo")
 
     ano, mes = (int(x) for x in dados.competencia.split("-"))
-    ano_venc, mes_venc = (int(x) for x in _competencia_seguinte(dados.competencia).split("-"))
-    data_vencimento = dados.data_vencimento or date(ano_venc, mes_venc, 20)
-
-    contas_criadas: list[ContaGerencial] = []
-    if valor_fgts > 0:
-        numero_fgts = _proximo_numero_lancamento(session, ano)
-        conta_fgts = ContaGerencial(
-            numero_lancamento=numero_fgts,
-            descricao=f"Guia FGTS — {dados.competencia}",
-            data_vencimento=data_vencimento,
-            data_competencia=date(ano, mes, 1),
-            tipo_documento=TIPO_DOCUMENTO_GUIA_FGTS,
-            centro_custo=dados.centro_custo,
-            valor_total=valor_fgts,
-            parcela_num=1, parcela_total=1,
-            tipo="despesa", origem="auto",
-            usuario_id=user.id,
-            fazenda_id=fazenda_id,
-        )
-        session.add(conta_fgts)
-        contas_criadas.append(conta_fgts)
-    if valor_dctf > 0:
-        numero_dctf = _proximo_numero_lancamento(session, ano)
-        conta_dctf = ContaGerencial(
-            numero_lancamento=numero_dctf,
-            descricao=f"Guia DCTF — {dados.competencia}",
-            data_vencimento=data_vencimento,
-            data_competencia=date(ano, mes, 1),
-            tipo_documento=TIPO_DOCUMENTO_GUIA_DCTF,
-            centro_custo=dados.centro_custo,
-            valor_total=valor_dctf,
-            parcela_num=1, parcela_total=1,
-            tipo="despesa", origem="auto",
-            usuario_id=user.id,
-            fazenda_id=fazenda_id,
-        )
-        session.add(conta_dctf)
-        contas_criadas.append(conta_dctf)
-
+    numero_lancamento = _proximo_numero_lancamento(session, ano)
+    label = TIPO_DOCUMENTO_GUIA_FGTS if dados.tipo == "fgts" else TIPO_DOCUMENTO_GUIA_DCTF
+    conta = ContaGerencial(
+        fazenda_id=fazenda_id,
+        numero_lancamento=numero_lancamento,
+        descricao=f"{label} — {dados.competencia}",
+        data_vencimento=dados.data_vencimento,
+        data_competencia=date(ano, mes, 1),
+        tipo_documento=label,
+        centro_custo=dados.centro_custo,
+        valor_total=valor_total,
+        parcela_num=1, parcela_total=1,
+        numero_boleto=dados.linha_digitavel,
+        tipo="despesa", origem="manual",
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+    )
+    session.add(conta)
+    guia = GuiaFolhaEncargo(
+        fazenda_id=fazenda_id,
+        tipo=dados.tipo,
+        competencia=dados.competencia,
+        codigo_receita=dados.codigo_receita if dados.tipo == "dctf" else None,
+        valor_principal=dados.valor_principal,
+        valor_multa=dados.valor_multa,
+        valor_juros=dados.valor_juros,
+        valor_total=valor_total,
+        data_vencimento=dados.data_vencimento,
+        linha_digitavel=dados.linha_digitavel,
+        numero_lancamento=numero_lancamento,
+        origem=dados.origem if dados.origem in ("manual", "leitura_automatica") else "manual",
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+    )
+    session.add(guia)
     session.commit()
-    for conta in contas_criadas:
-        session.refresh(conta)
-    return {
-        "competencia": dados.competencia,
-        "data_vencimento": data_vencimento,
-        "contas": [c.model_dump() for c in contas_criadas],
-    }
+    session.refresh(conta)
+    session.refresh(guia)
+    return {**guia.model_dump(), "conta_id": conta.id}
 
 
+@router.get("/folha-pagamento/guias")
+def listar_guias_folha_encargo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Lista as guias de FGTS/DCTF já lançadas (mais recentes primeiro) — usada
+    pelo relatório da Folha de Pagamento."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(GuiaFolhaEncargo).order_by(GuiaFolhaEncargo.competencia.desc(), GuiaFolhaEncargo.id.desc())
+    if fazenda_id is not None:
+        query = query.where(GuiaFolhaEncargo.fazenda_id == fazenda_id)
+    return [g.model_dump() for g in session.exec(query).all()]
 
 
 # ---------------------------------------------------------------------------
@@ -1330,6 +1265,7 @@ def listar_vales(
         query = query.where(ValeFuncionario.fazenda_id == fazenda_id)
     vales = session.exec(query.order_by(ValeFuncionario.data_pagamento.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {v.usuario_id for v in vales})
+    origens = origens_lancamento_por_vale(session, {v.id for v in vales}, "vale_funcionario_id")
     saida = []
     for v in vales:
         parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == v.id)).all()
@@ -1337,6 +1273,7 @@ def listar_vales(
             **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"),
             "usuario_nome": nomes_usuarios.get(v.usuario_id),
             "parcelas_detalhe": sorted(({**p.model_dump()} for p in parcelas), key=lambda p: p["competencia"]),
+            "origem_lancamento": origens.get(v.id),
         })
     return saida
 
@@ -1666,6 +1603,105 @@ def editar_parcela_vale(
     }
 
 
+@router.delete("/vales/{vale_id}/parcelas/{parcela_id}")
+def excluir_parcela_vale(
+    vale_id: int, parcela_id: int, acao: str = "conceder", confirmar: bool = False,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Exclui UMA parcela de um vale de funcionário — diferente de DELETE
+    /vales/{id} (apaga o vale inteiro, incluindo o lançamento de caixa).
+    Segue a mesma ordem de validação de `editar_parcela_vale` (ver ali para o
+    porquê de cada regra), mas não é o motor genérico de `exclusoes.py`: é
+    sub-registro com reconciliação própria via `_reconciliar_vale_competencias`.
+
+    `acao`:
+    - "conceder": apaga só a parcela; `ValeFuncionario.valor_total` NUNCA
+      muda aqui (é o valor efetivamente pago/adiantado, histórico) — a soma
+      das parcelas passa a divergir dele, e a resposta expõe
+      `diverge_valor_pago`/`diferenca_valor_pago` para o front avisar.
+    - "redistribuir_igual": distribui o valor da parcela apagada entre as
+      parcelas PENDENTES POSTERIORES (mesma regra de "só posteriores" de
+      `editar_parcela_vale` — nunca mexe em parcela já paga/anterior), com o
+      resto (arredondamento) na última — a soma das parcelas se mantém.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    parcela = session.get(ValeParcela, parcela_id)
+    if not parcela or parcela.vale_id != vale_id:
+        raise HTTPException(status_code=404, detail="Parcela não encontrada")
+
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    if competencia_paga:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Parcela já aplicada na folha paga de {competencia_paga} não pode ser excluída.",
+        )
+
+    todas_parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    if len(todas_parcelas) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Este vale tem uma única parcela — exclua o vale inteiro (o lançamento de caixa também será removido).",
+        )
+
+    # Só as parcelas POSTERIORES (mesma ordem de competência) e ainda
+    # pendentes entram na redistribuição — mesma regra de `editar_parcela_vale`.
+    outras_pendentes = [
+        p for p in todas_parcelas
+        if p.id != parcela_id and p.competencia > parcela.competencia
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+    ]
+
+    if not confirmar:
+        soma_atual = round(sum(p.valor for p in todas_parcelas), 2)
+        raise HTTPException(status_code=409, detail={
+            "mensagem": "Excluir esta parcela muda o valor total lançado do vale.",
+            "valor_parcela": parcela.valor,
+            "valor_vale": vale.valor_total,
+            "soma_apos": round(soma_atual - parcela.valor, 2),
+            "parcelas_pendentes_posteriores": len(outras_pendentes),
+        })
+
+    if acao == "redistribuir_igual":
+        if not outras_pendentes:
+            raise HTTPException(status_code=400, detail="Não há parcelas pendentes para redistribuir — escolha conceder.")
+        valor_base = round(parcela.valor / len(outras_pendentes), 2)
+        restante = parcela.valor
+        for i, p in enumerate(outras_pendentes):
+            acrescimo = valor_base if i < len(outras_pendentes) - 1 else round(restante, 2)
+            restante = round(restante - acrescimo, 2)
+            p.valor = round(p.valor + acrescimo, 2)
+            session.add(p)
+    elif acao != "conceder":
+        raise HTTPException(status_code=400, detail="Informe a ação: conceder ou redistribuir_igual.")
+
+    pessoa_id = vale.pessoa_id
+    competencia_apagada = parcela.competencia
+    session.delete(parcela)
+    session.commit()
+
+    # Inclui a competência apagada na reconciliação — senão a folha daquele
+    # mês fica com o desconto fantasma (ela já não tem mais parcela nenhuma
+    # apontando pra ela, mas o valor_vale/valor_liquido gravados na
+    # FolhaPagamento ainda refletem o vale antes da exclusão).
+    parcelas_restantes = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    competencias_afetadas = sorted({p.competencia for p in parcelas_restantes} | {competencia_apagada})
+    _reconciliar_vale_competencias(session, pessoa_id, competencias_afetadas)
+    session.commit()
+    session.refresh(vale)
+
+    soma_parcelas = round(sum(p.valor for p in parcelas_restantes), 2)
+    return {
+        **vale.model_dump(),
+        "parcelas_detalhe": sorted(({**p.model_dump()} for p in parcelas_restantes), key=lambda p: p["competencia"]),
+        "soma_parcelas_atual": soma_parcelas,
+        "diverge_valor_pago": soma_parcelas != vale.valor_total,
+        "diferenca_valor_pago": round(soma_parcelas - vale.valor_total, 2),
+    }
+
+
 @router.delete("/vales/{vale_id}")
 def excluir_vale(
     vale_id: int, session: Session = Depends(get_session),
@@ -1695,6 +1731,11 @@ def excluir_vale(
             session.delete(conta_gerada)
     for p in parcelas:
         session.delete(p)
+    # Zera o vínculo em qualquer LancamentoItem que apontava para este vale
+    # (caminho inverso: usuário excluiu o vale direto no Relatório de vales,
+    # não pelo checkbox do item) — sem isso ficaria FK pendurada e o item
+    # sumido dos relatórios gerenciais para sempre (ver rules/vale_item.py).
+    limpar_vinculo_de_itens(session, vale_funcionario_id=vale_id)
     session.delete(vale)
     session.commit()
     _reconciliar_vale_competencias(session, pessoa_id, competencias)

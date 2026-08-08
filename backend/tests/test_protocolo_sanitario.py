@@ -121,6 +121,41 @@ class TestCadastroProtocolo:
         assert r.json()["etapas"][0]["produto"] == "Novo produto"
 
 
+class TestExcluirProtocolo:
+    def test_exclui_protocolo_nunca_usado(self, client):
+        c, engine = client
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Nunca usado", "etapas": [_etapa(1)],
+        }).json()["id"]
+        r = c.delete(f"/cadastro/protocolos-sanitarios/{pid}")
+        assert r.status_code == 200
+        assert r.json() == {"excluido": True}
+        nomes = [p["nome"] for p in c.get("/cadastro/protocolos-sanitarios").json()]
+        assert "Nunca usado" not in nomes
+
+    def test_nao_exclui_protocolo_ja_lancado(self, client):
+        c, engine = client
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Já lançado", "etapas": [_etapa(1, produto="Ivermectina")],
+        }).json()["id"]
+        r_lanc = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
+        })
+        assert r_lanc.status_code == 201
+
+        r = c.delete(f"/cadastro/protocolos-sanitarios/{pid}")
+        assert r.status_code == 409
+        assert "desative" in r.json()["detail"].lower()
+        # Continua existindo — a exclusão não pode ter apagado nada por engano.
+        nomes = [p["nome"] for p in c.get("/cadastro/protocolos-sanitarios").json()]
+        assert "Já lançado" in nomes
+
+    def test_exclui_protocolo_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.delete("/cadastro/protocolos-sanitarios/999999")
+        assert r.status_code == 404
+
+
 class TestImportarProtocolo:
     def test_importa_csv_agrupando_por_nome(self, client):
         c, engine = client
@@ -585,3 +620,60 @@ class TestCadastroPorCriterio:
             assert substituto.quantidade == 40.0
             original = s.exec(select(Estoque).where(Estoque.nome == "Mastite Injetável")).first()
             assert original.quantidade == 0  # não mexeu no item zerado
+
+
+class TestMedicamentosPorPrincipioAtivoOuDoencaComCatalogo:
+    """`incluir_sem_estoque` também tem que valer pra etapa cadastrada por
+    princípio ativo/doença (não só classificação) — mesma flag "incluir
+    todos os medicamentos/hormônios, inclusive sem estoque" do picker de
+    Central de Protocolos/Agenda, agora unificada aqui."""
+
+    def _preparar_principio_com_marca_sem_estoque(self, engine):
+        from fazenda.models import MedicamentoComercial, PrincipioAtivo
+        with Session(engine) as s:
+            pa = PrincipioAtivo(nome="Cloprostenol")
+            s.add(pa)
+            s.commit()
+            s.refresh(pa)
+            s.add(Estoque(nome="Sincrocp", quantidade=50, unidade="ml", principio_ativo_id=pa.id))
+            s.add(MedicamentoComercial(principio_ativo_id=pa.id, nome_comercial="Croniben", laboratorio="Farmavet"))
+            s.commit()
+            return pa.id
+
+    def test_principio_ativo_sem_flag_so_lista_frasco_em_estoque(self, client):
+        c, engine = client
+        self._preparar_principio_com_marca_sem_estoque(engine)
+        r = c.get("/estoque/medicamentos", params={"principio_ativo": "Cloprostenol"})
+        assert [m["nome"] for m in r.json()] == ["Sincrocp"]
+
+    def test_principio_ativo_com_flag_inclui_marca_sem_estoque(self, client):
+        c, engine = client
+        self._preparar_principio_com_marca_sem_estoque(engine)
+        r = c.get("/estoque/medicamentos", params={"principio_ativo": "Cloprostenol", "incluir_sem_estoque": "true"})
+        por_nome = {m["nome"]: m for m in r.json()}
+        assert set(por_nome) == {"Sincrocp", "Croniben"}
+        assert por_nome["Sincrocp"]["sem_estoque"] is False
+        assert por_nome["Croniben"]["sem_estoque"] is True
+        assert por_nome["Croniben"]["estoque_id"] is None
+
+    def test_doenca_encontra_principio_via_indicacao_terapeutica(self, client):
+        """Antes só o vínculo direto PrincipioAtivo.doenca_id (1-pra-1, só
+        biológicos) era considerado — uma doença tratada por antibiótico
+        (via IndicacaoTerapeutica, N-pra-N) não aparecia. Confirma que agora
+        aparece."""
+        from fazenda.models import Doenca, IndicacaoTerapeutica, PrincipioAtivo
+        c, engine = client
+        with Session(engine) as s:
+            doenca = Doenca(nome="Metrite")
+            s.add(doenca)
+            pa = PrincipioAtivo(nome="Ceftiofur")
+            s.add(pa)
+            s.commit()
+            s.refresh(doenca)
+            s.refresh(pa)
+            s.add(IndicacaoTerapeutica(principio_ativo_id=pa.id, doenca_id=doenca.id, prioridade=1))
+            s.add(Estoque(nome="Excenel", quantidade=20, unidade="ml", principio_ativo_id=pa.id))
+            s.commit()
+
+        r = c.get("/estoque/medicamentos", params={"doenca": "Metrite"})
+        assert [m["nome"] for m in r.json()] == ["Excenel"]

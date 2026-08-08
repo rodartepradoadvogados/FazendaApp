@@ -210,15 +210,20 @@ class TestDataD0DoServicoIatf:
         with Session(engine) as s:
             s.add(Animal(numero="700", sit_rep="Vaz. apt.", ativo=True))
             s.commit()
-        c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["700"], "data_d0": "2026-06-12", "protocolo": "IATF 12/06 a 23/06",
-        })
+        criado = c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["700"], "data_d0": "2026-06-12",
+        }).json()
+        nome_protocolo = next(
+            l["nome_protocolo"] for l in c.get("/reproducao/protocolo-iatf/lancamentos").json()
+            if l["lancamento_id"] == criado["lancamento_id"]
+        )
         # D11 = D0 + 11 dias — a inseminação em si é lançada à parte, e resolve
         # a ProtocoloIatfAplicacao (dia 11) em aberto automaticamente pelo nome
-        # do protocolo (mesma regra de registrar_servico).
+        # do protocolo (mesma regra de registrar_servico). O nome agora é
+        # sempre automático (Central de Protocolos) — não se digita mais.
         r = c.post("/reproducao/servico", json={
             "numero_matriz": "700", "data_servico": "2026-06-23", "tipo_servico": "IA",
-            "protocolo": "IATF 12/06 a 23/06",
+            "protocolo": nome_protocolo,
         })
         assert r.status_code == 200
 

@@ -1,21 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Package, Pencil, Check, X, AlertTriangle, Plus, Search } from "lucide-react";
-import { fetchItensEstoqueCadastro, atualizarMetaEstoque, fetchFornecedores, fetchPlanoContas } from "@/lib/api";
-import NovoItemEstoque from "./NovoItemEstoque";
+import { Package, Pencil, Trash2, AlertTriangle, Plus, Search } from "lucide-react";
+import { fetchItensEstoqueCadastro, fetchFornecedores, fetchPlanoContas, excluirItemEstoque } from "@/lib/api";
+import NovoItemEstoque, { type ItemEstoqueEditando } from "./NovoItemEstoque";
+import { Modal } from "./Modal";
 import { onPedidoCadastroDeEstoque, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 import { ThOrdenavel, useOrdenacao } from "./Ordenavel";
 
-const UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"];
-const MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"];
-
+// Item vindo de GET /cadastro/estoque-itens — na prática o model_dump()
+// completo de Estoque + fornecedor_nome (ver ItemEstoqueEditando), mas só os
+// campos usados nesta listagem estão tipados aqui.
 type Item = {
   id: number; nome: string; categoria: string | null; quantidade: number | null; unidade: string | null;
   unidade_embalagem: string | null; medida_embalagem: string | null; quantidade_embalagem: number | null;
   fornecedor_id: number | null; fornecedor_nome: string | null;
   ativo: boolean | null; estocavel: boolean | null;
   conta_gerencial_despesa_padrao: string | null;
-};
+} & Record<string, any>;
 type Fornecedor = { id: number; nome: string };
 type Conta = { codigo: string; nome: string };
 
@@ -24,8 +25,7 @@ type Conta = { codigo: string; nome: string };
 // dentro dela) — não é mais uma marcação manual por item.
 const entraNoRmca = (it: Item) => (it.conta_gerencial_despesa_padrao || "").startsWith("3.01.01");
 
-const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
-const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
 
 // Normaliza texto para busca insensível a maiúsculas e acentos.
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -35,17 +35,15 @@ export default function CadastroEstoqueMeta() {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [contas, setContas] = useState<Conta[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [editando, setEditando] = useState<number | null>(null);
-  const [unidadeEmbalagem, setUnidadeEmbalagem] = useState("");
-  const [medidaEmbalagem, setMedidaEmbalagem] = useState("");
-  const [quantidadeEmbalagem, setQuantidadeEmbalagem] = useState("");
-  const [fornecedorId, setFornecedorId] = useState("");
-  const [contaGerencial, setContaGerencial] = useState("");
-  const [estocavel, setEstocavel] = useState(true);
-  const [salvando, setSalvando] = useState(false);
+  // Edição abre o MESMO formulário completo do "+ Novo item" (NovoItemEstoque),
+  // num modal — antes era uma edição inline na própria linha da tabela,
+  // limitada a só 6 dos ~25 campos do item (unidade de embalagem, unidade de
+  // medida, quantidade por embalagem, fornecedor, conta gerencial, estocável).
+  const [editando, setEditando] = useState<ItemEstoqueEditando | null>(null);
   const [novoAberto, setNovoAberto] = useState(false);
   const [prefillNovo, setPrefillNovo] = useState<PrefillNovoEstoque | null>(null);
   const [busca, setBusca] = useState("");
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
 
   const carregar = () => fetchItensEstoqueCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -55,33 +53,14 @@ export default function CadastroEstoqueMeta() {
   }, []);
   useEffect(() => onPedidoCadastroDeEstoque((dados) => { setPrefillNovo(dados); setNovoAberto(true); }), []);
 
-  const abrirEdicao = (it: Item) => {
-    setEditando(it.id);
-    setUnidadeEmbalagem(it.unidade_embalagem ?? "");
-    setMedidaEmbalagem(it.medida_embalagem ?? "");
-    setQuantidadeEmbalagem(it.quantidade_embalagem?.toString() ?? "");
-    setFornecedorId(it.fornecedor_id?.toString() ?? "");
-    setContaGerencial(it.conta_gerencial_despesa_padrao ?? "");
-    setEstocavel(it.estocavel !== false);
-  };
-
-  const salvar = async (id: number) => {
-    setSalvando(true);
+  const excluir = async (it: Item) => {
+    if (!window.confirm(`Excluir o item de estoque "${it.nome}"? Isso não pode ser desfeito.`)) return;
+    setErroExclusao(null);
     try {
-      await atualizarMetaEstoque(id, {
-        unidade_embalagem: unidadeEmbalagem.trim() === "" ? null : unidadeEmbalagem,
-        medida_embalagem: medidaEmbalagem.trim() === "" ? null : medidaEmbalagem,
-        quantidade_embalagem: quantidadeEmbalagem.trim() === "" ? null : Number(quantidadeEmbalagem),
-        fornecedor_id: fornecedorId.trim() === "" ? null : Number(fornecedorId),
-        conta_gerencial_despesa_padrao: contaGerencial.trim() === "" ? null : contaGerencial,
-        estocavel,
-      });
-      setEditando(null);
+      await excluirItemEstoque(it.id);
       await carregar();
     } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setSalvando(false);
+      setErroExclusao(e.message || "Erro ao excluir item de estoque");
     }
   };
 
@@ -124,6 +103,7 @@ export default function CadastroEstoqueMeta() {
       )}
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {erroExclusao && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erroExclusao}</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {itens && (
@@ -153,61 +133,23 @@ export default function CadastroEstoqueMeta() {
                 <tr key={it.id}>
                   <td style={{ fontWeight: 700 }}>{it.nome}{it.ativo === false && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                   <td style={{ fontSize: "0.78rem" }}>{it.categoria || "—"}</td>
-                  {editando === it.id ? (
-                    <>
-                      <td>
-                        <select style={inputStyle} value={unidadeEmbalagem} onChange={(e) => setUnidadeEmbalagem(e.target.value)}>
-                          <option value="">—</option>
-                          {UNIDADES_EMBALAGEM.map((u) => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                      </td>
-                      <td>
-                        <select style={inputStyle} value={medidaEmbalagem} onChange={(e) => setMedidaEmbalagem(e.target.value)}>
-                          <option value="">—</option>
-                          {MEDIDAS_EMBALAGEM.map((m) => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </td>
-                      <td><input type="number" style={{ ...inputStyle, width: "5.5rem" }} value={quantidadeEmbalagem} onChange={(e) => setQuantidadeEmbalagem(e.target.value)} /></td>
-                      <td>
-                        <select style={inputStyle} value={fornecedorId} onChange={(e) => setFornecedorId(e.target.value)}>
-                          <option value="">—</option>
-                          {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
-                        </select>
-                      </td>
-                      <td>
-                        <select style={inputStyle} value={contaGerencial} onChange={(e) => setContaGerencial(e.target.value)}>
-                          <option value="">—</option>
-                          {contas.map((c) => <option key={c.codigo} value={c.codigo}>{`${c.codigo} — ${c.nome}`}</option>)}
-                        </select>
-                      </td>
-                      <td><input type="checkbox" checked={estocavel} onChange={(e) => setEstocavel(e.target.checked)} /></td>
-                      <td>{entraNoRmca(it) ? "Sim" : "Não"}</td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        {unidadeEmbalagem === "Saca" && (medidaEmbalagem !== "kg/saca" || quantidadeEmbalagem.trim() === "") && (
-                          <span title="Para contar como ensacado na Alimentação, preencha também &quot;kg/saca&quot; e a quantidade por saca." style={{ marginRight: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--warning, #d97706)" }}>
-                            <AlertTriangle size={14} />
-                          </span>
-                        )}
-                        <button className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem", marginRight: "0.3rem" }} onClick={() => salvar(it.id)} disabled={salvando}><Check size={13} /></button>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }} onClick={() => setEditando(null)}><X size={13} /></button>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td style={{ fontSize: "0.78rem" }}>{it.unidade_embalagem ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{it.medida_embalagem ?? "—"}</td>
-                      <td>{it.quantidade_embalagem ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{it.fornecedor_nome || fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{nomeConta(it.conta_gerencial_despesa_padrao)}</td>
-                      <td>{it.estocavel === false ? "Não" : "Sim"}</td>
-                      <td>{entraNoRmca(it) ? "Sim" : "Não"}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(it)}>
-                          <Pencil size={13} /> Editar
-                        </button>
-                      </td>
-                    </>
-                  )}
+                  <td style={{ fontSize: "0.78rem" }}>{it.unidade_embalagem ?? "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{it.medida_embalagem ?? "—"}</td>
+                  <td>{it.quantidade_embalagem ?? "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{it.fornecedor_nome || fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{nomeConta(it.conta_gerencial_despesa_padrao)}</td>
+                  <td>{it.estocavel === false ? "Não" : "Sim"}</td>
+                  <td>{entraNoRmca(it) ? "Sim" : "Não"}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <div className="flex items-center justify-end gap-2">
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setEditando(it)}>
+                        <Pencil size={13} /> Editar
+                      </button>
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem", color: "var(--red)" }} onClick={() => excluir(it)}>
+                        <Trash2 size={13} /> Excluir
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
               {!itens.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
@@ -216,6 +158,16 @@ export default function CadastroEstoqueMeta() {
           </table>
           </div>
         </>
+      )}
+
+      {editando && (
+        <Modal title={`Editar item — ${editando.nome}`} onClose={() => setEditando(null)} width="960px">
+          <NovoItemEstoque
+            editando={editando}
+            onCriado={() => { setEditando(null); carregar(); }}
+            onCancelar={() => setEditando(null)}
+          />
+        </Modal>
       )}
     </div>
   );

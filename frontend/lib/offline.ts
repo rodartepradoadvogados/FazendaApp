@@ -53,7 +53,7 @@
 //     design de nunca marcar erro definitivo por falha de rede).
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
-import { API, getToken, getFazendaAtual } from "@/lib/api";
+import { API, getToken, getFazendaAtual, mensagemErroApi } from "@/lib/api";
 import {
   garantirPronto, pedirStoragePersistente, idbDisponivel, cabeNoDisco,
   inserirRegistro, lerRegistro, listarResumos, atualizarRegistro, removerRegistro, lerBlob,
@@ -222,6 +222,25 @@ function proximaTentativa(tentativas: number): string {
   return new Date(Date.now() + espera).toISOString();
 }
 
+/** Contexto de rede no momento da falha — anexado à mensagem técnica
+ *  (debugUltimoErro) pra separar "sem sinal de verdade" de "tem sinal mas o
+ *  fetch falhou mesmo assim" (ex.: WebView com problema, DNS, certificado) —
+ *  sem isso, "TypeError: Failed to fetch" sozinho não diz qual dos dois é,
+ *  e foi exatamente essa dúvida que travou o diagnóstico de um relato real
+ *  ("app não envia dados", com Wi-Fi supostamente bom). navigator.connection
+ *  só existe em Chrome/WebView Android — undefined em iOS/Safari, ok ficar
+ *  de fora nesse caso. */
+function descreverConectividade(): string {
+  const partes: string[] = [`onLine=${typeof navigator !== "undefined" ? navigator.onLine : "?"}`];
+  const conexao = typeof navigator !== "undefined" ? (navigator as any).connection : undefined;
+  if (conexao) {
+    partes.push(`rede=${conexao.effectiveType ?? "?"}`);
+    if (typeof conexao.downlink === "number") partes.push(`${conexao.downlink}Mbps`);
+    if (conexao.saveData) partes.push("economiaDeDados=on");
+  }
+  return partes.join(" ");
+}
+
 /**
  * Tenta enviar agora; sem internet (ou falha de rede), guarda na fila para
  * sincronizar depois. Erro do servidor (4xx/5xx) com internet É repassado —
@@ -243,11 +262,11 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
   // cliente vê erro de rede e enfileira, porém o reenvio usa a MESMA chave,
   // então o servidor devolve a resposta já salva em vez de duplicar.
   const id = gerarId();
-  if (!navigator.onLine) {
-    await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
-    await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
-    return { enviado: false };
-  }
+  // NÃO trava em navigator.onLine (mesmo motivo de sincronizar() — em WebView
+  // Android essa API é conhecida por ficar presa em `false` mesmo com
+  // internet real, o que fazia todo lançamento cair direto na fila sem nem
+  // tentar enviar, mesmo com internet de verdade). Tenta de verdade; falha de
+  // rede cai no catch abaixo e enfileira do mesmo jeito.
   const { authFetch } = await import("@/lib/api");
   // AbortController manual em vez de AbortSignal.timeout() — a API estática
   // só existe em WebView/Chrome 103+ (meados de 2022); num Android System
@@ -267,7 +286,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
-      throw new Error(detalhe.detail || `Erro ${res.status} ao salvar`);
+      throw new Error(mensagemErroApi(detalhe.detail) || `Erro ${res.status} ao salvar`);
     }
     const resposta = await res.json().catch(() => undefined);
     return { enviado: true, resposta };
@@ -275,7 +294,11 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
     // aborta como erro de rede, não de validação → nos dois casos, enfileira.
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
-      await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
+      const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      await inserirItem({
+        id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente",
+        fazendaId: getFazendaAtual()?.id ?? null, debugUltimoErro: `${motivo} (${descreverConectividade()})`,
+      });
       await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
       return { enviado: false };
     }
@@ -320,13 +343,10 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
     return fd;
   };
 
-  if (!navigator.onLine) {
-    if (modoLegado) throw new Error("Este aparelho não consegue guardar fotos offline — tente novamente com internet.");
-    if (!(await cabeNoDisco(opcoes.arquivo.size))) throw new ErroCotaOutbox();
-    await enfileirarArquivo();
-    return { enviado: false };
-  }
-
+  // NÃO trava em navigator.onLine — mesmo motivo de enviarOuEnfileirar/
+  // sincronizar() acima: em WebView Android essa API pode ficar presa em
+  // `false` mesmo com internet real. Tenta de verdade; falha de rede cai no
+  // catch abaixo e enfileira do mesmo jeito.
   const { authFetch } = await import("@/lib/api");
   // Mesmo motivo do AbortController manual em enviarOuEnfileirar (acima):
   // AbortSignal.timeout() não existe em WebView antiga.
@@ -340,7 +360,7 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
-      throw new Error(detalhe.detail || `Erro ${res.status} ao enviar`);
+      throw new Error(mensagemErroApi(detalhe.detail) || `Erro ${res.status} ao enviar`);
     }
     return { enviado: true };
   } catch (e) {
@@ -425,7 +445,14 @@ let sincronizando = false;
  *  grupo ainda é tentado nesta mesma rodada. */
 export async function sincronizar(): Promise<{ enviados: number; restantes: number }> {
   await iniciar();
-  if (sincronizando || !navigator.onLine) return { enviados: 0, restantes: (await listarTudo()).length };
+  // NÃO trava em navigator.onLine aqui — em WebView Android essa API é
+  // conhecida por ficar presa em `false` mesmo com internet real (não há
+  // garantia de que os eventos 'online'/'offline' disparem de volta), o que
+  // travava a fila para sempre (tentativas nunca passava de 0, nenhum erro
+  // visível). Tenta de verdade; se estiver offline mesmo, o fetch falha
+  // rápido (dentro do timeout) e cai no backoff normal — mesmo resultado,
+  // sem o risco de nunca tentar.
+  if (sincronizando) return { enviados: 0, restantes: (await listarTudo()).length };
   sincronizando = true;
   let enviados = 0;
   try {
@@ -463,23 +490,35 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           }
           if (res.status === 401 || res.status === 403 || res.status >= 500) {
             // Sessão expirada ou servidor fora do ar — tenta de novo mais
-            // tarde, nunca descarta nem marca como erro definitivo.
+            // tarde, nunca descarta nem marca como erro definitivo. Mas
+            // registra o motivo em debugUltimoErro (igual ao catch abaixo):
+            // sem isso, um token expirado ficava pendurado indefinidamente
+            // como "pendente", sem nenhuma pista visível na tela de
+            // Sincronização de por que nunca ia embora (relato: "app não
+            // envia dados pra nuvem" — a causa mais provável é essa).
             const tentativas = (atual.tentativas || 0) + 1;
-            await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
+            const motivo = res.status === 401 || res.status === 403
+              ? "Sessão expirada — abra o app e faça login de novo para este item ser enviado."
+              : `Servidor indisponível (${res.status}) — vai tentar de novo automaticamente.`;
+            await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas), debugUltimoErro: motivo });
             continue;
           }
           // 4xx "de verdade" (400/404/409/422...) = dado inválido, exige o usuário.
           const detalhe = await res.json().catch(() => ({}));
-          await atualizarItem(atual.id, { status: "erro", erro: detalhe.detail || `Erro ${res.status}` });
-        } catch (err) {
-          // Rede caiu de novo no meio deste grupo — para só este grupo;
-          // o próximo (json→form ou form→json) ainda é tentado. Loga o
-          // motivo real (visível via chrome://inspect) e conta como
-          // tentativa, pra UI parar de mostrar "Aguardando envio…" parado
-          // sem nenhuma pista de que ainda está tentando de verdade.
-          console.error(`[offline] sincronizar: falha de rede ao enviar "${atual.descricao}" (id ${atual.id}):`, err);
+          await atualizarItem(atual.id, { status: "erro", erro: mensagemErroApi(detalhe.detail) || `Erro ${res.status}` });
+        } catch (e) {
+          // Rede caiu de novo no meio deste grupo — para só este grupo; o
+          // próximo (json→form ou form→json) ainda é tentado. Registra a
+          // tentativa e a mensagem técnica (diagnóstico só — não bloqueia
+          // retentativa) em vez de falhar 100% em silêncio: sem isso, uma
+          // falha que se repete sempre (CORS, DNS, URL de API errada) parece
+          // idêntica a "nunca tentou", indistinguível pra quem usa o app.
           const tentativas = (atual.tentativas || 0) + 1;
-          await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
+          const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+          await atualizarItem(atual.id, {
+            tentativas, proximaTentativaEm: proximaTentativa(tentativas),
+            debugUltimoErro: `${motivo} (${descreverConectividade()})`,
+          });
           break;
         }
       }

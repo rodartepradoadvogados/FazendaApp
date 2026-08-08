@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Estoque
@@ -87,6 +87,11 @@ class Estoque(SQLModel, table=True):
     # por aplicação/consumo e pode ser doado/recebido de cortesia). False = item
     # cadastrado só para lançamento financeiro (produto de nota), sem controle de quantidade.
     estocavel: Optional[bool] = None
+    # True = item de patrimônio (ex.: trator, benfeitoria) — uma compra desse
+    # item no lançamento financeiro sugere vincular/criar um registro em
+    # Controle Financeiro > Patrimônio (ver ContaGerencial.patrimonio_id e
+    # fazenda/api/routers/financeiro.py). Nada a ver com estocável/gera_receita.
+    gera_patrimonio: Optional[bool] = None
     # Campo legado — a elegibilidade do custo físico do RMCA (ver GET
     # /financeiro/rmca) hoje é decidida por `conta_gerencial_despesa_padrao`
     # (conta "3.01.01" — Alimentação do rebanho — ou qualquer conta dentro
@@ -116,6 +121,84 @@ class Estoque(SQLModel, table=True):
     # EstoqueSemen.tipo/CompraSemen.tipo, mas cadastrável aqui direto (antes só
     # existia na compra de sêmen). None = não é sêmen ou ainda não informado.
     tipo_semen: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Cadastros de apoio ao item de estoque — Local de Armazenamento, Categoria,
+# Finalidade, Unidade, Unidade (embalagem) e Unidade de Medida (Configurações
+# > Cadastro > Estoque). Antes eram listas fixas em Python/TypeScript
+# (CATEGORIAS_ESTOQUE, FINALIDADES_ESTOQUE, UNIDADES, UNIDADES_EMBALAGEM,
+# MEDIDAS_EMBALAGEM) ou texto livre sem sugestão (local_armazenamento) — agora
+# cadastráveis, mesmo padrão "nome + ativo" de Raça/MotivoBaixa (ver
+# fazenda.api.routers.cadastro._comum._crud_nome_ativo). `Estoque.categoria`
+# etc. continuam guardando o NOME como texto (igual a `centro_custo_padrao`),
+# não uma FK — o cadastro só alimenta o seletor de preenchimento, sem exigir
+# migração de dado já existente.
+# ---------------------------------------------------------------------------
+class LocalArmazenamento(SQLModel, table=True):
+    __tablename__ = "local_armazenamento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_local_armazenamento_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CategoriaEstoque(SQLModel, table=True):
+    __tablename__ = "categoria_estoque"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_categoria_estoque_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FinalidadeEstoque(SQLModel, table=True):
+    __tablename__ = "finalidade_estoque"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_finalidade_estoque_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UnidadeEstoque(SQLModel, table=True):
+    __tablename__ = "unidade_estoque"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_unidade_estoque_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UnidadeEmbalagemEstoque(SQLModel, table=True):
+    __tablename__ = "unidade_embalagem_estoque"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_unidade_embalagem_estoque_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UnidadeMedidaEmbalagemEstoque(SQLModel, table=True):
+    __tablename__ = "unidade_medida_embalagem_estoque"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_unidade_medida_embalagem_estoque_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

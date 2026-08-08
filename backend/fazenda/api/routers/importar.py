@@ -868,7 +868,7 @@ async def importar_baixas_pendencias_agenda(
                     if len(numeros) != 1:
                         raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
                     numero = numeros[0]
-                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0)
+                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
                     if not any(n == numero and d == data_pendencia for n, d in candidatos):
                         raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
                     eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
@@ -1045,6 +1045,9 @@ def backfill_fornecedores_e_estoque(
 
     estoque_query = select(Estoque.nome)
     curva_query = select(CurvaABC.produto)
+    # NÃO aplicar sem_itens_de_vale aqui — são candidatos a cadastro de
+    # estoque a partir de nomes de produto já usados; excluir os itens de
+    # vale só empobreceria a lista de sugestões (ver rules/vale_item.py).
     lancamento_query = select(LancamentoItem.produto)
     sanidade_query = select(Sanidade.produto)
     if fazenda_id is not None:

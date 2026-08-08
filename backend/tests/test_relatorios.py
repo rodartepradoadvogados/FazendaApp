@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, EstoqueSemen, Parto, Servico
+from fazenda.models import Animal, EstoqueSemen, ParametroFazenda, Parto, Servico
 
 
 @pytest.fixture
@@ -226,9 +226,49 @@ class TestGerencial:
         c, engine = client
         self._seed(engine)
         r = c.get("/relatorios/gerencial/dias-reinseminacao")
-        # 201: negativo em -70, re-inseminada em -60 → 10 dias
+        # 201: negativo em -70, re-inseminada em -60 → 10 dias, antes da
+        # janela padrão (dias_reinseminacao_min/max = 18/25) — adiantada.
         barras = {b["faixa"]: b["servicos"] for b in r.json()["barras"]}
-        assert barras["4-17 dias"] == 1
+        assert barras["1-17 dias (adiantada)"] == 1
+
+    def test_dias_reinseminacao_reage_ao_parametro_configurado(self, client, monkeypatch):
+        c, engine = client
+        # get_param()/_linha() lê `fazenda.database.engine` diretamente (não
+        # via Depends) — sem isso, a leitura pós-PUT cairia no engine
+        # padrão do módulo, não no engine isolado deste teste.
+        monkeypatch.setattr(database, "engine", engine)
+        self._seed(engine)
+        # PUT exige a linha já existir — testes rodam com FAZENDA_TESTING=1
+        # (seed_parametros() pulado por velocidade, ver main.py::lifespan),
+        # então semeia só as 2 chaves que este teste usa.
+        with Session(engine) as s:
+            s.add(ParametroFazenda(chave="dias_reinseminacao_min", grupo="reinseminacao_cio",
+                                    label="Dias para reinseminação — mínimo", valor="18", tipo="int"))
+            s.add(ParametroFazenda(chave="dias_reinseminacao_max", grupo="reinseminacao_cio",
+                                    label="Dias para reinseminação — máximo", valor="25", tipo="int"))
+            s.commit()
+        # Muda a janela para 5-15 dias — os mesmos 10 dias do seed (201)
+        # passam a cair DENTRO da janela, não mais "adiantada".
+        assert c.put("/parametros/dias_reinseminacao_min", json={"valor": 5}).status_code == 200
+        assert c.put("/parametros/dias_reinseminacao_max", json={"valor": 15}).status_code == 200
+        r = c.get("/relatorios/gerencial/dias-reinseminacao")
+        barras = {b["faixa"]: b["servicos"] for b in r.json()["barras"]}
+        assert barras["5-15 dias (janela ideal)"] == 1
+
+    def test_taxa_servico_prenhez_meta_100d_vem_do_parametro(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setattr(database, "engine", engine)
+        self._seed(engine)
+        r = c.get("/relatorios/gerencial/taxa-servico-prenhez")
+        assert r.json()["parametros"]["meta_100d"] == 50  # padrão de meta_taxa_servico
+
+        with Session(engine) as s:
+            s.add(ParametroFazenda(chave="meta_taxa_servico", grupo="metas_reproducao",
+                                    label="Taxa de serviço em vacas", valor="50", tipo="int", unidade="%"))
+            s.commit()
+        assert c.put("/parametros/meta_taxa_servico", json={"valor": 65}).status_code == 200
+        r2 = c.get("/relatorios/gerencial/taxa-servico-prenhez")
+        assert r2.json()["parametros"]["meta_100d"] == 65
 
     def test_prenhezes_por_del(self, client):
         c, engine = client

@@ -7,12 +7,17 @@
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
-import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, today, type ApresentacaoDieta } from "@/lib/api";
+import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
+
+// Carregado só quando o cartão "Aplicação de BST hoje" é aberto — mesmo
+// componente rico (com seleção/aplicar) já usado em Lançar > Produção > BST.
+const PainelLancarBst = dynamic(() => import("@/components/PainelLancarBst").then((m) => m.PainelLancarBst), { ssr: false });
 
 const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
@@ -41,6 +46,59 @@ function inicioDaSemana(iso: string): string {
   return maisDias(iso, -dia);
 }
 
+/** "Qual frasco você está usando?" — a mesma pergunta que o site faz ao
+ *  confirmar um dia de protocolo, agora no app. Sem ela, o estoque baixava
+ *  sempre o item cadastrado no molde: se o curral pegou outra marca do mesmo
+ *  princípio ativo, saía do saldo errado e a rastreabilidade ia junto. */
+function SeletorFrasco({ itens, escolhas, onEscolher }: {
+  itens: OpcaoMedicamento[];
+  escolhas: Record<number, number | null>;
+  onEscolher: (idx: number, estoqueId: number | null) => void;
+}) {
+  if (!itens.length) return null;
+  return (
+    <div style={{ marginBottom: "0.7rem", background: "var(--mob-surface-2)", border: "1px solid var(--mob-dourado)", borderRadius: 12, padding: "0.7rem 0.8rem" }}>
+      <div style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--mob-dourado)", marginBottom: "0.5rem" }}>
+        Qual frasco você está usando?
+      </div>
+      {itens.map((m, idx) => {
+        const escolhido = escolhas[idx] ?? (m.opcoes?.length === 1 ? m.opcoes[0].estoque_id : "");
+        return (
+          <div key={idx} style={{ marginBottom: idx === itens.length - 1 ? 0 : "0.6rem" }}>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.25rem" }}>
+              {m.produto}{m.dose ? ` · ${m.dose}${m.unidade || ""}` : ""}
+            </div>
+            {!(m.opcoes?.length) ? (
+              <div style={{ fontSize: "0.78rem", color: "var(--mob-ambar)" }}>
+                Nenhum frasco deste princípio ativo em estoque — será baixado pelo nome cadastrado.
+              </div>
+            ) : (
+              <select className="mob-input" value={escolhido ?? ""}
+                      onChange={(ev) => onEscolher(idx, ev.target.value ? Number(ev.target.value) : null)}>
+                <option value="">Selecione o frasco…</option>
+                {m.opcoes.map((o) => (
+                  <option key={o.estoque_id} value={o.estoque_id}>
+                    {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}
+                    {o.estoque_inicializado === false ? " (sem estoque inicial)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Um medicamento/hormônio previsto para o dia, com os frascos de estoque do
+ *  mesmo princípio ativo entre os quais o funcionário escolhe. */
+type OpcaoMedicamento = {
+  produto: string; dose?: number | null; unidade?: string | null; via?: string | null;
+  principio_ativo_id?: number | null;
+  opcoes?: { estoque_id: number; nome: string; marca?: string | null; saldo: number; unidade?: string | null; estoque_inicializado?: boolean }[];
+};
+
 type Evento = {
   id: string;
   data: string;
@@ -57,6 +115,13 @@ type Evento = {
   via?: string | null;
   dia?: number | null;
   hormonio?: string | null;
+  medicamentos?: string | null;
+  // "Qual frasco você está usando?" — o backend já mandava estas opções (o
+  // site as usa desde sempre), mas o app confirmava sem perguntar e o estoque
+  // acabava baixando o item cadastrado no molde, não o que foi para o curral.
+  // `hormonios` vem no IATF; `medicamentos_opcoes`, na indução de lactação.
+  hormonios?: OpcaoMedicamento[] | null;
+  medicamentos_opcoes?: OpcaoMedicamento[] | null;
   protocolo?: string | null;
   grupo?: string | null;
   grupo_titulo?: string | null;
@@ -118,7 +183,7 @@ function catInfo(categoria: string): { chave: string; rotulo: string } {
 // Identificação em negrito + detalhe cinza de cada cartão, a partir do evento.
 function linhas(e: Evento): { principal: string; detalhe: string | null } {
   if (e.numero_animal) return { principal: `Nº ${e.numero_animal}`, detalhe: e.descricao || e.observacao || null };
-  if (e.tipo === "protocolo_iatf" && e.animais?.length) {
+  if ((e.tipo === "protocolo_iatf" || e.tipo === "protocolo_inducao") && e.animais?.length) {
     return { principal: e.descricao, detalhe: `${e.animais.length} ${e.animais.length !== 1 ? "animais" : "animal"}` };
   }
   if (e.lote) return { principal: `Lote ${e.lote}`, detalhe: e.descricao || e.observacao || null };
@@ -179,9 +244,35 @@ export default function AgendaMovel() {
   // Vacas já confirmadas individualmente dentro de um cartão (some da lista).
   const [iatfVacasFeitas, setIatfVacasFeitas] = useState<Record<string, Set<string>>>({});
 
+  // Protocolo customizado (Configurações > Protocolos): mesmo padrão do IATF
+  // acima (lote ou individual) quando o grupo do dia tem mais de 1 animal —
+  // paridade com o site, que ganhou a mesma seleção fina por animal.
+  const [protocoloCustomAberto, setProtocoloCustomAberto] = useState<Set<string>>(new Set());
+  const [protocoloCustomChecks, setProtocoloCustomChecks] = useState<Record<string, Set<string>>>({});
+  const [protocoloCustomModo, setProtocoloCustomModo] = useState<Record<string, "lote" | "individual">>({});
+  const [protocoloCustomFeitos, setProtocoloCustomFeitos] = useState<Record<string, Set<string>>>({});
+
   // Grupos de protocolo sanitário (aplicação em lote): mesma pergunta lote/individual.
   const [sanAberto, setSanAberto] = useState<Set<string>>(new Set());
   const [sanModo, setSanModo] = useState<Record<string, "lote" | "individual">>({});
+
+  // Cronograma sanitário — 3 cartões novos (o 4º, "animal", não precisa de
+  // estado próprio: é sempre um cartão simples com 2 botões).
+  // (2) "modo" / "urgente": expansível, com sub-tela "vet" (escolher/cadastrar
+  // veterinário) ou "adiar" (nova data + motivo).
+  const [cronModoAberto, setCronModoAberto] = useState<Set<string>>(new Set());
+  const [cronSubTela, setCronSubTela] = useState<Record<string, "vet" | "adiar" | undefined>>({});
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  const [pessoasCarregando, setPessoasCarregando] = useState(false);
+  const [novoVetNome, setNovoVetNome] = useState<Record<string, string>>({});
+  const [criandoVet, setCriandoVet] = useState<Set<string>>(new Set());
+  const [cronNovaData, setCronNovaData] = useState<Record<string, string>>({});
+  const [cronMotivoAdiar, setCronMotivoAdiar] = useState<Record<string, string>>({});
+  const [adiandoCron, setAdiandoCron] = useState<Set<string>>(new Set());
+  // (3) "aplicar": mesmo padrão lote/individual do IATF.
+  const [cronAplicarAberto, setCronAplicarAberto] = useState<Set<string>>(new Set());
+  const [cronAplicarModo, setCronAplicarModo] = useState<Record<string, "lote" | "individual">>({});
+  const [cronAplicarFeitos, setCronAplicarFeitos] = useState<Record<string, Set<string>>>({});
 
   // Alerta de nova dieta: cartão expansível que mostra a apresentação da dieta
   // (produtos, por cabeça, total/dia, total/trato e kg no vagão) para o funcionário.
@@ -380,6 +471,32 @@ export default function AgendaMovel() {
     setAviso({ tipo: "ok", msg: `Aplicação confirmada em ${g.itens.length} animal(is).` });
   }
 
+  // ── "Qual frasco?" ────────────────────────────────────────────────────────
+  // Escolha do funcionário por evento → índice do medicamento → estoque_id.
+  // Sem escolha, cai no frasco único (quando só há um) e, na falta de
+  // qualquer opção, no produto cadastrado no molde — que era o comportamento
+  // antigo do app e fazia o estoque baixar a marca errada quando o curral
+  // usava outro frasco do mesmo princípio ativo.
+  const [frascoEscolhido, setFrascoEscolhido] = useState<Record<string, Record<number, number | null>>>({});
+  const escolherFrasco = (eventoId: string, idx: number, estoqueId: number | null) =>
+    setFrascoEscolhido((p) => ({ ...p, [eventoId]: { ...(p[eventoId] || {}), [idx]: estoqueId } }));
+
+  const listaMedicamentos = (e: Evento): OpcaoMedicamento[] =>
+    (e.tipo === "protocolo_iatf" ? e.hormonios : e.medicamentos_opcoes) || [];
+
+  function medicamentosEscolhidos(e: Evento) {
+    const sel = frascoEscolhido[e.id] || {};
+    const medicamentos = listaMedicamentos(e).map((m, idx) => {
+      const estoqueId = sel[idx] ?? (m.opcoes?.length === 1 ? m.opcoes[0].estoque_id : null);
+      const op = (m.opcoes || []).find((o) => o.estoque_id === estoqueId);
+      return { produto: op?.nome || m.produto, estoque_id: estoqueId ?? undefined, dose: m.dose, unidade: m.unidade, via: m.via };
+    }).filter((m) => m.produto);
+    // Lista vazia = "não escolhi nada": o backend usa os medicamentos
+    // cadastrados no lançamento, como sempre fez. Mandar [] explicitamente
+    // seria dizer "nenhum medicamento aplicado", que é outra coisa.
+    return medicamentos.length ? medicamentos : undefined;
+  }
+
   const abrirIatf = (id: string, animais: string[]) => {
     setIatfAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
     setIatfChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
@@ -398,11 +515,138 @@ export default function AgendaMovel() {
     if (!individual) setFeitos((p) => new Set(p).add(e.id));
     try {
       const r = await enviarOuEnfileirar("/agenda/realizados",
-        { evento_id: e.id, animais: animaisSel },
-        `IATF ${e.descricao} — ${animaisSel.length} vaca(s)`, "POST");
+        { evento_id: e.id, animais: animaisSel, medicamentos: medicamentosEscolhidos(e) },
+        `${e.descricao} — ${animaisSel.length} vaca(s)`, "POST");
       if (individual) setIatfVacasFeitas((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
       else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} vaca(s).` });
+    } catch (err) {
+      if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
+  const abrirProtocoloCustom = (id: string, animais: string[]) => {
+    setProtocoloCustomAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setProtocoloCustomChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+  };
+  const toggleAnimalProtocoloCustom = (id: string, numero: string) => setProtocoloCustomChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+
+  async function confirmarProtocoloCustom(e: Evento, animaisSel: string[], individual = false) {
+    if (!animaisSel.length) return;
+    setAviso(null);
+    // Só marca o cartão inteiro como feito no modo lote; individual mantém o
+    // cartão para confirmar os demais animais (mesmo comportamento do IATF).
+    if (!individual) setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, animais: animaisSel },
+        `${e.descricao} — ${animaisSel.length} animal(is)`, "POST");
+      if (individual) setProtocoloCustomFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
+      // (protocolo customizado não tem frasco: o insumo dele é texto livre,
+      // informativo, e nunca gerou baixa de estoque — ver rules/protocolo_customizado.py)
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} animal(is).` });
+    } catch (err) {
+      if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
+  // ── Cronograma sanitário ──────────────────────────────────────────────
+  // (1) Trilha do animal: incluir/excluir a matriz sugerida no cronograma.
+  async function decidirCronAnimal(e: Evento, incluir: boolean) {
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id, incluir },
+        `${incluir ? "Incluir" : "Excluir"} ${e.numero_animal || ""} no cronograma`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+
+  // Lista de pessoas carregada sob demanda (1ª vez que um cartão "modo" abre
+  // a escolha de veterinário) — reaproveitada por todos os cartões da tela.
+  function carregarPessoas() {
+    if (pessoas.length || pessoasCarregando) return;
+    setPessoasCarregando(true);
+    fetchPessoas().then(setPessoas).catch(() => {}).finally(() => setPessoasCarregando(false));
+  }
+  const veterinarios = pessoas.filter((p: any) =>
+    p.ativo !== false && (p.tipos || []).some((t: string) => t.toLowerCase().includes("veterinár")));
+
+  // (2) Trilha do agendamento: decidir modo (veterinário / própria) ou adiar.
+  async function confirmarCronModo(e: Evento, modo: "veterinario" | "propria", veterinarioPessoaId?: number) {
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, modo, veterinario_pessoa_id: veterinarioPessoaId },
+        `Definir aplicação — ${e.descricao}`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: "Aplicação definida." });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+  async function cadastrarNovoVetEConfirmar(e: Evento) {
+    const nome = (novoVetNome[e.id] || "").trim();
+    if (!nome) return;
+    setCriandoVet((p) => new Set(p).add(e.id));
+    setAviso(null);
+    try {
+      const pessoa = await criarPessoa({ nome, tipos: ["Veterinário"] });
+      setPessoas((p) => [...p, pessoa]);
+      await confirmarCronModo(e, "veterinario", pessoa.id);
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível cadastrar o veterinário." });
+    } finally {
+      setCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+  async function confirmarAdiarCron(e: Evento) {
+    const novaData = cronNovaData[e.id];
+    if (!novaData) return;
+    setAdiandoCron((p) => new Set(p).add(e.id));
+    setAviso(null);
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, nova_data: novaData, motivo: (cronMotivoAdiar[e.id] || "").trim() || undefined },
+        `Adiar — ${e.descricao}`, "POST");
+      setFeitos((p) => new Set(p).add(e.id));
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: "Data adiada." });
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    } finally {
+      setAdiandoCron((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+
+  // (3) Aplicar: em lote (sem `animais` = todos os incluídos) ou individual
+  // (1 número por vez — o backend só conclui o cronograma quando o último
+  // incluído for confirmado).
+  async function confirmarCronAplicar(e: Evento, animaisSel?: string[], individual = false) {
+    setAviso(null);
+    if (!individual) setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const corpo: Record<string, unknown> = { evento_id: e.id };
+      if (animaisSel && animaisSel.length) corpo.animais = animaisSel;
+      const r = await enviarOuEnfileirar("/agenda/realizados", corpo,
+        `Aplicar ${e.descricao}${animaisSel ? ` — ${animaisSel.join(", ")}` : ""}`, "POST");
+      if (individual && animaisSel) {
+        setCronAplicarFeitos((p) => { const n = new Set(p[e.id] || []); animaisSel.forEach((a) => n.add(a)); return { ...p, [e.id]: n }; });
+      }
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: individual ? "Confirmado." : "Aplicação confirmada." });
     } catch (err) {
       if (!individual) setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
@@ -715,6 +959,97 @@ export default function AgendaMovel() {
                   </div>
                 )}
 
+                <SeletorFrasco itens={listaMedicamentos(e)} escolhas={frascoEscolhido[e.id] || {}}
+                               onEscolher={(idx, id) => escolherFrasco(e.id, idx, id)} />
+
+                {/* Antes de tudo: aplicação em lote ou individual? */}
+                {!modo ? (
+                  <>
+                    <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como deseja confirmar a aplicação?</p>
+                    <div style={{ display: "flex", gap: "0.6rem" }}>
+                      <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setIatfModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todas)</button>
+                      <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setIatfModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
+                    </div>
+                  </>
+                ) : modo === "lote" ? (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Marque as vacas que receberam:</p>
+                    {e.animais!.map((numero) => (
+                      <label key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.2rem", borderBottom: "1px solid var(--mob-border)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={sel.has(numero)} onChange={() => toggleVaca(e.id, numero)} style={{ width: 20, height: 20 }} />
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{numero}</span>
+                      </label>
+                    ))}
+                    <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }}
+                      disabled={feito || !sel.size} onClick={() => confirmarIatf(e, Array.from(sel))}>
+                      Confirmar aplicação ({sel.size}/{e.animais!.length})
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>
+                      Confirme vaca por vaca — aplicado?
+                    </p>
+                    {e.animais!.map((numero) => {
+                      const jaFeita = feitasVaca.has(numero);
+                      return (
+                        <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                          <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeita ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeita ? "line-through" : "none" }}>{numero}</span>
+                          {jaFeita ? (
+                            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Aplicado</span>
+                          ) : (
+                            <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }}
+                              onClick={() => confirmarIatf(e, [numero], true)}>Sim</button>
+                          )}
+                        </div>
+                      );
+                    })}
+    {!pendentes.length && (
+                      <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todas as vacas confirmadas.</p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+        </MobCard>
+      );
+    }
+
+    // Protocolo de indução de lactação: mesmo cartão expansível do IATF
+    // acima (lote ou individual), reaproveitando o mesmo estado — os ids são
+    // sempre prefixados de forma distinta ("protocolo_iatf_"/"protocolo_inducao_"),
+    // então não há colisão. O seletor de frasco em estoque (ver site) fica só
+    // no site por enquanto, igual ao IATF hoje — o app aplica pelo medicamento
+    // cadastrado no lançamento.
+    if (e.tipo === "protocolo_inducao" && e.animais?.length) {
+      const aberto = iatfAberto.has(e.id);
+      const sel = iatfChecks[e.id] || new Set(e.animais);
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+                {e.animais!.length} {e.animais!.length !== 1 ? "animais" : "animal"}{e.medicamentos ? ` · ${e.medicamentos}` : ""}
+              </div>
+              {e.observacao && <div style={{ fontSize: "0.78rem", color: "var(--mob-acao)", marginTop: "0.15rem", fontWeight: 700 }}>{e.observacao}</div>}
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+
+          {aberto && (() => {
+            const modo = iatfModo[e.id];
+            const feitasVaca = iatfVacasFeitas[e.id] || new Set<string>();
+            const pendentes = e.animais!.filter((n) => !feitasVaca.has(n));
+            return (
+              <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+                <SeletorFrasco itens={listaMedicamentos(e)} escolhas={frascoEscolhido[e.id] || {}}
+                               onEscolher={(idx, id) => escolherFrasco(e.id, idx, id)} />
+
                 {/* Antes de tudo: aplicação em lote ou individual? */}
                 {!modo ? (
                   <>
@@ -769,28 +1104,287 @@ export default function AgendaMovel() {
       );
     }
 
-    // Compromisso "Aplicação de BST hoje" — cartão expansível com as 3 listas
-    // já embutidas no evento (sem outra chamada à API): aptas, incluir no
-    // próximo BST e vacas em lactação inaptas (não elegíveis).
+    // Protocolo customizado (Configurações > Protocolos): mesmo padrão do
+    // IATF acima (lote ou individual), sem hormônio/medicamento — só quando
+    // o grupo do dia tem mais de 1 animal; com 1 só, numero_animal já vem
+    // preenchido pelo backend e cai no card simples de sempre.
+    if (e.tipo === "protocolo_customizado" && (e.animais?.length ?? 0) > 1) {
+      const aberto = protocoloCustomAberto.has(e.id);
+      const sel = protocoloCustomChecks[e.id] || new Set(e.animais);
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirProtocoloCustom(e.id, e.animais!)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+                {e.animais!.length} {e.animais!.length !== 1 ? "animais" : "animal"}
+              </div>
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+
+          {aberto && (() => {
+            const modo = protocoloCustomModo[e.id];
+            const feitosAnimal = protocoloCustomFeitos[e.id] || new Set<string>();
+            const pendentes = e.animais!.filter((n) => !feitosAnimal.has(n));
+            return (
+              <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+                {!modo ? (
+                  <>
+                    <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como deseja confirmar?</p>
+                    <div style={{ display: "flex", gap: "0.6rem" }}>
+                      <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setProtocoloCustomModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todos)</button>
+                      <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setProtocoloCustomModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
+                    </div>
+                  </>
+                ) : modo === "lote" ? (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Marque os animais que receberam:</p>
+                    {e.animais!.map((numero) => (
+                      <label key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.2rem", borderBottom: "1px solid var(--mob-border)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={sel.has(numero)} onChange={() => toggleAnimalProtocoloCustom(e.id, numero)} style={{ width: 20, height: 20 }} />
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{numero}</span>
+                      </label>
+                    ))}
+                    <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }}
+                      disabled={feito || !sel.size} onClick={() => confirmarProtocoloCustom(e, Array.from(sel))}>
+                      Confirmar ({sel.size}/{e.animais!.length})
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>
+                      Confirme animal por animal:
+                    </p>
+                    {e.animais!.map((numero) => {
+                      const jaFeito = feitosAnimal.has(numero);
+                      return (
+                        <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                          <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeito ? "line-through" : "none" }}>{numero}</span>
+                          {jaFeito ? (
+                            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Confirmado</span>
+                          ) : (
+                            <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }}
+                              onClick={() => confirmarProtocoloCustom(e, [numero], true)}>Sim</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {!pendentes.length && (
+                      <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todos os animais confirmados.</p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+        </MobCard>
+      );
+    }
+
+    // Cronograma sanitário (1): matriz entrou na janela do gatilho — só
+    // incluir/excluir no cronograma da regra, sem opções de aplicação aqui.
+    if (e.tipo === "cronograma_sanitario_animal") {
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", marginBottom: feito ? 0 : "0.7rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito && <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span>}
+          </div>
+          {!feito && (
+            <div style={{ display: "flex", gap: "0.6rem" }}>
+              <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => decidirCronAnimal(e, true)}>Incluir</button>
+              <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => decidirCronAnimal(e, false)}>Excluir</button>
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    // Cronograma sanitário (2): decidir COMO vai ser aplicado — veterinário
+    // agendado (escolhido de Pessoas, ou cadastrado na hora), equipe própria,
+    // ou (só quando urgente, faltando poucos dias) adiar a data prevista.
+    if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
+      const urgente = e.tipo === "cronograma_sanitario_urgente";
+      const aberto = cronModoAberto.has(e.id);
+      const sub = cronSubTela[e.id];
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem", ...(urgente && !feito ? { border: "1px solid var(--mob-vermelho)" } : {}) }}>
+          <button type="button" onClick={() => { setCronModoAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; }); carregarPessoas(); }}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : urgente ? "var(--mob-vermelho)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: urgente && !feito ? "var(--mob-vermelho)" : "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+            )}
+          </button>
+
+          {aberto && !feito && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {!sub ? (
+                <>
+                  <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como vai ser aplicado?</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    <button type="button" className="mob-btn" onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: "vet" }))}>Veterinário</button>
+                    <button type="button" className="mob-btn mob-btn-sec" onClick={() => confirmarCronModo(e, "propria")}>Aplicação própria</button>
+                    {urgente && (
+                      <button type="button" className="mob-btn mob-btn-sec" style={{ color: "var(--mob-vermelho)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: "adiar" }))}>
+                        Adiar
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : sub === "vet" ? (
+                <>
+                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Selecione o veterinário:</p>
+                  {pessoasCarregando && !pessoas.length ? (
+                    <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>Carregando…</p>
+                  ) : (
+                    <>
+                      {!veterinarios.length && (
+                        <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Nenhum veterinário cadastrado ainda.</p>
+                      )}
+                      {veterinarios.map((v: any) => (
+                        <button key={v.id} type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.4rem" }} onClick={() => confirmarCronModo(e, "veterinario", v.id)}>
+                          {v.nome}
+                        </button>
+                      ))}
+                      <div style={{ marginTop: "0.6rem" }}>
+                        <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>+ cadastrar novo veterinário</label>
+                        <input className="mob-input" placeholder="Nome do veterinário" value={novoVetNome[e.id] || ""} onChange={(ev) => setNovoVetNome((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                        <button type="button" className="mob-btn" style={{ marginTop: "0.4rem" }}
+                          disabled={!(novoVetNome[e.id] || "").trim() || criandoVet.has(e.id)} onClick={() => cadastrarNovoVetEConfirmar(e)}>
+                          {criandoVet.has(e.id) ? "Cadastrando…" : "Cadastrar e confirmar"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.6rem", color: "var(--mob-muted)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: undefined }))}>
+                    Voltar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Nova data</label>
+                  <input type="date" className="mob-input" style={{ marginBottom: "0.5rem" }} value={cronNovaData[e.id] || ""} onChange={(ev) => setCronNovaData((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Motivo (opcional)</label>
+                  <input className="mob-input" style={{ marginBottom: "0.6rem" }} value={cronMotivoAdiar[e.id] || ""} onChange={(ev) => setCronMotivoAdiar((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                  <button type="button" className="mob-btn" disabled={!cronNovaData[e.id] || adiandoCron.has(e.id)} onClick={() => confirmarAdiarCron(e)}>
+                    {adiandoCron.has(e.id) ? "Salvando…" : "Confirmar nova data"}
+                  </button>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.5rem", color: "var(--mob-muted)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: undefined }))}>
+                    Voltar
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    // Cronograma sanitário (3): dia do evento chegou, modo já definido —
+    // aplicar em lote (todos os incluídos de uma vez) ou individualizado
+    // (mesmo padrão do protocolo IATF acima).
+    if (e.tipo === "cronograma_sanitario_aplicar") {
+      const aberto = cronAplicarAberto.has(e.id);
+      const modo = cronAplicarModo[e.id];
+      const animais = e.animais || [];
+      const feitosAnimal = cronAplicarFeitos[e.id] || new Set<string>();
+      const pendentes = animais.filter((n) => !feitosAnimal.has(n));
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => setCronAplicarAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; })}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                {e.descricao}
+              </div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+            )}
+          </button>
+
+          {aberto && !feito && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {!modo ? (
+                <>
+                  <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Aplicar em lote ou individual?</p>
+                  <div style={{ display: "flex", gap: "0.6rem" }}>
+                    <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setCronAplicarModo((p) => ({ ...p, [e.id]: "lote" }))}>Em lote (todos)</button>
+                    <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setCronAplicarModo((p) => ({ ...p, [e.id]: "individual" }))}>Individual</button>
+                  </div>
+                </>
+              ) : modo === "lote" ? (
+                <>
+                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Animais incluídos:</p>
+                  {animais.map((n) => (
+                    <div key={n} style={{ padding: "0.45rem 0.2rem", borderBottom: "1px solid var(--mob-border)", fontWeight: 800, fontSize: "1.02rem" }}>{n}</div>
+                  ))}
+                  <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }} onClick={() => confirmarCronAplicar(e)}>
+                    Confirmar aplicação em todos
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Confirme animal por animal — aplicado?</p>
+                  {animais.map((numero) => {
+                    const jaFeito = feitosAnimal.has(numero);
+                    return (
+                      <div key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeito ? "line-through" : "none" }}>{numero}</span>
+                        {jaFeito ? (
+                          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Aplicado</span>
+                        ) : (
+                          <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }} onClick={() => confirmarCronAplicar(e, [numero], true)}>Sim</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {!pendentes.length && (
+                    <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todos os animais confirmados.</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    // Compromisso "Aplicação de BST hoje" — cartão expansível que, ao abrir,
+    // traz o mesmo painel de seleção/aplicação usado em Lançar > Produção >
+    // BST (checkbox por animal nas 3 listas + Aplicar/Marcar como inapta),
+    // em vez de só listar os números pra consulta — pode aplicar em uns e
+    // deixar de aplicar em outros na própria Agenda.
     if (e.tipo === "bst_aplicacao") {
       const aberto = bstAberto.has(e.id);
-      const aptas = e.aptas || [];
-      const incluir = e.incluir_proximo || [];
-      const inaptas = e.inaptas || [];
-      const ListaNumeros = ({ titulo, numeros, cor }: { titulo: string; numeros: string[]; cor: string }) => (
-        <div style={{ marginBottom: "0.6rem" }}>
-          <div style={{ fontSize: "0.78rem", fontWeight: 800, color: cor, marginBottom: "0.3rem" }}>{titulo} ({numeros.length})</div>
-          {numeros.length ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
-              {numeros.map((n) => (
-                <span key={n} style={{ fontSize: "0.78rem", fontWeight: 700, padding: "0.15rem 0.5rem", borderRadius: 999, background: "var(--mob-surface)", border: "1px solid var(--mob-border)" }}>{n}</span>
-              ))}
-            </div>
-          ) : (
-            <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)" }}>Nenhum animal.</p>
-          )}
-        </div>
-      );
       return (
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => toggleBst(e.id)}
@@ -799,15 +1393,13 @@ export default function AgendaMovel() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>{e.descricao}</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para ver as listas</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para selecionar e aplicar</div>
             </div>
             <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
           </button>
           {aberto && (
-            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
-              <ListaNumeros titulo="BST aptas" numeros={aptas} cor="var(--mob-verde)" />
-              <ListaNumeros titulo="Incluir no próximo BST" numeros={incluir} cor="var(--mob-azul)" />
-              <ListaNumeros titulo="Vacas em lactação inaptas" numeros={inaptas} cor="var(--mob-ambar)" />
+            <div className="mob-form-embutido" style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              <PainelLancarBst agenda={agenda} onAtualizado={carregar} />
             </div>
           )}
         </MobCard>

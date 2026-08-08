@@ -1,6 +1,39 @@
 // Funções de comunicação com o backend FastAPI
 export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/**
+ * Extrai uma mensagem legível do `detail` de um erro da API.
+ *
+ * O FastAPI devolve `detail` como STRING quando é um `HTTPException` de
+ * negócio (ex.: "Selecione ao menos um animal"), mas como uma LISTA DE
+ * OBJETOS `[{loc, msg, type}, ...]` quando é um erro de validação do
+ * Pydantic (422) — e todo `throw new Error(mensagemErroApi(d.detail) || "…")` do projeto
+ * (280+ ocorrências) assumia string. `Error()` converte o valor recebido com
+ * `String()`; `String([{...}])` vira exatamente o texto "[object Object]"
+ * que aparecia na tela sem explicar nada ao usuário.
+ *
+ * Retorna `null` quando não há nada aproveitável, para o chamador continuar
+ * caindo no `|| "mensagem padrão"` de sempre — só troca `d.detail` por
+ * `mensagemErroApi(d.detail)` no lugar de sempre.
+ */
+export function mensagemErroApi(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const partes = detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "msg" in item) return String((item as any).msg);
+        return null;
+      })
+      .filter((s): s is string => !!s);
+    if (partes.length) return partes.join("; ");
+  }
+  if (detail && typeof detail === "object" && "msg" in (detail as any)) {
+    return String((detail as any).msg);
+  }
+  return null;
+}
+
 // ── Autenticação ──
 export function getToken(): string | null {
   return typeof window === "undefined" ? null : localStorage.getItem("token");
@@ -23,7 +56,7 @@ export function manterConectadoAtivo(): boolean {
 // Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
 // — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
 // que nunca teve mais de uma fazenda vinculada (o caso de hoje).
-export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean };
+export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean; vinculo_consultor?: boolean };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
@@ -48,7 +81,7 @@ export function logout() {
 }
 // Mapa rota → módulo (para menu e bloqueio de páginas).
 export const ROTA_MODULO: Record<string, string> = {
-  "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos",
+  "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos", "/protocolos": "lancamentos",
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
   "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
@@ -76,6 +109,13 @@ export function ehDono(): boolean {
 // navegação normal da fazenda. Ver components/AuthShell.tsx.
 export function ehContador(): boolean {
   return getFazendaAtual()?.vinculo_contador === true;
+}
+// Vínculo externo (veterinário/agrônomo convidado) — mesmo acesso de um
+// funcionário comum dentro da fazenda, mas deve ficar de fora de
+// funcionalidades sensíveis específicas (ex.: link para o banco de dados
+// externo em Relatórios financeiros), mesmo com o módulo financeiro liberado.
+export function ehConsultor(): boolean {
+  return getFazendaAtual()?.vinculo_consultor === true;
 }
 // Administração de News/Blog (matérias: criar, editar, revisar, aprovar) —
 // o dono sempre pode; além dele, só quem o dono designar via o toggle
@@ -122,7 +162,7 @@ export async function criarUsuario(dados: {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar usuário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar usuário"); }
   return res.json();
 }
 export async function atualizarUsuario(id: number, dados: any) {
@@ -130,7 +170,7 @@ export async function atualizarUsuario(id: number, dados: any) {
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar"); }
   return res.json();
 }
 
@@ -141,7 +181,7 @@ export async function login(username: string, senha: string, manterConectado = f
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Usuário ou senha inválidos");
+    throw new Error(mensagemErroApi(d.detail) || "Usuário ou senha inválidos");
   }
   const data = await res.json();
   localStorage.setItem("token", data.token);
@@ -177,7 +217,7 @@ export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify({ fazenda_id: fazendaId }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao selecionar fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao selecionar fazenda"); }
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
@@ -233,7 +273,7 @@ export async function fetchFazendas(): Promise<Fazenda[]> {
 }
 export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: string }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar fazenda"); }
   return res.json();
 }
 export async function atualizarFazenda(fazendaId: number, dados: {
@@ -242,7 +282,7 @@ export async function atualizarFazenda(fazendaId: number, dados: {
   representante_nome?: string; representante_cpf?: string; exige_aprovacao_suporte?: boolean;
 }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar fazenda"); }
   return res.json();
 }
 export async function fetchContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
@@ -255,17 +295,17 @@ export async function definirContratoFazenda(
   dados: { plano: PlanoNome | null; modulos: { modulo: ModuloComercial; preco: number }[]; ciclo_pagamento?: CicloPagamento },
 ): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao definir contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir contrato"); }
   return res.json();
 }
 export async function aprovarContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar contrato"); }
   return res.json();
 }
 export async function suspenderContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/suspender`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao suspender contrato"); }
   return res.json();
 }
 export async function fetchPlanosCatalogo(): Promise<Record<PlanoNome, PlanoCatalogo>> {
@@ -292,7 +332,7 @@ export async function atualizarPrecoModulo(modulo: ModuloComercial, preco: numbe
   const res = await authFetch(`${API}/fazendas/catalogo/precos-modulo/${modulo}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modulo, preco }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar preço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar preço"); }
   return res.json();
 }
 export async function fetchAnexosContrato(fazendaId: number): Promise<AnexoContrato[]> {
@@ -304,12 +344,12 @@ export async function anexarContrato(fazendaId: number, file: File): Promise<Ane
   const fd = new FormData();
   fd.append("file", file);
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/anexos`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar contrato"); }
   return res.json();
 }
 export async function excluirAnexoContrato(anexoId: number): Promise<void> {
   const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
 }
 // Antes era um <a href> direto pro endpoint — mas ele exige Bearer token
 // (backend/fazenda/api/routers/fazendas.py), então abrir a URL crua sem
@@ -317,7 +357,7 @@ export async function excluirAnexoContrato(anexoId: number): Promise<void> {
 // (definida mais abaixo neste arquivo).
 export async function baixarAnexoContrato(anexoId: number, nomeArquivoFallback: string): Promise<void> {
   const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao baixar anexo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar anexo"); }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -371,7 +411,7 @@ async function _pcSend(path: string, method: string, body?: any) {
   const res = await authFetch(`${API}/painel-cowdata${path}`, {
     method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro (${res.status})`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro (${res.status})`); }
   return res.json();
 }
 
@@ -452,7 +492,7 @@ export async function baixarModeloContrato(fazendaId: number, dados?: {
 }): Promise<void> {
   const params = new URLSearchParams(Object.entries(dados || {}).filter(([, v]) => v) as [string, string][]);
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/modelo${params.toString() ? `?${params}` : ""}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar o contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar o contrato"); }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -463,7 +503,7 @@ export async function baixarModeloContrato(fazendaId: number, dados?: {
 }
 export async function assinarContratoZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/assinar-zapsign`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar assinatura no ZapSign"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar assinatura no ZapSign"); }
   return res.json();
 }
 export async function fetchStatusAssinaturaZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
@@ -480,7 +520,7 @@ export type CobrancaAsaas = {
 };
 async function _postAsaas(path: string, dados: CobrancaAsaasIn): Promise<any> {
   const res = await authFetch(`${API}/asaas/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cobrança no Asaas"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cobrança no Asaas"); }
   return res.json();
 }
 export const criarAssinaturaAsaas = (fazendaId: number, dados: CobrancaAsaasIn) => _postAsaas(`${fazendaId}/assinatura`, dados);
@@ -510,12 +550,12 @@ export async function vincularUsuarioFazenda(
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular usuário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular usuário"); }
   return res.json();
 }
 export async function desvincularUsuarioFazenda(fazendaId: number, usuarioId: number): Promise<void> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario/${usuarioId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desvincular usuário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desvincular usuário"); }
 }
 
 // ── Consultor independente (Fase 2C) — assinatura própria (fora de qualquer
@@ -552,7 +592,7 @@ export async function solicitarPlanoConsultor(plano: PlanoConsultorNome): Promis
   const res = await authFetch(`${API}/consultor/solicitar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plano }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao solicitar plano"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao solicitar plano"); }
   return res.json();
 }
 export async function fetchMeuContratoConsultor(): Promise<ContratoConsultor> {
@@ -567,12 +607,12 @@ export async function fetchContratosConsultor(): Promise<ContratoConsultorAdmin[
 }
 export async function aprovarContratoConsultor(usuarioId: number): Promise<ContratoConsultor> {
   const res = await authFetch(`${API}/consultor/${usuarioId}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar contrato"); }
   return res.json();
 }
 export async function suspenderContratoConsultor(usuarioId: number): Promise<ContratoConsultor> {
   const res = await authFetch(`${API}/consultor/${usuarioId}/suspender`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao suspender contrato"); }
   return res.json();
 }
 
@@ -587,12 +627,12 @@ export async function criarFazendaGerenciada(dados: {
   const res = await authFetch(`${API}/consultor/fazendas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar fazenda gerenciada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar fazenda gerenciada"); }
   return res.json();
 }
 export async function excluirFazendaGerenciada(fazendaGerenciadaId: number): Promise<void> {
   const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir fazenda gerenciada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir fazenda gerenciada"); }
 }
 export async function importarPlanilhaGerenciada(
   fazendaGerenciadaId: number, categoria: CategoriaImportacao, file: File,
@@ -601,7 +641,7 @@ export async function importarPlanilhaGerenciada(
   fd.append("file", file);
   fd.append("categoria", categoria);
   const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/importar`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 export async function fetchIndicadoresGerenciados(
@@ -614,7 +654,7 @@ export async function fetchIndicadoresGerenciados(
 }
 export async function excluirRegistroImportado(fazendaGerenciadaId: number, registroId: number): Promise<void> {
   const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/importacoes/${registroId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir registro importado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir registro importado"); }
 }
 
 export type SimulacaoIn = {
@@ -630,7 +670,7 @@ export async function calcularSimulacaoConsultor(dados: SimulacaoIn): Promise<Si
   const res = await authFetch(`${API}/consultor/simulacao/calcular`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular simulação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular simulação"); }
   return res.json();
 }
 
@@ -655,7 +695,7 @@ export async function enviarResetSenha(username: string): Promise<void> {
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Não foi possível enviar o e-mail de redefinição.");
+    throw new Error(mensagemErroApi(d.detail) || "Não foi possível enviar o e-mail de redefinição.");
   }
 }
 
@@ -666,7 +706,7 @@ export async function redefinirSenha(token: string, novaSenha: string): Promise<
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Não foi possível redefinir a senha.");
+    throw new Error(mensagemErroApi(d.detail) || "Não foi possível redefinir a senha.");
   }
 }
 
@@ -690,7 +730,7 @@ async function salvarPreferencias(dados: { paleta?: "vinho" | "verde" | "azul"; 
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar preferência"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar preferência"); }
   const usuario = await res.json();
   try {
     const atual = getUsuario();
@@ -747,12 +787,28 @@ export async function fetchAgenda(data?: string, dias?: number) {
 }
 
 export type MedicamentoIatf = { produto: string; estoque_id?: number | null; dose?: number | null; unidade?: string | null; via?: string | null };
-export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[]) {
+// Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) + overrides
+// de aplicação agendada — cada campo só é lido pelo prefixo de evento_id
+// correspondente no backend (agenda.py::RealizadoIn), ignorado nos demais.
+export type RealizadoExtras = {
+  incluir?: boolean;                    // cronograma_sanitario_animal_ — incluir/excluir o animal
+  modo?: "veterinario" | "propria";     // cronograma_sanitario_modo_/_urgente_ — decisão de execução
+  veterinario_pessoa_id?: number;       // idem, quando modo="veterinario"
+  nova_data?: string;                   // idem — presente = adiar em vez de decidir
+  motivo?: string;                      // idem — motivo do adiamento (opcional)
+  responsavel?: string;                 // cronograma_sanitario_aplicar_ / aplic_agendada_
+  observacao?: string;                  // idem
+  produto?: string; dose?: number; unidade?: string; via?: string; // overrides de aplicação agendada
+};
+export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[], extras?: RealizadoExtras) {
   const res = await authFetch(`${API}/agenda/realizados`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ evento_id: eventoId, animais: animais || undefined, medicamentos: medicamentos && medicamentos.length ? medicamentos : undefined }),
+    body: JSON.stringify({
+      evento_id: eventoId, animais: animais || undefined, medicamentos: medicamentos && medicamentos.length ? medicamentos : undefined,
+      ...(extras || {}),
+    }),
   });
-  if (!res.ok) throw new Error("Erro ao marcar como realizado");
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar como realizado"); }
   return res.json();
 }
 
@@ -768,7 +824,7 @@ export async function aplicarBstLote(dados: {
   const res = await authFetch(`${API}/agenda/bst/aplicar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de BST"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar aplicação de BST"); }
   return res.json();
 }
 
@@ -776,7 +832,7 @@ export async function marcarInaptaBst(dados: { numeros_matriz: string[]; inapta?
   const res = await authFetch(`${API}/agenda/bst/marcar-inapta`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar animal como inapto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar animal como inapto"); }
   return res.json();
 }
 
@@ -804,12 +860,63 @@ export async function lancarInducaoLactacao(dados: {
   const res = await authFetch(`${API}/producao/inducao-lactacao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar indução de lactação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar indução de lactação"); }
   return res.json();
 }
 export async function fetchInducaoLactacaoAtivos() {
   const res = await authFetch(`${API}/producao/inducao-lactacao/ativos`, { cache: "no-store" });
   if (!res.ok) throw new Error("Erro ao buscar induções de lactação em andamento");
+  return res.json();
+}
+
+// ── Cadastro do protocolo de indução de lactação (Configurações > Cadastro >
+// Sanitário > Indução de lactação) — CRUD completo; a leitura acima
+// (fetchProtocolosInducaoLactacao, /producao/...) é só o seletor enxuto usado
+// na hora de lançar. ──
+export type EtapaInducaoLactacao = {
+  id?: number;
+  dia: number;
+  tipo: "medicamento" | "dispositivo" | "manejo";
+  principio_ativo_id?: number | null;
+  produto: string;
+  acao_dispositivo?: "colocar" | "retirar" | null;
+  dose?: number | null;
+  unidade?: string | null;
+  via?: string | null;
+};
+export type ProtocoloInducaoLactacaoPayload = {
+  nome: string;
+  dia_inicial: number;
+  observacao?: string;
+  ativo: boolean;
+  etapas: EtapaInducaoLactacao[];
+};
+export type ProtocoloInducaoLactacaoCadastro = ProtocoloInducaoLactacaoPayload & { id: number; criado_em: string };
+
+export async function fetchProtocolosInducaoLactacaoCadastro(): Promise<ProtocoloInducaoLactacaoCadastro[]> {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar protocolos de indução de lactação");
+  return res.json();
+}
+export async function criarProtocoloInducaoLactacao(dados: ProtocoloInducaoLactacaoPayload) {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar protocolo de indução de lactação"); }
+  return res.json();
+}
+export async function atualizarProtocoloInducaoLactacao(id: number, dados: ProtocoloInducaoLactacaoPayload) {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo de indução de lactação"); }
+  return res.json();
+}
+// G8 — espelha excluir_protocolo_sanitario/excluir_protocolo_iatf_cadastrado:
+// 409 se o protocolo já foi lançado ao menos uma vez (usar `ativo: false` em vez disso).
+export async function excluirProtocoloInducaoLactacao(id: number) {
+  const res = await authFetch(`${API}/cadastro/protocolos-inducao-lactacao/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo de indução de lactação"); }
   return res.json();
 }
 
@@ -825,7 +932,7 @@ export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; 
 
 export async function fetchFichaAnimal(numero: string) {
   const res = await authFetch(`${API}/animais/${encodeURIComponent(numero)}/ficha`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Ficha do animal error: ${res.status}`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Ficha do animal error: ${res.status}`); }
   return res.json();
 }
 
@@ -833,6 +940,35 @@ export async function fetchIndicadores(data?: string) {
   const url = data ? `${API}/indicadores/?data=${data}` : `${API}/indicadores/`;
   const res = await authFetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Indicadores error: ${res.status}`);
+  return res.json();
+}
+
+export type NaoConformidadeItem = {
+  chave: string;
+  dominio: "reproducao" | "recria" | "financeiro" | "manejo";
+  label: string;
+  sublabel: string;
+  valor: number;
+  meta: number | null;
+  unidade: string;
+  maior_melhor: boolean;
+  status: "ok" | "atencao" | "critico";
+  rota: string;
+  rota_label: string;
+};
+export type NaoConformidadeSemMeta = {
+  chave: string; dominio: string; label: string; sublabel: string; valor: number; unidade: string;
+  rota: string; rota_label: string;
+};
+export type NaoConformidadesResp = {
+  itens: NaoConformidadeItem[];
+  sem_meta: NaoConformidadeSemMeta[];
+  resumo: { critico: number; atencao: number; ok: number; total: number };
+  atualizado_em: string;
+};
+export async function fetchNaoConformidades(): Promise<NaoConformidadesResp> {
+  const res = await authFetch(`${API}/nao-conformidades/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Não conformidades error: ${res.status}`);
   return res.json();
 }
 
@@ -850,7 +986,7 @@ export async function atualizarServico(id: number, dados: ServicoEditPayload) {
   const res = await authFetch(`${API}/reproducao/servicos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar serviço"); }
   return res.json();
 }
 export async function atualizarParto(id: number, dados: {
@@ -862,7 +998,7 @@ export async function atualizarParto(id: number, dados: {
   const res = await authFetch(`${API}/reproducao/partos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar parto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar parto"); }
   return res.json();
 }
 
@@ -878,14 +1014,14 @@ export async function verificarMaeParto(maeNumero: string, animalNumero?: string
   const params = new URLSearchParams({ mae_numero: maeNumero });
   if (animalNumero) params.set("animal_numero", animalNumero);
   const res = await authFetch(`${API}/reproducao/verificar-mae?${params.toString()}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao verificar mãe"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao verificar mãe"); }
   return res.json();
 }
 export async function atualizarSecagem(id: number, dados: { data_secagem?: string; motivo?: string; escore_condicao_corporal?: number | null; observacao?: string }) {
   const res = await authFetch(`${API}/reproducao/secagens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar secagem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar secagem"); }
   return res.json();
 }
 
@@ -934,7 +1070,7 @@ export async function gerarRelatorioPersonalizado(dados: { parametros: string[];
   const res = await authFetch(`${API}/indicadores/relatorio-personalizado`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar relatório personalizado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar relatório personalizado"); }
   return res.json() as Promise<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[]; resumo: ResumoRelatorioPersonalizado }>;
 }
 
@@ -993,7 +1129,7 @@ export async function fetchSugestaoAcasalamento(numeroMatriz: string): Promise<S
   const res = await authFetch(`${API}/reproducao/acasalamento/sugestao?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || `Sugestão de acasalamento error: ${res.status}`);
+    throw new Error(mensagemErroApi(d.detail) || `Sugestão de acasalamento error: ${res.status}`);
   }
   return res.json() as Promise<SugestaoAcasalamento>;
 }
@@ -1005,7 +1141,7 @@ export async function criarServicoLote(dados: {
   const res = await authFetch(`${API}/reproducao/servico-lote`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar inseminação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar inseminação"); }
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
 }
 type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; valor_unitario?: number | null; local_armazenamento?: string | null; observacao?: string | null; ativo?: boolean };
@@ -1013,19 +1149,19 @@ export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar sêmen"); }
   return res.json();
 }
 export async function atualizarEstoqueSemen(id: number, dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar sêmen"); }
   return res.json();
 }
 export async function excluirEstoqueSemen(id: number) {
   const res = await authFetch(`${API}/cadastro/estoque-semen/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir sêmen"); }
   return res.json();
 }
 
@@ -1035,7 +1171,7 @@ export async function salvarDiagnostico(dados: {
   const res = await authFetch(`${API}/reproducao/diagnostico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar diagnóstico"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar diagnóstico"); }
   return res.json();
 }
 
@@ -1083,7 +1219,7 @@ export async function registrarReconfirmacao(dados: {
   const res = await authFetch(`${API}/reproducao/reconfirmacao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar reconfirmação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar reconfirmação"); }
   return res.json();
 }
 
@@ -1097,7 +1233,7 @@ export async function enviarDiagnosticoEmail(numeroMatriz: string, destinatario:
   const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/diagnostico/enviar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destinatario }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar diagnóstico por e-mail"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao enviar diagnóstico por e-mail"); }
   return res.json();
 }
 
@@ -1119,7 +1255,7 @@ export async function registrarPerdaPrenhez(dados: {
   const res = await authFetch(`${API}/reproducao/perda-prenhez`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar perda de prenhez"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar perda de prenhez"); }
   return res.json();
 }
 
@@ -1129,7 +1265,7 @@ export async function abrirLactacao(numeroMatriz: string) {
   const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/abrir-lactacao`, {
     method: "POST",
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao abrir lactação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir lactação"); }
   return res.json();
 }
 
@@ -1142,14 +1278,14 @@ export async function criarFornecedor(dados: { nome: string; tipo: string; categ
   const res = await authFetch(`${API}/cadastro/fornecedores`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fornecedor"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar fornecedor"); }
   return res.json();
 }
 export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/fornecedores/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fornecedor"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar fornecedor"); }
   return res.json();
 }
 
@@ -1169,14 +1305,14 @@ export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pessoa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar pessoa"); }
   return res.json();
 }
 export async function atualizarPessoa(id: number, dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pessoa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar pessoa"); }
   return res.json();
 }
 export async function fetchInseminadores(): Promise<string[]> {
@@ -1195,7 +1331,7 @@ export async function criarTipoPessoa(nome: string) {
   const res = await authFetch(`${API}/cadastro/pessoas/tipos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de pessoa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar tipo de pessoa"); }
   return res.json();
 }
 
@@ -1230,58 +1366,69 @@ export async function criarFolhaPagamento(dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar folha de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar folha de pagamento"); }
   return res.json();
 }
 export async function atualizarFolhaPagamento(id: number, dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar folha de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar folha de pagamento"); }
   return res.json();
 }
 export async function excluirFolhaPagamento(id: number) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir lançamento de folha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lançamento de folha"); }
   return res.json();
 }
 
-// ── Guias consolidadas de FGTS/DCTF (projeção de contas a pagar somando o
-// valor_fgts/valor_dctf de todos os funcionários de uma competência) ──
-export type PreviewGuiasFgtsDctf = {
+// ── Guia de FGTS/DCTF — lançamento manual ou por leitura automática (ver
+// POST /financeiro/ler-documento, tipo_documento "guia_fgts"/"guia_dctf")
+// — substitui o antigo "gerar guias" (soma projetada sem vínculo com guia
+// real, removido por decisão do usuário) ──
+export type GuiaFolhaEncargo = {
+  id: number;
+  tipo: "fgts" | "dctf";
   competencia: string;
-  quantidade_lancamentos: number;
-  valor_fgts: number;
-  valor_dctf: number;
-  data_vencimento_sugerida: string;
-  ja_gerado: boolean;
+  codigo_receita: string | null;
+  valor_principal: number;
+  valor_multa: number;
+  valor_juros: number;
+  valor_total: number;
+  data_vencimento: string;
+  linha_digitavel: string | null;
+  numero_lancamento: string | null;
+  origem: "manual" | "leitura_automatica";
+  criado_em: string;
 };
-export async function fetchPreviewGuiasFgtsDctf(competencia: string): Promise<PreviewGuiasFgtsDctf> {
-  const res = await authFetch(
-    `${API}/cadastro/folha-pagamento/guias-preview?competencia=${competencia}`,
-    { cache: "no-store" },
-  );
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao pré-visualizar guias de FGTS/DCTF"); }
-  return res.json();
-}
-type GerarGuiasFgtsDctfDados = {
+export type GuiaFolhaEncargoDados = {
+  tipo: "fgts" | "dctf";
   competencia: string;
-  valor_fgts?: number | null;
-  valor_dctf?: number | null;
-  data_vencimento?: string | null;
+  codigo_receita?: string | null;
+  valor_principal: number;
+  valor_multa?: number;
+  valor_juros?: number;
+  data_vencimento: string;
+  linha_digitavel?: string | null;
+  origem?: "manual" | "leitura_automatica";
   centro_custo?: string;
 };
-export async function gerarGuiasFgtsDctf(dados: GerarGuiasFgtsDctfDados) {
-  const res = await authFetch(`${API}/cadastro/folha-pagamento/gerar-guias`, {
+export async function lancarGuiaFolhaEncargo(dados: GuiaFolhaEncargoDados): Promise<GuiaFolhaEncargo & { conta_id: number }> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar guias de FGTS/DCTF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar guia de FGTS/DCTF"); }
+  return res.json();
+}
+export async function fetchGuiasFolhaEncargo(): Promise<GuiaFolhaEncargo[]> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Guias de FGTS/DCTF error: ${res.status}`);
   return res.json();
 }
 
-// ── Folha de pagamento unificada (funcionário + empreita + contrato + diária) ──
+// ── Folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º) ──
 export type LinhaFolhaUnificada = {
-  tipo: "funcionario" | "empreita" | "contrato" | "diaria";
+  tipo: "funcionario" | "empreita" | "contrato" | "diaria" | "ferias_decimo";
   origem_id: number;
   origem_subtipo: string;
   pessoa_id: number;
@@ -1301,36 +1448,36 @@ export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificad
 }
 export async function excluirParcelaEmpreitada(id: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de empreitada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir parcela de empreitada"); }
   return res.json();
 }
 export async function excluirParcelaContrato(id: number) {
   const res = await authFetch(`${API}/cadastro/contratos/parcelas/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir parcela de contrato"); }
   return res.json();
 }
 export async function atualizarParcelaEmpreitada(id: number, dados: { data_vencimento: string; valor: number }) {
   const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar parcela de empreitada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar parcela de empreitada"); }
   return res.json();
 }
 export async function atualizarParcelaContrato(id: number, dados: { data_vencimento: string; valor: number }) {
   const res = await authFetch(`${API}/cadastro/contratos/parcelas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar parcela de contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar parcela de contrato"); }
   return res.json();
 }
 export async function redistribuirParcelasEmpreitada(empreitadaId: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/${empreitadaId}/parcelas/redistribuir`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao redistribuir parcelas"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao redistribuir parcelas"); }
   return res.json();
 }
 export async function redistribuirParcelasContrato(contratoId: number) {
   const res = await authFetch(`${API}/cadastro/contratos/${contratoId}/parcelas/redistribuir`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao redistribuir parcelas"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao redistribuir parcelas"); }
   return res.json();
 }
 
@@ -1378,7 +1525,7 @@ export async function atualizarVale(valeId: number, dados: {
 }
 export async function excluirVale(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
   return res.json();
 }
 /** Edita UMA parcela do vale (sem recriar as demais) — se o valor divergir do
@@ -1402,6 +1549,25 @@ export async function atualizarParcelaVale(valeId: number, parcelaId: number, da
   }
   return res.json();
 }
+/** G15 — exclui UMA parcela do vale (não o vale inteiro; para isso já existe
+ * `excluirVale`). 400 se a parcela já caiu em folha paga, ou se for a única
+ * parcela do vale (exclua o vale inteiro nesse caso). Sem `confirmar`, a API
+ * responde 409 com `detail = {mensagem, valor_parcela, valor_vale, soma_apos,
+ * parcelas_pendentes_posteriores}` — mesmo padrão de `atualizarParcelaVale`;
+ * reenviar com `confirmar: true` e a `acao` escolhida. */
+export type ExcluirParcelaValeOpts = { acao?: "conceder" | "redistribuir_igual"; confirmar?: boolean };
+export async function excluirParcelaVale(valeId: number, parcelaId: number, opts: ExcluirParcelaValeOpts = {}) {
+  const qs = new URLSearchParams({ acao: opts.acao || "conceder", confirmar: opts.confirmar ? "true" : "false" });
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}?${qs}`, { method: "DELETE" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao excluir parcela do vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
 
 // ── Empreitada (Financeiro > Ações > Folha de Pagamento) ──
 export async function fetchEmpreitadas() {
@@ -1417,12 +1583,12 @@ export async function criarEmpreitada(dados: {
   const res = await authFetch(`${API}/cadastro/empreitadas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar empreitada"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar empreitada"); }
   return res.json();
 }
 export async function concluirEtapaEmpreitada(empreitadaId: number, etapaId: number) {
   const res = await authFetch(`${API}/cadastro/empreitadas/${empreitadaId}/etapas/${etapaId}/concluir`, { method: "PUT" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao concluir etapa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao concluir etapa"); }
   return res.json();
 }
 
@@ -1439,12 +1605,12 @@ export async function criarContrato(dados: {
   const res = await authFetch(`${API}/cadastro/contratos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar contrato"); }
   return res.json();
 }
 export async function encerrarContrato(id: number) {
   const res = await authFetch(`${API}/cadastro/contratos/${id}/encerrar`, { method: "PUT" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar contrato"); }
   return res.json();
 }
 
@@ -1462,21 +1628,21 @@ export async function criarDiaria(dados: {
   const res = await authFetch(`${API}/cadastro/diarias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar diária"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar diária"); }
   return res.json();
 }
 export async function atualizarDiaria(diariaId: number, dados: { data_inicio: string; data_fim?: string | null; ajuste_numero_diarias?: number | null }) {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar diária"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar diária"); }
   return res.json();
 }
 export async function registrarPagamentoDiaria(diariaId: number, dados: { data_pagamento: string; valor: number; observacao?: string }) {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar pagamento"); }
   return res.json();
 }
 
@@ -1493,14 +1659,14 @@ export async function salvarParametroDiariaPadrao(dados: ParametroDiariaPadrao) 
   const res = await authFetch(`${API}/cadastro/diarias/parametro-padrao`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro padrão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetro padrão"); }
   return res.json();
 }
 export async function responderAuditoriaDiaria(auditoriaId: number, diasTrabalhados: number) {
   const res = await authFetch(`${API}/cadastro/diarias/auditorias/${auditoriaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dias_trabalhados: diasTrabalhados }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao responder auditoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao responder auditoria"); }
   return res.json();
 }
 
@@ -1527,19 +1693,19 @@ export async function criarFerias(dados: FeriasDados) {
   const res = await authFetch(`${API}/cadastro/ferias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar férias"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar férias"); }
   return res.json();
 }
 export async function atualizarFerias(id: number, dados: FeriasDados) {
   const res = await authFetch(`${API}/cadastro/ferias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar férias"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar férias"); }
   return res.json();
 }
 export async function excluirFerias(id: number) {
   const res = await authFetch(`${API}/cadastro/ferias/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir férias"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir férias"); }
   return res.json();
 }
 
@@ -1562,19 +1728,19 @@ export async function criarDecimoTerceiro(dados: DecimoTerceiroDados) {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar 13º salário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar 13º salário"); }
   return res.json();
 }
 export async function atualizarDecimoTerceiro(id: number, dados: DecimoTerceiroDados) {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar 13º salário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar 13º salário"); }
   return res.json();
 }
 export async function excluirDecimoTerceiro(id: number) {
   const res = await authFetch(`${API}/cadastro/decimo-terceiro/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir 13º salário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir 13º salário"); }
   return res.json();
 }
 
@@ -1613,14 +1779,14 @@ export async function simularRescisao(dados: RescisaoDados): Promise<CalculoResc
   const res = await authFetch(`${API}/cadastro/rescisao/calcular`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular rescisão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular rescisão"); }
   return res.json();
 }
 export async function criarRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
   const res = await authFetch(`${API}/cadastro/rescisao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar rescisão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar rescisão"); }
   return res.json();
 }
 export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
@@ -1639,7 +1805,7 @@ export async function criarValeAvulso(dados: {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar vale"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar vale"); }
   return res.json();
 }
 export async function fetchValesAvulsos() {
@@ -1673,7 +1839,7 @@ export async function atualizarValeAvulso(valeId: number, dados: {
 }
 export async function excluirValeAvulso(valeId: number) {
   const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir vale"); }
   return res.json();
 }
 
@@ -1681,14 +1847,14 @@ export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar animal"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar animal"); }
   return res.json();
 }
 export async function atualizarAnimalFicha(numero: string, dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais/${numero}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar ficha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar ficha"); }
   return res.json();
 }
 
@@ -1701,21 +1867,26 @@ export async function criarItemEstoque(dados: Record<string, unknown>) {
   const res = await authFetch(`${API}/estoque/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar item de estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar item de estoque"); }
   return res.json();
 }
 export async function atualizarItemEstoque(id: number, dados: Record<string, unknown>) {
   const res = await authFetch(`${API}/estoque/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item de estoque"); }
   return res.json();
 }
 export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; conta_gerencial_despesa_padrao?: string | null; estocavel?: boolean | null }) {
   const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item"); }
+  return res.json();
+}
+export async function excluirItemEstoque(id: number): Promise<{ excluido: boolean }> {
+  const res = await authFetch(`${API}/estoque/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir item de estoque"); }
   return res.json();
 }
 
@@ -1731,7 +1902,7 @@ export async function atualizarParametro(chave: string, valor: number | string |
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ valor }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetro"); }
   return res.json();
 }
 
@@ -1788,14 +1959,14 @@ export async function atualizarParametrosManualFazenda(dados: {
   const res = await authFetch(`${API}/manual-fazenda/parametros`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetros do Manual da Fazenda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetros do Manual da Fazenda"); }
   return res.json() as Promise<ParametroManualFazenda>;
 }
 export async function anexarContratoManejo(arquivo: File) {
   const form = new FormData();
   form.append("arquivo", arquivo);
   const res = await authFetch(`${API}/manual-fazenda/contrato-anexo`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar contrato"); }
   return res.json() as Promise<ParametroManualFazenda>;
 }
 export async function fetchSugestoesManualFazenda() {
@@ -1807,19 +1978,19 @@ export async function criarSugestaoManualFazenda(dados: { texto: string; categor
   const res = await authFetch(`${API}/manual-fazenda/sugestoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar sugestão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar sugestão"); }
   return res.json() as Promise<SugestaoManualFazenda>;
 }
 export async function atualizarSugestaoManualFazenda(id: number, dados: { texto: string; categoria: string; ativo: boolean; ordem: number }) {
   const res = await authFetch(`${API}/manual-fazenda/sugestoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar sugestão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar sugestão"); }
   return res.json() as Promise<SugestaoManualFazenda>;
 }
 export async function excluirSugestaoManualFazenda(id: number) {
   const res = await authFetch(`${API}/manual-fazenda/sugestoes/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir sugestão"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir sugestão"); }
   return res.json();
 }
 
@@ -1839,14 +2010,14 @@ export async function criarLote(dados: Record<string, any>) {
   const res = await authFetch(`${API}/lotes/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lote"); }
   return res.json();
 }
 export async function atualizarLote(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/lotes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar lote"); }
   return res.json();
 }
 export async function previewCriteriosLote(dados: Record<string, any>) {
@@ -1869,14 +2040,14 @@ export async function criarSafra(dados: Record<string, any>) {
   const res = await authFetch(`${API}/safras/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar safra"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar safra"); }
   return res.json();
 }
 export async function atualizarSafra(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/safras/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar safra"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar safra"); }
   return res.json();
 }
 
@@ -1917,7 +2088,7 @@ export async function criarMovimentacao(dados: {
   const res = await authFetch(`${API}/movimentacoes/mover`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao mover animais"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao mover animais"); }
   return res.json();
 }
 
@@ -1932,7 +2103,7 @@ export async function salvarParametroAgendamentoMovimentacao(dados: ParametroAge
   const res = await authFetch(`${API}/movimentacoes/parametro-agendamento`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar parâmetro"); }
   return res.json();
 }
 
@@ -1951,14 +2122,14 @@ export async function criarMotivoMovimentacao(dados: { nome: string; ativo?: boo
   const res = await authFetch(`${API}/movimentacoes/motivos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar motivo"); }
   return res.json();
 }
 export async function atualizarMotivoMovimentacao(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/movimentacoes/motivos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar motivo"); }
   return res.json();
 }
 
@@ -1972,14 +2143,14 @@ export async function criarMotivoBaixa(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/cadastro/motivos-baixa`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo de baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar motivo de baixa"); }
   return res.json();
 }
 export async function atualizarMotivoBaixa(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/motivos-baixa/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo de baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar motivo de baixa"); }
   return res.json();
 }
 
@@ -1993,16 +2164,91 @@ export async function criarRaca(dados: { nome: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar raça"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar raça"); }
   return res.json();
 }
 export async function atualizarRaca(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/racas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar raça"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar raça"); }
   return res.json();
 }
+
+export type ItemCadastroSimples = { id: number; nome: string; ativo: boolean };
+
+// Fábrica de fetch/criar/atualizar para os cadastros "nome + ativo" simples
+// (mesmo padrão de Raça acima) — evita repetir a mesma tripla de funções
+// para cada cadastro novo (ver Local de Armazenamento/Categoria/Finalidade/
+// Unidade/Unidade de embalagem/Unidade de medida do estoque, abaixo).
+function criarApiCadastroSimples(rota: string, rotulo: string) {
+  return {
+    fetch: async (): Promise<ItemCadastroSimples[]> => {
+      const res = await authFetch(`${API}/cadastro/${rota}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${rotulo} error: ${res.status}`);
+      return res.json();
+    },
+    criar: async (dados: { nome: string; ativo?: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/cadastro/${rota}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    atualizar: async (id: number, dados: { nome: string; ativo: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/cadastro/${rota}/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    excluir: async (id: number): Promise<{ excluido: boolean }> => {
+      const res = await authFetch(`${API}/cadastro/${rota}/${id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao excluir ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+  };
+}
+
+// Cadastros de apoio ao item de estoque (Configurações > Cadastro > Estoque)
+// — antes listas fixas (CATEGORIAS_ESTOQUE, FINALIDADES_ESTOQUE, UNIDADES,
+// UNIDADES_EMBALAGEM, MEDIDAS_EMBALAGEM) ou texto livre sem sugestão
+// (local_armazenamento), agora cadastráveis.
+const apiLocaisArmazenamento = criarApiCadastroSimples("locais-armazenamento", "Local de armazenamento");
+export const fetchLocaisArmazenamento = apiLocaisArmazenamento.fetch;
+export const criarLocalArmazenamento = apiLocaisArmazenamento.criar;
+export const atualizarLocalArmazenamento = apiLocaisArmazenamento.atualizar;
+export const excluirLocalArmazenamento = apiLocaisArmazenamento.excluir;
+
+const apiCategoriasEstoque = criarApiCadastroSimples("categorias-estoque", "Categoria de estoque");
+export const fetchCategoriasEstoqueCadastro = apiCategoriasEstoque.fetch;
+export const criarCategoriaEstoque = apiCategoriasEstoque.criar;
+export const atualizarCategoriaEstoque = apiCategoriasEstoque.atualizar;
+export const excluirCategoriaEstoque = apiCategoriasEstoque.excluir;
+
+const apiFinalidadesEstoque = criarApiCadastroSimples("finalidades-estoque", "Finalidade de estoque");
+export const fetchFinalidadesEstoqueCadastro = apiFinalidadesEstoque.fetch;
+export const criarFinalidadeEstoque = apiFinalidadesEstoque.criar;
+export const atualizarFinalidadeEstoque = apiFinalidadesEstoque.atualizar;
+export const excluirFinalidadeEstoque = apiFinalidadesEstoque.excluir;
+
+const apiUnidadesEstoque = criarApiCadastroSimples("unidades-estoque", "Unidade de estoque");
+export const fetchUnidadesEstoqueCadastro = apiUnidadesEstoque.fetch;
+export const criarUnidadeEstoque = apiUnidadesEstoque.criar;
+export const atualizarUnidadeEstoque = apiUnidadesEstoque.atualizar;
+export const excluirUnidadeEstoque = apiUnidadesEstoque.excluir;
+
+const apiUnidadesEmbalagemEstoque = criarApiCadastroSimples("unidades-embalagem-estoque", "Unidade de embalagem");
+export const fetchUnidadesEmbalagemEstoqueCadastro = apiUnidadesEmbalagemEstoque.fetch;
+export const criarUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.criar;
+export const atualizarUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.atualizar;
+export const excluirUnidadeEmbalagemEstoque = apiUnidadesEmbalagemEstoque.excluir;
+
+const apiUnidadesMedidaEmbalagemEstoque = criarApiCadastroSimples("unidades-medida-embalagem-estoque", "Unidade de medida");
+export const fetchUnidadesMedidaEmbalagemEstoqueCadastro = apiUnidadesMedidaEmbalagemEstoque.fetch;
+export const criarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.criar;
+export const atualizarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.atualizar;
+export const excluirUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.excluir;
 
 // ── Graus de sangue (Configurações > Cadastro) ──
 export async function fetchGrausSangue() {
@@ -2014,14 +2260,14 @@ export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: n
   const res = await authFetch(`${API}/cadastro/graus-sangue`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar grau de sangue"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar grau de sangue"); }
   return res.json();
 }
 export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/graus-sangue/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar grau de sangue"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar grau de sangue"); }
   return res.json();
 }
 
@@ -2035,14 +2281,14 @@ export async function criarMotivoVenda(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/cadastro/motivos-venda`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo de venda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar motivo de venda"); }
   return res.json();
 }
 export async function atualizarMotivoVenda(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/motivos-venda/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo de venda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar motivo de venda"); }
   return res.json();
 }
 
@@ -2056,14 +2302,14 @@ export async function criarServicoCadastro(dados: { nome: string; ativo?: boolea
   const res = await authFetch(`${API}/cadastro/servicos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar serviço"); }
   return res.json();
 }
 export async function atualizarServicoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/servicos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar serviço"); }
   return res.json();
 }
 
@@ -2077,14 +2323,14 @@ export async function criarTipoServico(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/cadastro/tipos-servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar tipo de serviço"); }
   return res.json();
 }
 export async function atualizarTipoServico(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/tipos-servico/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de serviço"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar tipo de serviço"); }
   return res.json();
 }
 export type MetodoServico = { id: number; nome: string; tipo_servico_id: number; tipo_servico_nome?: string | null; codigo_interno: string | null; ativo: boolean };
@@ -2097,14 +2343,14 @@ export async function criarMetodoServico(dados: { nome: string; tipo_servico_id:
   const res = await authFetch(`${API}/cadastro/metodos-servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar método"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar método"); }
   return res.json();
 }
 export async function atualizarMetodoServico(id: number, dados: { nome: string; tipo_servico_id: number; ativo: boolean }) {
   const res = await authFetch(`${API}/cadastro/metodos-servico/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar método"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar método"); }
   return res.json();
 }
 
@@ -2127,7 +2373,7 @@ export async function criarBaixaAnimal(dados: {
   const res = await authFetch(`${API}/baixas/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar baixa"); }
   return res.json();
 }
 
@@ -2135,7 +2381,7 @@ export async function marcarADescartar(dados: { animais: string[]; descartar?: b
   const res = await authFetch(`${API}/baixas/a-descartar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar A descartar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar A descartar"); }
   return res.json();
 }
 
@@ -2167,7 +2413,7 @@ export async function criarCompraAnimal(dados: CompraVendaCamposComuns & {
   const res = await authFetch(`${API}/compras-animais/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar compra"); }
   return res.json();
 }
 
@@ -2183,7 +2429,7 @@ export async function criarVendaAnimal(dados: CompraVendaCamposComuns & {
   const res = await authFetch(`${API}/vendas-animais/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar venda"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar venda"); }
   return res.json();
 }
 
@@ -2267,7 +2513,7 @@ export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
   const res = await authFetch(`${API}/compras-semen/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra de sêmen"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar compra de sêmen"); }
   return res.json();
 }
 
@@ -2286,7 +2532,7 @@ export async function registrarColostragem(dados: {
   const res = await authFetch(`${API}/sanidade/colostragem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar colostragem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar colostragem"); }
   return res.json();
 }
 
@@ -2315,7 +2561,7 @@ export async function criarAplicacaoSanidade(dados: {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de sanidade"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar aplicação de sanidade"); }
   return res.json();
 }
 
@@ -2326,13 +2572,13 @@ export async function editarAplicacaoSanidade(id: number, dados: {
   const res = await authFetch(`${API}/sanidade/aplicacoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar aplicação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar aplicação"); }
   return res.json();
 }
 
 export async function excluirAplicacaoSanidade(id: number) {
   const res = await authFetch(`${API}/sanidade/aplicacoes/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir aplicação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir aplicação"); }
   return res.json();
 }
 
@@ -2340,23 +2586,30 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
   const res = await authFetch(`${API}/sanidade/aplicacoes/${id}/cura`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ curada }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar cura"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
   return res.json();
 }
 
 export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean) {
-  const res = await authFetch(`${API}/sanidade/mastite/cura`, {
+  // Rota nova, com nome correto — /mastite/cura (retrocompatibilidade) segue
+  // funcionando pois o app em produção ainda a chama, mas serve qualquer
+  // protocolo sanitário, não só mastite.
+  const res = await authFetch(`${API}/sanidade/protocolos/lancamentos/${lancamentoId}/cura`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lancamento_id: lancamentoId, curada }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar cura"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar cura"); }
   return res.json();
 }
 
 export type CasoTaxaCura = {
   origem: "aplicacao" | "protocolo"; id: number; numero: string; tratamento: string;
-  data: string | null; curada: boolean; lote: string | null; categoria: string; status_lactacao: string;
+  data: string | null; curada: boolean | null; avaliado: boolean;
+  lote: string | null; categoria: string; status_lactacao: string;
 };
-export async function fetchTaxaCura(): Promise<{ casos: CasoTaxaCura[]; total: number; curados: number; taxa_cura_pct: number | null }> {
+export async function fetchTaxaCura(): Promise<{
+  casos: CasoTaxaCura[]; total: number; total_avaliados: number; curados: number; nao_curados: number;
+  total_nao_avaliados: number; taxa_cura_pct: number | null; cobertura_avaliacao_pct: number | null;
+}> {
   const res = await authFetch(`${API}/sanidade/taxa-cura`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Taxa de cura error: ${res.status}`);
   return res.json();
@@ -2374,14 +2627,14 @@ function _crudNomeAtivo(caminho: string, rotulo: string) {
       const res = await authFetch(`${API}/cadastro/${caminho}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
     atualizar: async (id: number, dados: { nome: string; ativo: boolean }) => {
       const res = await authFetch(`${API}/cadastro/${caminho}/${id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
       return res.json();
     },
   };
@@ -2392,7 +2645,7 @@ export const criarPrincipioAtivo = _principiosAtivos.criar;
 export const atualizarPrincipioAtivo = _principiosAtivos.atualizar;
 export async function restaurarCatalogoPrincipios(): Promise<{ criados: number; total: number }> {
   const res = await authFetch(`${API}/cadastro/principios-ativos/restaurar-catalogo`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao restaurar catálogo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao restaurar catálogo"); }
   return res.json();
 }
 
@@ -2406,7 +2659,7 @@ export const atualizarDoenca = _doencas.atualizar;
 export type EventoSanitarioPayload = {
   nome: string; ativo?: boolean;
   tipo_agendamento?: "nenhum" | "epoca" | "evento";
-  categoria_alvo?: string | null; doenca_id?: number | null; categoria_preventiva?: string | null;
+  categoria_alvo?: string | null; sexo_alvo?: "F" | "M" | null; doenca_id?: number | null; categoria_preventiva?: string | null;
   data_primeiro?: string | null; frequencia_valor?: number | null; frequencia_unidade?: string | null;
   gatilho?: string | null; gatilho_lote?: string | null; gatilho_idade_meses?: number | null; offset_dias?: number | null;
   produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null; via_padrao?: string | null;
@@ -2417,6 +2670,9 @@ export type EventoSanitarioPayload = {
   // Só para exame: qual ExameDefinicao decide o tipo de resultado
   // (diagnóstico/numérico) mostrado no lançamento de Sanitário > Preventivo.
   exame_definicao_id?: number | null;
+  // Nome de um serviço cadastrado (Configurações > Cadastro > Serviços) —
+  // liga este evento ao botão "Lançar financeiro" no calendário sanitário.
+  servico_financeiro?: string | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });
@@ -2427,14 +2683,14 @@ export async function criarEventoSanitario(dados: EventoSanitarioPayload) {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar evento sanitário"); }
   return res.json();
 }
 export async function atualizarEventoSanitario(id: number, dados: EventoSanitarioPayload) {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar evento sanitário"); }
   return res.json();
 }
 
@@ -2459,19 +2715,19 @@ export async function criarExame(dados: ExameDefinicaoPayload) {
   const res = await authFetch(`${API}/cadastro/exames`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar exame"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar exame"); }
   return res.json();
 }
 export async function atualizarExame(id: number, dados: ExameDefinicaoPayload) {
   const res = await authFetch(`${API}/cadastro/exames/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar exame"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar exame"); }
   return res.json();
 }
 export async function excluirExame(id: number) {
   const res = await authFetch(`${API}/cadastro/exames/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir exame"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir exame"); }
   return res.json();
 }
 
@@ -2548,19 +2804,19 @@ export async function criarAgendamentoPesagem(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/agendamentos-pesagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar agendamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar agendamento"); }
   return res.json();
 }
 export async function atualizarAgendamentoPesagem(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/agendamentos-pesagem/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar agendamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar agendamento"); }
   return res.json();
 }
 export async function excluirAgendamentoPesagem(id: number) {
   const res = await authFetch(`${API}/cadastro/agendamentos-pesagem/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir"); }
   return res.json();
 }
 
@@ -2577,22 +2833,26 @@ export async function importarProtocoloSanitarioExcel(file: File) {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
-export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; finalidade?: string | null; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar protocolo sanitário"); }
   return res.json();
 }
-export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; finalidade?: string | null; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo sanitário"); }
   return res.json();
+}
+export async function excluirProtocoloSanitario(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo sanitário"); }
 }
 export async function fetchLancamentosProtocolo() {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, { cache: "no-store" });
@@ -2607,7 +2867,7 @@ export async function lancarProtocoloSanitario(dados: {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar protocolo sanitário"); }
   return res.json();
 }
 
@@ -2637,25 +2897,74 @@ type CalendarioSanitarioPayload = {
   evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
   principio_ativo_id?: number; dosagem?: string; unidade?: string; responsavel?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; observacao?: string; ativo?: boolean; realizado?: boolean;
+  // Liga esta regra ao workflow de Cronograma sanitário (ver
+  // fazenda/rules/cronograma_sanitario.py): animal que bate o critério entra
+  // numa lista de espera em vez de virar pendência de aplicar na hora.
+  usa_cronograma?: boolean;
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar regra do calendário sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar regra do calendário sanitário"); }
   return res.json();
 }
 export async function atualizarCalendarioSanitario(id: number, dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar regra do calendário sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar regra do calendário sanitário"); }
   return res.json();
 }
 export async function excluirCalendarioSanitario(id: number) {
   const res = await authFetch(`${API}/sanidade/calendario/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir regra do calendário sanitário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir regra do calendário sanitário"); }
   return res.json();
+}
+
+// Cronogramas sanitários (regras usa_cronograma=True) — Sanidade > Preventiva >
+// Cronogramas. Lista as ocorrências (abertas ou concluídas) com contagem de
+// animais por status (sugerido/incluído/excluído/aplicado).
+export async function fetchCronogramasSanitarios(filtros?: { calendarioId?: number; status?: string }) {
+  const params = new URLSearchParams();
+  if (filtros?.calendarioId) params.set("calendario_id", String(filtros.calendarioId));
+  if (filtros?.status) params.set("status", filtros.status);
+  const res = await authFetch(`${API}/sanidade/cronogramas?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cronogramas sanitários error: ${res.status}`);
+  return res.json();
+}
+// Cria (ou devolve, se já existir) o cronograma em aberto de uma regra — card
+// Cronogramas > "Novo cronograma". Sempre exige uma regra existente marcada
+// usa_cronograma=True; nunca cria um cronograma solto.
+export async function criarCronogramaSanitario(calendarioSanitarioId: number) {
+  const res = await authFetch(`${API}/sanidade/cronogramas`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ calendario_sanitario_id: calendarioSanitarioId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cronograma"); }
+  return res.json();
+}
+
+export type JanelaCalendarioEvento = {
+  calendario_sanitario_id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
+  categoria_alvo: string | null; categoria_preventiva: string | null; servico_financeiro: string | null;
+  usa_cronograma: boolean; data: string; animais: number | null; estimativa: boolean;
+  estimativa_base: "ultima_aplicacao" | null;
+  cronograma: { id: number; status: string; modo_execucao: string | null; veterinario_nome: string | null; animais_contagem: { sugerido: number; incluido: number; excluido: number; aplicado: number } } | null;
+};
+export type JanelaCalendario = {
+  data_inicio: string; data_fim: string; animais_total: number; tem_estimativa: boolean;
+  sugerir_veterinario: boolean; eventos: JanelaCalendarioEvento[];
+};
+// Card CALENDÁRIO — projeção agrupada das próximas ocorrências (vacina/exame),
+// com estimativa de animais e sinalização de "vale chamar o veterinário".
+export async function fetchCalendarioVisao(filtros?: { dataInicio?: string; dataFim?: string }) {
+  const params = new URLSearchParams();
+  if (filtros?.dataInicio) params.set("data_inicio", filtros.dataInicio);
+  if (filtros?.dataFim) params.set("data_fim", filtros.dataFim);
+  const res = await authFetch(`${API}/sanidade/calendario/visao?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Calendário sanitário (visão) error: ${res.status}`);
+  return res.json() as Promise<{ janelas: JanelaCalendario[]; min_animais_agrupamento: number; janela_agrupamento_dias: number }>;
 }
 
 // ── Relatório de eventos de vida (mudança de categoria) ──
@@ -2676,7 +2985,7 @@ export async function fetchRelatorioEventosVida(filtros: {
   if (filtros.dataInicio) params.set("data_inicio", filtros.dataInicio);
   if (filtros.dataFim) params.set("data_fim", filtros.dataFim);
   const res = await authFetch(`${API}/sanidade/calendario/relatorio-eventos-vida?${params.toString()}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Relatório de eventos de vida error: ${res.status}`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Relatório de eventos de vida error: ${res.status}`); }
   return res.json();
 }
 
@@ -2704,7 +3013,7 @@ export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar preventivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar preventivo"); }
   return res.json();
 }
 
@@ -2721,7 +3030,7 @@ export async function movimentarEstoque(dados: {
   const res = await authFetch(`${API}/estoque/movimentar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar movimento de estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar movimento de estoque"); }
   return res.json();
 }
 
@@ -2734,6 +3043,22 @@ export async function fetchMovimentosEstoque(): Promise<{ movimentos: MovimentoE
   if (!res.ok) throw new Error(`Movimentos de estoque error: ${res.status}`);
   return res.json();
 }
+
+// G1 — só movimento manual (`origem_tipo` nulo) pode ser editado/excluído por
+// aqui; movimento gerado por outro lançamento (Sanidade, Protocolo, Secagem…)
+// dá 400 e aponta pra desfazer pelo lançamento de origem.
+export type MovimentoEstoqueEditIn = {
+  quantidade: number; unidade?: string | null; data_movimento: string; observacao?: string | null;
+};
+export async function atualizarMovimentoEstoque(id: number, dados: MovimentoEstoqueEditIn) {
+  const res = await authFetch(`${API}/estoque/movimentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar movimento de estoque"); }
+  return res.json() as Promise<MovimentoEstoqueRow & { saldo_item: number }>;
+}
+// A exclusão do movimento manual roteia pelo motor genérico — ver
+// confirmarExclusao("movimento_estoque", id) em "── Exclusões ──" abaixo.
 
 export async function fetchAlimentacao() {
   const res = await authFetch(`${API}/alimentacao/`, { cache: "no-store" });
@@ -2765,19 +3090,19 @@ export async function criarCategoriaAlimento(dados: { nome: string; ativo?: bool
   const res = await authFetch(`${API}/alimentacao/categorias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar categoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
   return res.json();
 }
 export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar categoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar categoria"); }
   return res.json();
 }
 export async function excluirCategoriaAlimento(id: number) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir categoria"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir categoria"); }
   return res.json();
 }
 
@@ -2797,19 +3122,19 @@ export async function criarAlimento(dados: AlimentoIn): Promise<Alimento> {
   const res = await authFetch(`${API}/alimentacao/alimentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar alimento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar alimento"); }
   return res.json();
 }
 export async function atualizarAlimento(id: number, dados: AlimentoIn): Promise<Alimento> {
   const res = await authFetch(`${API}/alimentacao/alimentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar alimento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar alimento"); }
   return res.json();
 }
 export async function excluirAlimento(id: number) {
   const res = await authFetch(`${API}/alimentacao/alimentos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir alimento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir alimento"); }
   return res.json();
 }
 
@@ -2828,26 +3153,26 @@ export async function criarProdutoTabelaNutricional(nome: string) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar produto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar produto"); }
   return res.json();
 }
 export async function renomearProdutoTabelaNutricional(id: number, nome: string) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao renomear produto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao renomear produto"); }
   return res.json();
 }
 export async function excluirProdutoTabelaNutricional(id: number) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir produto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir produto"); }
   return res.json();
 }
 export async function salvarValoresTabelaNutricional(itens: { produto_id: number; nutriente: string; valor: string }[]) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/valores`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar tabela nutricional"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar tabela nutricional"); }
   return res.json();
 }
 export function baixarModeloTabelaNutricional() {
@@ -2857,7 +3182,7 @@ export async function importarTabelaNutricional(file: File) {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 
@@ -2879,7 +3204,7 @@ export async function salvarMateriaSeca(dados: { nome: string; ms_pct: number | 
   const res = await authFetch(`${API}/alimentacao/materia-seca`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar matéria seca"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar matéria seca"); }
   return res.json();
 }
 
@@ -2903,7 +3228,7 @@ export async function criarAnaliseBromatologica(dados: {
   const res = await authFetch(`${API}/alimentacao/analise-bromatologica`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar análise bromatológica"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar análise bromatológica"); }
   return res.json();
 }
 export async function criarDieta(dados: {
@@ -2914,7 +3239,7 @@ export async function criarDieta(dados: {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar dieta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar dieta"); }
   return res.json();
 }
 export type ContextoDieta = {
@@ -2942,7 +3267,7 @@ export async function encerrarDieta(id: number, dataEfetivoEncerramento: string)
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/encerrar`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data_efetivo_encerramento: dataEfetivoEncerramento }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar dieta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar dieta"); }
   return res.json();
 }
 
@@ -2950,7 +3275,7 @@ export async function registrarRealDieta(id: number, dados: { data: string; iten
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/real`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar o real oferecido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar o real oferecido"); }
   return res.json();
 }
 
@@ -2988,26 +3313,26 @@ export async function atualizarPrincipioFarmacia(id: number, dados: Record<strin
   const res = await authFetch(`${API}/farmacia/principios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar princípio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar princípio"); }
   return res.json();
 }
 export async function criarPrincipioFarmacia(dados: Record<string, any>) {
   const res = await authFetch(`${API}/farmacia/principios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar princípio"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar princípio"); }
   return res.json();
 }
 export async function criarMarcaFarmacia(dados: { principio_ativo_id: number; nome_comercial: string; laboratorio?: string }) {
   const res = await authFetch(`${API}/farmacia/medicamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar marca"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar marca"); }
   return res.json();
 }
 export async function excluirMarcaFarmacia(id: number) {
   const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir marca"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir marca"); }
   return res.json();
 }
 export async function fetchApresentacoesFarmacia(params: { principio_ativo_id?: number; produto?: string }) {
@@ -3022,8 +3347,104 @@ export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { qua
   const res = await authFetch(`${API}/farmacia/estoque/${estoqueId}/inicializar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao inicializar estoque"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao inicializar estoque"); }
   return res.json();
+}
+
+// ── Indicações terapêuticas (substituto inteligente: princípio ↔ doença ↔ prioridade) ──
+export type IndicacaoTerapeutica = { id: number; doenca_id: number; doenca: string; prioridade: number };
+export type OpcaoIndicacaoDoenca = {
+  principio_ativo_id: number; nome: string; classificacao: string | null; prioridade: number;
+  status_estoque: "ok" | "low" | "out"; total_apresentacoes: number | null; unidade_apresentacao: string | null;
+  marcas: string[];
+};
+export async function fetchIndicacoes(principioAtivoId: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes?principio_ativo_id=${principioAtivoId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicações error: ${res.status}`);
+  return res.json() as Promise<IndicacaoTerapeutica[]>;
+}
+export async function criarIndicacao(dados: { principio_ativo_id: number; doenca_id: number; prioridade: number }) {
+  const res = await authFetch(`${API}/farmacia/indicacoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao indicar princípio para a doença"); }
+  return res.json() as Promise<IndicacaoTerapeutica>;
+}
+export async function excluirIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir indicação"); }
+  return res.json();
+}
+export async function fetchIndicacoesDoenca(doencaId: number) {
+  const res = await authFetch(`${API}/sanidade/indicacoes-doenca/${doencaId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicações por doença error: ${res.status}`);
+  return res.json() as Promise<{ doenca_id: number; doenca: string; opcoes: OpcaoIndicacaoDoenca[] }>;
+}
+
+// ── Catálogo de indicações da aba Farmácia (Fase 5) ──
+// Tela única: cada INDICAÇÃO (doença/manejo, `tipo` = doenca | reprodutivo |
+// produtivo | preventivo | suporte) traz a cadeia completa PRINCÍPIOS que
+// tratam → MARCAS de cada princípio, já com bula e carência formatada
+// (`carencia.texto`, pronto do backend — ver lib/carencia.ts para o preview
+// do formulário). Catálogo nasce global (fazenda_id nulo); a fazenda que
+// quer editar bula/prioridade/nota PERSONALIZA a indicação antes (clona).
+export type CarenciaFarmacia = {
+  leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string;
+  liberacao_leite?: string | null; liberacao_carne?: string | null;
+};
+export type MarcaIndicacaoCatalogo = {
+  id: number; nome_comercial: string; laboratorio: string | null; uso_principal: string | null;
+  concentracao: string | null; dose_texto: string | null; dose_padrao: number | null; unidade_dose: string | null;
+  via_padrao: string | null; link_bula: string | null; alerta: string | null; alerta_gestacao: boolean;
+  carencia: CarenciaFarmacia; editavel: boolean;
+};
+export type PrincipioIndicacaoCatalogo = {
+  id: number; nome: string; categoria_software: string | null; prioridade: number; nota: string | null;
+  indicacao_id: number; abaixo_minimo: boolean; total_apresentacoes: number; precisa_inicializar: boolean;
+  marcas: MarcaIndicacaoCatalogo[];
+};
+export type IndicacaoCatalogo = {
+  id: number; nome: string; tipo: string; descricao: string | null;
+  personalizada: boolean; origem_id: number | null; principios: PrincipioIndicacaoCatalogo[];
+};
+export async function fetchIndicacoesCatalogo(tipo?: string, busca?: string) {
+  const qs = new URLSearchParams();
+  if (tipo) qs.set("tipo", tipo);
+  if (busca) qs.set("busca", busca);
+  const res = await authFetch(`${API}/farmacia/indicacoes-catalogo${qs.toString() ? `?${qs}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo de indicações error: ${res.status}`);
+  return res.json() as Promise<IndicacaoCatalogo[]>;
+}
+export async function personalizarIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}/personalizar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao personalizar indicação"); }
+  return res.json() as Promise<IndicacaoCatalogo>;
+}
+export async function despersonalizarIndicacao(id: number) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}/personalizar`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao voltar ao padrão"); }
+  return res.json();
+}
+// Editar um campo do padrão (marca global ou vínculo global) personaliza a
+// indicação automaticamente num passo só — o backend clona pra fazenda e
+// aplica a edição no clone, sinalizando isso em `personalizou_automaticamente`
+// pra tela poder avisar o usuário (ver Farmacia.tsx).
+export async function atualizarMarcaFarmacia(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a bula"); }
+  return res.json() as Promise<Record<string, any> & { personalizou_automaticamente?: boolean }>;
+}
+export async function atualizarVinculoIndicacao(id: number, dados: { prioridade: number; nota?: string | null }) {
+  const res = await authFetch(`${API}/farmacia/indicacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar prioridade/nota"); }
+  return res.json() as Promise<{
+    id: number; doenca_id: number; principio_ativo_id: number; prioridade: number; nota: string | null;
+    personalizou_automaticamente?: boolean;
+  }>;
 }
 
 export async function fetchProducao() {
@@ -3045,7 +3466,7 @@ export async function criarControlesLeiteiros(dados: {
   const res = await authFetch(`${API}/producao/controles`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar controle leiteiro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar controle leiteiro"); }
   return res.json();
 }
 
@@ -3053,7 +3474,7 @@ export async function criarControlesLeiteiros(dados: {
 // dá pra usar um <a href> direto) — dispara o download no navegador via blob.
 async function baixarArquivoAutenticado(path: string, nomeArquivoFallback: string) {
   const res = await authFetch(`${API}${path}`);
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao baixar arquivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar arquivo"); }
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") || "";
   const nome = /filename="?([^"]+)"?/.exec(cd)?.[1] || nomeArquivoFallback;
@@ -3075,7 +3496,7 @@ export async function importarControleLeiteiroPlanilha(file: File): Promise<{ cr
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/producao/controle-leiteiro/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 
@@ -3087,7 +3508,7 @@ export async function criarPesagensCorporais(dados: {
   const res = await authFetch(`${API}/producao/pesagens`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar pesagem corporal"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar pesagem corporal"); }
   return res.json();
 }
 
@@ -3099,9 +3520,42 @@ export async function importarPesagemCorporalPlanilha(file: File): Promise<{ cri
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/producao/pesagens/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
+
+// G7 — /producao/pesagens/relatorio (acima) agrega por animal e não devolve
+// `id`; esta é a listagem individual (com id) que sustenta editar/excluir.
+export type PesagemFiltros = { numero_matriz?: string; grupo?: string; data_inicio?: string; data_fim?: string; limite?: number };
+export type PesagemLinha = {
+  id: number; numero_matriz: string; data_pesagem: string; peso_kg: number;
+  del_dias: number | null; idade_meses: number | null; grupo_primario: string | null;
+  fase: string | null; usuario_nome: string | null;
+};
+export async function fetchPesagens(filtros: PesagemFiltros = {}): Promise<{ pesagens: PesagemLinha[]; total: number }> {
+  const qs = new URLSearchParams();
+  if (filtros.numero_matriz) qs.set("numero_matriz", filtros.numero_matriz);
+  if (filtros.grupo) qs.set("grupo", filtros.grupo);
+  if (filtros.data_inicio) qs.set("data_inicio", filtros.data_inicio);
+  if (filtros.data_fim) qs.set("data_fim", filtros.data_fim);
+  if (filtros.limite) qs.set("limite", String(filtros.limite));
+  const res = await authFetch(`${API}/producao/pesagens?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Pesagens error: ${res.status}`);
+  return res.json();
+}
+// `data_pesagem`/`peso_kg` são opcionais (exclude_unset no backend) — manda só o que mudou.
+// Mudar a data recalcula `fase`; `del_dias`/`idade_meses`/`grupo_primario` são
+// fotos do momento do lançamento e não são recalculados.
+export type PesagemEditIn = { data_pesagem?: string; peso_kg?: number };
+export async function atualizarPesagem(id: number, dados: PesagemEditIn) {
+  const res = await authFetch(`${API}/producao/pesagens/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar pesagem"); }
+  return res.json();
+}
+// A exclusão roteia pelo motor genérico — confirmarExclusao("pesagem_corporal", id).
+
 // ── Qualidade do leite ──
 export async function fetchQualidadeLeite() {
   const res = await authFetch(`${API}/producao/qualidade-leite`, { cache: "no-store" });
@@ -3116,7 +3570,7 @@ export async function criarQualidadeLeite(dados: {
   const res = await authFetch(`${API}/producao/qualidade-leite`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar qualidade do leite"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar qualidade do leite"); }
   return res.json();
 }
 
@@ -3128,7 +3582,7 @@ export async function importarQualidadeLeitePlanilha(file: File): Promise<{ cria
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/producao/qualidade-leite/importar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
   return res.json();
 }
 
@@ -3142,9 +3596,21 @@ export async function criarEntregaLeiteMensal(dados: { competencia: string; quan
   const res = await authFetch(`${API}/producao/entrega-leite`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar entrega mensal do leite"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar entrega mensal do leite"); }
   return res.json();
 }
+// G6 — o POST acima já faz upsert por competência (editar o valor de um mês
+// já funciona); o PUT serve pra corrigir a COMPETÊNCIA errada. 409 se a nova
+// competência já tiver outro registro na mesma fazenda.
+export type EntregaLeiteEditIn = { competencia: string; quantidade_litros: number; observacao?: string | null };
+export async function atualizarEntregaLeite(id: number, dados: EntregaLeiteEditIn) {
+  const res = await authFetch(`${API}/producao/entrega-leite/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar entrega de leite"); }
+  return res.json();
+}
+// A exclusão roteia pelo motor genérico — confirmarExclusao("entrega_leite", id).
 
 // ── Relatório controle leiteiro × ITALAC × entrega ──
 export async function fetchRelatorioControleEntrega(dataInicio?: string, dataFim?: string) {
@@ -3171,7 +3637,7 @@ export async function ajustarProximaAplicacaoBst(novaData: string, modo: "interv
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
-    throw new Error(d.detail || "Não foi possível ajustar a próxima aplicação de BST.");
+    throw new Error(mensagemErroApi(d.detail) || "Não foi possível ajustar a próxima aplicação de BST.");
   }
   return res.json();
 }
@@ -3179,7 +3645,7 @@ export async function ajustarProximaAplicacaoBst(novaData: string, modo: "interv
 // ── Secagem ──
 export async function fetchSecagemInfo(numeroMatriz: string) {
   const res = await authFetch(`${API}/producao/secagem-info?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao buscar dados de secagem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar dados de secagem"); }
   return res.json();
 }
 export async function criarSecagem(dados: {
@@ -3192,7 +3658,7 @@ export async function criarSecagem(dados: {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar secagem"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar secagem"); }
   return res.json();
 }
 export type LoteSugeridoEvento = { codigo: string; nome: string; rotulo: string };
@@ -3200,17 +3666,195 @@ export async function sugestaoLoteEvento(dados: { numero_matriz: string; categor
   const res = await authFetch(`${API}/producao/sugestao-lote-evento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao buscar sugestão de lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar sugestão de lote"); }
   return res.json();
 }
 
 // ── Serviço/IA: protocolo IATF (só agenda) e inseminação (o evento em si) ──
 export type HormonioIatf = { dia: number; produto: string; dose?: number | null; unidade?: string; via?: string };
-export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo?: string; hormonios?: HormonioIatf[] }) {
+// Nome do lançamento é sempre automático (Central de Protocolos) — não se
+// digita mais; protocolo_id é opcional (molde cadastrado, só para
+// pré-preencher os hormônios e citar no nome).
+export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo_id?: number | null; hormonios?: HormonioIatf[] }) {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao agendar protocolo IATF"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao agendar protocolo IATF"); }
+  return res.json();
+}
+
+// ── Molde de IATF (Central de Protocolos > Cadastro) ──
+export type EtapaProtocoloIatf = {
+  dia: number; criterio_tipo: "medicamento" | "principio_ativo" | "classificacao";
+  principio_ativo_id?: number | null; produto: string; dose?: number | null; unidade?: string; via?: string;
+};
+export type ProtocoloIatfMolde = {
+  id: number; nome: string; observacao: string | null; ativo: boolean; etapas: EtapaProtocoloIatf[];
+};
+export async function fetchProtocolosIatfCadastrados(): Promise<ProtocoloIatfMolde[]> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos IATF cadastrados error: ${res.status}`);
+  return res.json();
+}
+export async function criarProtocoloIatfCadastrado(dados: { nome: string; observacao?: string | null; ativo?: boolean; etapas: EtapaProtocoloIatf[] }): Promise<ProtocoloIatfMolde> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar protocolo IATF"); }
+  return res.json();
+}
+export async function atualizarProtocoloIatfCadastrado(id: number, dados: { nome: string; observacao?: string | null; ativo?: boolean; etapas: EtapaProtocoloIatf[] }): Promise<ProtocoloIatfMolde> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo IATF"); }
+  return res.json();
+}
+export async function excluirProtocoloIatfCadastrado(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/protocolos-iatf/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo IATF"); }
+}
+
+// ── Central de Protocolos — Acompanhamento e Histórico (IATF + Indução +
+// Sanitário + Customizado, juntos e filtráveis por nome/período/tipo) ──
+export type LinhaCentralProtocolos = {
+  tipo: "produtivo" | "reprodutivo" | "sanitario" | "lida"; origem: "iatf" | "inducao" | "sanitario" | "customizado" | "lida";
+  origem_id: number; nome: string; data_inicio: string; data_fim: string;
+  etapas_total: number; etapas_realizadas: number; etapas_faltam: number;
+  // "encerrado": acabou antes do fim do cronograma. As etapas que sobraram
+  // seguem contadas como NÃO realizadas — encerrar não maquia o progresso.
+  animais: number; status: "ativo" | "concluido" | "encerrado" | "cancelado";
+  encerrado_em?: string | null; encerrado_motivo?: string | null;
+};
+export async function fetchCentralProtocolosAcompanhamento(params?: { nome?: string; tipo?: string }): Promise<LinhaCentralProtocolos[]> {
+  const qs = new URLSearchParams();
+  if (params?.nome) qs.set("nome", params.nome);
+  if (params?.tipo) qs.set("tipo", params.tipo);
+  const res = await authFetch(`${API}/central-protocolos/acompanhamento?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Central de Protocolos (acompanhamento) error: ${res.status}`);
+  return res.json();
+}
+export async function fetchCentralProtocolosHistorico(params?: { nome?: string; tipo?: string; data_de?: string; data_ate?: string }): Promise<LinhaCentralProtocolos[]> {
+  const qs = new URLSearchParams();
+  if (params?.nome) qs.set("nome", params.nome);
+  if (params?.tipo) qs.set("tipo", params.tipo);
+  if (params?.data_de) qs.set("data_de", params.data_de);
+  if (params?.data_ate) qs.set("data_ate", params.data_ate);
+  const res = await authFetch(`${API}/central-protocolos/historico?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Central de Protocolos (histórico) error: ${res.status}`);
+  return res.json();
+}
+
+// Detalhe de UM lançamento: a grade animal × dia. É o que permite fechar o
+// ciclo — até 08/2026 a Agenda era o único lugar capaz de marcar uma etapa
+// como realizada, e ela escondia a etapa cujo dia já tinha passado.
+export type CelulaProtocolo = {
+  dia: number; rotulo: string; data_prevista: string; data_realizacao: string | null;
+  realizada: boolean; estado: "realizada" | "atrasada" | "pendente";
+};
+// Opção de frasco em estoque para um hormônio do dia (mesmo formato que a
+// Agenda já usa em `hormonios`/`medicamentos_opcoes`, ver agenda/page.tsx).
+// `estoque_id` vem `null` e `sem_estoque` vem `true` para uma marca comercial
+// cadastrada que ainda não tem frasco em Estoque — só aparece com
+// `incluirSemEstoque` habilitado; escolher uma dessas não abate estoque.
+export type OpcaoMedicamento = {
+  estoque_id: number | null; nome: string; marca: string | null; saldo: number | null;
+  unidade: string | null; estoque_inicializado: boolean; sem_estoque: boolean;
+};
+export type HormonioProtocolo = {
+  produto: string; dose: number | null; unidade: string | null; via: string | null;
+  opcoes: OpcaoMedicamento[];
+};
+export type DetalheCentralProtocolo = {
+  origem: string; origem_id: number; nome: string; data_inicio: string | null;
+  responsavel: string | null; encerrado_em: string | null; encerrado_motivo: string | null;
+  ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
+  dias: {
+    dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number;
+    // Vem preenchido para origem === "iatf" ou "inducao" — o "qual
+    // medicamento/frasco?" que a Agenda já pergunta, agora também na Central.
+    hormonios?: HormonioProtocolo[];
+  }[];
+  animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];
+};
+
+export async function fetchDetalheProtocolo(
+  origem: string, origemId: number, incluirSemEstoque?: boolean,
+): Promise<DetalheCentralProtocolo> {
+  const qs = incluirSemEstoque ? "?incluir_sem_estoque=true" : "";
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}${qs}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao carregar o protocolo"); }
+  return res.json();
+}
+
+export async function darBaixaProtocolo(origem: string, origemId: number, dados: {
+  dia: number; animais?: string[] | null; data_realizacao?: string | null; medicamentos?: MedicamentoIatf[] | null;
+}): Promise<{ ok: boolean; avisos: string[] }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/baixa`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
+  return res.json();
+}
+
+/** Desfaz UMA aplicação já confirmada (um animal, um dia) — diferente de
+ *  cancelar, que desfaz o lançamento inteiro. Só IATF estorna estoque (o
+ *  backend documenta o motivo do escopo). */
+export async function desfazerAplicacao(origem: string, origemId: number, dia: number, numeroMatriz: string): Promise<{ ok: boolean; avisos: string[] }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/baixa`, {
+    method: "DELETE", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dia, numero_matriz: numeroMatriz }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desfazer a aplicação"); }
+  return res.json();
+}
+
+export async function renomearProtocolo(origem: string, origemId: number, nome: string): Promise<{ ok: boolean; nome: string }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/renomear`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao renomear o protocolo"); }
+  return res.json();
+}
+
+// G16 — genérico para as 4 origens (iatf, inducao, customizado, lida); todos
+// os campos são opcionais (exclude_unset no backend). 400 se o protocolo
+// estiver encerrado/cancelado, ou se `data_inicio` mudar com etapa já
+// aplicada. Mudar `data_inicio` desloca `data_prevista` de todas as
+// aplicações pelo mesmo delta.
+export type EditarLancamentoProtocoloIn = {
+  data_inicio?: string; responsavel?: string; observacao?: string; nome?: string;
+};
+export async function editarLancamentoProtocolo(origem: string, origemId: number, dados: EditarLancamentoProtocoloIn) {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento do protocolo"); }
+  return res.json();
+}
+
+export async function encerrarProtocolo(origem: string, origemId: number, motivo?: string) {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo: motivo || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar o protocolo"); }
+  return res.json();
+}
+
+/** Cancelar ≠ encerrar: aqui as aplicações voltam a "não realizadas" e o
+ *  estoque consumido é devolvido. A Sanidade registrada na ficha do animal
+ *  permanece — o produto entrou nele, e isso não se reescreve. */
+export async function cancelarProtocolo(origem: string, origemId: number, motivo?: string): Promise<{ ok: boolean; avisos: string[] }> {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/cancelar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo: motivo || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar o protocolo"); }
+  return res.json();
+}
+
+export async function reabrirProtocolo(origem: string, origemId: number) {
+  const res = await authFetch(`${API}/central-protocolos/${origem}/${origemId}/encerrar`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reabrir o protocolo"); }
   return res.json();
 }
 export async function fetchProtocolosIatfAtivos() {
@@ -3236,7 +3880,7 @@ export async function adicionarAnimaisIatf(lancamentoId: number, animais: string
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ animais }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar animais ao protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao adicionar animais ao protocolo"); }
   return res.json();
 }
 // Corrige uma inclusão por engano num lançamento ativo — só permite remover
@@ -3245,7 +3889,7 @@ export async function removerAnimalIatf(lancamentoId: number, numeroMatriz: stri
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais/${encodeURIComponent(numeroMatriz)}`, {
     method: "DELETE",
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover animal do protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover animal do protocolo"); }
 }
 export async function criarServico(dados: {
   numero_matriz: string; data_servico: string; tipo_servico?: string;
@@ -3255,7 +3899,7 @@ export async function criarServico(dados: {
   const res = await authFetch(`${API}/reproducao/servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar serviço/inseminação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar serviço/inseminação"); }
   return res.json();
 }
 
@@ -3268,7 +3912,7 @@ export async function criarParto(dados: {
   const res = await authFetch(`${API}/reproducao/parto`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar parto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar parto"); }
   return res.json();
 }
 
@@ -3291,9 +3935,56 @@ export async function fetchLancamentos() {
   return res.json();
 }
 
+export async function fetchPatrimonioListaSimples(): Promise<{ id: number; nome: string; tipo: string | null }[]> {
+  const res = await authFetch(`${API}/financeiro/patrimonio/lista-simples`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Patrimônio error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchPatrimonio() {
   const res = await authFetch(`${API}/financeiro/patrimonio`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Patrimônio error: ${res.status}`);
+  return res.json();
+}
+
+export type PatrimonioPayload = {
+  nome: string; tipo?: string | null; numero?: string | null; atividade_cultura?: string | null;
+  data_imobilizacao?: string | null; quantidade?: number | null; unidade?: string | null;
+  valor_total?: number | null; depreciavel?: boolean; metodo_depreciacao?: string | null;
+  vida_util?: string | null; valor_residual?: number | null; valor_mercado_atual?: number | null;
+  atualizacao_valor_mercado_frequencia_meses?: number | null;
+};
+
+export async function criarPatrimonio(dados: PatrimonioPayload) {
+  const res = await authFetch(`${API}/financeiro/patrimonio`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar patrimônio"); }
+  return res.json();
+}
+
+export async function atualizarPatrimonio(itemId: number, dados: PatrimonioPayload) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar patrimônio"); }
+  return res.json();
+}
+
+export async function atualizarValorMercadoPatrimonio(itemId: number, valorMercadoAtual: number, data?: string) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/valor-mercado`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ valor_mercado_atual: valorMercadoAtual, data: data || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar valor de mercado"); }
+  return res.json();
+}
+
+export async function vincularLancamentoPatrimonio(numeroLancamento: string, patrimonioId: number | null) {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/patrimonio`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patrimonio_id: patrimonioId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular patrimônio"); }
   return res.json();
 }
 
@@ -3304,7 +3995,100 @@ export async function atualizarPlanoManutencaoPatrimonio(itemId: number, dados: 
   const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao-plano`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar o plano de manutenção"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o plano de manutenção"); }
+  return res.json();
+}
+
+// ── Cartão de crédito (Controle Financeiro > Cartão de crédito) ────────────
+export type CartaoCredito = {
+  id: number; apelido: string; bandeira: string | null; banco_emissor: string | null;
+  conta_bancaria_id: number | null; dia_fechamento: number; dia_vencimento: number;
+  melhor_dia_compra: number; limite: number | null; controla_milhas: boolean;
+  milhas_por_real: number | null; ativo: boolean; milhas_totais?: number | null;
+};
+export type CartaoCreditoPayload = {
+  apelido: string; bandeira?: string | null; banco_emissor?: string | null;
+  conta_bancaria_id?: number | null; dia_fechamento: number; dia_vencimento: number;
+  limite?: number | null; controla_milhas?: boolean; milhas_por_real?: number | null; ativo?: boolean;
+};
+export type FaturaCartao = {
+  id: number; cartao_id: number; competencia: string; data_fechamento: string; data_vencimento: string;
+  valor_total: number | null; milhas_acumuladas: number | null; status: "aberta" | "fechada" | "paga";
+  numero_lancamento: string | null;
+};
+export type LancamentoCartao = {
+  id: number; cartao_id: number; fatura_id: number; data_compra: string; descricao: string;
+  codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; centro_custo: string | null;
+  valor: number; parcela_num: number | null; parcela_total: number | null; observacao: string | null;
+};
+export type LancamentoCartaoPayload = {
+  data_compra: string; descricao: string; codigo_conta_gerencial?: string | null;
+  nome_conta_gerencial?: string | null; centro_custo?: string | null; valor: number;
+  parcela_num?: number | null; parcela_total?: number | null; observacao?: string | null;
+};
+
+export async function fetchCartoesCredito(): Promise<CartaoCredito[]> {
+  const res = await authFetch(`${API}/financeiro/cartoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cartões de crédito error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCartaoCredito(cartaoId: number): Promise<CartaoCredito> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cartão de crédito error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarCartaoCredito(dados: CartaoCreditoPayload): Promise<CartaoCredito> {
+  const res = await authFetch(`${API}/financeiro/cartoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar cartão"); }
+  return res.json();
+}
+
+export async function atualizarCartaoCredito(cartaoId: number, dados: CartaoCreditoPayload): Promise<CartaoCredito> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar cartão"); }
+  return res.json();
+}
+
+export async function fetchExtratoCartao(cartaoId: number, competencia?: string): Promise<{ cartao: CartaoCredito; fatura: FaturaCartao; lancamentos: LancamentoCartao[] }> {
+  const qs = competencia ? `?competencia=${encodeURIComponent(competencia)}` : "";
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/extrato${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Extrato do cartão error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFaturasCartao(cartaoId: number): Promise<FaturaCartao[]> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/faturas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Faturas do cartão error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarLancamentoCartao(cartaoId: number, dados: LancamentoCartaoPayload): Promise<LancamentoCartao> {
+  const res = await authFetch(`${API}/financeiro/cartoes/${cartaoId}/lancamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar compra no cartão"); }
+  return res.json();
+}
+
+export async function fecharFaturaCartao(faturaId: number): Promise<FaturaCartao> {
+  const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/fechar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao fechar fatura"); }
+  return res.json();
+}
+
+export async function pagarFaturaCartao(faturaId: number, dados: {
+  data_pagamento?: string | null; codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null; centro_custo?: string | null;
+} = {}): Promise<FaturaCartao & { lancamento: any }> {
+  const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/pagar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao pagar fatura"); }
   return res.json();
 }
 
@@ -3322,13 +4106,22 @@ export async function registrarManutencaoPatrimonio(itemId: number, dados: {
   const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar a manutenção"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar a manutenção"); }
   return res.json();
 }
 
 export async function fetchOpcoesFinanceiro() {
   const res = await authFetch(`${API}/financeiro/opcoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Opções financeiro error: ${res.status}`);
+  return res.json();
+}
+
+// Link pro painel do Supabase (Table Editor) — botão em Relatórios
+// financeiros; backend bloqueia consultor (ver fazenda.auth.exigir_nao_consultor).
+// url: null quando o Supabase não está configurado.
+export async function fetchSupabaseDashboardUrl(): Promise<{ url: string | null }> {
+  const res = await authFetch(`${API}/financeiro/supabase-dashboard-url`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Link do Supabase error: ${res.status}`);
   return res.json();
 }
 
@@ -3346,14 +4139,14 @@ export async function criarContaGerencial(dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta gerencial"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar conta gerencial"); }
   return res.json();
 }
 export async function atualizarContaGerencial(id: number, dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta gerencial"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar conta gerencial"); }
   return res.json();
 }
 
@@ -3373,7 +4166,7 @@ export async function vincularEventoSanitarioReprodutivo(dados: { tipo: string; 
   const res = await authFetch(`${API}/financeiro/vincular-evento-sanitario-reprodutivo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular evento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao vincular evento"); }
   return res.json();
 }
 export async function fetchLancamentosPorData(data: string, tipo: "despesa" | "receita" = "despesa") {
@@ -3412,7 +4205,7 @@ export async function fetchCustoVacaLote(dataInicio: string, dataFim: string, ce
 
 export async function fetchCustoSafra(safraId: number) {
   const res = await authFetch(`${API}/financeiro/custo-safra?safra_id=${safraId}`, { cache: "no-store" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Custo por safra error: ${res.status}`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Custo por safra error: ${res.status}`); }
   return res.json();
 }
 
@@ -3433,14 +4226,14 @@ export async function criarContaCorrente(dados: { banco: string; agencia: string
   const res = await authFetch(`${API}/financeiro/contas-correntes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta corrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar conta corrente"); }
   return res.json();
 }
 export async function atualizarContaCorrente(id: number, dados: { banco: string; agencia: string; numero_conta: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/contas-correntes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta corrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar conta corrente"); }
   return res.json();
 }
 
@@ -3454,14 +4247,14 @@ export async function criarCentroCusto(dados: { nome: string; ativo?: boolean })
   const res = await authFetch(`${API}/financeiro/centros-custo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar centro de custo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar centro de custo"); }
   return res.json();
 }
 export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/centros-custo/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar centro de custo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar centro de custo"); }
   return res.json();
 }
 
@@ -3475,14 +4268,14 @@ export async function criarTipoDocumento(dados: { nome: string; ativo?: boolean 
   const res = await authFetch(`${API}/financeiro/tipos-documento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar tipo de documento"); }
   return res.json();
 }
 export async function atualizarTipoDocumento(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/tipos-documento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar tipo de documento"); }
   return res.json();
 }
 
@@ -3496,14 +4289,14 @@ export async function criarFormaPagamentoCadastro(dados: { nome: string; ativo?:
   const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar forma de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar forma de pagamento"); }
   return res.json();
 }
 export async function atualizarFormaPagamentoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
   const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar forma de pagamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar forma de pagamento"); }
   return res.json();
 }
 
@@ -3511,7 +4304,86 @@ export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    // Preserva `detail`/`status` (padrão `criarVale`) — o 409 de "estourou 40%
+    // do salário" de um item marcado como vale (ver ValeItemModal) precisa do
+    // `detail.competencias_excedidas` estruturado, não só de uma string solta.
+    const err: any = new Error(mensagemErroApi(d.detail) || (typeof d.detail === "object" ? d.detail?.mensagem : null) || "Erro ao criar lançamento");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+// ── Vale a partir de um item de lançamento financeiro (checkbox "É vale de
+// funcionário?" na linha do item, ver ValeItemModal/FormFinanceiro) ──
+export type ValeItemOrigem = {
+  origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number;
+  label: string; saldo_pendente: number | null; itens_pendentes: number | null;
+};
+export type ValeItemOpcoes = {
+  pessoa_id: number; pessoa_nome: string; tipos: string[];
+  folha: { disponivel: boolean; motivo: string | null; salario_base: number | null; limite_por_competencia: number | null };
+  origens: ValeItemOrigem[];
+  sugestao: { modo: "folha" | "avulso"; origem_tipo?: string | null; origem_id?: number | null } | null;
+  bloqueio: string | null;
+};
+export type ValeItemIn = {
+  pessoa_id: number;
+  modo: "folha" | "avulso";
+  parcelas?: number;
+  competencia_inicio?: string | null;
+  origem_tipo?: "empreitada" | "contrato" | "diaria" | null;
+  origem_id?: number | null;
+  observacao?: string | null;
+  confirmar?: boolean;
+};
+export type ValeItemResultado = {
+  item_id: number; numero_lancamento: string; vale_tipo: "funcionario" | "avulso";
+  vale_id: number; valor: number; data_pagamento: string;
+  pessoa_id: number; pessoa_nome: string; resumo: string;
+};
+
+export async function fetchOpcoesValeItem(pessoaId: number): Promise<ValeItemOpcoes> {
+  const res = await authFetch(`${API}/cadastro/vale-item/opcoes?pessoa_id=${pessoaId}`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao buscar opções de vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function marcarItemComoVale(itemId: number, dados: ValeItemIn): Promise<ValeItemResultado> {
+  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    // Preserva `detail`/`status` (mesmo padrão de `criarVale`) — o 409 de
+    // "item já gerou um vale" e o 409 de "estourou 40% do salário" chegam
+    // com `detail` estruturado (objeto), não só uma string.
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao marcar item como vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function desmarcarItemComoVale(itemId: number, excluirVale: boolean) {
+  const res = await authFetch(`${API}/cadastro/vale-item/${itemId}?excluir_vale=${excluirVale ? "true" : "false"}`, { method: "DELETE" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao desmarcar vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -3558,14 +4430,14 @@ export async function criarLancamentoRecorrente(dados: LancamentoRecorrentePaylo
   const res = await authFetch(`${API}/financeiro/recorrentes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento recorrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lançamento recorrente"); }
   return res.json();
 }
 export async function atualizarLancamentoRecorrente(id: number, dados: LancamentoRecorrentePayload) {
   const res = await authFetch(`${API}/financeiro/recorrentes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lançamento recorrente"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar lançamento recorrente"); }
   return res.json();
 }
 export type GerarLancamentoRecorrentePayload = {
@@ -3586,18 +4458,22 @@ export async function gerarLancamentoRecorrente(modeloId: number, dados: GerarLa
   const res = await authFetch(`${API}/financeiro/recorrentes/${modeloId}/gerar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar o lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar o lançamento"); }
   return res.json();
 }
 
 export async function marcarPagoFinanceiro(id: number, dados: {
   data_pagamento: string; valor_pago: number; conta_bancaria?: string; numero_documento_pagamento?: string;
   forma_pagamento?: string; data_vencimento_cartao?: string;
+  // Diferença entre valor_pago e o valor do lançamento dividida em novas
+  // parcelas do mesmo lançamento, em vez de virar desconto/acréscimo — ver
+  // PUT /financeiro/lancamentos/{id}/pagar.
+  parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
 
@@ -3608,7 +4484,7 @@ export async function criarBaixaLote(dados: {
   const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa em lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
 
@@ -3621,7 +4497,7 @@ export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
   const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa em lote"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa em lote"); }
   return res.json();
 }
 
@@ -3637,7 +4513,30 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar o lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento"); }
+  return res.json();
+}
+
+// G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
+// lançamento. Se a baixa criou parcela(s) para cobrir a diferença de valor
+// pago (ver marcarPagoFinanceiro/parcelas_diferenca), a API responde 409 com
+// `detail = {mensagem, parcelas}` — reenviar com `confirmar_parcelas_diferenca: true`
+// para apagar essas parcelas e restaurar `parcela_total` das remanescentes.
+export type EstornoLancamentoIn = { motivo?: string | null; confirmar_parcelas_diferenca?: boolean };
+export type EstornoLancamentoOut = Record<string, any> & {
+  estornado: true; parcelas_diferenca_removidas: number; avisos: string[];
+};
+export async function estornarPagamentoLancamento(id: number, dados: EstornoLancamentoIn = {}): Promise<EstornoLancamentoOut> {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/estornar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao estornar pagamento");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -3656,7 +4555,7 @@ export async function importarXmlFinanceiro(xml: string) {
   const res = await authFetch(`${API}/financeiro/importar-xml`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o XML"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o XML"); }
   return res.json();
 }
 
@@ -3664,24 +4563,44 @@ export async function lerDocumentoFinanceiro(file: File) {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o documento"); }
   return res.json();
 }
 
 // Anexos do lançamento (ex.: boleto de um parcelamento) — o lançamento já
 // precisa existir (numero_lancamento vem do retorno de criarLancamentoFinanceiro).
-export type AnexoLancamento = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; criado_em?: string };
+export type AnexoLancamento = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria?: string | null; criado_em?: string };
 
-export async function anexarArquivoLancamento(numeroLancamento: string, file: File): Promise<AnexoLancamento> {
+export async function anexarArquivoLancamento(numeroLancamento: string, file: File, categoria?: string | null): Promise<AnexoLancamento> {
   const form = new FormData();
   form.append("file", file);
+  if (categoria) form.append("categoria", categoria);
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar o arquivo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
 
 export async function listarAnexosLancamento(numeroLancamento: string): Promise<AnexoLancamento[]> {
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos");
+  return res.json();
+}
+
+// Mesmas duas operações, ancoradas no id do lançamento. Necessário porque
+// lançamento importado da planilha nasce sem `numero_lancamento`, e sem ele
+// não havia como anexar comprovante nenhum — o backend emite a numeração na
+// primeira anexação (ver _garantir_numero_lancamento).
+export async function anexarArquivoLancamentoPorId(lancamentoId: number, file: File, categoria?: string | null): Promise<AnexoLancamento> {
+  const form = new FormData();
+  form.append("file", file);
+  if (categoria) form.append("categoria", categoria);
+  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+
+export async function listarAnexosLancamentoPorId(lancamentoId: number): Promise<AnexoLancamento[]> {
+  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`);
   if (!res.ok) throw new Error("Erro ao listar anexos");
   return res.json();
 }
@@ -3701,12 +4620,12 @@ export async function enviarReciboEmail(numeroLancamento: string, destinatario: 
   form.append("destinatario", destinatario);
   form.append("arquivo", arquivo, `recibo_${numeroLancamento}.pdf`);
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/recibo/enviar`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar o recibo por e-mail"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao enviar o recibo por e-mail"); }
 }
 
 export async function excluirAnexoLancamento(anexoId: number) {
   const res = await authFetch(`${API}/financeiro/anexos/${anexoId}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
   return res.json();
 }
 
@@ -3758,19 +4677,19 @@ export async function criarItemOrcamento(dados: OrcamentoItemPayload) {
   const res = await authFetch(`${API}/planejamento/orcamento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar item de orçamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar item de orçamento"); }
   return res.json();
 }
 export async function atualizarItemOrcamento(id: number, dados: OrcamentoItemPayload) {
   const res = await authFetch(`${API}/planejamento/orcamento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de orçamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item de orçamento"); }
   return res.json();
 }
 export async function excluirItemOrcamento(id: number) {
   const res = await authFetch(`${API}/planejamento/orcamento/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir item de orçamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir item de orçamento"); }
 }
 export async function fetchComparativoOrcado(params: { ano: number; mes_inicio?: number; mes_fim?: number; centro_custo?: string }) {
   const qs = new URLSearchParams({ ano: String(params.ano) });
@@ -3792,19 +4711,19 @@ export async function criarCenario(dados: CenarioPayload) {
   const res = await authFetch(`${API}/planejamento/cenarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar cenário"); }
   return res.json();
 }
 export async function atualizarCenario(id: number, dados: CenarioPayload) {
   const res = await authFetch(`${API}/planejamento/cenarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar cenário"); }
   return res.json();
 }
 export async function excluirCenario(id: number) {
   const res = await authFetch(`${API}/planejamento/cenarios/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir cenário"); }
 }
 
 export type PlanejamentoItemPayload = {
@@ -3820,19 +4739,19 @@ export async function criarItemCenario(cenarioId: number, dados: PlanejamentoIte
   const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/itens`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar item do cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar item do cenário"); }
   return res.json();
 }
 export async function atualizarItemCenario(id: number, dados: PlanejamentoItemPayload) {
   const res = await authFetch(`${API}/planejamento/itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item do cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar item do cenário"); }
   return res.json();
 }
 export async function excluirItemCenario(id: number) {
   const res = await authFetch(`${API}/planejamento/itens/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir item do cenário"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir item do cenário"); }
 }
 export async function fetchProjecaoCenario(cenarioId: number) {
   const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/projecao`, { cache: "no-store" });
@@ -3847,7 +4766,7 @@ export async function importarParaPedido(dados: {
   const res = await authFetch(`${API}/planejamento/importar-para-pedido`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar para pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar para pedido"); }
   return res.json();
 }
 
@@ -3883,26 +4802,26 @@ export async function criarPedido(dados: PedidoPayload) {
   const res = await authFetch(`${API}/pedidos/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar pedido"); }
   return res.json();
 }
 export async function atualizarPedido(id: number, dados: PedidoPayload) {
   const res = await authFetch(`${API}/pedidos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar pedido"); }
   return res.json();
 }
 export async function atualizarStatusPedido(id: number, status: string) {
   const res = await authFetch(`${API}/pedidos/${id}/status`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar status do pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar status do pedido"); }
   return res.json();
 }
 export async function excluirPedido(id: number) {
   const res = await authFetch(`${API}/pedidos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir pedido"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pedido"); }
 }
 
 export async function fetchModelosImportar() {
@@ -3916,13 +4835,13 @@ export async function importarCSV(categoria: string, file: File, extra?: Record<
   form.append("file", file);
   Object.entries(extra || {}).forEach(([k, v]) => form.append(k, v));
   const res = await authFetch(`${API}/importar/${categoria}`, { method: "POST", body: form });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar"); }
   return res.json();
 }
 
 export async function backfillFornecedoresEstoque() {
   const res = await authFetch(`${API}/importar/backfill`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao rodar o backfill"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rodar o backfill"); }
   return res.json();
 }
 
@@ -3940,7 +4859,7 @@ export async function uploadCSV(tipo: string, file: File) {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Erro no upload");
+    throw new Error(mensagemErroApi(err.detail) || "Erro no upload");
   }
   return res.json();
 }
@@ -3972,7 +4891,7 @@ export async function addEventoManual(data: {
       intervalo_meses: data.intervalo_meses || null,
     }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar evento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao adicionar evento"); }
   return res.json();
 }
 
@@ -3988,24 +4907,18 @@ export async function buscarExclusao(tipo: string, termo: string, dataInicio = "
   if (!res.ok) throw new Error(`Busca de exclusão error: ${res.status}`);
   return res.json();
 }
-// FastAPI 422 traz "detail" como lista de erros de validação, não string — normaliza para texto.
-function detalheErro(d: any, fallback: string): string {
-  if (typeof d?.detail === "string") return d.detail;
-  if (Array.isArray(d?.detail)) return d.detail.map((e: any) => e.msg || JSON.stringify(e)).join("; ");
-  return fallback;
-}
 export async function impactoExclusao(tipo: string, id: string) {
   const res = await authFetch(`${API}/exclusoes/impacto`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao calcular impacto")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular impacto"); }
   return res.json();
 }
 export async function confirmarExclusao(tipo: string, id: string) {
   const res = await authFetch(`${API}/exclusoes/confirmar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao excluir")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir"); }
   return res.json();
 }
 export async function fetchPendentesExclusao() {
@@ -4015,14 +4928,14 @@ export async function fetchPendentesExclusao() {
 }
 export async function aprovarExclusao(id: number) {
   const res = await authFetch(`${API}/exclusoes/pendentes/${id}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao aprovar")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar"); }
   return res.json();
 }
 export async function rejeitarExclusao(id: number, motivo?: string) {
   const res = await authFetch(`${API}/exclusoes/pendentes/${id}/rejeitar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao rejeitar")); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rejeitar"); }
   return res.json();
 }
 
@@ -4044,7 +4957,7 @@ export async function subscribePush(dados: { endpoint: string; keys: { p256dh: s
   const res = await authFetch(`${API}/push/subscribe`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ativar notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ativar notificações"); }
   return res.json();
 }
 
@@ -4052,7 +4965,7 @@ export async function unsubscribePush(endpoint?: string) {
   const res = await authFetch(`${API}/push/subscribe`, {
     method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: endpoint || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desativar notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desativar notificações"); }
   return res.json();
 }
 
@@ -4066,7 +4979,7 @@ export async function registrarTokenFcm(dados: {
   const res = await authFetch(`${API}/push/registrar-fcm`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar notificações"); }
   return res.json();
 }
 
@@ -4074,7 +4987,7 @@ export async function removerTokenFcm(token?: string): Promise<{ ok: boolean }> 
   const res = await authFetch(`${API}/push/registrar-fcm`, {
     method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover notificações"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao remover notificações"); }
   return res.json();
 }
 
@@ -4101,19 +5014,44 @@ export async function editarLancamentoPendente(id: number, dados: Record<string,
   const res = await authFetch(`${API}/aprovacoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dados }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar"); }
   return res.json();
 }
 
 export async function aprovarLancamento(id: number) {
   const res = await authFetch(`${API}/aprovacoes/${id}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar"); }
   return res.json();
 }
 
 export async function rejeitarLancamento(id: number) {
   const res = await authFetch(`${API}/aprovacoes/${id}/rejeitar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao rejeitar"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rejeitar"); }
+  return res.json();
+}
+
+// G17 — fila de decididos (aprovados/rejeitados), com a possibilidade de
+// desfazer. `pode_desfazer` é sempre true para rejeitado; para aprovado, só
+// quando o backend conseguiu gravar o(s) registro(s) criados (ver
+// `LancamentoPendente.registro_criado`) e eles ainda existem — aprovações
+// antigas (de antes desta coluna existir) vêm com `pode_desfazer: false` e
+// `motivo_nao_desfaz` explicando o porquê.
+export type LancamentoPendenteDecidido = LancamentoPendente & {
+  pode_desfazer: boolean; motivo_nao_desfaz: string | null;
+};
+export async function fetchAprovacoesDecididas(limite = 30): Promise<LancamentoPendenteDecidido[]> {
+  const res = await authFetch(`${API}/aprovacoes/decididas?limite=${limite}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Aprovações decididas error: ${res.status}`);
+  return res.json();
+}
+/** Rejeitado → volta a "pendente" (pode ser reavaliado). Aprovado → desfaz o
+ * que foi criado (mesmo trio do motor de exclusões: desvincula vale, estorna
+ * estoque, `session.delete`) e também volta a "pendente" — 400 se o registro
+ * não for reversível (`registro_criado` ausente ou `reversivel: false`), 409
+ * se ainda estiver "pendente" (nada pra desfazer). */
+export async function desfazerAprovacao(id: number) {
+  const res = await authFetch(`${API}/aprovacoes/${id}/desfazer`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao desfazer aprovação"); }
   return res.json();
 }
 
@@ -4149,11 +5087,11 @@ async function _rGet(path: string) {
 }
 async function _rSend(path: string, method: string, body?: any) {
   const res = await fetch(`${API}${path}`, { method, headers: _rHead(), ...(body ? { body: JSON.stringify(body) } : {}) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro (${res.status})`); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro (${res.status})`); }
   return res.json();
 }
 
-export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
+export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; doenca_id?: number | null; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
 export type RecriaPontoCritico = { dia_pico: number; dia_min: number; dia_max: number; casos_na_janela: number; total_casos: number; pct_na_janela: number };
 export type RecriaCurva = {
   doenca: string; total_casos: number;
@@ -4164,7 +5102,7 @@ export type RecriaCurva = {
 export type RecriaMetas = { idade_parto_meses: number; idade_prenhez_meses: number; idade_1a_cobertura_meses: number; taxa_prenhez_meta: number; desvio_padrao_meta: number; custo_diario_recria: number };
 export type RecriaPesoAlvo = { id?: number; mes: number; peso_min_kg: number; peso_max_kg: number };
 export type RecriaFase = { id?: number; nome: string; dia_min: number; dia_max: number; ordem: number; ativo: boolean };
-export type RecriaJanela = { id?: number; doenca: string; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
+export type RecriaJanela = { id?: number; doenca: string; doenca_id?: number | null; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
 
 export const fetchRecriaDoencas = (): Promise<{ doenca: string; casos: number }[]> => _rGet(`/recria/doencas`);
 export const fetchRecriaCurva = (doenca: string, ini?: string, fim?: string): Promise<RecriaCurva> => {
@@ -4176,7 +5114,7 @@ export const fetchRecriaOcorrencias = (doenca = "", numero = ""): Promise<Recria
   const p = new URLSearchParams(); if (doenca) p.set("doenca", doenca); if (numero) p.set("numero_matriz", numero);
   return _rGet(`/recria/ocorrencias${p.toString() ? "?" + p.toString() : ""}`);
 };
-export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
+export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; doenca_id?: number | null; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
 export const excluirRecriaOcorrencia = (id: number) => _rSend(`/recria/ocorrencias/${id}`, "DELETE");
 export const fetchRecriaMetas = (): Promise<RecriaMetas> => _rGet(`/recria/metas`);
 export const salvarRecriaMetas = (d: RecriaMetas) => _rSend(`/recria/metas`, "PUT", d);
@@ -4196,10 +5134,10 @@ export const salvarRecriaBenchmark = (d: RecriaBenchmark) => _rSend(`/recria/ben
 export const excluirRecriaBenchmark = (id: number) => _rSend(`/recria/benchmark/${id}`, "DELETE");
 
 export type WisconsinStats = { n: number; media: number; minimo: number; maximo: number; desvio_padrao: number; assimetria: number; curtose: number; idade_tipica_min: number; idade_tipica_max: number; amplitude_tipica: number };
-export type RecriaIdadeParto = { meta_idade_parto: number; estatisticas: WisconsinStats | null; distribuicao: { mes: number; n: number; pct: number }[]; custo_excedente: { n: number; dias_excedentes_total: number; custo_total: number; dias_por_novilha: number; custo_por_novilha: number } };
+export type RecriaIdadeParto = { meta_idade_parto: number; meta_desvio_padrao: number; estatisticas: WisconsinStats | null; distribuicao: { mes: number; n: number; pct: number }[]; custo_excedente: { n: number; dias_excedentes_total: number; custo_total: number; dias_por_novilha: number; custo_por_novilha: number } };
 export type RecriaCiclo = { ciclo: number; inicio: string; fim: string; elegiveis: number; servidos: number; prenhes: number; taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null };
 export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/recria/reproducao/idade-parto`);
-export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number }> =>
+export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; meta_taxa_prenhez: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
 export type RecriaDossie = {
@@ -4225,7 +5163,7 @@ export async function importarCochoPlanilha(file: File): Promise<{ criados: numb
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`${API}/recria/cocho/importar`, { method: "POST", body: form });
-  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || "Erro ao importar planilha");
+  if (!res.ok) throw new Error(mensagemErroApi((await res.json().catch(() => null))?.detail) || "Erro ao importar planilha");
   return res.json();
 }
 
@@ -4449,7 +5387,7 @@ export async function enviarDocumento(dados: {
   if (dados.dataDocumento) fd.append("data_documento", dados.dataDocumento);
   if (dados.descricao) fd.append("descricao", dados.descricao);
   const res = await authFetch(`${API}/documentos/upload`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao arquivar documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao arquivar documento"); }
   return res.json();
 }
 
@@ -4468,7 +5406,7 @@ export async function baixarDocumento(id: number, nomeArquivo: string): Promise<
 
 export async function excluirDocumento(id: number): Promise<void> {
   const res = await authFetch(`${API}/documentos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir documento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir documento"); }
 }
 
 // ── Fotos do campo (app móvel) ──
@@ -4507,7 +5445,7 @@ export async function fetchFotoCampoUrl(id: number): Promise<string> {
 
 export async function excluirFotoCampo(id: number): Promise<void> {
   const res = await authFetch(`${API}/fotos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir foto"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir foto"); }
 }
 
 // ── Cadeado do Painel do Contador ──
@@ -4520,7 +5458,7 @@ export async function desbloquearContador(senha: string): Promise<{ token_desblo
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify({ senha }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Senha incorreta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Senha incorreta"); }
   return res.json();
 }
 
@@ -4545,7 +5483,7 @@ export async function abrirChamado(dados: { assunto: string; descricao: string }
     method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao abrir chamado"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir chamado"); }
   return res.json();
 }
 
@@ -4560,7 +5498,7 @@ export async function calcularJuros(
     method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular juros"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular juros"); }
   return res.json();
 }
 
@@ -4571,7 +5509,7 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
     method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
     body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lançamento"); }
   return res.json();
 }
 
@@ -4601,7 +5539,7 @@ export async function criarAlertaIndicador(dados: { indicador_chave: string; ope
   const res = await authFetch(`${API}/alertas-indicador`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar alerta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar alerta"); }
   return res.json();
 }
 
@@ -4609,13 +5547,13 @@ export async function editarAlertaIndicador(id: number, dados: { operador?: stri
   const res = await authFetch(`${API}/alertas-indicador/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar alerta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar alerta"); }
   return res.json();
 }
 
 export async function excluirAlertaIndicador(id: number): Promise<void> {
   const res = await authFetch(`${API}/alertas-indicador/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir alerta"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir alerta"); }
 }
 
 // ── Onboarding (checklist guiado de primeiro acesso) ──
@@ -4658,13 +5596,13 @@ export async function criarFiltroSalvo(dados: { tela: string; nome: string; filt
   const res = await authFetch(`${API}/filtros-salvos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar filtro"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar filtro"); }
   return res.json();
 }
 
 export async function excluirFiltroSalvo(id: number): Promise<void> {
   const res = await authFetch(`${API}/filtros-salvos/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir filtro salvo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir filtro salvo"); }
 }
 
 // ── Protocolos personalizados (motor de protocolos configurável) ──
@@ -4676,13 +5614,21 @@ export type EtapaProtocoloCustomizado = {
   observacao?: string | null; ordem?: number;
 };
 export type ProtocoloCustomizado = {
-  id: number; nome: string; categoria: string; dia_inicial: number;
+  id: number; nome: string; categoria: string;
+  // Classificação macro exigida pela Central de Protocolos — sem isto, o
+  // protocolo continua funcionando na Agenda mas fica fora dos filtros de
+  // Acompanhamento/Histórico (ver LinhaCentralProtocolos.tipo).
+  tipo: "produtivo" | "reprodutivo" | "sanitario" | null;
+  dia_inicial: number;
   observacao: string | null; ativo: boolean; duracao_dias: number;
   etapas: EtapaProtocoloCustomizado[];
 };
 export const CATEGORIAS_PROTOCOLO_CUSTOM: [string, string][] = [
   ["Atividades", "Atividades (geral)"], ["Reprodutivo", "Reprodutivo"], ["Produção", "Produção"],
   ["sanidade", "Sanidade"], ["Rebanho", "Rebanho"], ["Gestão/Financeiro", "Gestão/Financeiro"],
+];
+export const TIPOS_PROTOCOLO_CUSTOM: [string, string][] = [
+  ["produtivo", "Produtivo"], ["reprodutivo", "Reprodutivo"], ["sanitario", "Sanitário"],
 ];
 
 export async function fetchProtocolosCustomizados(): Promise<ProtocoloCustomizado[]> {
@@ -4691,28 +5637,28 @@ export async function fetchProtocolosCustomizados(): Promise<ProtocoloCustomizad
   return res.json();
 }
 export async function criarProtocoloCustomizado(dados: {
-  nome: string; categoria: string; dia_inicial: number; observacao?: string | null; ativo?: boolean;
+  nome: string; categoria: string; tipo?: string | null; dia_inicial: number; observacao?: string | null; ativo?: boolean;
   etapas: EtapaProtocoloCustomizado[];
 }): Promise<ProtocoloCustomizado> {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar protocolo"); }
   return res.json();
 }
 export async function atualizarProtocoloCustomizado(id: number, dados: {
-  nome: string; categoria: string; dia_inicial: number; observacao?: string | null; ativo?: boolean;
+  nome: string; categoria: string; tipo?: string | null; dia_inicial: number; observacao?: string | null; ativo?: boolean;
   etapas: EtapaProtocoloCustomizado[];
 }): Promise<ProtocoloCustomizado> {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar protocolo"); }
   return res.json();
 }
 export async function excluirProtocoloCustomizado(id: number): Promise<void> {
   const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir protocolo"); }
 }
 
 export async function fetchProtocolosCustomizadosParaLancar(): Promise<ProtocoloCustomizado[]> {
@@ -4723,11 +5669,11 @@ export async function fetchProtocolosCustomizadosParaLancar(): Promise<Protocolo
 export async function lancarProtocoloCustomizado(dados: {
   protocolo_id: number; animais: string[]; lote?: string | null; data_inicio: string;
   responsavel?: string | null; observacao?: string | null;
-}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number }> {
+}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number; aviso?: string }> {
   const res = await authFetch(`${API}/protocolos-customizados/lancar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar protocolo"); }
   return res.json();
 }
 export type ProtocoloCustomizadoAtivo = {
@@ -4742,5 +5688,81 @@ export async function fetchProtocolosCustomizadosAtivos(): Promise<ProtocoloCust
 }
 export async function cancelarLancamentoProtocoloCustomizado(lancamentoId: number): Promise<void> {
   const res = await authFetch(`${API}/protocolos-customizados/${lancamentoId}/cancelar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cancelar lançamento"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar lançamento"); }
+}
+
+// ── Lida — tarefas gerais da fazenda (não são protocolo de animal) ──────────
+// Sem Tipo produtivo/reprodutivo/sanitário — ver comentário em
+// fazenda/models/lida.py (backend) para a diferença em relação ao Protocolo
+// Customizado. Duas formas de agendar: "periodo" (D0, D1... como os demais
+// protocolos) ou "frequencia" (a cada N dias, entre início e fim).
+export type EtapaLida = {
+  dia_inicio: number; dia_fim?: number | null; descricao_evento: string;
+  insumo_padrao?: string | null; insumo_dose?: number | null; insumo_unidade?: string | null;
+  foto_obrigatoria?: boolean; ordem?: number;
+};
+export type Lida = {
+  id: number; nome: string; modo: "periodo" | "frequencia"; dia_inicial: number;
+  frequencia_dias: number | null; descricao_evento: string | null;
+  insumo_padrao: string | null; insumo_dose: number | null; insumo_unidade: string | null;
+  foto_obrigatoria: boolean; dar_baixa_estoque: boolean; vincular_financeiro: boolean;
+  observacao: string | null; ativo: boolean; etapas: EtapaLida[]; duracao_dias: number | null;
+};
+type LidaPayload = {
+  nome: string; modo: "periodo" | "frequencia"; dia_inicial?: number;
+  frequencia_dias?: number | null; descricao_evento?: string | null;
+  insumo_padrao?: string | null; insumo_dose?: number | null; insumo_unidade?: string | null;
+  foto_obrigatoria?: boolean; dar_baixa_estoque?: boolean; vincular_financeiro?: boolean;
+  observacao?: string | null; ativo?: boolean; etapas?: EtapaLida[];
+};
+
+export async function fetchLidas(): Promise<Lida[]> {
+  const res = await authFetch(`${API}/cadastro/lidas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lida error: ${res.status}`);
+  return res.json();
+}
+export async function criarLida(dados: LidaPayload): Promise<Lida> {
+  const res = await authFetch(`${API}/cadastro/lidas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar lida"); }
+  return res.json();
+}
+export async function atualizarLida(id: number, dados: LidaPayload): Promise<Lida> {
+  const res = await authFetch(`${API}/cadastro/lidas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar lida"); }
+  return res.json();
+}
+export async function excluirLida(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/lidas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lida"); }
+}
+
+export async function fetchLidasParaLancar(): Promise<Lida[]> {
+  const res = await authFetch(`${API}/lida`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lida error: ${res.status}`);
+  return res.json();
+}
+export async function lancarLida(dados: {
+  lida_id: number; animais?: string[]; lote?: string | null; data_inicio: string; data_fim?: string | null;
+  responsavel?: string | null; observacao?: string | null;
+}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number; aviso?: string }> {
+  const res = await authFetch(`${API}/lida/lancar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar lida"); }
+  return res.json();
+}
+export type LidaAtiva = {
+  lancamento_id: number; nome_protocolo: string; modo: "periodo" | "frequencia"; data_inicio: string;
+  alvo_tipo: "tarefa_fazenda" | "lote" | "animal"; lote: string | null; responsavel: string | null;
+  total_etapas: number; pendentes: number; animais: string[];
+  proxima_etapa: string; proxima_data: string; proxima_foto_obrigatoria: boolean;
+};
+export async function fetchLidasAtivas(): Promise<LidaAtiva[]> {
+  const res = await authFetch(`${API}/lida/ativos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lida ativos error: ${res.status}`);
+  return res.json();
 }

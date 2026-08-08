@@ -14,7 +14,8 @@ const TIPOS = [
   { id: "sanidade",         label: "SANIDADE.csv",                   desc: "Medicamentos aplicados nos animais" },
   { id: "curva_abc",        label: "CURVA_ABC.csv",                  desc: "Classificação A/B/C de compras (Pareto de custos)" },
   { id: "plano_conta_gerencial", label: "PLANO_DE_CONTAS_GERENCIAIS.csv", desc: "Hierarquia do plano de contas gerenciais" },
-  { id: "patrimonio",       label: "LISTA_DE_PATRIMONIO.csv",        desc: "Máquinas, veículos, implementos e terras" },
+  // Patrimônio saiu da lista: o cadastro agora é manual (Controle Financeiro
+  // > Patrimônio > "+ Novo patrimônio"), que substitui o upload de CSV.
 ];
 
 type Status = "idle" | "uploading" | "ok" | "error";

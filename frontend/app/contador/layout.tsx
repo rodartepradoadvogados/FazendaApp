@@ -3,24 +3,26 @@
 // UsuarioFazenda.contador, ver backend/fazenda/models/multitenant.py e
 // AuthShell.tsx::ehPainelContador). Deliberadamente "soa diferente" do resto
 // do sistema (nem a paleta vinho/verde/azul da fazenda, nem o navy+dourado
-// do Painel CowData): tipografia serifada de livro-caixa sobre grafite quente,
-// com friso duplo no cabeçalho — a intenção é que nunca pareça "mais uma tela
-// da fazenda". Não tem equivalente no app móvel (ver AuthShell.tsx).
+// do Painel CowData): tipografia serifada de livro-caixa sobre grafite
+// neutro-azulado (paleta cinza-azulada do redesign, sem o cobre/marrom da
+// versão anterior), com friso duplo no cabeçalho — a intenção é que nunca
+// pareça "mais uma tela da fazenda". Não tem equivalente no app móvel (ver
+// AuthShell.tsx).
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { ehContador, getFazendaAtual, getUsuario, logout } from "@/lib/api";
 
 export const CORES_CONTADOR = {
-  bg: "#1c1a17",
-  painel: "#242019",
-  painelAlt: "#2c2620",
-  borda: "#463c2e",
-  bordaClara: "#5a4d3a",
-  texto: "#ede4d3",
-  mudo: "#a3947a",
-  cobre: "#c1682f",
-  cobreClaro: "#e0985c",
+  bg: "#1A2028",
+  painel: "#212832",
+  painelAlt: "#262E39",
+  borda: "#39424F",
+  bordaClara: "#4B5563",
+  texto: "#F1F3F5",
+  mudo: "#9CA6B4",
+  cobre: "#6B7F99",
+  cobreClaro: "#8FA0B5",
   positivo: "#8faa7b",
   negativo: "#b5544a",
 };
@@ -58,7 +60,7 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
             <div style={{ display: "flex", alignItems: "center", gap: "0.9rem" }}>
               <span style={{
                 fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
-                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "3px", padding: "0.2rem 0.5rem",
+                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "var(--r-sm)", padding: "0.2rem 0.5rem",
               }}>
                 Somente leitura
               </span>

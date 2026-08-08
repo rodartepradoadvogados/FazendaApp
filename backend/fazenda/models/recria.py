@@ -27,7 +27,13 @@ class OcorrenciaClinica(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_matriz: str = Field(index=True)
-    doenca: str = Field(index=True)          # nome da doença (ex.: Diarreia, Pneumonia, TPB)
+    doenca: str = Field(index=True)          # nome da doença (ex.: Diarreia, Pneumonia, TPB) — texto livre, histórico
+    # Vínculo com o catálogo (fazenda.models.sanidade.Doenca) — casado por
+    # nome (backfill, ver fazenda.rules.recria_doenca) ou gravado direto na
+    # criação quando o lançamento já veio de um seletor do catálogo. `doenca`
+    # (texto) continua existindo: é o fallback de exibição e o histórico de
+    # quem nunca teve o vínculo resolvido.
+    doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id", index=True)
     data_ocorrencia: date = Field(index=True)
     observacao: Optional[str] = None
     origem: str = "manual"                    # "manual" | "importacao" | "sanidade"
@@ -99,7 +105,8 @@ class JanelaPontoCritico(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    doenca: str = Field(index=True)
+    doenca: str = Field(index=True)          # texto livre, histórico — ver nota em OcorrenciaClinica.doenca
+    doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id", index=True)
     dia_min: int
     dia_max: int
     dias_antecedencia: int = 3

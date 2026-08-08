@@ -124,6 +124,48 @@ class TestLerDocumento:
         assert d["parcela_total"] == 6
         assert d["data_vencimento"] == "2026-08-10"
 
+    def test_extrai_guia_fgts(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        payload = {
+            "tipo_documento": "guia_fgts", "fornecedor_cliente": "Fazenda Estreito Ponte de Pedra",
+            "numero_documento": None, "data_emissao": None, "data_pagamento": None,
+            "valor_total": 1240.0, "conta_bancaria": None, "itens": [], "observacao": None,
+            "parcela_num": None, "parcela_total": None, "linha_digitavel": "858700000012400123456789012345678901234567",
+            "data_vencimento": "2026-08-20", "parcelas_detectadas": [],
+            "competencia": "2026-07", "codigo_receita": None,
+            "valor_principal": 1240.0, "valor_multa": 0.0, "valor_juros": 0.0,
+        }
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(payload)
+            r = c.post("/financeiro/ler-documento", files={"file": ("guia_fgts.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["tipo_documento"] == "guia_fgts"
+        assert d["competencia"] == "2026-07"
+        assert d["valor_principal"] == 1240.0
+
+    def test_extrai_guia_dctf_com_codigo_da_receita(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        payload = {
+            "tipo_documento": "guia_dctf", "fornecedor_cliente": "Fazenda Estreito Ponte de Pedra",
+            "numero_documento": None, "data_emissao": None, "data_pagamento": None,
+            "valor_total": 892.50, "conta_bancaria": None, "itens": [], "observacao": None,
+            "parcela_num": None, "parcela_total": None, "linha_digitavel": None,
+            "data_vencimento": "2026-08-20", "parcelas_detectadas": [],
+            "competencia": "2026-07", "codigo_receita": "1017",
+            "valor_principal": 850.0, "valor_multa": 20.0, "valor_juros": 22.5,
+        }
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(payload)
+            r = c.post("/financeiro/ler-documento", files={"file": ("darf.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["tipo_documento"] == "guia_dctf"
+        assert d["codigo_receita"] == "1017"
+        assert d["valor_principal"] + d["valor_multa"] + d["valor_juros"] == 892.5
+
     def test_recusa_da_ia_vira_erro_400(self, client, monkeypatch):
         c, engine = client
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")

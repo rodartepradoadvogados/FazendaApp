@@ -10,7 +10,7 @@ type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeri
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem",
+  borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", fontSize: "0.78rem",
 };
 const hoje = () => new Date().toISOString().split("T")[0];
 
@@ -52,7 +52,7 @@ function FormMover({ sugestao, motivos, onFeito, onCancelar }: { sugestao: Suges
       <button onClick={confirmar} disabled={salvando} className="btn-primary" title="Confirmar a movimentação deste animal" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
         <Check size={13} /> {salvando ? "Movendo…" : "Confirmar"}
       </button>
-      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
         <X size={13} />
       </button>
       {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
@@ -144,7 +144,7 @@ export default function SugestoesMovimentacao() {
                     <FormMover sugestao={s} motivos={motivos} onFeito={() => { setMovendo(null); carregar(); }} onCancelar={() => setMovendo(null)} />
                   ) : (
                     <button onClick={() => setMovendo(s.numero_matriz)} title={`Mover ${s.numero_matriz} para o lote sugerido`}
-                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
+                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
                       Mover
                     </button>
                   )}

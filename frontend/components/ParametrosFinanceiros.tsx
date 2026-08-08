@@ -19,7 +19,7 @@ const ABAS = [
   ["formas-pagamento", "Forma de pagamento", CreditCard],
 ] as const;
 
-const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
+const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 export default function ParametrosFinanceiros() {
@@ -104,7 +104,7 @@ function ContasCorrentes() {
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
-        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <div><label style={labelStyle}>Banco</label><input style={inputStyle} value={form.banco} onChange={(e) => setForm({ ...form, banco: e.target.value })} /></div>
             <div><label style={labelStyle}>Agência</label><input style={inputStyle} value={form.agencia} onChange={(e) => setForm({ ...form, agencia: e.target.value })} /></div>
@@ -142,7 +142,7 @@ function ContasCorrentes() {
                   </tr>
                   {editando === c.id && (
                     <tr><td colSpan={4} style={{ padding: 0 }}>
-                      <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", margin: "0.5rem 0" }}>
+                      <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", margin: "0.5rem 0" }}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                           <div><label style={labelStyle}>Banco</label><input style={inputStyle} value={form.banco} onChange={(e) => setForm({ ...form, banco: e.target.value })} /></div>
                           <div><label style={labelStyle}>Agência</label><input style={inputStyle} value={form.agencia} onChange={(e) => setForm({ ...form, agencia: e.target.value })} /></div>
@@ -214,7 +214,7 @@ function CentrosCusto() {
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
-        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
             <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
             <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
@@ -242,7 +242,7 @@ function CentrosCusto() {
                 </tr>
                 {editando === c.id && (
                   <tr><td colSpan={2} style={{ padding: 0 }}>
-                    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", margin: "0.5rem 0" }}>
+                    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", margin: "0.5rem 0" }}>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
                         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
                         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
@@ -308,7 +308,7 @@ function NomeAtivoTab({ icon: Icon, titulo, semNenhum, fetchFn, criarFn, atualiz
   };
 
   const formItem = (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
@@ -490,7 +490,7 @@ function ContasGerenciais() {
     border: "1px solid var(--dourado)", color: "var(--dourado-light)", background: "rgba(184,134,11,0.12)",
   };
   const formEdicao = (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", margin: "0.25rem 0 0.5rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", margin: "0.25rem 0 0.5rem" }}>
       {campos}
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
@@ -553,7 +553,7 @@ function ContasGerenciais() {
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
-        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
           {campos}
           {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
           <div className="flex items-center gap-2">
@@ -564,7 +564,7 @@ function ContasGerenciais() {
       )}
 
       {itens && (
-        <div style={{ maxHeight: "560px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "8px" }}>
+        <div style={{ maxHeight: "560px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
           {raizes.length ? raizes.map((c) => renderNo(c)) : (
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.8rem" }}>Nenhuma conta gerencial cadastrada ainda.</p>
           )}

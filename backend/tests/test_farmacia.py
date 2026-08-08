@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Estoque, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Sanidade
+from fazenda.models import Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Sanidade
 from fazenda.rules.farmacia import compatibilizar_estoque, resumo_principios, seed_farmacia
 
 
@@ -214,9 +214,9 @@ def test_bootstrap_popula_catalogo_completo_idempotente():
         bootstrap_farmacia(s)  # roda de novo: não pode duplicar
         pas = s.exec(select(PrincipioAtivo)).all()
         marcas = s.exec(select(MedicamentoComercial)).all()
-        assert len(pas) == 39
+        assert len(pas) == 51
         assert all(p.categoria_software for p in pas)   # todas com característica
-        assert len(marcas) == 112
+        assert len(marcas) == 122
         mel = next(p for p in pas if p.nome == "Meloxicam")
         assert mel.categoria_software == "AINE" and mel.uso_principal
 
@@ -271,3 +271,205 @@ class TestUnidadesCompativeis:
         from fazenda.rules.unidades import unidades_compativeis
         assert "ml" in unidades_compativeis("un")
         assert set(unidades_compativeis("un")) == set(unidades_compativeis("unidade"))
+
+
+class TestIndicacoesTerapeuticas:
+    """Substituto inteligente: vínculo N-para-N princípio ativo ↔ doença com
+    prioridade, e o ranking com estoque ao vivo que alimenta a consulta
+    "Remédios por doença" e o banner de substituto no lançamento."""
+
+    def _cenario_mastite(self, engine):
+        """Doença Mastite clínica com 3 opções: Ceftiofur (estoque ok),
+        Cefquinoma (abaixo do mínimo) e Amoxicilina (sem estoque)."""
+        from fazenda.models import Doenca
+
+        with Session(engine) as s:
+            doenca = Doenca(nome="Mastite clínica")
+            s.add(doenca); s.commit(); s.refresh(doenca)
+
+            ceftiofur = PrincipioAtivo(nome="Ceftiofur", categoria_software="Antibiótico sistêmico",
+                                        unidade_base="ml", unidade_apresentacao="frasco", estoque_minimo_apresentacoes=1.0)
+            cefquinoma = PrincipioAtivo(nome="Cefquinoma", categoria_software="Antibiótico sistêmico",
+                                         unidade_base="ml", unidade_apresentacao="frasco", estoque_minimo_apresentacoes=2.0)
+            amoxicilina = PrincipioAtivo(nome="Amoxicilina + Clavulanato", categoria_software="Antibiótico sistêmico",
+                                          unidade_base="ml", unidade_apresentacao="frasco")
+            s.add(ceftiofur); s.add(cefquinoma); s.add(amoxicilina); s.commit()
+            s.refresh(ceftiofur); s.refresh(cefquinoma); s.refresh(amoxicilina)
+
+            # Ceftiofur: 4 frascos de 100ml cheios → bem acima do mínimo.
+            s.add(Estoque(nome="Excenel", laboratorio="Zoetis", principio_ativo_id=ceftiofur.id,
+                          quantidade=400.0, unidade="ml", volume_por_apresentacao=100.0, volume_unidade="ml",
+                          estoque_inicializado=True))
+            # Cefquinoma: 1 frasco de 100ml, mínimo é 2 → abaixo do mínimo.
+            s.add(Estoque(nome="Cobactan", laboratorio="MSD", principio_ativo_id=cefquinoma.id,
+                          quantidade=100.0, unidade="ml", volume_por_apresentacao=100.0, volume_unidade="ml",
+                          estoque_inicializado=True))
+            # Amoxicilina: sem nenhum item de estoque vinculado → "out".
+            s.commit()
+
+            s.add(IndicacaoTerapeutica(principio_ativo_id=ceftiofur.id, doenca_id=doenca.id, prioridade=1))
+            s.add(IndicacaoTerapeutica(principio_ativo_id=cefquinoma.id, doenca_id=doenca.id, prioridade=2))
+            s.add(IndicacaoTerapeutica(principio_ativo_id=amoxicilina.id, doenca_id=doenca.id, prioridade=3))
+            s.commit()
+            return {"doenca_id": doenca.id, "ceftiofur_id": ceftiofur.id, "cefquinoma_id": cefquinoma.id,
+                    "amoxicilina_id": amoxicilina.id}
+
+    def test_ranking_por_doenca_traz_status_de_estoque_correto(self, client):
+        c, engine = client
+        ids = self._cenario_mastite(engine)
+        r = c.get(f"/sanidade/indicacoes-doenca/{ids['doenca_id']}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["doenca"] == "Mastite clínica"
+        opcoes = body["opcoes"]
+        assert [o["principio_ativo_id"] for o in opcoes] == [ids["ceftiofur_id"], ids["cefquinoma_id"], ids["amoxicilina_id"]]
+        assert opcoes[0]["status_estoque"] == "ok" and opcoes[0]["marcas"] == ["Zoetis"]
+        assert opcoes[1]["status_estoque"] == "low"
+        assert opcoes[2]["status_estoque"] == "out" and opcoes[2]["marcas"] == []
+
+    def test_doenca_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.get("/sanidade/indicacoes-doenca/999999")
+        assert r.status_code == 404
+
+    def test_doenca_sem_indicacao_traz_lista_vazia(self, client):
+        from fazenda.models import Doenca
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Doenca(nome="Doença sem tratamento cadastrado")); s.commit()
+            doenca_id = s.exec(select(Doenca).where(Doenca.nome == "Doença sem tratamento cadastrado")).first().id
+        r = c.get(f"/sanidade/indicacoes-doenca/{doenca_id}")
+        assert r.status_code == 200 and r.json()["opcoes"] == []
+
+    def test_crud_indicacao(self, client):
+        from fazenda.models import Doenca
+        c, engine = client
+        with Session(engine) as s:
+            doenca = Doenca(nome="Pneumonia"); s.add(doenca)
+            pa = PrincipioAtivo(nome="Tulatromicina"); s.add(pa)
+            s.commit(); s.refresh(doenca); s.refresh(pa)
+            doenca_id, pa_id = doenca.id, pa.id
+
+        assert c.get("/farmacia/indicacoes", params={"principio_ativo_id": pa_id}).json() == []
+
+        r = c.post("/farmacia/indicacoes", json={"principio_ativo_id": pa_id, "doenca_id": doenca_id, "prioridade": 1})
+        assert r.status_code == 201
+        criada = r.json()
+        assert criada["doenca"] == "Pneumonia" and criada["prioridade"] == 1
+
+        listada = c.get("/farmacia/indicacoes", params={"principio_ativo_id": pa_id}).json()
+        assert len(listada) == 1 and listada[0]["id"] == criada["id"]
+
+        # Duplicata (mesmo princípio + doença) é bloqueada.
+        dup = c.post("/farmacia/indicacoes", json={"principio_ativo_id": pa_id, "doenca_id": doenca_id, "prioridade": 2})
+        assert dup.status_code == 409
+
+        excluir = c.delete(f"/farmacia/indicacoes/{criada['id']}")
+        assert excluir.status_code == 200
+        assert c.get("/farmacia/indicacoes", params={"principio_ativo_id": pa_id}).json() == []
+
+    def test_criar_indicacao_com_principio_ou_doenca_inexistente_da_400(self, client):
+        from fazenda.models import Doenca
+        c, engine = client
+        with Session(engine) as s:
+            doenca = Doenca(nome="Verminose"); s.add(doenca)
+            pa = PrincipioAtivo(nome="Ivermectina 1%"); s.add(pa)
+            s.commit(); s.refresh(doenca); s.refresh(pa)
+            doenca_id, pa_id = doenca.id, pa.id
+
+        assert c.post("/farmacia/indicacoes", json={"principio_ativo_id": 999999, "doenca_id": doenca_id}).status_code == 400
+        assert c.post("/farmacia/indicacoes", json={"principio_ativo_id": pa_id, "doenca_id": 999999}).status_code == 400
+
+    def test_excluir_indicacao_inexistente_da_404(self, client):
+        c, engine = client
+        assert c.delete("/farmacia/indicacoes/999999").status_code == 404
+
+
+class TestSomatotropinaBST:
+    """bST (Lactotropin/Boostin) no catálogo da farmácia.
+
+    Os dois itens de estoque nasceram antes de o princípio existir no
+    catálogo, então ficaram com `principio_ativo_id` nulo — e quem faria o
+    vínculo por nome de marca (`compatibilizar_estoque`) é guardada por
+    SeedFlag e já rodou nos bancos em produção. Daí o backfill dirigido
+    `vincular_bst_ao_principio`, que roda em todo start.
+    """
+
+    def test_seed_cria_o_principio_com_as_duas_marcas(self, client):
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST
+        c, engine = client
+        with Session(engine) as s:
+            seed_farmacia(s)
+            pa = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).first()
+            assert pa is not None, "princípio de bST não foi semeado"
+            assert pa.categoria_software == "Hormônio Galactopoiético"
+            assert pa.unidade_base == "dose"
+            marcas = {m.nome_comercial for m in s.exec(
+                select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa.id)
+            ).all()}
+            assert marcas == {"Lactotropin", "Boostin"}
+
+    def test_vincula_item_de_estoque_legado_sem_principio(self, client):
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST, seed_boostin, vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            # Estado do banco em produção: Lactotropin já cadastrado, sem princípio.
+            s.add(Estoque(nome="Lactotropin", unidade="unidade", quantidade=5, principio_ativo_id=None))
+            s.commit()
+            seed_farmacia(s)
+            seed_boostin(s)
+            vincular_bst_ao_principio(s)
+
+            pa = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).one()
+            for nome in ("Lactotropin", "Boostin"):
+                item = s.exec(select(Estoque).where(Estoque.nome == nome)).one()
+                assert item.principio_ativo_id == pa.id, f"{nome} continuou sem princípio"
+                assert item.principio_ativo == NOME_PRINCIPIO_BST
+
+    def test_nao_sobrescreve_vinculo_feito_pelo_usuario(self, client):
+        from fazenda.rules.farmacia import vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            outro = PrincipioAtivo(nome="Outro princípio escolhido à mão")
+            s.add(outro); s.commit(); s.refresh(outro)
+            s.add(Estoque(nome="Lactotropin", unidade="unidade", principio_ativo_id=outro.id))
+            s.commit()
+            seed_farmacia(s)
+            vincular_bst_ao_principio(s)
+
+            item = s.exec(select(Estoque).where(Estoque.nome == "Lactotropin")).one()
+            assert item.principio_ativo_id == outro.id, "backfill não pode sobrescrever escolha do usuário"
+
+    def test_e_idempotente(self, client):
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST, vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Lactotropin", unidade="unidade", principio_ativo_id=None))
+            s.commit()
+            for _ in range(3):
+                seed_farmacia(s)
+                vincular_bst_ao_principio(s)
+            principios = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).all()
+            assert len(principios) == 1
+            marcas = s.exec(select(MedicamentoComercial).where(
+                MedicamentoComercial.principio_ativo_id == principios[0].id
+            )).all()
+            assert len(marcas) == 2
+
+    def test_corrige_grafia_lactotropim_e_vincula(self, client):
+        # "Lactotropim" (com M) é erro de digitação comum; o produto da Elanco
+        # é Lactotropin. O item mal grafado tem que ser corrigido E vinculado,
+        # senão fica fora do seletor de frasco por causa de uma letra.
+        from fazenda.rules.farmacia import NOME_PRINCIPIO_BST, vincular_bst_ao_principio
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Lactotropim", unidade="unidade", quantidade=3, principio_ativo_id=None))
+            s.commit()
+            seed_farmacia(s)
+            vincular_bst_ao_principio(s)
+
+            pa = s.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)).one()
+            assert s.exec(select(Estoque).where(Estoque.nome == "Lactotropim")).first() is None
+            item = s.exec(select(Estoque).where(Estoque.nome == "Lactotropin")).one()
+            assert item.principio_ativo_id == pa.id
+            assert item.quantidade == 3, "corrigir a grafia não pode mexer no saldo"

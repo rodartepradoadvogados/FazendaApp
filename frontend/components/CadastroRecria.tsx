@@ -2,20 +2,29 @@
 // Configurações > Cadastro > Recria — parâmetros do Dossiê Zootécnico:
 // metas gerenciais, curva de peso-alvo por idade, fases de idade (coorte) e
 // janelas de ponto crítico por doença. Pensado para ser simples de operar.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Baby, Check, Trash2, Plus } from "lucide-react";
 import {
   fetchRecriaMetas, salvarRecriaMetas, fetchRecriaPesoAlvo, salvarRecriaPesoAlvo, excluirRecriaPesoAlvo,
   fetchRecriaFases, criarRecriaFase, excluirRecriaFase, fetchRecriaJanelas, criarRecriaJanela, excluirRecriaJanela,
-  fetchRecriaBenchmark, salvarRecriaBenchmark,
+  fetchRecriaBenchmark, salvarRecriaBenchmark, fetchDoencas, criarDoenca,
   fetchCategoriasManejo, criarCategoriaManejo, atualizarCategoriaManejo, excluirCategoriaManejo, fetchComposicaoCategorias,
   type RecriaMetas, type RecriaPesoAlvo, type RecriaFase, type RecriaJanela, type RecriaBenchmark, type CategoriaManejo,
 } from "@/lib/api";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const input: React.CSSProperties = { padding: "0.4rem 0.55rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", width: "100%" };
 const lbl: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.15rem" };
 const card: React.CSSProperties = { background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "1rem 1.1rem" };
 const secTit: React.CSSProperties = { fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.7rem", display: "flex", alignItems: "center", gap: 6 };
+
+// Mesmos tipos de Doenca.TIPOS (backend) — agrupam o seletor em optgroups,
+// mesmo padrão de components/RemediosPorDoenca.tsx.
+const GRUPOS_TIPO_JANELA: [string, string][] = [
+  ["doenca", "Doenças"], ["reprodutivo", "Reprodutivo"], ["produtivo", "Produtivo"],
+  ["preventivo", "Preventivo"], ["suporte", "Suporte"],
+];
+const OUTRA_DOENCA = "__outra__";
 
 export default function CadastroRecria() {
   return (
@@ -226,7 +235,7 @@ function SecMetas() {
         {campo("idade_1a_cobertura_meses", "Idade à 1ª cobertura (meses)")}
         {campo("taxa_prenhez_meta", "Meta taxa de prenhez (%)")}
         {campo("desvio_padrao_meta", "Meta desvio-padrão (meses)")}
-        {campo("custo_diario_recria", "Custo diário de recria (R$)")}
+        <div><label style={lbl}>Custo diário de recria (R$)</label><CampoMoeda style={input} value={m.custo_diario_recria} onChange={(v) => setM({ ...m, custo_diario_recria: v })} /></div>
       </div>
       <div className="flex items-center gap-3 mt-3">
         <button className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
@@ -309,21 +318,86 @@ function SecFases() {
 
 function SecJanelas() {
   const [lista, setLista] = useState<RecriaJanela[]>([]);
-  const [form, setForm] = useState<RecriaJanela>({ doenca: "", dia_min: 0, dia_max: 30, dias_antecedencia: 3, ativo: true });
+  const [doencas, setDoencas] = useState<{ id: number; nome: string; ativo: boolean; tipo?: string | null }[]>([]);
+  // "" = nada selecionado ainda; OUTRA_DOENCA = digitar um nome novo (cria no
+  // catálogo da fazenda ao salvar); número = id de uma doença já cadastrada.
+  const [selecao, setSelecao] = useState<number | typeof OUTRA_DOENCA | "">("");
+  const [novoNome, setNovoNome] = useState("");
+  const [campos, setCampos] = useState({ dia_min: 0, dia_max: 30, dias_antecedencia: 3 });
+  const [erro, setErro] = useState("");
   const carregar = () => fetchRecriaJanelas().then(setLista).catch(() => {});
-  useEffect(() => { carregar(); }, []);
+  const carregarDoencas = () => fetchDoencas().then(setDoencas).catch(() => {});
+  useEffect(() => { carregar(); carregarDoencas(); }, []);
+
+  // Agrupa por tipo (Doenças / Reprodutivo / Produtivo / Preventivo /
+  // Suporte) — mesma ordem/critério de components/RemediosPorDoenca.tsx.
+  const grupos = useMemo(() => {
+    const ativas = doencas.filter((d) => d.ativo);
+    return GRUPOS_TIPO_JANELA
+      .map(([tipo, label]) => ({
+        label,
+        itens: ativas.filter((d) => (tipo === "doenca" ? !d.tipo || d.tipo === "doenca" : d.tipo === tipo)),
+      }))
+      .filter((g) => g.itens.length > 0);
+  }, [doencas]);
+
+  const salvar = async () => {
+    setErro("");
+    if (campos.dia_min > campos.dia_max) { setErro("Dia inicial não pode ser maior que o final."); return; }
+    try {
+      let doencaId: number;
+      let nomeDoenca: string;
+      if (selecao === OUTRA_DOENCA) {
+        const nome = novoNome.trim();
+        if (!nome) { setErro("Informe o nome da doença."); return; }
+        const criada = await criarDoenca({ nome });
+        doencaId = criada.id;
+        nomeDoenca = criada.nome;
+      } else if (selecao === "") {
+        setErro("Selecione a doença.");
+        return;
+      } else {
+        const d = doencas.find((x) => x.id === selecao);
+        if (!d) { setErro("Doença não encontrada — atualize a lista."); return; }
+        doencaId = d.id;
+        nomeDoenca = d.nome;
+      }
+      await criarRecriaJanela({ doenca: nomeDoenca, doenca_id: doencaId, ...campos, ativo: true });
+      setSelecao(""); setNovoNome(""); setCampos({ dia_min: 0, dia_max: 30, dias_antecedencia: 3 });
+      carregar(); carregarDoencas();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar a janela.");
+    }
+  };
+
   return (
     <div style={card}>
       <div style={secTit}>Janelas de ponto crítico (por doença)</div>
-      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>Faixa de idade de maior risco de cada doença — base para os alertas preventivos.</p>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>Faixa de idade de maior risco de cada doença — vira alerta na Agenda quando algum animal ativo entra na faixa.</p>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={lbl}>Doença</label><input style={input} value={form.doenca} onChange={(e) => setForm({ ...form, doenca: e.target.value })} placeholder="ex.: Diarreia" /></div>
-        <div><label style={lbl}>Dia inicial</label><input type="number" style={input} value={form.dia_min} onChange={(e) => setForm({ ...form, dia_min: Number(e.target.value) })} /></div>
-        <div><label style={lbl}>Dia final</label><input type="number" style={input} value={form.dia_max} onChange={(e) => setForm({ ...form, dia_max: Number(e.target.value) })} /></div>
-        <div><label style={lbl}>Antecedência (dias)</label><input type="number" style={input} value={form.dias_antecedencia} onChange={(e) => setForm({ ...form, dias_antecedencia: Number(e.target.value) })} /></div>
+        <div style={{ gridColumn: "span 2" }}>
+          <label style={lbl}>Doença</label>
+          <select style={input} value={selecao} onChange={(e) => setSelecao(e.target.value === OUTRA_DOENCA ? OUTRA_DOENCA : (e.target.value === "" ? "" : Number(e.target.value)))}>
+            <option value="">Selecione a doença…</option>
+            {grupos.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.itens.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+              </optgroup>
+            ))}
+            <option value={OUTRA_DOENCA}>Outra…</option>
+          </select>
+          {selecao === OUTRA_DOENCA && (
+            <input style={{ ...input, marginTop: "0.35rem" }} value={novoNome} onChange={(e) => setNovoNome(e.target.value)}
+              placeholder="Nome da nova doença" />
+          )}
+        </div>
+        <div><label style={lbl}>Dia inicial</label><input type="number" style={input} value={campos.dia_min} onChange={(e) => setCampos({ ...campos, dia_min: Number(e.target.value) })} /></div>
+        <div><label style={lbl}>Dia final</label><input type="number" style={input} value={campos.dia_max} onChange={(e) => setCampos({ ...campos, dia_max: Number(e.target.value) })} /></div>
+        <div><label style={lbl}>Antecedência (dias)</label><input type="number" style={input} value={campos.dias_antecedencia} onChange={(e) => setCampos({ ...campos, dias_antecedencia: Number(e.target.value) })} /></div>
       </div>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "-0.4rem" }}>{erro}</p>}
       <button className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: "0.7rem" }}
-        onClick={() => { if (form.doenca.trim()) criarRecriaJanela(form).then(() => { setForm({ ...form, doenca: "" }); carregar(); }); }}><Plus size={14} /> Adicionar janela</button>
+        onClick={salvar}><Plus size={14} /> Adicionar janela</button>
       <div style={{ overflowX: "auto" }}>
         <table className="fazenda-table">
           <thead><tr><th>Doença</th><th>Janela (dias)</th><th>Antecedência</th><th></th></tr></thead>

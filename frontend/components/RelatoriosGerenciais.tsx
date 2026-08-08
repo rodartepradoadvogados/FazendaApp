@@ -364,7 +364,8 @@ function CardTaxaServicoPrenhez() {
             </ComposedChart>
           </ResponsiveContainer>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "0.6rem", lineHeight: 1.5 }}>
-            Parâmetros de eficiência: 50% do rebanho prenhe até 100 dias, 75% até 150 dias, e não mais de 10%
+            Parâmetros de eficiência: {data?.parametros?.meta_100d ?? 50}% do rebanho prenhe até 100 dias,{" "}
+            {data?.parametros?.meta_150d ?? 75}% até 150 dias, e não mais de {data?.parametros?.max_300d ?? 10}%
             chegando aos 300 dias sem prenhez.
           </p>
         </>

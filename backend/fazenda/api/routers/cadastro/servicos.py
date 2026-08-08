@@ -54,7 +54,7 @@ def seed_servicos(session: Session) -> None:
 
 
 
-_listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoCadastro, com_fazenda=True)
+_listar_servicos, _criar_servico, _atualizar_servico, _ = _crud_nome_ativo(ServicoCadastro, com_fazenda=True)
 router.get("/servicos")(_listar_servicos)
 router.post("/servicos")(_criar_servico)
 router.put("/servicos/{item_id}")(_atualizar_servico)
@@ -68,7 +68,7 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # pré-cadastrados; o usuário pode renomear os rótulos, desativar ou criar
 # métodos adicionais (informativos, sem lógica especial própria).
 # ---------------------------------------------------------------------------
-_listar_tipos_servico, _criar_tipo_servico, _atualizar_tipo_servico = _crud_nome_ativo(TipoServicoReprodutivo, com_fazenda=True)
+_listar_tipos_servico, _criar_tipo_servico, _atualizar_tipo_servico, _ = _crud_nome_ativo(TipoServicoReprodutivo, com_fazenda=True)
 router.get("/tipos-servico")(_listar_tipos_servico)
 router.post("/tipos-servico")(_criar_tipo_servico)
 router.put("/tipos-servico/{item_id}")(_atualizar_tipo_servico)

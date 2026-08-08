@@ -19,12 +19,13 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaAuditoria, DiariaPagamento,
-    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso,
-    ValeAvulsoAbatimento,
+    AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria, DiariaAuditoria,
+    DiariaPagamento, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, FeriasFuncionario, ParametroDiariaPadrao, Pessoa,
+    Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 
 from .rh_folha import _competencia_seguinte, listar_folha_pagamento
 
@@ -36,10 +37,11 @@ def listar_folha_pagamento_unificada(
 ) -> list[dict]:
     """
     Visão consolidada de TODOS os lançamentos de folha — funcionário, empreita,
-    contrato e diária — num único ledger ordenável/filtrável por vencimento,
-    priorizando pendências (destacando as vencidas). `origem_tipo` (=`tipo`) +
-    `origem_id` apontam para o registro de origem só para permitir excluir
-    lançamentos ainda pendentes; a edição continua nas telas específicas.
+    contrato, diária e férias/13º salário — num único ledger ordenável/
+    filtrável por vencimento, priorizando pendências (destacando as vencidas).
+    `origem_tipo` (=`tipo`) + `origem_id` apontam para o registro de origem só
+    para permitir excluir lançamentos ainda pendentes; a edição continua nas
+    telas específicas.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
@@ -155,6 +157,52 @@ def listar_folha_pagamento_unificada(
             "data_pagamento": pg.data_pagamento,
             "status": "pago",
             "pode_excluir": False,
+        })
+
+    # Férias e 13º salário — mesmo padrão de Empreita/Contrato: o vencimento e
+    # o status de pagamento vêm da ContaGerencial gerada junto (numero_
+    # lancamento_gerado), já que os dois modelos não têm data_vencimento
+    # própria. Faltavam neste ledger unificado (item aprovado da proposta de
+    # Folha de Pagamento) — o filtro "Todos"/"Férias / 13º" agora inclui os dois.
+    query_ferias = select(FeriasFuncionario)
+    query_decimo = select(DecimoTerceiro)
+    if fazenda_id is not None:
+        query_ferias = query_ferias.where(FeriasFuncionario.fazenda_id == fazenda_id)
+        query_decimo = query_decimo.where(DecimoTerceiro.fazenda_id == fazenda_id)
+    ferias = session.exec(query_ferias).all()
+    decimos = session.exec(query_decimo).all()
+    numeros_ferias_decimo = [f.numero_lancamento_gerado for f in ferias if f.numero_lancamento_gerado] + [
+        d.numero_lancamento_gerado for d in decimos if d.numero_lancamento_gerado
+    ]
+    contas_ferias_decimo = {
+        c.numero_lancamento: c
+        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros_ferias_decimo))).all()
+    } if numeros_ferias_decimo else {}
+    for f in ferias:
+        conta = contas_ferias_decimo.get(f.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "ferias_decimo", "origem_id": f.id, "origem_subtipo": "ferias",
+            "pessoa_id": f.pessoa_id, "pessoa_nome": pessoas.get(f.pessoa_id, "—"),
+            "descricao": f"Férias — {f.data_inicio_gozo.isoformat()} a {f.data_fim_gozo.isoformat()}",
+            "valor": f.valor_total,
+            "data_vencimento": conta.data_vencimento if conta else None,
+            "data_pagamento": conta.data_pagamento if conta else f.data_pagamento,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": not pago,
+        })
+    for d in decimos:
+        conta = contas_ferias_decimo.get(d.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "ferias_decimo", "origem_id": d.id, "origem_subtipo": "decimo_terceiro",
+            "pessoa_id": d.pessoa_id, "pessoa_nome": pessoas.get(d.pessoa_id, "—"),
+            "descricao": f"13º salário — {d.ano} ({d.parcela})",
+            "valor": d.valor_liquido,
+            "data_vencimento": conta.data_vencimento if conta else None,
+            "data_pagamento": conta.data_pagamento if conta else d.data_pagamento,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": not pago,
         })
 
     hoje = date.today()
@@ -1336,6 +1384,7 @@ def listar_todos_vales_avulsos(
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     empreitadas = {e.id: e.descricao for e in session.exec(select(Empreitada)).all()}
     contratos = {c.id: c.descricao for c in session.exec(select(Contrato)).all()}
+    origens_lancamento = origens_lancamento_por_vale(session, {v.id for v in vales}, "vale_avulso_id")
     saida = []
     for v in vales:
         if v.origem_tipo == "empreitada":
@@ -1347,6 +1396,7 @@ def listar_todos_vales_avulsos(
         saida.append({
             **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"), "origem_descricao": origem_descricao,
             **_info_parcelas_vale_avulso(session, v),
+            "origem_lancamento": origens_lancamento.get(v.id),
         })
     return saida
 
@@ -1444,6 +1494,11 @@ def excluir_vale_avulso(
         ).first()
         if conta_gerada:
             session.delete(conta_gerada)
+    # Zera o vínculo em qualquer LancamentoItem que apontava para este vale
+    # (caminho inverso: usuário excluiu o vale direto no Relatório de vales,
+    # não pelo checkbox do item) — sem isso ficaria FK pendurada e o item
+    # sumido dos relatórios gerenciais para sempre (ver rules/vale_item.py).
+    limpar_vinculo_de_itens(session, vale_avulso_id=vale_id)
     session.delete(vale)
     session.commit()
     return {"ok": True}

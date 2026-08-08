@@ -76,4 +76,19 @@ def _crud_nome_ativo(model, com_fazenda: bool = False):
         session.refresh(obj)
         return obj.model_dump()
 
-    return listar, criar, atualizar
+    def excluir(
+        item_id: int, session: Session = Depends(get_session),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    ) -> dict:
+        obj = session.get(model, item_id)
+        if com_fazenda:
+            fazenda_id = fazenda_id_seguro(fazenda_id)
+            if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
+                raise HTTPException(status_code=404, detail="Registro não encontrado")
+        elif not obj:
+            raise HTTPException(status_code=404, detail="Registro não encontrado")
+        session.delete(obj)
+        session.commit()
+        return {"excluido": True}
+
+    return listar, criar, atualizar, excluir

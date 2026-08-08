@@ -26,7 +26,7 @@ export function InstitucionalHero({
         </Link>
         <div style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center", width: "3.4rem", height: "3.4rem",
-          borderRadius: "999px", background: "rgba(212,160,23,0.14)", border: "1px solid rgba(212,160,23,0.3)", marginBottom: "1.1rem",
+          borderRadius: "999px", background: "rgba(201,164,76,0.14)", border: "1px solid rgba(201,164,76,0.3)", marginBottom: "1.1rem",
         }}>
           <Icon size={26} style={{ color: "var(--dourado-light)" }} />
         </div>
@@ -34,7 +34,7 @@ export function InstitucionalHero({
           <span style={{
             display: "inline-block", padding: "0.3rem 0.75rem", borderRadius: "999px", fontSize: "0.72rem", fontWeight: 700,
             letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--dourado-light)",
-            background: "rgba(212,160,23,0.14)", border: "1px solid rgba(212,160,23,0.3)", marginBottom: "0.9rem",
+            background: "rgba(201,164,76,0.14)", border: "1px solid rgba(201,164,76,0.3)", marginBottom: "0.9rem",
           }}>
             {eyebrow}
           </span>

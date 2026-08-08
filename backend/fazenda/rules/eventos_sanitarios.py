@@ -83,7 +83,7 @@ def _limiares_categoria(session: Session) -> tuple[int, int]:
 
 def _datas_gatilho(
     session: Session, gatilho: str, gatilho_lote: str | None = None, gatilho_idade_meses: int | None = None,
-    offset_dias: int = 0,
+    offset_dias: int = 0, sexo_alvo: str | None = None,
 ) -> list[tuple[str, date]]:
     """Datas (por animal) em que um gatilho de evento de vida ocorre ou vai
     ocorrer — usado tanto para gerar a pendência na Agenda (`eventos_agenda`)
@@ -133,7 +133,22 @@ def _datas_gatilho(
             prevista = calcular_parto_provavel(s.data_servico, s.raca_matriz).data_parto_provavel
             saida.append((s.numero_matriz, prevista - timedelta(days=limite) + offset))
 
-    return saida
+    # Filtro único no fim (não em cada ramo, pra cobrir gatilho novo por
+    # igual): nunca sugere animal já baixado (vendido/morto/etc.) — pendência
+    # de vacina pra quem não está mais no rebanho não faz sentido — nem fora
+    # do sexo-alvo do evento, quando um está definido (ex.: Brucelose B19 só
+    # em fêmeas; macho não recebe).
+    animais = {a.numero: a for a in session.exec(select(Animal)).all()}
+
+    def elegivel(numero: str) -> bool:
+        a = animais.get(numero)
+        if not a or not a.ativo:
+            return False
+        if sexo_alvo and a.sexo != sexo_alvo:
+            return False
+        return True
+
+    return [(n, d) for n, d in saida if elegivel(n)]
 
 
 def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
@@ -146,7 +161,11 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
     a baixa apenas marca como realizado (e permite lançar o financeiro).
     """
     regras = session.exec(
-        select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+        # usa_cronograma=True fica de fora daqui — essas regras geram suas
+        # próprias pendências pelo workflow do cronograma (ver
+        # rules.cronograma_sanitario.eventos_agenda), nunca as duas ao mesmo
+        # tempo para a mesma regra.
+        select(CalendarioSanitario).where(CalendarioSanitario.ativo == True).where(CalendarioSanitario.usa_cronograma == False)  # noqa: E712
     ).all()
     if not regras:
         return []
@@ -243,6 +262,18 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
         if e.ativo and e.tipo_agendamento != "nenhum"
     ]
 
+    # Eventos ligados a uma regra do calendário sanitário com
+    # usa_cronograma=True não geram mais a pendência antiga de "aplicar
+    # agora" — o animal entra na trilha do cronograma (ver
+    # rules.cronograma_sanitario), que pergunta se ele entra na lista de
+    # espera em vez de cobrar aplicação imediata (ver eventos_agenda_cronograma
+    # em routers/agenda.py). Um evento sem regra vinculada (ou com regra
+    # usa_cronograma=False) continua exatamente como sempre.
+    calendarios_cronograma = {
+        c.evento_sanitario_id: c
+        for c in session.exec(select(CalendarioSanitario).where(CalendarioSanitario.usa_cronograma == True)).all()  # noqa: E712
+    }
+
     # Resolve o princípio ativo do produto padrão (nome do item de estoque) —
     # alimenta o seletor "Princípio ativo" já pré-preenchido na Agenda, do
     # mesmo jeito que as regras do calendário sanitário já fazem.
@@ -297,7 +328,9 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
 
         minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
         limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
-        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset)
+        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo)
+
+        calendario_cron = calendarios_cronograma.get(ev.id)
 
         vistos: set[str] = set()
         for numero, quando in gatilhos:
@@ -308,6 +341,15 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
             if ja_aplicado(numero, ev.produto_padrao, quando):
                 continue
             if bloqueado_pela_condicao(ev, numero):
+                continue
+            if calendario_cron:
+                # Trilha do cronograma: só sugere quando o animal JÁ bateu o
+                # critério (não antecipa animais que ainda vão chegar lá) —
+                # o funcionário decide incluir/excluir pela Agenda.
+                if quando <= hoje:
+                    vistos.add(numero)
+                    from fazenda.rules.cronograma_sanitario import sugerir_animal
+                    sugerir_animal(session, calendario_cron, numero, hoje)
                 continue
             evt = _base(ev, quando, numero, quando.isoformat(), principio_ativo_id)
             if evt["id"] in realizados:

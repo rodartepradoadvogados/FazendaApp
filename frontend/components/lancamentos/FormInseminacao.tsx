@@ -36,13 +36,20 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [lancamentos, setLancamentos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string }[]>([]);
   const [semen, setSemen] = useState<SemenDisponivel | null>(null);
   // Origem da seleção: avulsa (qualquer matriz apta) ou vinda de um protocolo
-  // IATF em andamento — nesse caso a lista se restringe às matrizes no D11.
+  // IATF vigente — nesse caso a lista se restringe às matrizes cujo
+  // protocolo ainda não teve inseminação lançada (`pronta_para_inseminar`),
+  // sem exigir que a etapa de hoje seja a de inseminação em si.
   const [origemSelecao, setOrigemSelecao] = useState<"avulsa" | "protocolo">("avulsa");
-  const [protocolosAtivos, setProtocolosAtivos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null }[] }[]>([]);
-  useEffect(() => { fetchProtocolosIatfAtivos().then(setProtocolosAtivos).catch(() => setProtocolosAtivos([])); }, []);
+  const [protocolosAtivos, setProtocolosAtivos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; pronta_para_inseminar?: boolean }[] }[]>([]);
+  const carregarProtocolosAtivos = () => fetchProtocolosIatfAtivos().then(setProtocolosAtivos).catch(() => setProtocolosAtivos([]));
+  useEffect(() => { carregarProtocolosAtivos(); }, []);
+  // "Protocolo de IATF atual" = protocolo ainda vigente (nenhum Serviço
+  // lançado depois do D0) — não precisa estar na etapa D11 hoje: a
+  // inseminação pode ser lançada a posteriori, depois de o hormônio já ter
+  // sido aplicado há dias.
   const protocolosD11 = useMemo(
     () => protocolosAtivos
-      .map((p) => ({ ...p, animaisD11: p.animais.filter((a) => a.etapa_atual === "D11") }))
+      .map((p) => ({ ...p, animaisD11: p.animais.filter((a) => a.pronta_para_inseminar) }))
       .filter((p) => p.animaisD11.length > 0),
     [protocolosAtivos]
   );
@@ -170,6 +177,14 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         setSucesso(`${r.criados} inseminação(ões) registrada(s)${tipo === "iatf" ? " (IATF)" : tipo === "monta_natural" ? " (monta natural)" : " (cio natural)"}.`);
         setSel(new Set()); setLotesSelecionadosInsem([]); setTouro("");
       }
+      // Sem isso, o estoque de sêmen exibido (doses do touro) e a lista de
+      // matrizes em protocolo IATF vigente ficavam presos no valor de quando
+      // a tela abriu — cada dose baixada, ou cada matriz já inseminada,
+      // continuava aparecendo disponível até a página ser recarregada.
+      if (r.criados) {
+        fetchSemenDisponivel().then(setSemen).catch(() => {});
+        carregarProtocolosAtivos();
+      }
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar inseminação");
     } finally {
@@ -196,22 +211,22 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         <TabBar<"avulsa" | "protocolo">
           abas={[
             { id: "avulsa", label: "Inseminação avulsa", title: "Escolher livremente entre as matrizes aptas" },
-            { id: "protocolo", label: "Protocolo de IATF atual", title: "Mostrar apenas as matrizes no D11 de um protocolo IATF em andamento" },
+            { id: "protocolo", label: "Protocolo de IATF atual", title: "Mostrar as matrizes com protocolo IATF vigente — ainda sem inseminação lançada, não importa em qual etapa do hormônio está hoje" },
           ]}
           ativa={origemSelecao}
           onChange={(o) => { setOrigemSelecao(o); setSel(new Set()); setLotesSelecionadosInsem([]); setVinculoInsem("animal"); if (o === "protocolo") setTipo("iatf"); }}
         />
         {origemSelecao === "protocolo" && !animaisProtocolo.length && (
-          <p style={{ ...nota, color: "var(--amber)" }}>Nenhuma matriz está no D11 de um protocolo IATF em andamento no momento.</p>
+          <p style={{ ...nota, color: "var(--amber)" }}>Nenhuma matriz está em protocolo IATF vigente sem inseminação já lançada.</p>
         )}
       </div>
 
-      <Campo label={origemSelecao === "protocolo" ? "Matrizes no D11 do protocolo IATF — pode selecionar várias" : "Matriz / novilha (aptas) — animal(is) ou lote(s)"} full>
+      <Campo label={origemSelecao === "protocolo" ? "Matrizes em protocolo IATF vigente — pode selecionar várias" : "Matriz / novilha (aptas) — animal(is) ou lote(s)"} full>
         {origemSelecao === "protocolo" ? (
           <AnimalPickerModal
             animais={animaisProtocolo}
             selecionados={sel} onToggle={toggle}
-            titulo="Escolher matrizes no D11 (IATF)"
+            titulo="Escolher matrizes em protocolo IATF vigente"
             colunas={[
               { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
               { header: "Lote", render: (a) => a.grupo_primario || "—" },

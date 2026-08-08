@@ -59,7 +59,7 @@ function ConsumoDiario({ a, error }: { a: any; error: string | null }) {
             <tr key={x.ingrediente}>
               <td style={{ fontWeight: 600, fontSize: "0.85rem", minWidth: "9rem" }}>{x.ingrediente}</td>
               <td style={{ width: "40%" }}>
-                <div style={{ background: "var(--surface-2)", borderRadius: "4px", height: "14px", overflow: "hidden" }}><div style={{ width: `${(x.consumo_dia / maxTotal) * 100}%`, height: "100%", background: "var(--dourado)", minWidth: "2px" }} /></div>
+                <div style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", height: "14px", overflow: "hidden" }}><div style={{ width: `${(x.consumo_dia / maxTotal) * 100}%`, height: "100%", background: "var(--dourado)", minWidth: "2px" }} /></div>
               </td>
               <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(x.consumo_dia)} {x.unidade}</td>
               <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmt(x.consumo_dia / TRATOS)} {x.unidade}</td>
@@ -83,7 +83,7 @@ function PlanoPorLote({ a }: { a: any }) {
         {porLote.map((l) => {
           const aberto = abertos.has(l.lote);
           return (
-            <div key={l.lote} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+            <div key={l.lote} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
               <button onClick={() => toggle(l.lote)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.6rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                 {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 <span style={{ fontWeight: 700, minWidth: "1.5rem" }}>{l.lote}</span>
@@ -130,7 +130,7 @@ function NecessidadeMensal() {
       <div className="card-header mb-3">Necessidade mensal (30 dias)</div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         Projeção simples: consumo diário × 30. Itens de estoque cadastrados com unidade "saca 30kg"/"saca 60kg" (ou com o cadastro
-        de embalagem preenchido em Configurações {"›"} Cadastro {"›"} Itens de estoque) aparecem convertidos em sacos (arredondado para cima).
+        de embalagem preenchido em Configurações {"›"} Cadastro {"›"} Estoque {"›"} Itens de Estoque) aparecem convertidos em sacos (arredondado para cima).
       </p>
       <table className="fazenda-table">
         <thead><tr><th>Ingrediente</th><th style={{ textAlign: "right" }}>Necessidade (30d)</th><th style={{ textAlign: "right" }}>Sacos (30d)</th><th>Vínculo com estoque</th></tr></thead>

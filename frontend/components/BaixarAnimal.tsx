@@ -5,6 +5,7 @@ import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, ma
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
@@ -23,7 +24,7 @@ const LABEL_MOTIVO: Record<string, string> = {
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const hoje = () => new Date().toISOString().split("T")[0];
@@ -196,7 +197,7 @@ export default function BaixarAnimal() {
             )}
           </div>
 
-          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
             <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ fontSize: "0.85rem" }}>Animais ({candidatos.length}) — {selecionados.size} selecionado(s)</span>
               <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
@@ -284,7 +285,7 @@ export default function BaixarAnimal() {
               </div>
               <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: "480px" }}>
                 <div><label style={labelStyle}>{tipoValor === "total" ? "Valor total (R$)" : "Valor por animal (R$)"}</label>
-                  <input type="number" step="0.01" style={selStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+                  <CampoMoeda style={selStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
                 <div><label style={labelStyle}>Cliente</label>
                   <select style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)}>
                     <option value="">Selecione…</option>

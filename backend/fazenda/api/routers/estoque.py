@@ -15,6 +15,8 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
+from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
 
@@ -121,10 +123,6 @@ def backfill_estoque_semen_generico(session: Session) -> None:
     session.commit()
 
 
-UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"]
-MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"]
-
-
 @router.get("/")
 def listar_estoque(
     fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
@@ -165,6 +163,7 @@ class EstoqueIn(BaseModel):
     conta_gerencial_despesa_padrao: str | None = None
     conta_gerencial_receita_padrao: str | None = None
     gera_receita: bool = False
+    gera_patrimonio: bool = False
     exibir_necessidade_compra_agenda: bool = False
     estocavel: bool = True
     data_inicio_controle: date | None = None
@@ -174,13 +173,6 @@ class EstoqueIn(BaseModel):
     alimento_id: int | None = None
     estoque_semen_id: int | None = None
     tipo_semen: str | None = None
-
-
-def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
-    if unidade_embalagem and unidade_embalagem not in UNIDADES_EMBALAGEM:
-        raise HTTPException(status_code=400, detail=f"Unidade de embalagem inválida — use uma de: {', '.join(UNIDADES_EMBALAGEM)}")
-    if medida_embalagem and medida_embalagem not in MEDIDAS_EMBALAGEM:
-        raise HTTPException(status_code=400, detail=f"Unidade de medida inválida — use uma de: {', '.join(MEDIDAS_EMBALAGEM)}")
 
 
 @router.post("/", status_code=201)
@@ -195,8 +187,6 @@ def criar_item_estoque(
     existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe um item de estoque chamado "{dados.nome}"')
-    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
-
     valor_total = (dados.quantidade or 0) * (dados.valor_unitario or 0) if dados.quantidade and dados.valor_unitario else None
     item = Estoque(
         nome=dados.nome,
@@ -221,6 +211,7 @@ def criar_item_estoque(
         conta_gerencial_despesa_padrao=dados.conta_gerencial_despesa_padrao,
         conta_gerencial_receita_padrao=dados.conta_gerencial_receita_padrao,
         gera_receita=dados.gera_receita,
+        gera_patrimonio=dados.gera_patrimonio,
         exibir_necessidade_compra_agenda=dados.exibir_necessidade_compra_agenda,
         estocavel=dados.estocavel,
         data_inicio_controle=dados.data_inicio_controle if dados.estocavel else None,
@@ -255,8 +246,6 @@ def atualizar_item_estoque(
     existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe outro item de estoque chamado "{dados.nome}"')
-    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
-
     item.nome = dados.nome
     item.categoria = dados.categoria
     item.finalidade = dados.finalidade
@@ -279,6 +268,7 @@ def atualizar_item_estoque(
     item.conta_gerencial_despesa_padrao = dados.conta_gerencial_despesa_padrao
     item.conta_gerencial_receita_padrao = dados.conta_gerencial_receita_padrao
     item.gera_receita = dados.gera_receita
+    item.gera_patrimonio = dados.gera_patrimonio
     item.exibir_necessidade_compra_agenda = dados.exibir_necessidade_compra_agenda
     item.estocavel = dados.estocavel
     item.data_inicio_controle = dados.data_inicio_controle if dados.estocavel else None
@@ -294,6 +284,32 @@ def atualizar_item_estoque(
     session.commit()
     session.refresh(item)
     return item.model_dump()
+
+
+@router.delete("/{item_id}")
+def excluir_item_estoque(
+    item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Exclui um item de estoque de fato — só permitido quando não há nenhum
+    `MovimentoEstoque` vinculado (409 caso contrário, orientando a desativar
+    em vez de excluir), já que `MovimentoEstoque.estoque_id` é FK real para
+    `estoque.id` (o único FK do repo apontando pra essa tabela)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    total_movimentos = len(session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == item_id)).all())
+    if total_movimentos:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'Não é possível excluir "{item.nome}" — há {total_movimentos} movimento(s) de estoque '
+                'vinculado(s) a ele. Desative o item (campo "Ativo") em vez de excluir.'
+            ),
+        )
+    session.delete(item)
+    session.commit()
+    return {"excluido": True}
 
 
 def _eh_medicamento(e: Estoque) -> bool:
@@ -329,19 +345,28 @@ def listar_medicamentos(
     O casamento por princípio ativo/doença usa a Farmácia: além do texto legado
     `principio_ativo`, resolve o vínculo relacional (principio_ativo_id →
     PrincipioAtivo.nome / PrincipioAtivo.doenca_id → Doenca.nome), para que os
-    medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto."""
-    from fazenda.models import Doenca, PrincipioAtivo
+    medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto.
+
+    `incluir_sem_estoque` também acrescenta, pra critério `principio_ativo` ou
+    `doenca`, toda marca comercial cadastrada (`MedicamentoComercial`) que
+    ainda não tem item de Estoque nenhum — mesmo mecanismo de
+    `estoque_baixa.opcoes_medicamento` (usado no picker de Central de
+    Protocolos/Agenda), só que aqui o resultado é achatado no mesmo formato
+    de item de estoque, com `estoque_id: None` e `sem_estoque: True`, porque
+    o Protocolo Sanitário resolve o medicamento pelo NOME digitado no
+    lançamento (`escolhas_medicamento`), não por estoque_id."""
+    from fazenda.models import Doenca, IndicacaoTerapeutica, MedicamentoComercial, PrincipioAtivo
 
     fazenda_id = fazenda_id_seguro(fazenda_id)
 
     algum_criterio = bool(principio_ativo or classificacao or doenca or finalidade)
 
-    query_pa = select(PrincipioAtivo)
-    query_doenca = select(Doenca)
+    # Catálogo (princípio ativo, doença) é global + da fazenda — ver
+    # rules/visibilidade. Estoque é dado real da fazenda: filtro estrito.
+    query_pa = visivel(select(PrincipioAtivo), PrincipioAtivo, fazenda_id)
+    query_doenca = visivel(select(Doenca), Doenca, fazenda_id)
     query_estoque = select(Estoque)
     if fazenda_id is not None:
-        query_pa = query_pa.where(PrincipioAtivo.fazenda_id == fazenda_id)
-        query_doenca = query_doenca.where(Doenca.fazenda_id == fazenda_id)
         query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
 
     pa_ids: set[int] = set()
@@ -351,7 +376,12 @@ def listar_medicamentos(
             if (pa.nome or "").strip().lower() == alvo:
                 pa_ids.add(pa.id)
 
-    # Doença → princípios ativos ligados a ela (via doenca_id da Farmácia).
+    # Doença → princípios ativos ligados a ela: pelo vínculo direto
+    # PrincipioAtivo.doenca_id (1-pra-1, só biológicos) E pela indicação
+    # terapêutica N-pra-N (IndicacaoTerapeutica — o caso geral, ex.: um
+    # antibiótico tratando mais de uma doença). Sem a segunda parte, um
+    # protocolo cadastrado "por doença" só encontrava vacina — nunca o
+    # antibiótico/anti-inflamatório indicado pra ela.
     pa_ids_doenca: set[int] = set()
     if doenca:
         alvo_d = doenca.strip().lower()
@@ -359,6 +389,12 @@ def listar_medicamentos(
         for pa in session.exec(query_pa).all():
             if pa.doenca_id in doenca_ids:
                 pa_ids_doenca.add(pa.id)
+        query_ind = visivel(
+            select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id.in_(doenca_ids)),
+            IndicacaoTerapeutica, fazenda_id,
+        )
+        for ind in session.exec(query_ind).all():
+            pa_ids_doenca.add(ind.principio_ativo_id)
 
     # Finalidade: "secagem" = antimicrobianos intramamários de vaca seca;
     # "vacina" = todos os biológicos; "vacina_pre_parto" = só as vacinas
@@ -386,6 +422,20 @@ def listar_medicamentos(
                 pa_ids_vacina_pre_parto.add(pa.id)
 
     itens = session.exec(query_estoque).all()
+    # Cache de marcas por princípio ativo — carrega uma vez por pa_id (não uma
+    # vez por item) para casar cada item de Estoque com sua carência/bula sem
+    # repetir a mesma query dezenas de vezes num catálogo grande.
+    marcas_por_pa: dict[int, list] = {}
+
+    def _marcas_do(pa_id: int | None) -> list:
+        if pa_id is None:
+            return []
+        if pa_id not in marcas_por_pa:
+            marcas_por_pa[pa_id] = session.exec(
+                select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa_id)
+            ).all()
+        return marcas_por_pa[pa_id]
+
     saida = []
     for e in itens:
         if e.ativo is False:
@@ -416,11 +466,44 @@ def listar_medicamentos(
         # <= 0, para não sumir com itens legados sem saldo lançado ainda.
         if not incluir_sem_estoque and e.quantidade is not None and e.quantidade <= 0:
             continue
+        marca = resolver_marca_comercial(
+            session, item=e, principio_ativo_id=e.principio_ativo_id, candidatos=_marcas_do(e.principio_ativo_id),
+        )
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
-            "laboratorio": e.laboratorio, "estoque_id": e.id,
+            "laboratorio": e.laboratorio, "estoque_id": e.id, "sem_estoque": False,
+            "carencia": carencia_para_item(e, marca),
+            "proibido_lactacao": bool(marca.proibido_lactacao) if marca else False,
+            "alerta": marca.alerta if marca else None,
         })
+
+    # incluir_sem_estoque + critério por princípio ativo/doença: acrescenta
+    # toda marca comercial do catálogo que ainda não apareceu acima (nenhum
+    # item de Estoque criado pra ela) — dá liberdade pro operador escolher o
+    # que realmente usou mesmo sem frasco cadastrado. Só faz sentido pra
+    # princípio ativo/doença: "classificação"/"finalidade" não têm uma marca
+    # comercial associada diretamente (são agrupamentos do item de estoque).
+    pa_ids_sem_estoque = pa_ids | pa_ids_doenca if incluir_sem_estoque else set()
+    if pa_ids_sem_estoque:
+        ja_listados = {(x["nome"] or "").strip().lower() for x in saida}
+        query_mc = visivel(
+            select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id.in_(pa_ids_sem_estoque)),
+            MedicamentoComercial, fazenda_id,
+        )
+        for mc in session.exec(query_mc).all():
+            nome_norm = (mc.nome_comercial or "").strip().lower()
+            if not nome_norm or nome_norm in ja_listados:
+                continue
+            ja_listados.add(nome_norm)
+            saida.append({
+                "nome": mc.nome_comercial, "unidade": None, "quantidade": None,
+                "principio_ativo": None, "classificacao_medicamento": None,
+                "laboratorio": mc.laboratorio, "estoque_id": None, "sem_estoque": True,
+                "carencia": carencia_para_item(None, mc),
+                "proibido_lactacao": bool(mc.proibido_lactacao),
+                "alerta": mc.alerta,
+            })
     return sorted(saida, key=lambda x: x["nome"])
 
 
@@ -522,3 +605,98 @@ def movimentar_estoque(
 ) -> dict:
     item = _criar_movimento_estoque(dados, session, usuario_id=user.id, fazenda_id=fazenda_id)
     return item.model_dump()
+
+
+class MovimentoEditIn(BaseModel):
+    """Edição de um `MovimentoEstoque` lançado manualmente (G1). Não permite
+    trocar `nome`/`movimento` — isso é excluir e relançar, não editar.
+    `extra="allow"` só para conseguirmos detectar `nome`/`movimento` no corpo
+    e devolver uma mensagem de erro explicativa em vez do 422 genérico do
+    FastAPI para campo desconhecido."""
+
+    model_config = {"extra": "allow"}
+
+    quantidade: float
+    unidade: str | None = None
+    data_movimento: date
+    observacao: str | None = None
+
+
+def _resolver_item_do_movimento(mov: MovimentoEstoque, session: Session, fazenda_id: int | None) -> Estoque | None:
+    """`MovimentoEstoque.estoque_id` pode ser `None` em movimentos legados —
+    nesse caso resolve o item por `nome_item` + `fazenda_id`, igual ao
+    lançamento (`_criar_movimento_estoque`)."""
+    if mov.estoque_id:
+        item = session.get(Estoque, mov.estoque_id)
+        if item:
+            return item
+    query_item = select(Estoque).where(Estoque.nome == mov.nome_item)
+    if fazenda_id is not None:
+        query_item = query_item.where(Estoque.fazenda_id == fazenda_id)
+    return session.exec(query_item).first()
+
+
+@router.put("/movimentos/{movimento_id}")
+def editar_movimento_estoque(
+    movimento_id: int, dados: MovimentoEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Edita quantidade/unidade/data/observação de um movimento manual
+    (`origem_tipo is None`). Aplica o *delta* da quantidade no saldo do item
+    (e no `EstoqueSemen.doses`, quando o item for de sêmen) — não refaz o
+    movimento do zero, para não perder o histórico de outros movimentos do
+    mesmo item entre o lançamento original e esta edição."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    extras = dados.model_extra or {}
+    if "nome" in extras or "movimento" in extras:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível trocar o item ou o tipo (entrada/saída) de um movimento existente — "
+            "exclua este movimento e lance um novo.",
+        )
+    mov = session.get(MovimentoEstoque, movimento_id)
+    if not mov or (fazenda_id is not None and mov.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Movimento de estoque não encontrado")
+    if mov.origem_tipo is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este movimento foi gerado por um lançamento de {mov.origem_tipo} — desfaça pelo próprio "
+            "lançamento (Sanidade, Protocolo, Secagem…), não pelo histórico de estoque.",
+        )
+    if mov.pedido_item_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta entrada está vinculada a um item de pedido — desfaça pelo Pedido.",
+        )
+    if dados.quantidade <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade deve ser maior que zero")
+
+    item = _resolver_item_do_movimento(mov, session, fazenda_id)
+    if not item:
+        raise HTTPException(status_code=404, detail=f'Item de estoque "{mov.nome_item}" não encontrado')
+
+    sinal = -1 if mov.movimento in MOVIMENTOS_SAIDA else 1
+    delta = sinal * (dados.quantidade - mov.quantidade)
+    item.quantidade = (item.quantidade or 0) + delta
+    if item.estoque_minimo is not None:
+        item.abaixo_minimo = item.quantidade < item.estoque_minimo
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+
+    if item.estoque_semen_id:
+        touro = session.get(EstoqueSemen, item.estoque_semen_id)
+        if touro:
+            touro.doses = touro.doses + round(delta)
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
+
+    mov.quantidade = dados.quantidade
+    mov.unidade = dados.unidade
+    mov.data_movimento = dados.data_movimento
+    mov.observacao = dados.observacao
+    session.add(mov)
+    session.commit()
+    session.refresh(mov)
+    session.refresh(item)
+
+    return {**mov.model_dump(), "saldo_item": item.quantidade}

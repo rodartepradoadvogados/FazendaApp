@@ -25,13 +25,13 @@ const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
 const cardBtn = (ativo: boolean): React.CSSProperties => ({
-  display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.65rem 1rem", borderRadius: "8px",
+  display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.65rem 1rem", borderRadius: "var(--r-sm)",
   border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
   background: ativo ? "var(--dourado-transp, rgba(197,160,74,0.12))" : "var(--surface-2)",
   color: ativo ? "var(--dourado-light)" : "var(--text)", cursor: "pointer", fontSize: "0.85rem", fontWeight: ativo ? 700 : 400,
 });
 
-const inputStyle: React.CSSProperties = { width: "100%", padding: "0.45rem 0.6rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" };
+const inputStyle: React.CSSProperties = { width: "100%", padding: "0.45rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
 /** Editar um touro do estoque de sêmen direto em Rebanho > Touros (mesmos
@@ -50,7 +50,7 @@ function FormEstoqueSemenEdit({ inicial, onSalvar, onCancelar }: { inicial: Esto
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 200, overflowY: "auto", padding: "2rem 1rem" }}>
-      <div style={{ background: "var(--bg)", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "32rem", border: "1px solid var(--border)" }}>
+      <div style={{ background: "var(--bg)", borderRadius: "var(--r-sm)", padding: "1.5rem", width: "100%", maxWidth: "32rem", border: "1px solid var(--border)" }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-bold flex items-center gap-2"><FlaskConical size={18} style={{ color: "var(--dourado)" }} /> Editar touro em estoque</h3>
           <button onClick={onCancelar} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><X size={18} /></button>
@@ -251,7 +251,7 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
     setEditNaab(null);
   };
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">

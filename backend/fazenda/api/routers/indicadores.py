@@ -13,11 +13,12 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao, Sanidade, Servico,
+    Animal, Doenca, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao, Sanidade, Servico,
 )
 from fazenda.rules.estado_reprodutivo import classificar_animal
 from fazenda.rules.indicadores import calcular_indicadores
 from fazenda.rules.parametros import get_param, idade_apta_min_meses, peso_apta_min, pev_dias
+from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/indicadores", tags=["indicadores"])
 
@@ -111,11 +112,26 @@ def relatorio_personalizado(
         servicos_por_animal.setdefault(s.numero_matriz, []).append(s)
     mastites_por_animal: dict[str, int] = {}
     if "numero_mastites" in precisa_computadas:
-        query_ocorrencias = select(OcorrenciaClinica).where(OcorrenciaClinica.doenca.ilike("%mastite%"))
+        # Decisão (c) do dono do produto: conta pelo vínculo de catálogo
+        # (doenca_id -> Doenca "Mastite", global ou da fazenda — ver
+        # rules.visibilidade.visivel), não mais por pedaço de texto. Casos
+        # HISTÓRICOS que o backfill (fazenda.rules.recria_doenca) não
+        # conseguiu vincular (doenca_id nulo) continuam contados pelo texto,
+        # de propósito — para o número do relatório não sumir de uma hora
+        # para outra por causa de dado antigo sem vínculo.
+        ids_mastite = {
+            d.id for d in session.exec(
+                visivel(select(Doenca).where(Doenca.nome.ilike("mastite")), Doenca, fazenda_id)
+            ).all()
+        }
+        query_ocorrencias = select(OcorrenciaClinica)
         if fazenda_id is not None:
             query_ocorrencias = query_ocorrencias.where(OcorrenciaClinica.fazenda_id == fazenda_id)
         for o in session.exec(query_ocorrencias).all():
-            mastites_por_animal[o.numero_matriz] = mastites_por_animal.get(o.numero_matriz, 0) + 1
+            vinculado = o.doenca_id is not None and o.doenca_id in ids_mastite
+            fallback_texto = o.doenca_id is None and "mastite" in (o.doenca or "").strip().lower()
+            if vinculado or fallback_texto:
+                mastites_por_animal[o.numero_matriz] = mastites_por_animal.get(o.numero_matriz, 0) + 1
 
     def _computar(numero: str, data_nasc: date | None) -> dict:
         servs = sorted(servicos_por_animal.get(numero, []), key=lambda s: s.data_servico or date.min)
@@ -195,7 +211,21 @@ def _resumo_relatorio_personalizado(
     perdas = [s for s in servicos_rows if s.data_perda_prenhez]
     if data_de or data_ate:
         perdas = [s for s in perdas if (not data_de or s.data_perda_prenhez >= data_de) and (not data_ate or s.data_perda_prenhez <= data_ate)]
-    diagnosticados = sum(1 for s in servicos_rows if (s.diagnostico or "").strip())
+    # Denominador do % de perda de prenhez tem que respeitar o mesmo período
+    # do numerador (`perdas` acima) — senão o numerador conta só as perdas do
+    # período mas o denominador soma diagnósticos de todo o histórico, e o
+    # percentual sai artificialmente baixo. Data do diagnóstico = mesma
+    # âncora usada em agenda_engine.py/eventos_sanitarios.py: data_diagnostico
+    # com fallback pra data_servico (nem todo lançamento antigo tem a
+    # primeira preenchida).
+    diagnosticados_no_periodo = [
+        s for s in servicos_rows
+        if (s.diagnostico or "").strip()
+        and (not (data_de or data_ate) or (s.data_diagnostico or s.data_servico))
+        and (not data_de or (s.data_diagnostico or s.data_servico) >= data_de)
+        and (not data_ate or (s.data_diagnostico or s.data_servico) <= data_ate)
+    ]
+    diagnosticados = len(diagnosticados_no_periodo)
 
     partos_filtrados = partos_rows
     if data_de or data_ate:

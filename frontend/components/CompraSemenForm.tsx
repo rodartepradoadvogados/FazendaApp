@@ -11,16 +11,17 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { SeletorContaGerencial } from "./SeletorContaGerencial";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 const hoje = () => new Date().toISOString().split("T")[0];
 
 const cardBtn = (ativo: boolean): React.CSSProperties => ({
-  display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.55rem 0.9rem", borderRadius: "8px",
+  display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.55rem 0.9rem", borderRadius: "var(--r-sm)",
   border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
   background: ativo ? "var(--dourado-transp, rgba(197,160,74,0.12))" : "var(--surface-2)",
   color: ativo ? "var(--dourado-light)" : "var(--text)", cursor: "pointer", fontSize: "0.85rem", fontWeight: ativo ? 700 : 400,
@@ -250,7 +251,7 @@ export default function CompraSemenForm() {
     }
   };
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="animate-in">
@@ -441,7 +442,7 @@ export default function CompraSemenForm() {
                     </div>
                   </Campo>
                   <Campo label={tipoValor === "total" ? "Valor total (R$)" : "Valor por dose (R$)"}>
-                    <input type="number" step="0.01" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} />
+                    <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />
                   </Campo>
                 </div>
                 {!!dosesNum && !!valorNum && (
@@ -532,8 +533,8 @@ export default function CompraSemenForm() {
                 <input type="checkbox" checked={entregue} onChange={(e) => setEntregue(e.target.checked)} /> Sim
               </label>
             </Campo>
-            <Campo label="Desconto (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={desconto} onChange={(e) => setDesconto(e.target.value)} placeholder="0,00" /></Campo>
-            <Campo label="Acréscimo (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} placeholder="0,00" /></Campo>
+            <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
+            <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
           </div>
 
           <div className="card mb-3" style={{ background: "var(--surface-2)" }}>
@@ -556,7 +557,7 @@ export default function CompraSemenForm() {
               {jaPago && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
                   <Campo label="Data de pagamento"><input type="date" style={inputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></Campo>
-                  <Campo label="Valor pago (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={valorPago} onChange={(e) => setValorPago(e.target.value)} /></Campo>
+                  <Campo label="Valor pago (R$)"><CampoMoeda style={inputStyle} value={Number(valorPago) || 0} onChange={(v) => setValorPago(v ? String(v) : "")} /></Campo>
                   <Campo label="Conta bancária">
                     <select style={inputStyle} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
                       <option value="">Selecione…</option>

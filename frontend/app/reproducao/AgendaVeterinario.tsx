@@ -59,7 +59,7 @@ function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; on
   const [resultado, setResultado] = useState<"positivo" | "negativo">("positivo");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
 
   async function salvar() {
     setSalvando(true); setErro(null);
@@ -79,7 +79,7 @@ function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; on
       <button onClick={salvar} disabled={salvando} className="btn-primary" title="Salvar a reconfirmação de prenhez desta matriz" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
         <Check size={13} /> {salvando ? "Salvando…" : "Salvar"}
       </button>
-      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
         <X size={13} />
       </button>
       {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
@@ -91,7 +91,7 @@ function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: stri
   const [email, setEmail] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
 
   async function enviar() {
     if (!email.trim()) { setErro("Informe o e-mail do destinatário."); return; }
@@ -108,7 +108,7 @@ function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: stri
       <button onClick={enviar} disabled={enviando} className="btn-primary" title="Enviar o último diagnóstico desta matriz por e-mail" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
         <Mail size={13} /> {enviando ? "Enviando…" : "Enviar"}
       </button>
-      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
         <X size={13} />
       </button>
       {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
@@ -242,7 +242,7 @@ export default function AgendaVeterinarioPage() {
           </label>
           <button onClick={abrirPainelExportar} disabled={categoriasComDados.length === 0}
             title="Exportar a lista completa, escolhendo quais categorias incluir"
-            style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.35rem 0.7rem", borderRadius: "6px",
+            style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)",
               border: "1px solid var(--dourado)", background: painelExportar ? "rgba(212,160,23,0.15)" : "transparent",
               color: "var(--dourado-light)", cursor: categoriasComDados.length === 0 ? "not-allowed" : "pointer", opacity: categoriasComDados.length === 0 ? 0.5 : 1 }}>
             <Download size={14} /> Exportar lista completa
@@ -256,11 +256,11 @@ export default function AgendaVeterinarioPage() {
             <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Exportar lista completa</span>
             <div className="flex items-center gap-2">
               <button onClick={() => setSelecionadasExport(new Set(categoriasComDados.map((l) => l.key)))}
-                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
                 Selecionar todas
               </button>
               <button onClick={() => setSelecionadasExport(new Set())}
-                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
                 Nenhuma
               </button>
             </div>
@@ -289,7 +289,7 @@ export default function AgendaVeterinarioPage() {
       )}
 
       {modo === "projecao" && !dados.proxima_visita_reprodutiva && (
-        <div className="mb-3" style={{ background: "rgba(198,58,58,0.12)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.75rem 1rem", fontSize: "0.85rem" }}>
+        <div className="mb-3" style={{ background: "rgba(198,58,58,0.12)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.75rem 1rem", fontSize: "0.85rem" }}>
           <div className="flex items-center gap-2" style={{ color: "var(--red)" }}>
             <AlertTriangle size={16} /><span>Não há próximo serviço agendado.</span>
           </div>
@@ -305,7 +305,7 @@ export default function AgendaVeterinarioPage() {
       )}
 
       {dados.projetado && (
-        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem" }}>
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem" }}>
           <AlertTriangle size={16} />
           <span>
             Cenário projetado para {fmtDia(dados.data_referencia)} — classificação simulada com os dados já lançados
@@ -315,7 +315,7 @@ export default function AgendaVeterinarioPage() {
       )}
 
       {sucesso && (
-        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.85rem" }}>
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.85rem" }}>
           <Check size={16} /><span>{sucesso}</span>
         </div>
       )}
@@ -358,7 +358,7 @@ export default function AgendaVeterinarioPage() {
               Não há um próximo serviço agendado. Deseja definir a data da próxima visita reprodutiva agora?
             </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Não</button>
+              <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Não</button>
               <button onClick={() => { setNovaData(""); setPassoAgendar("definir"); }} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>Sim</button>
             </div>
           </div>
@@ -384,19 +384,19 @@ export default function AgendaVeterinarioPage() {
                 <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "block", marginBottom: "0.75rem" }}>
                   Escreva a data do próximo serviço
                   <input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} min={dados.ultimo_servico}
-                    style={{ display: "block", marginTop: "0.3rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem" }} />
+                    style={{ display: "block", marginTop: "0.3rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem" }} />
                 </label>
                 {intervaloImplicito != null && intervaloImplicito > 0 && (
-                  <div className="mb-3" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.6rem 0.8rem", color: "var(--dourado-light)", fontSize: "0.8rem" }}>
+                  <div className="mb-3" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", color: "var(--dourado-light)", fontSize: "0.8rem" }}>
                     Essa data considerará <strong>{intervaloImplicito} dia(s)</strong> de intervalo entre o último serviço
                     ({fmtDia(dados.ultimo_servico)}) e o serviço lançado. Deseja colocar esse intervalo como parâmetro?
                   </div>
                 )}
                 {avisoParam && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{avisoParam}</p>}
                 <div className="flex justify-end gap-2">
-                  <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Cancelar</button>
+                  <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Cancelar</button>
                   <button onClick={recusarComoParametro} disabled={intervaloImplicito == null || intervaloImplicito <= 0}
-                    style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                    style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
                     Não
                   </button>
                   <button onClick={confirmarComoParametro} disabled={salvandoParam || intervaloImplicito == null || intervaloImplicito <= 0} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
@@ -462,7 +462,7 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
                     <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />
                   ) : (
                     <button onClick={() => setReconfirmando(it.numero_matriz)}
-                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
+                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
                       Registrar reconfirmação
                     </button>
                   )}
@@ -473,7 +473,7 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
                   <FormEnviarDiagnostico numero={it.numero_matriz} onEnviado={onDgEnviado} onCancelar={() => setEnviandoDg(null)} />
                 ) : (
                   <button onClick={() => setEnviandoDg(it.numero_matriz)} title="Enviar o último diagnóstico de gestação desta matriz por e-mail"
-                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
                     <Mail size={13} /> Enviar
                   </button>
                 )}

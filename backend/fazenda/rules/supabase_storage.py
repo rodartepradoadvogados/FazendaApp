@@ -1,11 +1,14 @@
 """
-Cliente do Supabase Storage — usado tanto pelo arquivo fiscal-contábil
-integral (notas fiscais, CCIR, IRPF/IRPJ, inscrição estadual, matrículas,
+Cliente do Supabase Storage — usado pelo arquivo fiscal-contábil integral
+(notas fiscais, CCIR, IRPF/IRPJ, inscrição estadual, matrículas,
 contratos...; ver fazenda/models/documentos.py::DocumentoArquivado e
-fazenda/api/routers/documentos.py) quanto pelas fotos do campo tiradas no
-app móvel (ver fazenda/models/fotos.py::FotoCampo e
-fazenda/api/routers/fotos.py) — cada um no seu próprio bucket
-(settings.supabase_bucket vs settings.supabase_bucket_fotos).
+fazenda/api/routers/documentos.py), pelas fotos do campo tiradas no app
+móvel (ver fazenda/models/fotos.py::FotoCampo e
+fazenda/api/routers/fotos.py) e pelos anexos de lançamento financeiro (ver
+fazenda/models/financeiro.py::LancamentoAnexo e
+fazenda/api/routers/financeiro.py) — cada um no seu próprio bucket
+(settings.supabase_bucket, settings.supabase_bucket_fotos e
+settings.supabase_bucket_financeiro).
 
 O conteúdo do arquivo nunca passa pelo Postgres — só o caminho dentro do
 bucket é guardado. O navegador do usuário nunca fala com o Supabase: todo
@@ -106,7 +109,7 @@ def garantir_buckets() -> None:
         return
     url = settings.supabase_url.rstrip("/")
     service_key = settings.supabase_service_key
-    for bucket in {settings.supabase_bucket, settings.supabase_bucket_fotos}:
+    for bucket in {settings.supabase_bucket, settings.supabase_bucket_fotos, settings.supabase_bucket_financeiro}:
         try:
             resp = httpx.get(f"{url}/storage/v1/bucket/{bucket}", headers=_headers(service_key), timeout=15)
             if resp.status_code == 200:

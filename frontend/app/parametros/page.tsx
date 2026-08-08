@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Loader2, Milk, Plus, X } from "lucide-react";
-import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros } from "@/lib/api";
+import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros, mensagemErroApi } from "@/lib/api";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 import ManualFazendaParametros from "@/components/ManualFazendaParametros";
 import AlertasIndicador from "@/components/AlertasIndicador";
@@ -42,7 +42,7 @@ export default function ParametrosPage() {
 
   const inputStyle = {
     width: "5rem", textAlign: "right" as const, background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.2rem 0.4rem", fontSize: "0.82rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.2rem 0.4rem", fontSize: "0.82rem",
   };
 
   return (
@@ -185,12 +185,12 @@ async function salvarFaixaBonificacao(id: number | "novo", dados: Record<string,
   const res = await authFetch(url, {
     method: id === "novo" ? "POST" : "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar faixa de bonificação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar faixa de bonificação"); }
   return res.json();
 }
 async function excluirFaixaBonificacao(id: number) {
   const res = await authFetch(`${API}/producao/faixas-bonificacao-qualidade/${id}`, { method: "DELETE" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir faixa de bonificação"); }
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir faixa de bonificação"); }
   return res.json();
 }
 
@@ -256,7 +256,7 @@ function CadastroFaixasBonificacaoQualidade({ podeEditar }: { podeEditar: boolea
   };
 
   const FormFaixa = (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
         <div>
           <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Indicador</label>
@@ -363,5 +363,5 @@ function CadastroFaixasBonificacaoQualidade({ podeEditar }: { podeEditar: boolea
 
 const selectStyleFaixa: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
 };

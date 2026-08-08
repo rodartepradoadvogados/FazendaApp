@@ -6,9 +6,10 @@
 // POST /sanidade/calendario/cadastrar-preventivo | POST /sanidade/calendario |
 // GET /agenda/ (BST).
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
-import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate } from "@/lib/api";
+import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -26,6 +27,16 @@ const CLASSIF_MASTITE = ["clinica", "subclinica", "ambiental"];
 // Separador usado para guardar mais de uma categoria-alvo no mesmo campo de
 // texto único do banco — mesmo padrão do site (ver SEP_CATEGORIAS em app/lancamentos/page.tsx).
 const SEP_CATEGORIAS = ", ";
+
+// Estoque zerado/baixo do produto selecionado — mesma regra do site (saldo
+// <= 0 ou abaixo do mínimo cadastrado; `/estoque/` já devolve `abaixo_minimo`
+// pronto, ver app/estoque/page.tsx, então só reaproveitamos o campo).
+function itemEstoqueBaixo(estoque: EstoqueItem[], produto: string): { baixo: boolean; zerado: boolean } {
+  const item = estoque.find((e) => e.nome === produto) as (EstoqueItem & { abaixo_minimo?: boolean | null }) | undefined;
+  if (!item) return { baixo: false, zerado: false };
+  const zerado = (item.quantidade ?? 0) <= 0;
+  return { baixo: zerado || item.abaixo_minimo === true, zerado };
+}
 
 type Modalidade = "curativa" | "preventiva";
 type TipoCurativa = "aplicacao" | "protocolo";
@@ -105,7 +116,9 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
 }
 
 // ── Curativa: aplicação avulsa OU protocolo sanitário ────────────────────────
-function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCurativa; animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[] }) {
+// Exportado para a tela Lançar > Protocolos usar o MESMO formulário de
+// protocolo sanitário (tipo="protocolo") — ver FormProtocolos.
+export function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCurativa; animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[] }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const protocolos = useCache<Protocolo[]>("protocolos_sanitarios", () => fetchProtocolosSanitarios() as Promise<Protocolo[]>, []);
 
@@ -123,19 +136,38 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
   const [filtrarPor, setFiltrarPor] = useState<"todos" | "principio_ativo" | "doenca">("todos");
   const [criterio, setCriterio] = useState("");
   const [principiosNomes, setPrincipiosNomes] = useState<string[]>([]);
-  const [doencasNomes, setDoencasNomes] = useState<string[]>([]);
+  // Guarda id junto do nome (não só o nome) porque o substituto inteligente
+  // (indicações por doença) precisa do id da doença, não do texto.
+  const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
   const [medicamentosFiltrados, setMedicamentosFiltrados] = useState<string[] | null>(null);
   useEffect(() => {
     fetchComCache<string[]>("sanidade_principios_ativos_nomes", () => fetchPrincipiosAtivos().then((d: any[]) => d.map((p) => p.nome)))
       .then(({ dados }) => setPrincipiosNomes(dados || []));
-    fetchComCache<string[]>("sanidade_doencas_nomes", () => fetchDoencas().then((d: any[]) => d.map((x) => x.nome)))
-      .then(({ dados }) => setDoencasNomes(dados || []));
+    fetchComCache<{ id: number; nome: string }[]>("sanidade_doencas_lista", () => fetchDoencas().then((d: any[]) => d.map((x) => ({ id: x.id, nome: x.nome }))))
+      .then(({ dados }) => setDoencas(dados || []));
   }, []);
   useEffect(() => {
     if (filtrarPor === "todos" || !criterio) { setMedicamentosFiltrados(null); return; }
     const filtro = filtrarPor === "principio_ativo" ? { principio_ativo: criterio } : { doenca: criterio };
     fetchMedicamentos(filtro).then((m: any[]) => setMedicamentosFiltrados(m.map((x) => x.nome))).catch(() => setMedicamentosFiltrados([]));
   }, [filtrarPor, criterio]);
+  const doencasNomes = useMemo(() => doencas.map((d) => d.nome), [doencas]);
+
+  // Substituto inteligente: filtrando por doença + produto escolhido com
+  // estoque baixo/zerado → busca as alternativas indicadas pra doença.
+  const [indicacoes, setIndicacoes] = useState<OpcaoIndicacaoDoenca[] | null>(null);
+  const { baixo: produtoEstoqueBaixo, zerado: produtoEstoqueZerado } = itemEstoqueBaixo(estoque, produto);
+  useEffect(() => {
+    if (filtrarPor !== "doenca" || !criterio || !produto || !produtoEstoqueBaixo) { setIndicacoes(null); return; }
+    const doencaId = doencas.find((d) => d.nome === criterio)?.id;
+    if (!doencaId) { setIndicacoes(null); return; }
+    let vivo = true;
+    fetchIndicacoesDoenca(doencaId)
+      .then((r) => { if (vivo) setIndicacoes(r.opcoes.length ? r.opcoes : null); })
+      .catch(() => { if (vivo) setIndicacoes(null); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrarPor, criterio, produto, produtoEstoqueBaixo, doencas]);
   // Protocolo sanitário
   const [protocoloId, setProtocoloId] = useState("");
   const [classifMastite, setClassifMastite] = useState("");
@@ -267,6 +299,9 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
             <EstoquePicker itens={itensProduto} value={produto} onChange={escolherProduto} placeholder="Selecione o produto…"
               disabled={filtrarPor !== "todos" && !criterio} incluirNaoEstocaveis />
           </MobCampo>
+          {indicacoes && (
+            <SubstitutoBanner indicacoes={indicacoes} zerado={produtoEstoqueZerado} produto={produto} doenca={criterio} onUsar={escolherProduto} />
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <MobCampo label="Quantidade (dose)">
               <input type="number" inputMode="decimal" className="mob-input" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" />
@@ -308,6 +343,52 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
     </>
+  );
+}
+
+// Aviso de substituto inteligente: produto escolhido está com estoque
+// baixo/zerado e a doença filtrada tem outras opções indicadas — mesma regra
+// do site, layout mobile (Mob*). "Disponível agora" troca o produto do form
+// com um toque; "Precisa comprar" é só informativo.
+function SubstitutoBanner({ indicacoes, zerado, produto, doenca, onUsar }: {
+  indicacoes: OpcaoIndicacaoDoenca[]; zerado: boolean; produto: string; doenca: string; onUsar: (nome: string) => void;
+}) {
+  const disponiveis = indicacoes.filter((o) => o.status_estoque === "ok");
+  const precisaComprar = indicacoes.filter((o) => o.status_estoque !== "ok");
+  return (
+    <MobCard style={{ marginBottom: "0.9rem", border: "1px solid var(--mob-ambar)" }}>
+      <div style={{ fontSize: "0.84rem", fontWeight: 700, color: "var(--mob-ambar)", marginBottom: "0.7rem" }}>
+        {`Estoque ${zerado ? "zerado" : "baixo"} de "${produto}" — substitutos indicados para ${doenca}:`}
+      </div>
+      {disponiveis.length > 0 && (
+        <div style={{ marginBottom: precisaComprar.length ? "0.8rem" : 0 }}>
+          <div style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--mob-verde)", marginBottom: "0.4rem" }}>Disponível agora</div>
+          {disponiveis.map((o) => (
+            <div key={o.principio_ativo_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", padding: "0.4rem 0", borderTop: "1px solid var(--mob-border)" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: "0.88rem" }}>{o.nome}</div>
+                {o.marcas.length > 0 && <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)" }}>{o.marcas.join(", ")}</div>}
+              </div>
+              <button type="button" onClick={() => onUsar(o.marcas[0] || o.nome)}
+                style={{ fontSize: "0.78rem", fontWeight: 700, color: "#fff", background: "var(--mob-verde)", border: "none", borderRadius: 8, padding: "0.4rem 0.75rem", cursor: "pointer", flexShrink: 0 }}>
+                Usar
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {precisaComprar.length > 0 && (
+        <div>
+          <div style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--mob-ambar)", marginBottom: "0.4rem" }}>Precisa comprar</div>
+          {precisaComprar.map((o) => (
+            <div key={o.principio_ativo_id} style={{ padding: "0.4rem 0", borderTop: "1px solid var(--mob-border)" }}>
+              <div style={{ fontWeight: 700, fontSize: "0.88rem" }}>{o.nome}</div>
+              {o.marcas.length > 0 && <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)" }}>{o.marcas.join(", ")}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </MobCard>
   );
 }
 
@@ -412,12 +493,7 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
       ) : (
         <>
           <MobCampo label="Medicamento aplicado">
-            <select className="mob-input" value={produto} onChange={(e) => escolherProduto(e.target.value)}>
-              <option value="">Selecione o produto…</option>
-              {estoque.map((e) => (
-                <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>
-              ))}
-            </select>
+            <EstoquePicker itens={estoque} value={produto} onChange={escolherProduto} placeholder="Selecione o produto…" incluirNaoEstocaveis />
           </MobCampo>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <MobCampo label="Dose">
@@ -458,6 +534,7 @@ function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Anim
 
 // ── Preventiva > Calendário sanitário — POST /sanidade/calendario ───────────
 function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
+  const router = useRouter();
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [eventoId, setEventoId] = useState("");
@@ -471,6 +548,15 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   const [freqUnidade, setFreqUnidade] = useState("meses");
   const [data, setData] = useState(hoje());
   const [obs, setObs] = useState("");
+  // Cronograma sanitário: em vez de cobrar aplicação na hora, o animal que
+  // bate o critério entra numa lista de espera até agendar com o
+  // veterinário ou confirmar aplicação própria (ver Agenda).
+  const [usaCronograma, setUsaCronograma] = useState(false);
+  // true só depois de um envio ONLINE bem-sucedido com o flag marcado — é
+  // quando o 1º ciclo do cronograma já foi de fato criado no servidor (se
+  // ficou na fila offline, o ciclo só nasce ao sincronizar, então não
+  // adianta linkar ainda).
+  const [cronogramaCriado, setCronogramaCriado] = useState(false);
 
   useEffect(() => {
     fetchComCache<EventoPrev[]>("sanidade_eventos_sanitarios_ativos", () => fetchEventosSanitarios().then((d: any[]) => d.filter((e) => e.ativo)))
@@ -487,6 +573,7 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   function salvar() {
     if (!eventoId) return erroValidacao("Selecione o evento sanitário.");
     if (!data) return erroValidacao("Informe a data do evento.");
+    const usouCronograma = usaCronograma;
     enviar(
       "/sanidade/calendario",
       {
@@ -494,9 +581,13 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
         produto: ehExame ? undefined : (produto || undefined), dosagem: ehExame ? undefined : (dosagem || undefined),
         unidade: ehExame ? undefined : (unidade || undefined), veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade, data_evento: data, observacao: obs || undefined,
+        usa_cronograma: usaCronograma,
       },
       `Regra do calendário — ${evento?.nome || ""}`,
-      () => { setEventoId(""); setCategoriaAlvoSel([]); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); },
+      () => {
+        setEventoId(""); setCategoriaAlvoSel([]); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); setUsaCronograma(false);
+        setCronogramaCriado(usouCronograma);
+      },
     );
   }
 
@@ -553,8 +644,27 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
       <MobCampo label="Observação">
         <input className="mob-input" value={obs} onChange={(e) => setObs(e.target.value)} />
       </MobCampo>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", margin: "0.2rem 0 0.9rem", fontSize: "0.82rem" }}>
+        <input type="checkbox" checked={usaCronograma} onChange={(e) => setUsaCronograma(e.target.checked)} style={{ marginTop: "0.15rem" }} />
+        <span>
+          <strong>Usar cronograma sanitário</strong>
+          <br />
+          <span style={{ color: "var(--mob-muted)", fontSize: "0.76rem" }}>
+            Em vez de cobrar aplicação na hora, o animal entra numa lista de espera até agendar com o veterinário ou confirmar aplicação própria.
+          </span>
+        </span>
+      </label>
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
+      {aviso?.tipo === "ok" && cronogramaCriado && (
+        <button
+          type="button" className="mob-btn"
+          style={{ marginTop: "0.5rem", background: "var(--mob-vinho)" }}
+          onClick={() => router.push("/app/menu#calendario-sanitario")}
+        >
+          Ver em Calendário Sanitário →
+        </button>
+      )}
     </>
   );
 }

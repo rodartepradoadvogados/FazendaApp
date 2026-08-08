@@ -14,9 +14,10 @@ from sqlmodel import Session, select
 from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Diaria,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
+    CronogramaSanitario, DietaLancamento, Diaria,
     DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, Lote, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pessoa, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     SeedFlag, Servico,
@@ -25,18 +26,30 @@ from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
+from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
+from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
+from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules.protocolo_customizado import (
     eventos_agenda as _eventos_protocolo_custom_agenda,
     marcar_realizado as _marcar_protocolo_custom_realizado,
     desmarcar_realizado as _desmarcar_protocolo_custom_realizado,
     PREFIXO_EVENTO as PREFIXO_PROTOCOLO_CUSTOM,
+    JANELA_ATRASO_DIAS as JANELA_ATRASO_PROTOCOLO_DIAS,
+)
+from fazenda.rules.lida import (
+    eventos_agenda as _eventos_lida_agenda,
+    marcar_realizado as _marcar_lida_realizado,
+    desmarcar_realizado as _desmarcar_lida_realizado,
+    PREFIXO_EVENTO as PREFIXO_LIDA,
 )
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
+from fazenda.rules.ponto_critico_recria import eventos_agenda as _eventos_ponto_critico_recria_agenda
+from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo
-from fazenda.rules.patrimonio import status_manutencao
+from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -45,7 +58,7 @@ router = APIRouter(prefix="/agenda", tags=["agenda"])
 # produtos como "carboidrato" ou "substância". Usado tanto para ancorar a
 # "próxima visita BST" na última aplicação real quanto para saber quando uma
 # aplicação confirmada deve limpar Animal.aguardando_nova_aplicacao_bst.
-MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+MARCADORES_BST = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
 # Categoria do evento -> módulo cujo acesso o usuário precisa ter para ver o
 # evento na Agenda (e no sininho de notificações, ver notificacoes.py).
@@ -411,50 +424,58 @@ def calcular_agenda(
             "produto": produto,
         })
 
-    # Protocolo IATF — agrupa por (lançamento, dia): uma linha por etapa do
+    # Protocolo IATF — agrupa por (DATA PREVISTA, dia): uma linha por etapa do
     # protocolo, não uma por animal, mostrando todos os animais daquele passo
-    # de uma vez. Em protocolos normais só entram etapas de hoje em diante
-    # (retroativo não spamma passos já vencidos); em protocolos lançados
-    # RETROATIVAMENTE (IATF sem protocolo, D0 no passado), as etapas vencidas
-    # aparecem como pendência.
+    # de uma vez. Agrupa pela data, não pelo lançamento — animais com o mesmo
+    # D0 incluídos em lançamentos separados (ex.: adicionados um de cada vez,
+    # em vez de "em lote") continuam caindo na mesma etapa/data e têm que
+    # aparecer juntos; agrupar por lancamento_id fragmentava esse caso em N
+    # cards de 1 animal cada (relato: 9 animais em D11, só 1 aparecendo na
+    # Agenda).
+    #
+    # Etapa VENCIDA continua cobrando por até JANELA_ATRASO_DIAS — mesma regra
+    # do protocolo customizado. Antes, a etapa cujo dia passou simplesmente
+    # sumia daqui; e como a Agenda era o único lugar do sistema que gravava
+    # `realizada = True`, o protocolo ficava travado em "em andamento" para
+    # sempre, sem nenhuma tela capaz de fechá-lo (relato do usuário: três
+    # protocolos IATF parados em 18/36, 15/20 e 8/16). Lançamento RETROATIVO
+    # (IATF sem protocolo, D0 no passado) segue sem janela nenhuma: as etapas
+    # vencidas dele são justamente o que se quer ver. Passada a janela, a
+    # baixa continua possível pela Central de Protocolos.
+    limite_atraso = data - timedelta(days=JANELA_ATRASO_PROTOCOLO_DIAS)
     lancamentos_iatf_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
     aplicacoes_iatf = [
         a for a in session.exec(
             select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == False)  # noqa: E712
         ).all()
-        if a.data_prevista >= data or getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "retroativo", False)
+        if not getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "encerrado_em", None)
+        and (a.data_prevista >= limite_atraso
+             or getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "retroativo", False))
     ]
-    grupos_iatf: dict[tuple[int, int], list[ProtocoloIatfAplicacao]] = {}
+    grupos_iatf: dict[tuple[date, int], list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes_iatf:
-        grupos_iatf.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+        grupos_iatf.setdefault((ap.data_prevista, ap.dia), []).append(ap)
 
     # Hormônios cadastrados por (lançamento, dia) + as opções de medicamento
     # (frascos em estoque) do princípio ativo de cada um, para o "qual
     # medicamento/frasco?" na hora de confirmar o dia (ex.: D9).
-    from fazenda.models import MedicamentoComercial, PrincipioAtivo
-    _todos_estoque = session.exec(select(Estoque)).all()
-    _pa_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(select(PrincipioAtivo)).all()}
+    # `_opcoes_medicamento` pré-carrega estoque/princípios uma vez e reusa em
+    # cada chamada — mesmo mecanismo compartilhado com a Central de
+    # Protocolos, ver fazenda.rules.estoque_baixa.opcoes_medicamento.
+    _query_estoque_agenda = select(Estoque)
+    if fazenda_id is not None:
+        _query_estoque_agenda = _query_estoque_agenda.where(Estoque.fazenda_id == fazenda_id)
+    _todos_estoque = session.exec(_query_estoque_agenda).all()
+    _query_pa_agenda = select(PrincipioAtivo)
+    if fazenda_id is not None:
+        _query_pa_agenda = _query_pa_agenda.where(PrincipioAtivo.fazenda_id == fazenda_id)
+    _pa_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(_query_pa_agenda).all()}
 
     def _opcoes_medicamento(produto: str) -> tuple[int | None, list[dict]]:
-        """Dado o produto/princípio de um hormônio, resolve o princípio ativo e
-        lista os frascos em estoque para o usuário escolher qual está usando."""
-        item = next((e for e in _todos_estoque if (e.nome or "").strip().lower() == (produto or "").strip().lower()), None)
-        pa_id = item.principio_ativo_id if item else None
-        if pa_id is None:
-            pa = _pa_por_nome.get((produto or "").strip().lower())
-            pa_id = pa.id if pa else None
-        opcoes = []
-        for e in _todos_estoque:
-            if pa_id is not None and e.principio_ativo_id == pa_id:
-                opcoes.append({"estoque_id": e.id, "nome": e.nome, "marca": e.laboratorio,
-                               "saldo": e.quantidade or 0, "unidade": e.unidade,
-                               "estoque_inicializado": e.estoque_inicializado is not False})
-        # Se o próprio produto é um item de estoque (sem princípio), ele é a opção.
-        if not opcoes and item is not None:
-            opcoes.append({"estoque_id": item.id, "nome": item.nome, "marca": item.laboratorio,
-                           "saldo": item.quantidade or 0, "unidade": item.unidade,
-                           "estoque_inicializado": item.estoque_inicializado is not False})
-        return pa_id, opcoes
+        return estoque_baixa.opcoes_medicamento(
+            session, fazenda_id=fazenda_id, produto=produto,
+            todos_estoque=_todos_estoque, principios_por_nome=_pa_por_nome,
+        )
 
     hormonios_por_grupo: dict[tuple[int, int], list[dict]] = {}
     for h in session.exec(select(ProtocoloIatfHormonio)).all():
@@ -466,44 +487,77 @@ def calcular_agenda(
 
     eventos_iatf = []
     DIAS_PROTOCOLO_IATF = [0, 7, 9, 11]
-    for (lancamento_id, dia), aps in grupos_iatf.items():
-        chave = f"protocolo_iatf_{lancamento_id}_{dia}"
+    for (data_prevista, dia), aps in grupos_iatf.items():
+        chave = f"protocolo_iatf_{data_prevista.isoformat()}_{dia}"
         if chave in realizados:
             continue
-        lancamento = lancamentos_iatf_por_id.get(lancamento_id)
-        if not lancamento:
+        lancamento_ids_grupo = sorted({a.lancamento_id for a in aps})
+        lancamentos_grupo = [lancamentos_iatf_por_id[lid] for lid in lancamento_ids_grupo if lancamentos_iatf_por_id.get(lid)]
+        if not lancamentos_grupo:
             continue
+        # Vários lançamentos podem cair no mesmo grupo (ver comentário acima)
+        # — normalmente é o mesmo protocolo, então o nome coincide; quando não
+        # coincide (lançamentos de nomes diferentes com o mesmo D0/dia, raro),
+        # mostra os dois nomes em vez de escolher um arbitrariamente.
+        nome_protocolo = " + ".join(sorted({l.nome_protocolo for l in lancamentos_grupo}))
         animais_grupo = sorted((a.numero_matriz for a in aps), key=chave_numero)
         proximos_dias = [d for d in DIAS_PROTOCOLO_IATF if d > dia]
         proxima_etapa = None
         if proximos_dias:
             proximo_dia = proximos_dias[0]
-            proxima_data = lancamento.data_d0 + timedelta(days=proximo_dia)
+            # data_prevista já é "D{dia}" deste grupo — a próxima etapa é só
+            # avançar a diferença de dias, sem depender de um único data_d0
+            # (lançamentos diferentes do grupo compartilham essa mesma data
+            # prevista por construção, então o resultado é idêntico).
+            proxima_data = data_prevista + timedelta(days=proximo_dia - dia)
             proxima_etapa = f"Próxima etapa: D{proximo_dia} em {proxima_data.strftime('%d/%m/%Y')}"
+        hormonios_grupo: list[dict] = []
+        vistos_hormonio: set[tuple] = set()
+        for lid in lancamento_ids_grupo:
+            for h in hormonios_por_grupo.get((lid, dia), []):
+                chave_h = (h["produto"], h["dose"], h["unidade"], h["via"])
+                if chave_h in vistos_hormonio:
+                    continue
+                vistos_hormonio.add(chave_h)
+                hormonios_grupo.append(h)
         eventos_iatf.append({
-            "id": chave, "data": aps[0].data_prevista.isoformat(), "categoria": "Reprodutivo",
-            "descricao": f"{lancamento.nome_protocolo} — D{dia}",
+            "id": chave, "data": data_prevista.isoformat(), "categoria": "Reprodutivo",
+            "descricao": f"{nome_curto(nome_protocolo)} — D{dia}",
             "numero_animal": None, "observacao": proxima_etapa,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
-            "hormonios": hormonios_por_grupo.get((lancamento_id, dia), []),
-            "protocolo": lancamento.nome_protocolo,
+            "hormonios": hormonios_grupo,
+            "protocolo": nome_protocolo,
         })
 
     # Protocolo de indução de lactação — agrupa por (lançamento, dia), igual
     # ao protocolo IATF: uma linha por dia mostrando todos os animais daquele
     # passo, com a observação de manejo (implante, adaptação na ordenha,
     # iniciar a ordenha) bem visível para o funcionário.
+    # Mesma janela de atraso do IATF/customizado — ver o comentário lá em cima.
     lancamentos_inducao_por_id = {l.id: l for l in session.exec(select(ProtocoloInducaoLancamento)).all()}
     aplicacoes_inducao = [
         a for a in session.exec(
             select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False)  # noqa: E712
         ).all()
-        if a.data_prevista >= data
+        if a.data_prevista >= limite_atraso
+        and not getattr(lancamentos_inducao_por_id.get(a.lancamento_id), "encerrado_em", None)
     ]
     grupos_inducao: dict[tuple[int, int], list[ProtocoloInducaoAplicacao]] = {}
     for ap in aplicacoes_inducao:
         grupos_inducao.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+
+    # Medicamentos cadastrados por (lançamento, dia) + as opções de estoque do
+    # princípio ativo de cada um — mesmo mecanismo do protocolo IATF acima
+    # (_opcoes_medicamento), pra dar o campo clicável "qual frasco?" na hora
+    # de confirmar, em vez de resolver por nome sozinho.
+    medicamentos_por_grupo_inducao: dict[tuple[int, int], list[dict]] = {}
+    for m in session.exec(select(ProtocoloInducaoMedicamento)).all():
+        pa_id, opcoes = _opcoes_medicamento(m.produto)
+        medicamentos_por_grupo_inducao.setdefault((m.lancamento_id, m.dia), []).append({
+            "produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via,
+            "principio_ativo_id": pa_id, "opcoes": opcoes,
+        })
 
     eventos_inducao = []
     for (lancamento_id, dia), aps in grupos_inducao.items():
@@ -516,10 +570,11 @@ def calcular_agenda(
         animais_grupo = sorted((a.numero_matriz for a in aps), key=chave_numero)
         eventos_inducao.append({
             "id": chave, "data": aps[0].data_prevista.isoformat(), "categoria": "Produção",
-            "descricao": f"{lancamento.nome_protocolo} — D{dia}",
+            "descricao": f"{nome_curto(lancamento.nome_protocolo)} — D{dia}",
             "numero_animal": None, "observacao": aps[0].observacao_manejo,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_inducao", "dia": dia, "animais": animais_grupo,
+            "medicamentos_opcoes": medicamentos_por_grupo_inducao.get((lancamento_id, dia), []),
             "medicamentos": aps[0].descricao, "protocolo": lancamento.nome_protocolo,
         })
 
@@ -534,11 +589,35 @@ def calcular_agenda(
     # cálculo já testado dele.
     eventos_protocolo_custom = _eventos_protocolo_custom_agenda(session, data, realizados, fazenda_id)
 
+    # Lida (tarefas gerais da fazenda que não são protocolo de animal — ver
+    # fazenda/models/lida.py) — mesmo espírito do protocolo personalizado
+    # acima: fonte ADITIVA, fora do AgendaEngine de propósito.
+    eventos_lida = _eventos_lida_agenda(session, data, realizados, fazenda_id)
+
+    # Cronograma sanitário (regras do calendário sanitário marcadas
+    # usa_cronograma=True) — trilha do animal (incluir/excluir) + trilha do
+    # agendamento (decidir modo/adiar/aplicar). Fora do AgendaEngine de
+    # propósito, mesmo espírito do protocolo personalizado acima.
+    eventos_cronograma_sanitario = _cronograma_sanitario_rules.eventos_agenda(session, data, realizados, fazenda_id)
+
+    # Ponto crítico da recria (decisão do dono do produto): cada
+    # JanelaPontoCritico ATIVA vira aviso de verdade quando há animal (ativo,
+    # da fazenda) entrando na faixa de idade de risco. Fora do AgendaEngine de
+    # propósito, mesmo espírito do protocolo personalizado/lida acima.
+    eventos_ponto_critico_recria = _eventos_ponto_critico_recria_agenda(session, data, realizados, fazenda_id)
+
     # Aplicações programadas ("aplicado? não" / data futura) ainda não baixadas.
     # Dar baixa aqui gera a aplicação de verdade e a saída de estoque.
-    aplic_agendadas = session.exec(
-        select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False)  # noqa: E712
-    ).all()
+    # Uma vez criada, essa linha ficava pendurada pra sempre — mesmo que o
+    # animal fosse baixado depois (relato: "03M" macho e já baixado ainda
+    # aparecendo pra vacina). Exclui só quem está CONFIRMADAMENTE baixado —
+    # um numero_matriz sem cadastro em Animal (ex.: lançamento avulso/animal
+    # ainda não importado) continua aparecendo normalmente, como sempre.
+    animais_baixados = set(session.exec(select(Animal.numero).where(Animal.ativo == False)))  # noqa: E712
+    aplic_agendadas = [
+        a for a in session.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False))  # noqa: E712
+        if a.numero_matriz not in animais_baixados
+    ]
     # Vacina(s) pré-parto (vindas da Secagem) formam um cartão só por animal —
     # o número do animal com o indicador "Vacina(s) pré-parto" e a lista das
     # vacinas logo abaixo — em vez de uma linha solta por vacina.
@@ -635,12 +714,8 @@ def calcular_agenda(
         for a in session.exec(select(ProtocoloSanitarioAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(a.lancamento_id, []).append(a)
         for lanc in lancamentos_protocolo_abertos:
-            aps = aplicacoes_por_lancamento.get(lanc.id, [])
-            if not aps:
-                continue
-            ultimo_dia = max(a.data_prevista for a in aps)
-            aps_ultimo_dia = [a for a in aps if a.data_prevista == ultimo_dia]
-            if not all(a.realizada for a in aps_ultimo_dia):
+            terminou, ultimo_dia = protocolo_terminado(aplicacoes_por_lancamento.get(lanc.id, []))
+            if not terminou:
                 continue  # falta aplicar algum medicamento do último dia — ainda não pergunta
             dia_seguinte = ultimo_dia + timedelta(days=1)
             if dia_seguinte > data or dia_seguinte < limite_cura:
@@ -803,6 +878,33 @@ def calcular_agenda(
             "tipo": "patrimonio_manutencao", "patrimonio_id": item.id, "situacao_manutencao": situacao,
         })
 
+    # Atualização de valor de mercado vencida — só para patrimônio não
+    # depreciável (ex.: terra, ver Patrimonio.depreciavel). Some sozinha
+    # quando o valor é registrado (PUT /financeiro/patrimonio/{id}/valor-mercado
+    # recalcula a data base) — não pode ser dispensada sem registrar (mesmo
+    # padrão da manutenção preventiva acima).
+    frequencia_padrao_valor_mercado = patrimonio_atualizacao_valor_mercado_meses()
+    itens_nao_depreciaveis = session.exec(
+        select(Patrimonio).where(Patrimonio.depreciavel == False)  # noqa: E712
+    ).all()
+    for item in itens_nao_depreciaveis:
+        if item.data_baixa:
+            continue
+        prox = proxima_atualizacao_valor_mercado(item.model_dump(), frequencia_padrao_valor_mercado)
+        if not prox or prox > data:
+            continue
+        chave = f"patrimonio_valor_mercado_{item.id}"
+        if chave in realizados:
+            continue
+        eventos_patrimonio.append({
+            "id": chave, "data": prox.isoformat(), "categoria": "Gestão/Financeiro",
+            "descricao": f"Atualizar valor de mercado — {item.nome}" + (f" (nº {item.numero})" if item.numero else ""),
+            "numero_animal": None,
+            "observacao": f"Última avaliação: {item.valor_mercado_atual if item.valor_mercado_atual is not None else item.valor_total}",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            "tipo": "patrimonio_valor_mercado", "patrimonio_id": item.id,
+        })
+
     # Diária com data de fim prevista chegando hoje — avisa no próprio dia
     # (não antes, não depois) para o usuário decidir se encerra ou estende.
     eventos_diaria_fim = []
@@ -844,7 +946,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_ponto_critico_recria
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -939,11 +1041,12 @@ class MedicamentoIatfIn(BaseModel):
 
 class RealizadoIn(BaseModel):
     evento_id: str
-    animais: list[str] | None = None  # subconjunto opcional (protocolo_iatf) — None = todos do grupo
-    # Medicamentos efetivamente aplicados neste dia do protocolo IATF, com o
-    # frasco escolhido ("qual medicamento você está usando?"). Quando vem, é ele
-    # que gera a aplicação em Sanidade e a baixa; sem ele, cai nos hormônios
-    # cadastrados no lançamento (comportamento anterior).
+    animais: list[str] | None = None  # subconjunto opcional (protocolo_iatf/protocolo_inducao) — None = todos do grupo
+    # Medicamentos efetivamente aplicados neste dia do protocolo IATF ou de
+    # indução de lactação, com o frasco escolhido ("qual medicamento você
+    # está usando?"). Quando vem, é ele que gera a aplicação em Sanidade e a
+    # baixa; sem ele, cai nos hormônios/medicamentos cadastrados no
+    # lançamento (comportamento anterior).
     medicamentos: list[MedicamentoIatfIn] | None = None
     # Overrides opcionais do produto/dose/unidade/via aplicados de fato — só
     # usados quando evento_id é de uma aplicação agendada ("aplic_agendada_");
@@ -952,6 +1055,85 @@ class RealizadoIn(BaseModel):
     dose: float | None = None
     unidade: str | None = None
     via: str | None = None
+    # Cronograma sanitário — cada campo só é lido pelo prefixo correspondente
+    # (ver marcar_realizado abaixo); nos demais tipos de evento, ignorados.
+    incluir: bool | None = None                    # cronograma_sanitario_animal_ — incluir/excluir o animal
+    modo: str | None = None                        # cronograma_sanitario_modo_ — "veterinario" | "propria"
+    veterinario_pessoa_id: int | None = None        # cronograma_sanitario_modo_ (modo="veterinario")
+    nova_data: date | None = None                   # cronograma_sanitario_modo_ — presente = adiar em vez de decidir
+    motivo: str | None = None                       # cronograma_sanitario_modo_ — motivo do adiamento (opcional)
+    responsavel: str | None = None                  # cronograma_sanitario_aplicar_
+    observacao: str | None = None                   # cronograma_sanitario_aplicar_
+
+
+def _decidir_cronograma_animal(session: Session, evento_id: str, incluir: bool | None) -> None:
+    if incluir is None:
+        raise HTTPException(status_code=400, detail="Informe se o animal deve ser incluído ou excluído do cronograma")
+    linha_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}animal_"))
+    try:
+        _cronograma_sanitario_rules.decidir_animal(session, linha_id, incluir, date.today())
+    except CronogramaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _decidir_cronograma_modo(
+    session: Session, evento_id: str, modo: str | None, veterinario_pessoa_id: int | None,
+    nova_data: date | None, motivo: str | None,
+) -> None:
+    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}modo_"))
+    cronograma = session.get(CronogramaSanitario, cronograma_id)
+    if not cronograma:
+        raise HTTPException(status_code=404, detail="Cronograma não encontrado")
+    try:
+        if nova_data is not None:
+            _cronograma_sanitario_rules.adiar(session, cronograma, nova_data, motivo)
+        else:
+            _cronograma_sanitario_rules.decidir_modo(session, cronograma, modo, veterinario_pessoa_id)
+    except CronogramaError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _aplicar_cronograma(
+    session: Session, evento_id: str, animais: list[str] | None, responsavel: str | None, observacao: str | None,
+    produto: str | None, dose: float | None, unidade: str | None, via: str | None,
+    fazenda_id: int | None, user: Usuario,
+) -> list[str]:
+    """Aplica o produto padrão do evento sanitário nos animais incluídos no
+    cronograma — em lote (animais=None, aplica todo mundo incluído) ou
+    individualizado (animais=[um número]), site e app chamam o mesmo
+    endpoint. Reaproveita 100% a lógica de baixa de estoque/Sanidade já
+    usada por /sanidade/calendario/cadastrar-preventivo."""
+    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}aplicar_"))
+    cronograma = session.get(CronogramaSanitario, cronograma_id)
+    if not cronograma:
+        raise HTTPException(status_code=404, detail="Cronograma não encontrado")
+    if cronograma.status != "agendado":
+        raise HTTPException(status_code=400, detail="Este cronograma ainda não tem veterinário/aplicação própria confirmado")
+    calendario = session.get(CalendarioSanitario, cronograma.calendario_sanitario_id)
+    if not calendario:
+        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+
+    incluidos = _cronograma_sanitario_rules.animais_por_status(session, cronograma.id, "incluido")
+    alvo = set(animais) if animais else {l.numero_matriz for l in incluidos}
+    animais_aplicar = [l.numero_matriz for l in incluidos if l.numero_matriz in alvo]
+    if not animais_aplicar:
+        raise HTTPException(status_code=400, detail="Nenhum animal incluído para aplicar")
+
+    from fazenda.api.routers.sanidade import CadastrarPreventivoIn, cadastrar_preventivo
+    cadastrar_preventivo(
+        CadastrarPreventivoIn(
+            evento_sanitario_id=calendario.evento_sanitario_id, categoria_alvo=calendario.categoria_alvo,
+            data_evento=date.today(), calendario_id=calendario.id, animais=animais_aplicar,
+            aplicar=True, aplicado=True, responsavel=responsavel, observacao=observacao,
+            produto=produto, dose=dose, unidade=unidade, via=via,
+        ),
+        session=session, user=user, fazenda_id=fazenda_id,
+    )
+    _cronograma_sanitario_rules.concluir(session, cronograma, animais_aplicar, date.today())
+    restantes = len(incluidos) - len(animais_aplicar)
+    return [f"Aplicado em {len(animais_aplicar)} animal(is)."] + (
+        [f"{restantes} animal(is) do cronograma seguem pendentes de aplicação."] if restantes else []
+    )
 
 
 def _baixar_protocolo_sanitario(
@@ -1097,98 +1279,167 @@ def _marcar_protocolo_iatf_realizado(
     session: Session, evento_id: str, animais: list[str] | None,
     medicamentos: list["MedicamentoIatfIn"] | None = None,
     fazenda_id: int | None = None, usuario_id: int | None = None,
+    data_realizacao: date | None = None, lancamento_id: int | None = None,
 ) -> list[str]:
     """
-    Marca a(s) aplicação(ões) de um grupo (lançamento, dia) do protocolo IATF
-    como realizadas. Sem `animais`, marca o grupo inteiro; com `animais`,
-    confirma só esse subconjunto — os demais continuam pendentes no grupo.
+    Marca a(s) aplicação(ões) de um grupo (DATA PREVISTA, dia) do protocolo
+    IATF como realizadas. O grupo pode reunir animais de mais de um
+    ProtocoloIatfLancamento — acontece quando animais com o mesmo D0 foram
+    incluídos em lançamentos separados em vez de um único lote (ver o
+    agrupamento por data em `calcular_agenda`). Sem `animais`, marca o grupo
+    inteiro; com `animais`, confirma só esse subconjunto — os demais
+    continuam pendentes no grupo.
 
     `medicamentos` (opcional): os frascos que o usuário escolheu na hora de
-    confirmar o dia ("qual medicamento?"). Quando vem, é ele que gera a
-    aplicação em Sanidade e a baixa (abatendo do frasco pelo estoque_id); sem
-    ele, usa os hormônios cadastrados no lançamento.
+    confirmar o dia ("qual medicamento?"), aplicado ao grupo inteiro. Sem
+    ele, usa os hormônios cadastrados em cada lançamento — como lançamentos
+    diferentes do mesmo grupo podem ter hormônios cadastrados diferentes, a
+    baixa de estoque nesse caso é calculada por lançamento, não pro grupo
+    inteiro de uma vez.
+
+    `data_realizacao` (opcional): o dia em que a aplicação REALMENTE
+    aconteceu. É o que a baixa retroativa da Central de Protocolos usa para
+    não carimbar "hoje" numa aplicação feita há três semanas. Sem ele, hoje.
+
+    `lancamento_id` (opcional): restringe a baixa a UM lançamento. Pela
+    Agenda não se passa — o grupo (data, dia) é justamente o que se quer
+    confirmar de uma vez. Pela Central, sim: lá se está olhando um lançamento
+    específico, e confirmar por tabela arrastaria junto outro lote que por
+    acaso tem o mesmo D0.
     """
     resto = evento_id.removeprefix("protocolo_iatf_")
-    lancamento_id_str, dia_str = resto.rsplit("_", 1)
-    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+    data_str, dia_str = resto.rsplit("_", 1)
+    data_prevista, dia = date.fromisoformat(data_str), int(dia_str)
 
     aplicacoes = session.exec(
         select(ProtocoloIatfAplicacao).where(
-            ProtocoloIatfAplicacao.lancamento_id == lancamento_id,
+            ProtocoloIatfAplicacao.data_prevista == data_prevista,
             ProtocoloIatfAplicacao.dia == dia,
             ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
         )
     ).all()
+    if lancamento_id is not None:
+        aplicacoes = [a for a in aplicacoes if a.lancamento_id == lancamento_id]
     if animais is not None:
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
 
-    hoje = date.today()
-    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
-    responsavel = getattr(lancamento, "responsavel", None)
+    avisos: list[str] = []
+    if not aplicacoes:
+        return avisos
 
-    # Aplicados: o que o usuário escolheu ao confirmar (com o frasco), OU, na
-    # falta disso, os hormônios cadastrados no lançamento. Normaliza os dois
-    # numa lista de dicts {produto, dose, unidade, via, estoque_id}.
+    hoje = data_realizacao or date.today()
+
+    # Aplicados: o que o usuário escolheu ao confirmar (com o frasco) vale
+    # pro grupo inteiro, OU, na falta disso, os hormônios cadastrados em CADA
+    # lançamento (podem diferir entre lançamentos do mesmo grupo).
+    aplicados_fixos = None
     if medicamentos:
-        aplicados = [
+        aplicados_fixos = [
             {"produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via, "estoque_id": m.estoque_id}
             for m in medicamentos if (m.produto or "").strip()
         ]
-    else:
-        hormonios = session.exec(
-            select(ProtocoloIatfHormonio).where(
-                ProtocoloIatfHormonio.lancamento_id == lancamento_id,
-                ProtocoloIatfHormonio.dia == dia,
-            )
-        ).all()
-        aplicados = [
-            {"produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via, "estoque_id": None}
-            for h in hormonios
-        ]
 
+    lancamentos_cache: dict[int, ProtocoloIatfLancamento | None] = {}
+    hormonios_cache: dict[int, list[dict]] = {}
+    aplicacoes_por_lancamento: dict[int, list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes:
+        aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
+        if ap.lancamento_id not in lancamentos_cache:
+            lancamentos_cache[ap.lancamento_id] = session.get(ProtocoloIatfLancamento, ap.lancamento_id)
+        if aplicados_fixos is None and ap.lancamento_id not in hormonios_cache:
+            hormonios = session.exec(
+                select(ProtocoloIatfHormonio).where(
+                    ProtocoloIatfHormonio.lancamento_id == ap.lancamento_id,
+                    ProtocoloIatfHormonio.dia == dia,
+                )
+            ).all()
+            hormonios_cache[ap.lancamento_id] = [
+                {"produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via, "estoque_id": None}
+                for h in hormonios
+            ]
+        responsavel = getattr(lancamentos_cache[ap.lancamento_id], "responsavel", None)
         ap.realizada = True
         ap.data_realizacao = hoje
         session.add(ap)
-        for m in aplicados:
+        aplicados_ap = aplicados_fixos if aplicados_fixos is not None else hormonios_cache[ap.lancamento_id]
+        for m in aplicados_ap:
             session.add(Sanidade(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Protocolo IATF — D{dia}",
-                protocolo_iatf_lancamento_id=lancamento_id,
+                protocolo_iatf_lancamento_id=ap.lancamento_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
     # Abate do frasco escolhido (estoque_id) ou, na falta, do item pelo nome.
-    avisos: list[str] = []
-    n_vacas = len(aplicacoes)
-    if n_vacas:
-        for m in aplicados:
+    # Com medicamento explícito, o frasco vale pro grupo inteiro — mas a baixa
+    # em si é sempre lançada POR LANÇAMENTO (uma chamada a `baixar` por
+    # lancamento_id do grupo, com origem_id=lancamento_id), nunca como um
+    # bloco único com origem_id=None. Motivo: `cancelar()` (central_protocolos.py)
+    # estorna filtrando MovimentoEstoque por origem_id == lancamento_id; uma
+    # baixa gravada sem origem_id nunca é encontrada por nenhum cancelamento,
+    # e o estoque que ela consumiu fica órfão pra sempre quando o grupo reúne
+    # mais de um lançamento (mesmo D0, lotes lançados separados). O rateio é
+    # exato porque a dose é a mesma pra todo o grupo: dose × nº de vacas DAQUELE
+    # lançamento, sem dízima nem resto pra ajustar — a soma bate com dose × total.
+    if aplicados_fixos is not None:
+        for m in aplicados_fixos:
             if not m["dose"]:
                 continue
             estoque_item = estoque_baixa.resolver_item(
                 session, fazenda_id=fazenda_id, produto=m["produto"], estoque_id=m["estoque_id"],
             )
-            total = m["dose"] * n_vacas
-            avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=total, unidade=m["unidade"], data=hoje,
-                fazenda_id=fazenda_id, observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
-                usuario_id=usuario_id, origem_tipo="iatf", origem_id=lancamento_id, produto=m["produto"],
-            ))
+            for lancamento_id, aps in aplicacoes_por_lancamento.items():
+                n_vacas_lanc = len(aps)
+                total_lanc = m["dose"] * n_vacas_lanc
+                avisos.extend(estoque_baixa.baixar(
+                    session, item=estoque_item, quantidade=total_lanc, unidade=m["unidade"], data=hoje,
+                    fazenda_id=fazenda_id, observacao=f"Protocolo IATF — D{dia} — {n_vacas_lanc} vaca(s)",
+                    usuario_id=usuario_id, origem_tipo="iatf", origem_id=lancamento_id, produto=m["produto"],
+                ))
+    else:
+        for lancamento_id, aps in aplicacoes_por_lancamento.items():
+            n_vacas = len(aps)
+            for m in hormonios_cache.get(lancamento_id, []):
+                if not m["dose"]:
+                    continue
+                estoque_item = estoque_baixa.resolver_item(
+                    session, fazenda_id=fazenda_id, produto=m["produto"], estoque_id=m["estoque_id"],
+                )
+                total = m["dose"] * n_vacas
+                avisos.extend(estoque_baixa.baixar(
+                    session, item=estoque_item, quantidade=total, unidade=m["unidade"], data=hoje,
+                    fazenda_id=fazenda_id, observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
+                    usuario_id=usuario_id, origem_tipo="iatf", origem_id=lancamento_id, produto=m["produto"],
+                ))
     session.commit()
-    return avisos
+    # Com medicamento explícito e o grupo rateado por lançamento, o mesmo
+    # aviso ("não está no estoque", "ficou negativo" etc.) pode se repetir
+    # uma vez por lançamento — dedup preservando a ordem de aparição.
+    return list(dict.fromkeys(avisos))
 
 
 def _marcar_protocolo_inducao_realizado(
     session: Session, evento_id: str, animais: list[str] | None,
+    medicamentos: list["MedicamentoIatfIn"] | None = None,
     fazenda_id: int | None = None, usuario_id: int | None = None,
+    data_realizacao: date | None = None,
 ) -> list[str]:
     """
     Marca a(s) aplicação(ões) de um grupo (lançamento, dia) da indução de
     lactação como realizadas. Sem `animais`, marca o grupo inteiro; com
     `animais`, confirma só esse subconjunto. Etapas de manejo/dispositivo
     (sem medicamento) só marcam a aplicação — não geram Sanidade nem baixa.
+
+    `medicamentos` (opcional): os frascos que o usuário escolheu na hora de
+    confirmar o dia ("qual medicamento?"), mesmo mecanismo do protocolo IATF.
+    Quando vem, é ele que gera a aplicação em Sanidade e a baixa (abatendo do
+    frasco pelo estoque_id); sem ele, usa os medicamentos cadastrados no
+    lançamento e resolve o item de estoque só pelo nome (comportamento antigo).
+
+    `data_realizacao` (opcional): o dia real da aplicação, para a baixa
+    retroativa da Central de Protocolos — ver _marcar_protocolo_iatf_realizado.
     """
     resto = evento_id.removeprefix("protocolo_inducao_")
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
@@ -1205,43 +1456,55 @@ def _marcar_protocolo_inducao_realizado(
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
 
-    hoje = date.today()
+    hoje = data_realizacao or date.today()
     lancamento = session.get(ProtocoloInducaoLancamento, lancamento_id)
     responsavel = getattr(lancamento, "responsavel", None)
 
-    medicamentos = session.exec(
-        select(ProtocoloInducaoMedicamento).where(
-            ProtocoloInducaoMedicamento.lancamento_id == lancamento_id,
-            ProtocoloInducaoMedicamento.dia == dia,
-        )
-    ).all()
+    if medicamentos:
+        aplicados = [
+            {"produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via, "estoque_id": m.estoque_id}
+            for m in medicamentos if (m.produto or "").strip()
+        ]
+    else:
+        cadastrados = session.exec(
+            select(ProtocoloInducaoMedicamento).where(
+                ProtocoloInducaoMedicamento.lancamento_id == lancamento_id,
+                ProtocoloInducaoMedicamento.dia == dia,
+            )
+        ).all()
+        aplicados = [
+            {"produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via, "estoque_id": None}
+            for m in cadastrados
+        ]
 
     for ap in aplicacoes:
         ap.realizada = True
         ap.data_realizacao = hoje
         session.add(ap)
-        for m in medicamentos:
+        for m in aplicados:
             session.add(Sanidade(
-                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m.produto,
-                dose=m.dose, unidade=m.unidade, via=m.via, responsavel=responsavel,
+                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
+                dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Indução de lactação — D{dia}",
+                protocolo_inducao_lancamento_id=lancamento_id,
             ))
 
-    # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas
-    # (item cadastrado por nome exato — combina automaticamente quando o
-    # princípio do protocolo já é um item de estoque real).
+    # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
+    # Abate do frasco escolhido (estoque_id) ou, na falta, do item pelo nome.
     avisos: list[str] = []
     n_vacas = len(aplicacoes)
     if n_vacas:
-        for m in medicamentos:
-            if not m.dose:
+        for m in aplicados:
+            if not m["dose"]:
                 continue
-            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=m.produto)
-            total = m.dose * n_vacas
+            estoque_item = estoque_baixa.resolver_item(
+                session, fazenda_id=fazenda_id, produto=m["produto"], estoque_id=m["estoque_id"],
+            )
+            total = m["dose"] * n_vacas
             avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=total, unidade=m.unidade, data=hoje,
+                session, item=estoque_item, quantidade=total, unidade=m["unidade"], data=hoje,
                 fazenda_id=fazenda_id, observacao=f"Indução de lactação — D{dia} — {n_vacas} vaca(s)",
-                usuario_id=usuario_id, origem_tipo="inducao", origem_id=lancamento_id, produto=m.produto,
+                usuario_id=usuario_id, origem_tipo="inducao", origem_id=lancamento_id, produto=m["produto"],
             ))
     session.commit()
     return avisos
@@ -1282,6 +1545,8 @@ def marcar_realizado(
         raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — preencha o dado que falta na ficha do animal.")
     if dados.evento_id.startswith("patrimonio_manutencao_"):
         raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — registre a manutenção no item de patrimônio (isso atualiza a próxima data sozinho).")
+    if dados.evento_id.startswith("patrimonio_valor_mercado_"):
+        raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — registre o novo valor de mercado no item de patrimônio (isso atualiza a próxima data sozinho).")
     if dados.evento_id.startswith("protocolo_iatf_"):
         avisos = _marcar_protocolo_iatf_realizado(
             session, dados.evento_id, dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
@@ -1289,12 +1554,29 @@ def marcar_realizado(
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith("protocolo_inducao_"):
         avisos = _marcar_protocolo_inducao_realizado(
-            session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
+            session, dados.evento_id, dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
         _marcar_protocolo_custom_realizado(session, dados.evento_id, dados.animais)
         return {"marcado": True}
+    if dados.evento_id.startswith(PREFIXO_LIDA):
+        avisos = _marcar_lida_realizado(
+            session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
+        )
+        return {"marcado": True, "avisos": avisos}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
+        _decidir_cronograma_animal(session, dados.evento_id, dados.incluir)
+        return {"marcado": True}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}modo_"):
+        _decidir_cronograma_modo(session, dados.evento_id, dados.modo, dados.veterinario_pessoa_id, dados.nova_data, dados.motivo)
+        return {"marcado": True}
+    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}aplicar_"):
+        avisos = _aplicar_cronograma(
+            session, dados.evento_id, dados.animais, dados.responsavel, dados.observacao,
+            dados.produto, dados.dose, dados.unidade, dados.via, fazenda_id, user,
+        )
+        return {"marcado": True, "avisos": avisos}
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)
     if fazenda_id is not None:
@@ -1428,18 +1710,18 @@ def marcar_inapta_bst(dados: MarcarInaptaBstIn, session: Session = Depends(get_s
 
 def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> None:
     """
-    Reverte um grupo (lançamento, dia) do protocolo IATF marcado por engano —
-    volta todas as aplicações do grupo para pendente (sem registro de qual
-    subconjunto foi confirmado, reverter o grupo inteiro é o único
+    Reverte um grupo (DATA PREVISTA, dia) do protocolo IATF marcado por
+    engano — volta todas as aplicações do grupo para pendente (sem registro
+    de qual subconjunto foi confirmado, reverter o grupo inteiro é o único
     comportamento coerente).
     """
     resto = evento_id.removeprefix("protocolo_iatf_")
-    lancamento_id_str, dia_str = resto.rsplit("_", 1)
-    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+    data_str, dia_str = resto.rsplit("_", 1)
+    data_prevista, dia = date.fromisoformat(data_str), int(dia_str)
 
     aplicacoes = session.exec(
         select(ProtocoloIatfAplicacao).where(
-            ProtocoloIatfAplicacao.lancamento_id == lancamento_id,
+            ProtocoloIatfAplicacao.data_prevista == data_prevista,
             ProtocoloIatfAplicacao.dia == dia,
             ProtocoloIatfAplicacao.realizada == True,  # noqa: E712
         )
@@ -1453,24 +1735,27 @@ def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> Non
 
 @router.get("/protocolo-iatf/concluidos")
 def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) -> list[dict]:
-    """Grupos (lançamento, dia) do protocolo IATF já confirmados — para desfazer, se marcado por engano."""
+    """Grupos (data prevista, dia) do protocolo IATF já confirmados — para desfazer, se marcado por engano."""
     aplicacoes = session.exec(
         select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
     ).all()
     lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
-    grupos: dict[tuple[int, int], list[ProtocoloIatfAplicacao]] = {}
+    grupos: dict[tuple[date, int], list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes:
-        grupos.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+        grupos.setdefault((ap.data_prevista, ap.dia), []).append(ap)
 
     resultado = []
-    for (lancamento_id, dia), aps in grupos.items():
-        lancamento = lancamentos_por_id.get(lancamento_id)
-        if not lancamento:
+    for (data_prevista, dia), aps in grupos.items():
+        nomes_protocolo = sorted({
+            lancamentos_por_id[lid].nome_protocolo
+            for lid in {a.lancamento_id for a in aps} if lancamentos_por_id.get(lid)
+        })
+        if not nomes_protocolo:
             continue
         datas_realizacao = [a.data_realizacao for a in aps if a.data_realizacao]
         resultado.append({
-            "id": f"protocolo_iatf_{lancamento_id}_{dia}",
-            "nome_protocolo": lancamento.nome_protocolo, "dia": dia,
+            "id": f"protocolo_iatf_{data_prevista.isoformat()}_{dia}",
+            "nome_protocolo": " + ".join(nomes_protocolo), "dia": dia,
             "animais": sorted((a.numero_matriz for a in aps), key=chave_numero),
             "data_realizacao": max(datas_realizacao).isoformat() if datas_realizacao else None,
         })
@@ -1523,6 +1808,14 @@ def desmarcar_realizado(
     if evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
         _desmarcar_protocolo_custom_realizado(session, evento_id)
         return {"desmarcado": True}
+    if evento_id.startswith(PREFIXO_LIDA):
+        _desmarcar_lida_realizado(session, evento_id)
+        return {"desmarcado": True}
+    if evento_id.startswith(_PREFIXO_CRONOGRAMA):
+        raise HTTPException(
+            status_code=400,
+            detail="Decisões do cronograma sanitário não se desfazem por aqui — ajuste em Sanidade > Preventivo > Cronogramas.",
+        )
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)
     if fazenda_id is not None:

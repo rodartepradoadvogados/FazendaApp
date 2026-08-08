@@ -8,6 +8,7 @@ import { AnimalPicker } from "@/components/AnimalPicker";
 import { SecaoRecolhivel } from "@/components/ui";
 import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type PrecisaoParto = {
   data_ultima_ia_positiva: string | null;
@@ -31,6 +32,8 @@ type Ficha = {
   qualidade_leite: Record<string, unknown>[];
   aplicacoes_sanitarias: Record<string, unknown>[];
   protocolos_sanitarios: Record<string, unknown>[];
+  inducao_lactacao: Record<string, unknown>[];
+  protocolos_customizados: Record<string, unknown>[];
   secagens: Record<string, unknown>[];
   eventos_agenda: Record<string, unknown>[];
   baixa: Record<string, unknown> | null;
@@ -72,6 +75,15 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
   ] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF (D0/D7/D9/D11)", colunas: [
     { header: "Dia", key: "dia" }, { header: "Descrição", key: "descricao" }, { header: "Data prevista", key: "data_previstaFmt" },
+    { header: "Realizada?", key: "realizada" }, { header: "Data realização", key: "data_realizacaoFmt" },
+  ] },
+  { chave: "inducao_lactacao", titulo: "Indução de lactação", colunas: [
+    { header: "Protocolo", key: "nome_protocolo" }, { header: "Dia", key: "dia" }, { header: "Etapa", key: "descricao" },
+    { header: "Data prevista", key: "data_previstaFmt" }, { header: "Realizada?", key: "realizada" }, { header: "Data realização", key: "data_realizacaoFmt" },
+  ] },
+  { chave: "protocolos_customizados", titulo: "Protocolo personalizado", colunas: [
+    { header: "Protocolo", key: "nome_protocolo" }, { header: "Dia", key: "dia" }, { header: "Etapa", key: "descricao" },
+    { header: "Insumo", key: "insumo" }, { header: "Data prevista", key: "data_previstaFmt" },
     { header: "Realizada?", key: "realizada" }, { header: "Data realização", key: "data_realizacaoFmt" },
   ] },
   { chave: "movimentos_lote", titulo: "Movimentação de lote", colunas: [
@@ -120,9 +132,11 @@ const DATA_KEYS: Record<string, string> = {
   controles_leiteiros: "data_controle", pesagens_corporais: "data_pesagem", qualidade_leite: "data_coleta",
   aplicacoes_sanitarias: "data_aplicacao", protocolos_sanitarios: "data_inicio", secagens: "data_secagem", eventos_agenda: "data_evento",
   exames_resultados: "data_exame", ocorrencias_clinicas: "data_ocorrencia",
+  inducao_lactacao: "data_prevista", protocolos_customizados: "data_prevista",
 };
 const DATA_KEYS_EXTRA: Record<string, string[]> = {
   servicos: ["data_diagnostico"], protocolos_iatf: ["data_realizacao"],
+  inducao_lactacao: ["data_realizacao"], protocolos_customizados: ["data_realizacao"],
 };
 
 function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -414,7 +428,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                   <CampoEdit label="Grau de sangue"><input style={inpStyle} value={formAnimal.grau_sangue} onChange={(e) => setFormAnimal((f) => ({ ...f, grau_sangue: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Mãe (nº)"><input style={inpStyle} value={formAnimal.mae_numero} onChange={(e) => setFormAnimal((f) => ({ ...f, mae_numero: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
-                  <CampoEdit label="Valor (R$)"><input type="number" style={inpStyle} value={formAnimal.valor} onChange={(e) => setFormAnimal((f) => ({ ...f, valor: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Valor (R$)"><CampoMoeda style={inpStyle} value={Number(formAnimal.valor) || 0} onChange={(v) => setFormAnimal((f) => ({ ...f, valor: v ? String(v) : "" }))} /></CampoEdit>
                   <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observações"><input style={inpStyle} value={formAnimal.observacoes} onChange={(e) => setFormAnimal((f) => ({ ...f, observacoes: e.target.value }))} /></CampoEdit></div>
                   <div className="flex items-end">
                     <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
@@ -445,7 +459,29 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                 <div><span style={labelStyle}>Valor</span><br />{a.valor != null ? `R$ ${a.valor}` : "—"}</div>
               </div>
             )}
+            <div style={{ marginTop: "0.85rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)", display: "grid", gridTemplateColumns: "repeat(3, minmax(120px, 1fr))", gap: "0.75rem", fontSize: "0.8rem" }}>
+              <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto?.dias_gestacao ?? "—"}</div>
+              <div><span style={labelStyle}>DEL atual</span><br />{a.del_dias != null ? String(a.del_dias) : "—"}</div>
+              <div><span style={labelStyle}>Previsão de parto</span><br />{ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+            </div>
           </div>
+
+          {ficha.precisao_parto && (
+            <div className="card" style={cardStyle}>
+              <div className="card-header mb-3">Previsão de parto</div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Última IA</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
+                <div><span style={labelStyle}>Último diagnóstico positivo</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
+                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
+                <div><span style={labelStyle}>Data da previsão de parto</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
+              </div>
+            </div>
+          )}
+
+          {!!ficha.partos?.length && (
+            <SecaoHistoricoTabela chave="partos" titulo="Partos" colunas={SECOES[0].colunas} linhas={formatarLinhas("partos", ficha.partos)} onAbrirCria={buscar} />
+          )}
 
           <div className="card" style={destacar ? { ...cardStyle, borderColor: "var(--red)" } : cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
@@ -566,20 +602,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             </SecaoRecolhivel>
           )}
 
-          {ficha.precisao_parto && (
-            <div className="card" style={cardStyle}>
-              <div className="card-header mb-3">Precisão de parto</div>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
-                <div><span style={labelStyle}>Última IA com diagnóstico positivo</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
-                <div><span style={labelStyle}>Confirmação da prenhez</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
-                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
-                <div><span style={labelStyle}>Parto provável</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
-                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
-              </div>
-            </div>
-          )}
-
-          {SECOES.map((s) => {
+          {SECOES.filter((s) => s.chave !== "partos").map((s) => {
             const linhasBrutas = (ficha[s.chave] as Record<string, unknown>[]) || [];
             if (!linhasBrutas.length) return null;
             const linhas = formatarLinhas(s.chave, linhasBrutas);
@@ -596,7 +619,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
       )}
 
       {confirmMae && (
-        <div onClick={() => setConfirmMae(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "440px", maxWidth: "95vw" }}>
             <div className="card-header mb-3 flex items-center gap-2"><AlertTriangle size={15} /> Confirmar mãe informada</div>
             {confirmMae.verificacao.parto_correspondente ? (

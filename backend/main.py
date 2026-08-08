@@ -30,6 +30,8 @@ from fazenda.api.routers import (
     auth,
     baixas,
     cadastro,
+    cartao_credito,
+    central_protocolos,
     chamados,
     cobranca,
     cofre_acesso,
@@ -46,9 +48,11 @@ from fazenda.api.routers import (
     fotos,
     importar,
     indicadores,
+    lida,
     lotes,
     manual_fazenda,
     movimentacoes,
+    nao_conformidades,
     news,
     notificacoes,
     onboarding,
@@ -90,6 +94,7 @@ from fazenda.api.routers.cadastro import (
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
+    seed_cadastros_estoque,
 )
 from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
 from fazenda.api.routers.recria import seed_recria
@@ -100,6 +105,7 @@ from fazenda.api.routers.news import (
 )
 from fazenda.api.routers.painel_cowdata import seed_cowdata_empresa
 from fazenda.rules.farmacia import bootstrap_farmacia
+from fazenda.rules.recria_doenca import backfill_doenca_catalogo
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
@@ -231,6 +237,12 @@ async def lifespan(app: FastAPI):
         bootstrap_farmacia(session)
         # Recria: metas, curva de peso-alvo e janelas de ponto crítico padrão.
         seed_recria(session, fazenda_id=1)
+        # Vincula ao catálogo (Doenca) o texto livre já lançado em
+        # OcorrenciaClinica/JanelaPontoCritico — casa por nome ou cria a
+        # doença nova na fazenda dona do registro (ver decisão (b) do dono do
+        # produto). Depois do bootstrap_farmacia (precisa do catálogo global
+        # já semeado) e do seed_recria (que acabou de criar as janelas padrão).
+        backfill_doenca_catalogo(session)
         # Catálogo NAAB completo (Alta Genetics) empacotado no repo — carrega
         # uma única vez, sem depender de upload manual do usuário.
         bootstrap_touros_naab(session)
@@ -264,6 +276,10 @@ async def lifespan(app: FastAPI):
         # conta correspondente (a partir da finalidade) — só preenche o que
         # está vazio, nunca sobrescreve um vínculo já feito manualmente.
         sindicar_conta_gerencial_estoque(session)
+        # Cadastros de apoio ao item de estoque (categoria, finalidade,
+        # unidade, unidade de embalagem, unidade de medida, local de
+        # armazenamento) — Configurações > Cadastro > Estoque.
+        seed_cadastros_estoque(session)
         # Painel Mestre CowData: fazenda "lógica" que ancora Equipe/Financeiro
         # da própria CowData (nunca uma fazenda-cliente — ver Fazenda.eh_empresa_cowdata).
         seed_cowdata_empresa(session)
@@ -488,6 +504,11 @@ app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
 # exige o módulo "parametros", via cadastro.router.
 app.include_router(protocolos_customizados.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(lida.router, dependencies=_protegido + _contrato_ativo)
+# Central de Protocolos (Acompanhamento/Histórico) — só lê dados de IATF,
+# Indução, Sanitário e Customizado; mesma regra de acesso deles (protegido +
+# contrato ativo, sem gate de módulo específico).
+app.include_router(central_protocolos.router, dependencies=_protegido + _contrato_ativo)
 # Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
 # comercial próprio, só exige contrato ativo.
 app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)
@@ -500,6 +521,7 @@ app.include_router(filtros_salvos.router, dependencies=_protegido)
 # — sem essa trava adicional, ele conseguiria escrever em qualquer endpoint
 # destes 4 routers, não só ler (ver fazenda/auth.py::bloquear_escrita_contador).
 app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
@@ -521,6 +543,10 @@ app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo
 # Alertas de indicador — preferência pessoal do usuário (config de "avise-me
 # se X passar de Y"), sem gate de módulo contratado.
 app.include_router(alertas_indicador.router, dependencies=_protegido)
+# Não conformidades — área transversal (reprodução/recria/financeiro/manejo),
+# mesmo gate de indicadores.router; cada seção interna já se auto-restringe
+# por módulo do usuário (ver fazenda/api/routers/nao_conformidades.py).
+app.include_router(nao_conformidades.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])

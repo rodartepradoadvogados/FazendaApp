@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
-from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, PlanoContaGerencial
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, ParametroFazenda, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -134,7 +134,7 @@ class TestNumeroLancamento:
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
 
@@ -153,6 +153,16 @@ def client():
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    # Fake do Supabase Storage (anexos de lançamento) — guarda em memória em
+    # vez de falar de verdade com o Supabase, mesmo padrão de
+    # test_arquivo_contador_desbloqueio.py, mas com um "bucket" fake de
+    # verdade (dict) para os testes que conferem o conteúdo baixado.
+    import fazenda.api.routers.financeiro as financeiro_mod
+    _bucket_fake: dict[str, bytes] = {}
+    monkeypatch.setattr(financeiro_mod, "enviar_arquivo", lambda caminho, conteudo, *a, **k: _bucket_fake.__setitem__(caminho, conteudo))
+    monkeypatch.setattr(financeiro_mod, "baixar_arquivo", lambda caminho, *a, **k: _bucket_fake[caminho])
+    monkeypatch.setattr(financeiro_mod, "excluir_arquivo", lambda caminho, *a, **k: _bucket_fake.pop(caminho, None))
 
     with TestClient(main.app) as c:
         yield c, engine
@@ -383,6 +393,44 @@ class TestAnexosLancamento:
         assert c.get(f"/financeiro/anexos/{anexo_id}").status_code == 404
         assert c.get(f"/financeiro/lancamentos/{numero}/anexos").json() == []
 
+    def test_categoria_explicita_e_gravada(self, client):
+        c, _ = client
+        numero = self._criar_lancamento(c)
+        r = c.post(
+            f"/financeiro/lancamentos/{numero}/anexos",
+            data={"categoria": "Nota fiscal"},
+            files={"file": ("nf.pdf", b"conteudo", "application/pdf")},
+        )
+        assert r.json()["categoria"] == "Nota fiscal"
+        assert c.get(f"/financeiro/lancamentos/{numero}/anexos").json()[0]["categoria"] == "Nota fiscal"
+
+    def test_sem_categoria_explicita_herda_tipo_documento_do_lancamento(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "tipo_documento": "Recibo", "itens": [{"produto": "Insumo", "valor_total": 500.0}],
+        })
+        numero = r.json()["numero_lancamento"]
+        r = c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("x.pdf", b"conteudo", "application/pdf")})
+        assert r.json()["categoria"] == "Recibo"
+
+    def test_anexo_legado_sem_caminho_storage_continua_baixavel(self, client):
+        """Anexo já existente antes da migração pro Supabase (conteudo em
+        bytes no Postgres, sem caminho_storage) — precisa continuar sendo
+        baixado normalmente, sem tentar falar com o Supabase."""
+        c, engine = client
+        from fazenda.models import LancamentoAnexo
+        numero = self._criar_lancamento(c)
+        with Session(engine) as s:
+            legado = LancamentoAnexo(
+                numero_lancamento=numero, nome_arquivo="antigo.pdf", mime_type="application/pdf",
+                tamanho_bytes=7, conteudo=b"legado!",
+            )
+            s.add(legado); s.commit(); s.refresh(legado)
+            anexo_id = legado.id
+        r = c.get(f"/financeiro/anexos/{anexo_id}")
+        assert r.status_code == 200
+        assert r.content == b"legado!"
+
 
 class TestPlanoContas:
     def test_traz_contas_ativas_e_de_grupo(self, client):
@@ -590,6 +638,58 @@ class TestBaixaLote:
         assert r.status_code == 400
 
 
+class TestParcelarDiferencaNoPagamento:
+    def _criar_lancamento(self, c, valor=1000.0):
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "quantidade": 1, "valor_unitario": valor, "valor_total": valor}],
+        })
+        return r.json()["ids"][0]
+
+    def test_parcelar_diferenca_cria_novas_parcelas_e_zera_desconto(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 1000.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+            "parcelas_diferenca": [
+                {"data_vencimento": "2026-08-08", "valor": 100.0},
+                {"data_vencimento": "2026-09-08", "valor": 100.0},
+            ],
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["valor_pago"] == 800.0
+        assert corpo["desconto_acrescimo"] == 0  # a diferença não foi perdoada — virou parcela
+        assert corpo["parcela_total"] == 3  # era 1/1 (não parcelado) + 2 novas parcelas
+        novas = corpo["parcelas_diferenca_criadas"]
+        assert len(novas) == 2
+        assert {n["parcela_num"] for n in novas} == {2, 3}
+        assert all(n["parcela_total"] == 3 for n in novas)
+        assert all(n["numero_lancamento"] == corpo["numero_lancamento"] for n in novas)
+        assert sorted(n["valor_total"] for n in novas) == [100.0, 100.0]
+        # As novas parcelas nascem em aberto (sem data_pagamento).
+        assert all(n["data_pagamento"] is None for n in novas)
+
+    def test_soma_das_parcelas_precisa_bater_com_a_diferenca(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 1000.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+            "parcelas_diferenca": [{"data_vencimento": "2026-08-08", "valor": 150.0}],  # deveria ser 200
+        })
+        assert r.status_code == 400
+
+    def test_sem_parcelas_diferenca_continua_gravando_desconto_normal(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 1000.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+        })
+        assert r.status_code == 200
+        assert r.json()["desconto_acrescimo"] == -200.0
+        assert r.json()["parcelas_diferenca_criadas"] == []
+
+
 class TestRmca:
     def _marcar_contas(self, session):
         session.add(PlanoContaGerencial(codigo="2.01.01.01", nome="Leite indústria", ativa=True, rmca_receita_leite=True))
@@ -631,6 +731,22 @@ class TestRmca:
         assert corpo["gerencial"]["receita_leite"] == 10000.0
         assert corpo["gerencial"]["custo_alimentacao"] == 3000.0
         assert corpo["gerencial"]["rmca"] == 7000.0
+        assert corpo["meta_rmca"] == 0  # padrão — preserva o "verde se >= 0" de antes
+
+    def test_meta_rmca_reage_ao_parametro_configurado(self, client, monkeypatch):
+        c, engine = client
+        # get_param()/_linha() lê `fazenda.database.engine` diretamente (não
+        # via Depends) — sem isso, a leitura pós-PUT cairia no engine
+        # padrão do módulo, não no engine isolado deste teste.
+        monkeypatch.setattr(database, "engine", engine)
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            s.add(ParametroFazenda(chave="meta_rmca", grupo="financeiro",
+                                    label="RMCA mínimo aceitável", valor="0", tipo="float", unidade="R$"))
+            s.commit()
+        assert c.put("/parametros/meta_rmca", json={"valor": 5000.0}).status_code == 200
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.json()["meta_rmca"] == 5000.0
 
     def test_versao_fisica_usa_consumo_real_x_valor_unitario_do_estoque(self, client):
         c, engine = client
@@ -818,6 +934,75 @@ class TestReciboLancamento:
         assert chamadas == ["alguem@exemplo.com"]
 
 
+class TestDadosDoReciboComPagamentoParcialEReparcelamento:
+    """Bug: o recibo de um pagamento PARCIAL mostrava o valor TOTAL da conta
+    original como se fosse o valor pago (ex.: conta de R$ 40.000, pago
+    R$ 20.000 e reparcelado o restante — o recibo mostrava R$ 40.000).
+
+    O PDF do recibo é gerado no navegador (frontend/lib/export.ts,
+    `gerarReciboPDF`) a partir dos dados que `GET /financeiro/lancamentos`
+    devolve — o backend não formata o recibo em si. Este teste garante que a
+    API expõe corretamente, após a baixa parcial com reparcelamento do
+    restante, os dados que o front agora usa para NÃO repetir o bug:
+    - o valor TOTAL da conta original (`valor`, = valor_total) segue 40000;
+    - o valor EFETIVAMENTE pago nesta baixa (`valor_pago`) é 20000, distinto
+      do total;
+    - a parcela nova do reparcelamento aparece como um lançamento irmão (mesmo
+      numero_lancamento), ainda em aberto, com o valor do restante (20000) e
+      a nova data de vencimento — exatamente os dados que o recibo corrigido
+      lista na seção "Restante reparcelado".
+    """
+
+    def test_pagamento_parcial_reparcelado_expõe_valores_corretos_para_o_recibo(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Cooperativa Agro LTDA",
+            "itens": [{"produto": "Insumos", "quantidade": 1, "valor_unitario": 40000.0, "valor_total": 40000.0}],
+        })
+        assert r.status_code == 201
+        lancamento_id = r.json()["ids"][0]
+        numero = r.json()["numero_lancamento"]
+
+        pag = c.put(f"/financeiro/lancamentos/{lancamento_id}/pagar", json={
+            "data_pagamento": "2026-08-06", "valor_pago": 20000.0, "forma_pagamento": "pix",
+            "parcelas_diferenca": [{"data_vencimento": "2026-09-06", "valor": 20000.0}],
+        })
+        assert pag.status_code == 200
+        corpo_pag = pag.json()
+        # A baixa em si já grava os dois valores separados — a conta original
+        # não muda de valor_total, só ganha um valor_pago menor que ela.
+        assert corpo_pag["valor_total"] == 40000.0
+        assert corpo_pag["valor_pago"] == 20000.0
+        assert corpo_pag["desconto_acrescimo"] == 0  # diferença reparcelada, não perdoada
+        novas = corpo_pag["parcelas_diferenca_criadas"]
+        assert len(novas) == 1
+        assert novas[0]["valor_total"] == 20000.0
+        assert novas[0]["data_vencimento"] == "2026-09-06"
+        assert novas[0]["data_pagamento"] is None
+
+        # É essa mesma lista (GET /financeiro/lancamentos) que o front usa
+        # para montar o recibo — confirma que os dois lançamentos (o pago
+        # parcialmente e a nova parcela reparcelada) aparecem nela com os
+        # campos certos.
+        listagem = c.get("/financeiro/lancamentos").json()["lancamentos"]
+        pago = next(l for l in listagem if l["id"] == lancamento_id)
+        assert pago["valor"] == 40000.0  # valor da conta original — não é o que foi pago
+        assert pago["valor_pago"] == 20000.0  # valor efetivamente pago nesta baixa
+        assert pago["valor"] != pago["valor_pago"]  # a causa raiz do bug: nunca são iguais aqui
+
+        reparcelada = next(
+            l for l in listagem
+            if l["numero_lancamento"] == numero and l["id"] != lancamento_id
+        )
+        assert reparcelada["valor"] == 20000.0  # valor da nova parcela (o restante)
+        assert reparcelada["data_vencimento"] == "2026-09-06"  # nova data de vencimento
+        assert reparcelada["valor_pago"] is None
+        assert reparcelada["data_pagamento"] is None
+
+        # Sanidade: total pago + total reparcelado bate com a conta original.
+        assert round(pago["valor_pago"] + reparcelada["valor"], 2) == pago["valor"]
+
+
 class TestLancamentoRecorrente:
     """Modelo de conta recorrente (energia/internet/telefone/assinatura/
     aluguel) — cadastra os dados fixos uma vez, gera um LancamentoFinanceiro
@@ -958,3 +1143,19 @@ class TestLancamentoRecorrente:
         modelo_id = self._criar_modelo(c).json()["id"]
         r = c.post(f"/financeiro/recorrentes/{modelo_id}/gerar", json={"valor": 0})
         assert r.status_code == 400
+
+
+class TestSupabaseDashboardUrl:
+    def test_sem_config_devolve_url_nula(self, client):
+        c, _ = client
+        r = c.get("/financeiro/supabase-dashboard-url")
+        assert r.status_code == 200
+        assert r.json()["url"] is None
+
+    def test_deriva_url_do_supabase_url_configurado(self, client, monkeypatch):
+        c, _ = client
+        from fazenda.config import settings
+        monkeypatch.setattr(settings, "supabase_url", "https://abcdefgh.supabase.co")
+        r = c.get("/financeiro/supabase-dashboard-url")
+        assert r.status_code == 200
+        assert r.json()["url"] == "https://supabase.com/dashboard/project/abcdefgh/editor"

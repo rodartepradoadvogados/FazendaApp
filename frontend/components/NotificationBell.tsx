@@ -124,12 +124,15 @@ export function NotificationBell() {
 
   return (
     <>
+      {/* Sem position:fixed próprio — flui como o último item dentro do
+          container fixed .site-top-actions (ver AuthShell.tsx/globals.css);
+          antes tinha seu próprio top/right fixos, o que o fazia sobrepor o
+          tema e a barra do menu mobile assim que a tela ficava estreita. */}
       <button
         onClick={() => setAberto((a) => !a)}
         aria-label="Notificações de hoje"
         style={{
-          position: "fixed", top: "1rem", right: "1.25rem", zIndex: 60,
-          width: "2.5rem", height: "2.5rem", borderRadius: "999px",
+          position: "relative", width: "2.5rem", height: "2.5rem", borderRadius: "999px", flexShrink: 0,
           background: "var(--surface-2)", border: "1px solid var(--border)",
           display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
         }}
@@ -157,9 +160,8 @@ export function NotificationBell() {
 
       {aberto && (
         <div onClick={() => setAberto(false)} style={{ position: "fixed", inset: 0, zIndex: 59 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card" style={{
-            position: "fixed", top: "4rem", right: "1.25rem", width: "360px", maxWidth: "92vw",
-            maxHeight: "70vh", overflowY: "auto", zIndex: 61, padding: "0.75rem",
+          <div onClick={(e) => e.stopPropagation()} className="card notification-panel" style={{
+            width: "360px", maxWidth: "92vw", maxHeight: "70vh", overflowY: "auto", padding: "0.75rem",
           }}>
             <div className="flex items-center justify-between mb-2">
               <div className="card-header" style={{ margin: 0 }}>Hoje</div>
@@ -189,7 +191,7 @@ export function NotificationBell() {
               <div className="space-y-2">
                 {itensExibidos.map((i, idx) => (
                   <div key={idx} onClick={() => irPara(i)} title="Ir para a página relacionada"
-                    style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", padding: "0.45rem 0.5rem", borderRadius: "6px", background: "var(--surface-2)", cursor: "pointer", boxShadow: "inset 0 0 0 1px transparent", transition: "box-shadow 0.15s" }}
+                    style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", padding: "0.45rem 0.5rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", cursor: "pointer", boxShadow: "inset 0 0 0 1px transparent", transition: "box-shadow 0.15s" }}
                     onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; e.currentTarget.style.boxShadow = "inset 3px 0 0 var(--dourado)"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "inset 0 0 0 1px transparent"; }}
                   >

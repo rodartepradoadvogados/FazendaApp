@@ -11,8 +11,9 @@ import {
   type PlanoConsultorNome, type PlanoConsultorCatalogo, type ContratoConsultor,
   type FazendaGerenciada, type CategoriaImportacao, type RegistroImportado, type SimulacaoIn, type SimulacaoOut,
 } from "@/lib/api";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
-const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
+const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 const NOME_CATEGORIA: Record<CategoriaImportacao, string> = {
@@ -67,7 +68,7 @@ function ContratoConsultorPainel({ contrato, catalogo, onSolicitado }: {
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
       <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
         {catalogo && (Object.entries(catalogo) as [PlanoConsultorNome, PlanoConsultorCatalogo][]).map(([chave, p]) => (
-          <div key={chave} style={{ border: "1px solid " + (contrato.plano === chave ? "var(--dourado)" : "var(--border)"), borderRadius: "8px", padding: "0.8rem 1rem", flex: "1 1 180px", minWidth: "180px" }}>
+          <div key={chave} style={{ border: "1px solid " + (contrato.plano === chave ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.8rem 1rem", flex: "1 1 180px", minWidth: "180px" }}>
             <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{p.nome}</div>
             <div style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>R$ {p.preco.toFixed(2)}/mês</div>
             <button onClick={() => solicitar(chave)} disabled={solicitando === chave || contrato.plano === chave && contrato.status !== "suspenso"}
@@ -158,7 +159,7 @@ function FazendasGerenciadasPainel() {
     <div className="animate-in">
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
       {msg && (
-        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
           <Check size={15} /><span>{msg}</span>
         </div>
       )}
@@ -188,7 +189,7 @@ function FazendasGerenciadasPainel() {
               {fazendas.map((f) => (
                 <div key={f.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
                   <button onClick={() => selecionar(f.id)}
-                    style={{ flex: 1, textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "6px", cursor: "pointer",
+                    style={{ flex: 1, textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
                       border: "1px solid " + (selecionada === f.id ? "var(--dourado)" : "var(--border)"),
                       background: selecionada === f.id ? "rgba(212,160,23,0.12)" : "transparent", color: "var(--text)", fontSize: "0.83rem" }}>
                     <div style={{ fontWeight: 600 }}>{f.nome}</div>
@@ -214,7 +215,7 @@ function FazendasGerenciadasPainel() {
               <select style={{ ...inp, width: "auto" }} value={categoriaImportar} onChange={(e) => setCategoriaImportar(e.target.value as CategoriaImportacao)}>
                 {CATEGORIAS.map((c) => <option key={c} value={c}>{NOME_CATEGORIA[c]}</option>)}
               </select>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
                 <Upload size={13} /> {importando ? "Importando…" : "Escolher planilha (.xlsx/.csv)"}
                 <input type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }} disabled={importando}
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) importar(f); e.target.value = ""; }} />
@@ -236,7 +237,7 @@ function FazendasGerenciadasPainel() {
                 {registros.map((r) => {
                   const aberto = !!expandidos[r.id];
                   return (
-                    <li key={r.id} style={{ border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem" }}>
+                    <li key={r.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem" }}>
                       <div className="flex items-center justify-between gap-2">
                         <button onClick={() => setExpandidos((s) => ({ ...s, [r.id]: !aberto }))}
                           style={{ background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem" }}>
@@ -303,12 +304,12 @@ function SimulacaoPainel() {
     try { sessionStorage.removeItem(CHAVE_SESSAO_SIMULACAO); } catch { /* ignore */ }
   }
 
-  const CAMPOS: { campo: keyof SimulacaoIn; label: string; sufixo?: string }[] = [
+  const CAMPOS: { campo: keyof SimulacaoIn; label: string; sufixo?: string; moeda?: boolean }[] = [
     { campo: "vacas_lactacao", label: "Vacas em lactação" },
     { campo: "producao_media_litro_vaca_dia", label: "Produção média (L/vaca/dia)" },
-    { campo: "preco_litro", label: "Preço do litro (R$)" },
-    { campo: "custo_alimentar_vaca_dia", label: "Custo alimentar (R$/vaca/dia)" },
-    { campo: "outros_custos_mensais", label: "Outros custos mensais (R$)" },
+    { campo: "preco_litro", label: "Preço do litro (R$)", moeda: true },
+    { campo: "custo_alimentar_vaca_dia", label: "Custo alimentar (R$/vaca/dia)", moeda: true },
+    { campo: "outros_custos_mensais", label: "Outros custos mensais (R$)", moeda: true },
     { campo: "taxa_prenhez_pct", label: "Taxa de prenhez (%, opcional)" },
   ];
 
@@ -322,11 +323,16 @@ function SimulacaoPainel() {
         </p>
         {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
         <div className="mb-4" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
-          {CAMPOS.map(({ campo, label }) => (
+          {CAMPOS.map(({ campo, label, moeda }) => (
             <label key={campo}>
               <span style={lbl}>{label}</span>
-              <input type="number" min={0} step="0.01" style={inp}
-                value={form[campo] ?? ""} onChange={(e) => set(campo, e.target.value)} />
+              {moeda ? (
+                <CampoMoeda style={inp} value={typeof form[campo] === "number" ? (form[campo] as number) : 0}
+                  onChange={(v) => setForm((s) => ({ ...s, [campo]: v }))} />
+              ) : (
+                <input type="number" min={0} step="0.01" style={inp}
+                  value={form[campo] ?? ""} onChange={(e) => set(campo, e.target.value)} />
+              )}
             </label>
           ))}
         </div>
@@ -334,7 +340,7 @@ function SimulacaoPainel() {
           <button onClick={calcular} disabled={calculando} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
             {calculando ? "Calculando…" : "Calcular"}
           </button>
-          <button onClick={limpar} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+          <button onClick={limpar} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
             Limpar
           </button>
         </div>
@@ -388,12 +394,12 @@ export default function ConsultorView() {
       <div className="flex items-center gap-2 mb-4">
         <button onClick={() => setAba("fazendas")}
           className={aba === "fazendas" ? "btn-primary" : ""}
-          style={aba !== "fazendas" ? { fontSize: "0.82rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text)", cursor: "pointer" } : { fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>
+          style={aba !== "fazendas" ? { fontSize: "0.82rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text)", cursor: "pointer" } : { fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>
           <Building2 size={14} style={{ marginRight: "0.35rem", display: "inline" }} /> Fazendas gerenciadas
         </button>
         <button onClick={() => setAba("simulacao")}
           className={aba === "simulacao" ? "btn-primary" : ""}
-          style={aba !== "simulacao" ? { fontSize: "0.82rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text)", cursor: "pointer" } : { fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>
+          style={aba !== "simulacao" ? { fontSize: "0.82rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text)", cursor: "pointer" } : { fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>
           <Calculator size={14} style={{ marginRight: "0.35rem", display: "inline" }} /> Simulação
         </button>
         <span style={{ marginLeft: "auto" }}><StatusBadge status={contrato.status} /></span>

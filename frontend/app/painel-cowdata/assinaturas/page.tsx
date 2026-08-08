@@ -7,7 +7,7 @@ import {
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c" };
+const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a" };
 
 const STATUS_LABEL: Record<string, { label: string; cor: string }> = {
   ativo: { label: "Ativo", cor: COR.verde },
@@ -58,7 +58,7 @@ export default function AssinaturasCowData() {
       </p>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflowX: "auto", overflowY: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
@@ -91,12 +91,12 @@ export default function AssinaturasCowData() {
                   <td style={{ padding: "0.6rem 1rem", textAlign: "right" }}>
                     {contrato.status !== "ativo" ? (
                       <button onClick={() => aprovar(fazenda.id)} disabled={processando === fazenda.id}
-                        style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: `1px solid ${COR.verde}`, background: "transparent", color: COR.verde, cursor: "pointer" }}>
+                        style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.verde}`, background: "transparent", color: COR.verde, cursor: "pointer" }}>
                         <ShieldCheck size={12} /> Aprovar
                       </button>
                     ) : (
                       <button onClick={() => suspender(fazenda.id)} disabled={processando === fazenda.id}
-                        style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: `1px solid ${COR.vermelho}`, background: "transparent", color: COR.vermelho, cursor: "pointer" }}>
+                        style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.vermelho}`, background: "transparent", color: COR.vermelho, cursor: "pointer" }}>
                         <Ban size={12} /> Suspender
                       </button>
                     )}

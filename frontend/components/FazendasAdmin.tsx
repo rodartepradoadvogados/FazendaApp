@@ -19,7 +19,7 @@ const NOME_CICLO: Record<CicloPagamento, string> = {
   semestral: "Semestral — Pix Automático QR dinâmico (20% off)",
 };
 
-const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
+const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 const NOME_MODULO: Record<ModuloComercial, string> = {
@@ -298,7 +298,7 @@ export default function FazendasAdmin() {
 
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
       {msg && (
-        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
           <Check size={15} /><span>{msg}</span>
         </div>
       )}
@@ -325,7 +325,7 @@ export default function FazendasAdmin() {
             <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
               {fazendas.map((f) => (
                 <button key={f.id} onClick={() => selecionar(f.id)}
-                  style={{ textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "6px", cursor: "pointer",
+                  style={{ textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
                     border: "1px solid " + (selecionada === f.id ? "var(--dourado)" : "var(--border)"),
                     background: selecionada === f.id ? "rgba(212,160,23,0.12)" : "transparent", color: "var(--text)", fontSize: "0.83rem" }}>
                   <div style={{ fontWeight: 600 }}>{f.nome}</div>
@@ -402,16 +402,23 @@ export default function FazendasAdmin() {
             <label style={lbl}>Plano</label>
             <div className="flex flex-wrap gap-2 mb-3">
               {(["standard", "silver", "gold", "diamond"] as const).map((p) => (
-                <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", cursor: "pointer",
-                  border: "1px solid " + (planoEscolhido === p ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.35rem 0.6rem",
-                  background: planoEscolhido === p ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === p ? 700 : 400, cursor: "pointer",
+                  border: "1px solid " + (planoEscolhido === p ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem",
+                  // Fundo sólido + cor de texto explícita (não hardcoded): --pill-active-bg/--pill-active-fg
+                  // já seguem tema (claro/misto/escuro) E paleta (vinho/verde/azul) — o tom âmbar fixo
+                  // que estava aqui antes não acompanhava a paleta escolhida e deixava a opção
+                  // selecionada com contraste ruim em claro/misto (texto herdado sobre fundo quase
+                  // branco). Mesmo padrão de SeletorTipoProtocolo (app/protocolos/page.tsx).
+                  background: planoEscolhido === p ? "var(--pill-active-bg)" : "transparent",
+                  color: planoEscolhido === p ? "var(--pill-active-fg)" : "var(--text)" }}>
                   <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => setPlanoEscolhido(p)} />
                   {catalogo?.[p]?.nome || p} — R$ {catalogo?.[p]?.preco.toFixed(2) ?? "—"}/mês
                 </label>
               ))}
-              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", cursor: "pointer",
-                border: "1px solid " + (planoEscolhido === "custom" ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.35rem 0.6rem",
-                background: planoEscolhido === "custom" ? "rgba(212,160,23,0.12)" : "transparent" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === "custom" ? 700 : 400, cursor: "pointer",
+                border: "1px solid " + (planoEscolhido === "custom" ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem",
+                background: planoEscolhido === "custom" ? "var(--pill-active-bg)" : "transparent",
+                color: planoEscolhido === "custom" ? "var(--pill-active-fg)" : "var(--text)" }}>
                 <input type="radio" name="plano" checked={planoEscolhido === "custom"} onChange={() => setPlanoEscolhido("custom")} />
                 Sob medida
               </label>
@@ -426,9 +433,10 @@ export default function FazendasAdmin() {
             <label style={lbl}>Ciclo de pagamento (desconto por adiantamento)</label>
             <div className="flex flex-wrap gap-2 mb-3">
               {(["mensal", "trimestral", "semestral"] as const).map((c) => (
-                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", cursor: "pointer",
-                  border: "1px solid " + (cicloEscolhido === c ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.3rem 0.55rem",
-                  background: cicloEscolhido === c ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", fontWeight: cicloEscolhido === c ? 700 : 400, cursor: "pointer",
+                  border: "1px solid " + (cicloEscolhido === c ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.3rem 0.55rem",
+                  background: cicloEscolhido === c ? "var(--pill-active-bg)" : "transparent",
+                  color: cicloEscolhido === c ? "var(--pill-active-fg)" : "var(--text)" }}>
                   <input type="radio" name="ciclo" checked={cicloEscolhido === c} onChange={() => setCicloEscolhido(c)} />
                   {NOME_CICLO[c]}
                 </label>
@@ -465,12 +473,12 @@ export default function FazendasAdmin() {
               </button>
               {contrato.status !== "ativo" ? (
                 <button onClick={aprovar} disabled={aprovando}
-                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                   <ShieldCheck size={14} /> {aprovando ? "Aprovando…" : "Aprovar/Fechar contrato"}
                 </button>
               ) : (
                 <button onClick={suspender} disabled={aprovando}
-                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                   <Ban size={14} /> {aprovando ? "Suspendendo…" : "Suspender"}
                 </button>
               )}
@@ -479,16 +487,16 @@ export default function FazendasAdmin() {
             <div className="card-header mb-2">Contrato assinado</div>
             <div className="flex flex-wrap gap-2 mb-2">
               <button onClick={baixarContrato} disabled={baixandoModelo}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
                 <Download size={13} /> {baixandoModelo ? "Gerando…" : "Baixar contrato"}
               </button>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
                 <Upload size={13} /> {enviandoAnexo ? "Enviando…" : "Anexar contrato assinado"}
                 <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={enviandoAnexo}
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ""; }} />
               </label>
               <button onClick={assinarZapSign} disabled={assinandoZapSign}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
                 <PenLine size={13} /> {assinandoZapSign ? "Enviando ao ZapSign…" : "Assinar contrato (ZapSign)"}
               </button>
             </div>
@@ -505,7 +513,7 @@ export default function FazendasAdmin() {
             {anexos && anexos.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {anexos.map((a) => (
-                  <li key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                  <li key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <button onClick={() => baixarAnexoContrato(a.id, a.nome_arquivo).catch((e: any) => setErro(e.message))}
                       style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text)", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
                       <FileText size={14} /> {a.nome_arquivo} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>({formatarBytes(a.tamanho_bytes)} — {formatarData(a.criado_em)})</span>
@@ -529,22 +537,22 @@ export default function FazendasAdmin() {
             </div>
             <div className="flex flex-wrap gap-2 mb-2">
               <button onClick={() => gerarCobranca("assinatura")} disabled={gerandoCobranca !== null}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
                 <Repeat size={13} /> {gerandoCobranca === "assinatura" ? "Criando…" : "Assinatura mensal (Pix)"}
               </button>
               <button onClick={() => gerarCobranca("semestral")} disabled={gerandoCobranca !== null}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
                 <QrCode size={13} /> {gerandoCobranca === "semestral" ? "Gerando…" : "QR semestral (-20%)"}
               </button>
               <button onClick={() => gerarCobranca("boleto")} disabled={gerandoCobranca !== null}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
                 <Receipt size={13} /> {gerandoCobranca === "boleto" ? "Gerando…" : "Boleto"}
               </button>
             </div>
             {cobrancas && cobrancas.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "0.5rem" }}>
                 {cobrancas.map((c) => (
-                  <li key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                  <li key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <span>{c.tipo.replace("_", " ")} — R$ {c.valor.toFixed(2)} <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({formatarData(c.criado_em)})</span></span>
                     <span style={{ fontWeight: 700, color: c.status === "paga" ? "var(--green-light)" : "var(--dourado)" }}>{c.status === "paga" ? "paga" : "aguardando"}</span>
                   </li>
@@ -571,7 +579,7 @@ export default function FazendasAdmin() {
             {usuarios && usuarios.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {usuarios.map((u) => (
-                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <span>
                       {u.nome || u.username} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>(@{u.username})</span>
                       {u.contratante && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--dourado)", fontWeight: 700 }}>Contratante</span>}
@@ -600,7 +608,7 @@ export default function FazendasAdmin() {
         ) : (
           <ul style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
             {consultores.map((c) => (
-              <li key={c.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap", fontSize: "0.82rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 0.7rem" }}>
+              <li key={c.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap", fontSize: "0.82rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem" }}>
                 <span>
                   <strong>@{c.username}</strong>{" "}
                   <span style={{ color: "var(--text-muted)" }}>— {c.plano || "sem plano"} (até {c.limite_fazendas ?? "—"} fazenda(s))</span>
@@ -609,12 +617,12 @@ export default function FazendasAdmin() {
                   <StatusBadge status={c.status} />
                   {c.status !== "ativo" ? (
                     <button onClick={() => aprovarConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
-                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
                       <ShieldCheck size={13} /> {processandoConsultor === c.usuario_id ? "Aprovando…" : "Aprovar"}
                     </button>
                   ) : (
                     <button onClick={() => suspenderConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
-                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
                       <Ban size={13} /> {processandoConsultor === c.usuario_id ? "Suspendendo…" : "Suspender"}
                     </button>
                   )}

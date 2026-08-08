@@ -5,6 +5,7 @@ import { fetchPessoas, criarPessoa, atualizarPessoa, fetchTiposPessoa, criarTipo
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = {
   id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
@@ -32,9 +33,9 @@ const formVazio: Form = {
 const ESTADOS_CIVIS = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União estável"];
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
 
-const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
+const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
-const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
 
 // Normaliza texto para busca insensível a maiúsculas e acentos.
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -274,7 +275,7 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
   const tiposAtivos = tipos.filter((t) => t.ativo);
 
   return (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
         <div style={{ gridColumn: "span 2" }}>
@@ -328,7 +329,7 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
         <div><label style={labelStyle}>CEP</label>
           <input style={inputStyle} value={form.cep} onChange={(e) => setForm({ ...form, cep: maskCep(e.target.value) })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>
-          <input type="number" inputMode="decimal" style={inputStyle} value={form.salarioBase} onChange={(e) => setForm({ ...form, salarioBase: e.target.value })} /></div>
+          <CampoMoeda style={inputStyle} value={Number(form.salarioBase) || 0} onChange={(v) => setForm({ ...form, salarioBase: v ? String(v) : "" })} /></div>
         <div><label style={labelStyle}>Data de admissão</label>
           <input type="date" style={inputStyle} value={form.dataAdmissao} onChange={(e) => setForm({ ...form, dataAdmissao: e.target.value })}
             title="Usada para calcular a folha proporcional do 1º mês de trabalho" /></div>

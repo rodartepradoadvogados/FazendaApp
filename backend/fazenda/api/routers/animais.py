@@ -13,7 +13,9 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen,
     EventoSanitario, ExameResultado, MovimentoLote, OcorrenciaClinica, Parto,
-    PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
+    PesagemCorporal, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
+    ProtocoloIatfAplicacao, ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
+    ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
     Sanidade, Secagem, Servico, Touro, VendaAnimal,
 )
 from fazenda.ordenacao import chave_numero
@@ -243,9 +245,10 @@ def buscar_animal(
 
 
 def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
-    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as 4 linhas
-    D0/D7/D9/D11 são um único protocolo de IATF. Antes a ficha do animal
-    contava 4 IATFs onde houve 1, distorcendo o histórico reprodutivo."""
+    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as linhas
+    de um mesmo protocolo IATF (D0/D7/D9/D11 clássico, ou os dias livres de
+    um molde) são um único protocolo. Antes a ficha do animal contava um IATF
+    por etapa, distorcendo o histórico reprodutivo."""
     from fazenda.models import ProtocoloIatfLancamento
 
     por_lancamento: dict[int, list] = {}
@@ -257,7 +260,10 @@ def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
         aps = sorted(aps, key=lambda a: a.dia)
         lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
         d0 = next((a.data_prevista for a in aps if a.dia == 0), None)
-        d11 = next((a.data_prevista for a in aps if a.dia == 11), None)
+        # Inseminação = etapa de MAIOR dia deste protocolo — não necessariamente
+        # D11 (molde com dias livres desloca esse número).
+        maior_dia = max((a.dia for a in aps), default=None)
+        d11 = next((a.data_prevista for a in aps if a.dia == maior_dia), None) if maior_dia is not None else None
         linhas.append({
             "lancamento_id": lancamento_id,
             "nome_protocolo": lancamento.nome_protocolo if lancamento else "IATF",
@@ -470,6 +476,53 @@ def ficha_animal(
         {**p.model_dump(), "protocolo_nome": protocolos_nomes.get(p.protocolo_id, "—")} for p in protocolos_sanitarios_rows
     ]
 
+    # Indução de lactação e protocolo customizado — os dois protocolos que
+    # nunca tinham entrado na ficha, apesar de já existirem no sistema (um
+    # animal em indução ativa não mostrava nada aqui). Mesmo formato das
+    # demais seções: uma linha por etapa/dia, com o que foi feito e quando.
+    query_inducao = (
+        select(ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento)
+        .join(ProtocoloInducaoLancamento, ProtocoloInducaoAplicacao.lancamento_id == ProtocoloInducaoLancamento.id)
+        .where(ProtocoloInducaoAplicacao.numero_matriz == numero)
+    )
+    if fazenda_id is not None:
+        query_inducao = query_inducao.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
+    inducao_lactacao = [
+        {
+            "nome_protocolo": lanc.nome_protocolo,
+            "dia": ap.dia,
+            "descricao": ap.descricao or ap.observacao_manejo or "—",
+            "data_prevista": ap.data_prevista.isoformat() if ap.data_prevista else None,
+            "realizada": "Sim" if ap.realizada else "Não",
+            "data_realizacao": ap.data_realizacao.isoformat() if ap.data_realizacao else None,
+        }
+        for ap, lanc in sorted(
+            session.exec(query_inducao).all(), key=lambda r: (r[0].data_prevista or date.min, r[0].dia)
+        )
+    ]
+
+    query_custom = (
+        select(ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento)
+        .join(ProtocoloCustomizadoLancamento, ProtocoloCustomizadoAplicacao.lancamento_id == ProtocoloCustomizadoLancamento.id)
+        .where(ProtocoloCustomizadoAplicacao.numero_matriz == numero)
+    )
+    if fazenda_id is not None:
+        query_custom = query_custom.where(ProtocoloCustomizadoAplicacao.fazenda_id == fazenda_id)
+    protocolos_customizados = [
+        {
+            "nome_protocolo": lanc.nome_protocolo,
+            "dia": ap.dia - (lanc.dia_inicial or 0),
+            "descricao": ap.descricao or "—",
+            "insumo": ap.insumo or "—",
+            "data_prevista": ap.data_prevista.isoformat() if ap.data_prevista else None,
+            "realizada": "Sim" if ap.realizada else "Não",
+            "data_realizacao": ap.data_realizacao.isoformat() if ap.data_realizacao else None,
+        }
+        for ap, lanc in sorted(
+            session.exec(query_custom).all(), key=lambda r: (r[0].data_prevista or date.min, r[0].dia)
+        )
+    ]
+
     query_secagens = select(Secagem).where(Secagem.numero_matriz == numero)
     if fazenda_id is not None:
         query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
@@ -619,6 +672,8 @@ def ficha_animal(
         "qualidade_leite": _dump(qualidade_leite),
         "aplicacoes_sanitarias": _dump(aplicacoes_sanitarias),
         "protocolos_sanitarios": protocolos_sanitarios,
+        "inducao_lactacao": inducao_lactacao,
+        "protocolos_customizados": protocolos_customizados,
         "secagens": _dump(secagens),
         "eventos_agenda": _dump(eventos_agenda),
         "baixa": baixa.model_dump() if baixa else None,

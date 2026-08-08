@@ -11,6 +11,7 @@ import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
+import { SubNavTabs } from "@/components/SubNavTabs";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
@@ -67,6 +68,15 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // contador (Financeiro somente leitura/exportação, sem app móvel) — casca
   // própria (ver frontend/app/contador/layout.tsx), nunca a Sidebar da fazenda.
   const ehPainelContador = path.startsWith("/contador");
+  // Portal "Insights e Administração" (Indicadores, Listas, Relatórios,
+  // Controle de Acesso, Portal, Consultor, Configurações): casca própria
+  // (ver components/insights/InsightsLayout.tsx, aplicada via layout.tsx
+  // dessas 7 rotas), nunca a Sidebar da fazenda — aberto pela Sidebar numa
+  // aba nova de verdade do navegador (ver Sidebar.tsx). Painel CowData e
+  // Painel do Contador são checados à parte acima: têm a própria casca
+  // bespoke, não a deste portal.
+  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/consultor", "/configuracoes"];
+  const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
 
   useEffect(() => {
     if (!hidratado) return; // aguarda a tentativa de restaurar a sessão nativa (ver acima)
@@ -141,22 +151,27 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // no topo deste componente.
   if (ehPainelContador) return <>{children}</>;
 
+  // Portal Insights e Administração: casca própria (InsightsLayout via
+  // layout.tsx da rota) — ver comentário no topo deste componente.
+  if (ehInsightsPortal) return <>{children}</>;
+
   return (
     <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
       <Sidebar />
-      <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
-        <ThemeSwitcher />
-      </div>
-      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/") — os
-          dois num único container fixed com gap (.site-top-actions, ver
-          globals.css) em vez de cada um calcular sua própria posição. */}
+      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
+          sino de notificações também moram aqui — os quatro num único
+          container fixed com gap (.site-top-actions, ver globals.css) em vez
+          de cada um calcular sua própria posição (era assim que ficavam
+          sobrepostos, ver comentário em globals.css). */}
       <div className="site-top-actions">
         {path === "/" && <ManualFazendaButton />}
         <NewsButton />
+        <ThemeSwitcher />
+        <NotificationBell />
       </div>
-      <NotificationBell />
       <AssistenteClaude />
       <main className="flex-1 md:overflow-y-auto app-main">
+        <SubNavTabs />
         <SectionBackground />
         <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
       </main>

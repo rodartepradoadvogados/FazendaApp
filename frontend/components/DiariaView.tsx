@@ -1,15 +1,17 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, DollarSign, Pencil, Check, X } from "lucide-react";
+import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt } from "lucide-react";
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
+  confirmarExclusao,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
@@ -68,6 +70,13 @@ export default function DiariaView() {
   const [editAjuste, setEditAjuste] = useState("");
   const [editSalvando, setEditSalvando] = useState(false);
   const [editErro, setEditErro] = useState<string | null>(null);
+
+  // G3/G14 — pagamentos lançados (com botão de excluir) e exclusão da
+  // diária, ambos via motor genérico de exclusões (mesmo padrão de
+  // app/sanidade/page.tsx): admin exclui na hora, operador só solicita.
+  const [pagamentosAbertoId, setPagamentosAbertoId] = useState<number | null>(null);
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
+  const [ocupadoExclusao, setOcupadoExclusao] = useState<number | null>(null);
 
   // Estimativa de nº de diárias/valor quando início e fim são informados no
   // lançamento — se o fim é futuro, mostra também a quantidade até hoje.
@@ -183,6 +192,54 @@ export default function DiariaView() {
     }
   }
 
+  // G3 — exclui um pagamento já lançado (o saldo devedor sobe de volta
+  // sozinho, sem nada a reverter manualmente: ver rules/exclusao_tipos/
+  // pessoal.py::_alvos_diaria_pagamento).
+  async function excluirPagamento(pagamentoId: number, pessoaNome: string, valor: number) {
+    const admin = ehAdmin();
+    const msg = admin
+      ? `Excluir o pagamento de ${formatBRL(valor)} de ${pessoaNome}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão do pagamento de ${formatBRL(valor)} de ${pessoaNome}? Um administrador precisa aprovar antes de ser excluído de fato.`;
+    if (!window.confirm(msg)) return;
+    setErroExclusao(null);
+    setOcupadoExclusao(pagamentoId);
+    try {
+      const r = await confirmarExclusao("diaria_pagamento", String(pagamentoId));
+      if (r.status !== "excluido") {
+        setErroExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir pagamento");
+    } finally {
+      setOcupadoExclusao(null);
+    }
+  }
+
+  // G14 — exclui a diária inteira (o backend bloqueia com 400 se houver
+  // pagamento registrado ou vale avulso com saída de caixa — a mensagem de
+  // erro já aponta para os botões acima/de vale).
+  async function excluirDiaria(d: Diaria) {
+    const admin = ehAdmin();
+    const msg = admin
+      ? `Excluir a diária de ${d.pessoa_nome}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão da diária de ${d.pessoa_nome}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setErroExclusao(null);
+    setOcupadoExclusao(d.id);
+    try {
+      const r = await confirmarExclusao("diaria", String(d.id));
+      if (r.status !== "excluido") {
+        setErroExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir diária");
+    } finally {
+      setOcupadoExclusao(null);
+    }
+  }
+
   const auditoriasPendentes = useMemo(
     () => (itens ?? []).flatMap((d) => (d.auditorias_pendentes ?? []).map((a) => ({ ...a, pessoa_nome: d.pessoa_nome }))),
     [itens],
@@ -205,7 +262,7 @@ export default function DiariaView() {
           </div>
           <div>
             <label style={lbl}>Valor da diária (R$)</label>
-            <input type="number" step="0.01" style={inputSm} value={valorDiaria} onChange={(e) => setValorDiaria(e.target.value)} />
+            <CampoMoeda style={inputSm} value={Number(valorDiaria) || 0} onChange={(v) => setValorDiaria(v ? String(v) : "")} />
           </div>
           <div>
             <label style={lbl}>Data de início</label>
@@ -217,7 +274,7 @@ export default function DiariaView() {
           </div>
         </div>
         {estimativa && (
-          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "6px", padding: "0.5rem 0.7rem", marginBottom: "0.75rem" }}>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem", marginBottom: "0.75rem" }}>
             {estimativa.futura ? (
               <>Estimativa: <strong>{estimativa.totalDias}</strong> diária(s) no período (<strong>{formatBRL(estimativa.totalValor)}</strong>) — até hoje, <strong>{estimativa.diasAteHoje}</strong> diária(s) (<strong>{formatBRL(estimativa.valorAteHoje)}</strong>).</>
             ) : (
@@ -364,6 +421,7 @@ export default function DiariaView() {
 
       <div className="card mt-4">
         <div className="card-header mb-3">Controle de diárias</div>
+        {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erroExclusao}</p>}
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
         {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma diarista lançada ainda.</p>}
         {itens && itens.length > 0 && (
@@ -406,9 +464,48 @@ export default function DiariaView() {
                           onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagoErro(null); }}>
                           <DollarSign size={13} /> Pagar
                         </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} title="Ver pagamentos lançados"
+                          onClick={() => setPagamentosAbertoId(pagamentosAbertoId === d.id ? null : d.id)}>
+                          <Receipt size={13} /> {d.pagamentos?.length ?? 0}
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir diária"
+                          disabled={ocupadoExclusao === d.id} onClick={() => excluirDiaria(d)}>
+                          <Trash2 size={13} />
+                        </button>
                       </span>
                     </td>
                   </tr>
+                  {pagamentosAbertoId === d.id && (
+                    <tr>
+                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                        <div style={{ fontSize: "0.75rem", fontWeight: 700, marginBottom: "0.4rem" }}>Pagamentos lançados</div>
+                        {!d.pagamentos?.length && <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhum pagamento lançado ainda.</p>}
+                        {d.pagamentos?.length > 0 && (
+                          <table className="fazenda-table" style={{ fontSize: "0.78rem" }}>
+                            <thead>
+                              <tr><th>Data</th><th>Valor</th><th>Observação</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                              {d.pagamentos.map((p) => (
+                                <tr key={p.id}>
+                                  <td>{fmtDataBR(p.data_pagamento)}</td>
+                                  <td>{formatBRL(p.valor)}</td>
+                                  <td>{p.observacao || "—"}</td>
+                                  <td>
+                                    <button className="btn-ghost" style={{ fontSize: "0.7rem", color: "var(--red)" }} title="Excluir pagamento"
+                                      disabled={ocupadoExclusao === p.id}
+                                      onClick={() => excluirPagamento(p.id, d.pessoa_nome, p.valor)}>
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                   {editandoId === d.id && (
                     <tr>
                       <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
@@ -448,7 +545,7 @@ export default function DiariaView() {
           </div>
           <div style={{ marginTop: "0.6rem" }}>
             <label style={lbl}>Valor (R$)</label>
-            <input type="number" step="0.01" style={inputSm} value={valorPagamento} onChange={(e) => setValorPagamento(e.target.value)} />
+            <CampoMoeda style={inputSm} value={Number(valorPagamento) || 0} onChange={(v) => setValorPagamento(v ? String(v) : "")} />
           </div>
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
           <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} onClick={() => registrarPagamento(pagandoId)}>

@@ -46,6 +46,8 @@ const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "qualidade_leite", titulo: "Qualidade do leite", campos: [["data_coleta", "Data", true], ["ccs", "CCS"], ["cbt", "CBT"]] },
   { chave: "aplicacoes_sanitarias", titulo: "Sanidade — aplicações", campos: [["data_aplicacao", "Data", true], ["produto", "Produto"], ["dose", "Dose"], ["unidade", "Un."]] },
   { chave: "protocolos_sanitarios", titulo: "Protocolos sanitários", campos: [["data_inicio", "Data", true], ["protocolo_nome", "Protocolo"], ["classificacao_mastite", "Mastite"]] },
+  { chave: "inducao_lactacao", titulo: "Indução de lactação", campos: [["data_prevista", "Prevista", true], ["nome_protocolo", "Protocolo"], ["descricao", "Etapa"], ["realizada", "Feito"]] },
+  { chave: "protocolos_customizados", titulo: "Protocolo personalizado", campos: [["data_prevista", "Prevista", true], ["nome_protocolo", "Protocolo"], ["descricao", "Etapa"], ["realizada", "Feito"]] },
   { chave: "secagens", titulo: "Secagens", campos: [["data_secagem", "Data", true], ["motivo", "Motivo"]] },
   { chave: "eventos_agenda", titulo: "Agenda — eventos", campos: [["data_evento", "Data", true], ["descricao", "Descrição"], ["categoria", "Categoria"]] },
   { chave: "exames_resultados", titulo: "Rastreabilidade — Exames", campos: [["data_exame", "Data", true], ["evento_sanitario_nome", "Exame"], ["resultado", "Resultado"]] },
@@ -237,6 +239,7 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
               <ParDado label="Pai" valor={pai?.nome ? `${pai.nome}${pai.naab ? ` (${pai.naab})` : ""}` : "—"} />
               <ParDado label="Grau de sangue" valor={String(a.grau_sangue || "—")} />
               <ParDado label="Última produção" valor={a.ult_cl_kg != null ? `${Number(a.ult_cl_kg).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg${a.data_ult_leite ? ` (${formatDate(String(a.data_ult_leite))})` : ""}` : "—"} />
+              <ParDado label="Dias de gestação" valor={(ficha?.precisao_parto as Record<string, unknown> | null)?.dias_gestacao != null ? String((ficha!.precisao_parto as Record<string, unknown>).dias_gestacao) : "—"} />
               <ParDado label="Previsão de secagem" valor={ficha?.previsao_secagem ? formatDate(ficha.previsao_secagem) : "—"} />
               <ParDado label="Previsão de parto" valor={ficha?.previsao_parto ? formatDate(ficha.previsao_parto) : "—"} />
             </Grade>

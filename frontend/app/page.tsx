@@ -114,7 +114,7 @@ export default function Home() {
     { nome: "Vazias", v: repSel.nao_classificadas },
   ].filter((x) => x.v > 0) : [];
 
-  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 
   const KPI = ({ v, l, c, cat, onClick, podeClicar }: { v: any; l: string; c?: string; cat?: "geral" | "reprodutivo" | "producao" | "financeiro"; onClick?: () => void; podeClicar?: boolean }) => (
     <Indicador
@@ -148,7 +148,7 @@ export default function Home() {
       <OnboardingChecklist />
 
       {nota && !notaFechada && (
-        <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.7rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>
+        <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.7rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>
           <Newspaper size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
             <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{nota.titulo}</p>
@@ -168,9 +168,9 @@ export default function Home() {
 
       {/* Alertas */}
       <div className="flex flex-wrap gap-3 mb-5">
-        {implanteFalta && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.15)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Syringe size={15} style={{ color: "var(--red)" }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF</div>}
-        {contasPagar > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><TrendingDown size={15} style={{ color: "var(--amber)" }} /> {contasPagar} conta(s) a pagar (10 dias)</div>}
-        {!!abaixoMin && abaixoMin > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.12)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Package size={15} style={{ color: "var(--red)" }} /> {abaixoMin} item(ns) abaixo do mínimo</div>}
+        {implanteFalta && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.15)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Syringe size={15} style={{ color: "var(--red)" }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF</div>}
+        {contasPagar > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><TrendingDown size={15} style={{ color: "var(--amber)" }} /> {contasPagar} conta(s) a pagar (10 dias)</div>}
+        {!!abaixoMin && abaixoMin > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.12)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Package size={15} style={{ color: "var(--red)" }} /> {abaixoMin} item(ns) abaixo do mínimo</div>}
       </div>
 
       {/* KPIs executivos */}
@@ -204,9 +204,9 @@ export default function Home() {
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} />
-          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} />
-          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} />
+          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} mediaPais={bm("taxa_servico").media_pais} maiorMelhor={bm("taxa_servico").maior_melhor ?? true} />
+          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} mediaPais={bm("taxa_concepcao").media_pais} maiorMelhor={bm("taxa_concepcao").maior_melhor ?? true} />
+          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} mediaPais={bm("taxa_prenhez_ciclo").media_pais} maiorMelhor={bm("taxa_prenhez_ciclo").maior_melhor ?? true} />
         </div>
         {/* Linha expansível: painel completo de benchmark */}
         <button onClick={() => setBenchAberto((v) => !v)}
@@ -301,7 +301,7 @@ export default function Home() {
                 <span style={{ fontSize: "0.68rem" }}>desde</span>
                 <input type="date" value={desdeDescarte} onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setDesdeDescarte(e.target.value)}
-                  style={{ fontSize: "0.68rem", padding: "0.05rem 0.25rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
+                  style={{ fontSize: "0.68rem", padding: "0.05rem 0.25rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }} />
               </p>
             </div>
           </div>

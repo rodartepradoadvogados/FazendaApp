@@ -130,6 +130,62 @@ class TestAgendaPorEvento:
         meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "500"]
         assert len(meus) == 1 and meus[0]["produto"] == "VacinaPre"
 
+    def test_animal_baixado_nao_aparece(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="403", data_nasc=HOJE - timedelta(days=10), sexo="F", ativo=False))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina ao nascer", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "produto_padrao": "VacinaX", "dose_padrao": 2, "unidade_padrao": "ml",
+        })
+        assert not any(e["numero_animal"] == "403" for e in _agenda_sanidade(c))
+
+    def test_sexo_alvo_restringe_ao_sexo_cadastrado(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="03M", data_nasc=HOJE - timedelta(days=155), sexo="M"))
+            s.add(Animal(numero="404", data_nasc=HOJE - timedelta(days=155), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Brucelose B19", "tipo_agendamento": "evento", "gatilho": "nascimento", "offset_dias": 150,
+            "sexo_alvo": "F", "produto_padrao": "VacinaB19", "dose_padrao": 2, "unidade_padrao": "ml",
+        })
+        eventos = _agenda_sanidade(c)
+        assert not any(e["numero_animal"] == "03M" for e in eventos)
+        assert any(e["numero_animal"] == "404" for e in eventos)
+
+
+class TestAplicacaoAgendadaNaAgenda:
+    """Bug real: 'Animal 03M ainda aparece pra tomar vacina de brucelose,
+    mas é macho e já foi baixado' — a pendência vinha de AplicacaoAgendada
+    (lançamento manual "aplicado? não"), que nunca filtrava por animal
+    ativo. Uma vez criada, ficava pendurada na Agenda pra sempre, mesmo
+    depois do animal ser baixado."""
+
+    def _agenda_aplic_agendada(self, c) -> list[dict]:
+        r = c.get("/agenda/", params={"data": HOJE.isoformat()})
+        assert r.status_code == 200, r.text
+        return [e for e in r.json()["eventos"] if e.get("tipo") == "aplicacao_agendada"]
+
+    def test_animal_ativo_aparece(self, client):
+        from fazenda.models import AplicacaoAgendada
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="03M", data_nasc=HOJE - timedelta(days=200), sexo="M"))
+            s.add(AplicacaoAgendada(numero_matriz="03M", data=HOJE, produto="Brucelose B19"))
+            s.commit()
+        assert any(e["numero_animal"] == "03M" for e in self._agenda_aplic_agendada(c))
+
+    def test_animal_baixado_nao_aparece_mais(self, client):
+        from fazenda.models import AplicacaoAgendada
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="03M", data_nasc=HOJE - timedelta(days=200), sexo="M", ativo=False))
+            s.add(AplicacaoAgendada(numero_matriz="03M", data=HOJE, produto="Brucelose B19"))
+            s.commit()
+        assert not any(e["numero_animal"] == "03M" for e in self._agenda_aplic_agendada(c))
+
 
 def _agenda_calendario(c) -> list[dict]:
     r = c.get("/agenda/", params={"data": HOJE.isoformat()})

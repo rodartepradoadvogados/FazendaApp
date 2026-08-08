@@ -4,8 +4,9 @@ download (GET /manual-fazenda/pdf) quanto para o anexo do e-mail semanal.
 
 xhtml2pdf tem suporte CSS limitado (sem grid/flexbox/border-radius) — o
 template abaixo usa só o que ele renderiza bem: tabelas, blocos com
-padding/border/background-color simples. Identidade visual CowData (vinho +
-dourado), mesma paleta de frontend/lib/export.ts.
+padding/border/background-color simples. Identidade visual CowData
+"Institucional" (marinho + ouro escurecido), mesma paleta de
+frontend/lib/export.ts.
 """
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ from io import BytesIO
 from xhtml2pdf import pisa
 
 NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra"
-COR_VINHO = "#3A0F1A"
-COR_DOURADO = "#E0A63C"
+COR_VINHO = "#0E2A47"
+COR_DOURADO = "#8A6D2F"
 COR_MUTED = "#6B7280"
 COR_LINHA = "#E5E7EB"
 

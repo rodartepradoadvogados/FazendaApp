@@ -7,10 +7,11 @@ import {
   type PessoaCowData, type FolhaCowData,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
+const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
 const inputStyle: React.CSSProperties = {
-  background: "#0a0e1a", border: `1px solid ${COR.borda}`, borderRadius: "6px", padding: "0.45rem 0.6rem",
+  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
   color: COR.texto, fontSize: "0.82rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
@@ -75,7 +76,7 @@ export default function EquipeCowData() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.2rem" }}>
         <h1 style={{ fontSize: "1.4rem", fontWeight: 700 }}>Equipe CowData</h1>
         <button onClick={() => setMostrarForm((v) => !v)}
-          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: `1px solid ${COR.dourado}`, background: "transparent", color: COR.dourado, cursor: "pointer" }}>
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.dourado}`, background: "transparent", color: COR.dourado, cursor: "pointer" }}>
           <UserPlus size={14} /> Novo membro
         </button>
       </div>
@@ -86,7 +87,7 @@ export default function EquipeCowData() {
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
 
       {mostrarForm && (
-        <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "12px", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
+        <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))", gap: "0.7rem" }}>
             <div>
               <label style={labelStyle}>Nome</label>
@@ -112,23 +113,23 @@ export default function EquipeCowData() {
             </div>
             <div>
               <label style={labelStyle}>Salário base (R$)</label>
-              <input style={inputStyle} type="number" value={novo.salario_base} onChange={(e) => setNovo({ ...novo, salario_base: e.target.value })} />
+              <CampoMoeda style={inputStyle} value={Number(novo.salario_base) || 0} onChange={(v) => setNovo({ ...novo, salario_base: v ? String(v) : "" })} />
             </div>
           </div>
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvarNovo}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: "none", background: COR.dourado, color: "#0a0e1a", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
               Cadastrar
             </button>
             <button onClick={() => setMostrarForm(false)}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
               Cancelar
             </button>
           </div>
         </div>
       )}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflowX: "auto", overflowY: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", minWidth: "40rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
@@ -204,7 +205,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
       </tr>
       {expandido && (
         <tr>
-          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: "#0a0e1a", borderBottom: `1px solid ${COR.borda}` }}>
+          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: "#1A2028", borderBottom: `1px solid ${COR.borda}` }}>
             {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.6rem" }}>{erro}</p>}
             <div style={{ fontSize: "0.75rem", color: COR.mudo, marginBottom: "0.6rem" }}>
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
@@ -217,11 +218,11 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
               </div>
               <div>
                 <label style={labelStyle}>Valor bruto</label>
-                <input style={{ ...inputStyle, width: "8rem" }} type="number" value={novaFolha.valor_bruto} onChange={(e) => setNovaFolha({ ...novaFolha, valor_bruto: e.target.value })} />
+                <CampoMoeda style={{ ...inputStyle, width: "8rem" }} value={Number(novaFolha.valor_bruto) || 0} onChange={(v) => setNovaFolha({ ...novaFolha, valor_bruto: v ? String(v) : "" })} />
               </div>
               <div>
                 <label style={labelStyle}>Descontos</label>
-                <input style={{ ...inputStyle, width: "7rem" }} type="number" value={novaFolha.descontos} onChange={(e) => setNovaFolha({ ...novaFolha, descontos: e.target.value })} />
+                <CampoMoeda style={{ ...inputStyle, width: "7rem" }} value={Number(novaFolha.descontos) || 0} onChange={(v) => setNovaFolha({ ...novaFolha, descontos: v ? String(v) : "" })} />
               </div>
               <div>
                 <label style={labelStyle}>Status</label>
@@ -231,7 +232,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
                 </select>
               </div>
               <button onClick={lancar}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "6px", border: "none", background: COR.dourado, color: "#0a0e1a", fontWeight: 700, cursor: "pointer" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
                 <Plus size={12} /> Lançar folha
               </button>
             </div>

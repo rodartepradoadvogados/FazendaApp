@@ -17,11 +17,11 @@ import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
-  Milk, FlaskConical, Droplet, Droplets, Scale,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
-import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
-import { MobTitulo, MobVoltar, MobAviso } from "@/components/mobile/ui";
+import { usePendentes, sincronizar, descartarPendente } from "@/lib/offline";
+import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
@@ -46,12 +46,14 @@ import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
+import Protocolos from "@/components/mobile/menu/Protocolos";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
+import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
+type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
@@ -65,6 +67,7 @@ const GRUPOS: Grupo[] = [
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
     { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={26} /> },
     { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={26} />, soAdmin: true },
+    { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={26} /> },
   ] },
   { secao: "alimentacao", titulo: "Alimentação", cor: "var(--cat-alimentacao)", iconeSecao: <Wheat size={26} />, itens: [
     { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={26} />, cor: "var(--mob-laranja)" },
@@ -97,6 +100,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   iatf: ProtocolosIatf,
   calendario: CalendarioSanitario,
   aplicacoes: AplicacoesSanidade,
+  remedios: RemediosPorDoenca,
   plano: PlanoAlimentacao,
   lancarDieta: LancarDieta,
   consultarDietas: ConsultarDietas,
@@ -118,17 +122,11 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "news" | "assistente" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
-  const online = useOnline();
   const [sincronizando, setSincronizando] = useState(false);
-  // Feedback brando quando "Enviar agora" termina sem mandar nada, apesar de
-  // ter itens pendentes — sem isso o botão só volta ao normal, sem dizer se
-  // tentou e falhou ou nem tentou. NÃO é alarme: falha de rede momentânea é
-  // normal (a sincronização automática — iniciarSincronizacaoAutomatica —
-  // continua tentando sozinha), então o texto é só informativo.
-  const [avisoSync, setAvisoSync] = useState(false);
+  const [resultadoEnvio, setResultadoEnvio] = useState<{ tipo: "ok" | "parcial"; msg: string } | null>(null);
 
   useEffect(() => { setMontado(true); }, []);
 
@@ -139,15 +137,40 @@ export default function Pagina() {
     const abrirSeHashNews = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
     abrirSeHashNews();
     window.addEventListener("hashchange", abrirSeHashNews);
-    return () => window.removeEventListener("hashchange", abrirSeHashNews);
+    // Clique no botão News do cabeçalho enquanto já se está em /app/menu —
+    // pushState não dispara 'hashchange', então o cabeçalho avisa por este
+    // evento customizado (ver app/app/layout.tsx).
+    window.addEventListener("app-abrir-news", abrirSeHashNews);
+    return () => {
+      window.removeEventListener("hashchange", abrirSeHashNews);
+      window.removeEventListener("app-abrir-news", abrirSeHashNews);
+    };
+  }, []);
+
+  // Atalho pós-salvar de Lançar > Sanidade (regra com "Registrar cronograma"
+  // marcado): navega para /app/menu#calendario-sanitario. Vindo de outra
+  // rota a página monta do zero, então o hash já está certo no 1º render;
+  // sem 'hashchange' aqui porque não há como cair já em /app/menu antes.
+  useEffect(() => {
+    if (window.location.hash === "#calendario-sanitario") { setSecaoAberta("sanidade"); setSub("calendario"); }
   }, []);
 
   async function enviarAgora() {
     setSincronizando(true);
-    setAvisoSync(false);
+    setResultadoEnvio(null);
     try {
       const { enviados, restantes } = await sincronizar();
-      if (enviados === 0 && restantes > 0) setAvisoSync(true);
+      if (restantes === 0) {
+        setResultadoEnvio({ tipo: "ok", msg: enviados > 0 ? `Tudo enviado (${enviados}).` : "Tudo já estava enviado." });
+      } else if (enviados > 0) {
+        setResultadoEnvio({ tipo: "parcial", msg: `${enviados} enviado(s) — ${restantes} ainda aguardando.` });
+      } else {
+        // Nenhum item saiu — provavelmente ainda sem conexão de verdade com
+        // o servidor (mesmo caso do card "Última falha" de cada item, mas
+        // muita gente só olha o botão, não os cards). Sem isso, tocar
+        // "Enviar agora" e falhar parecia não fazer nada (relato recorrente).
+        setResultadoEnvio({ tipo: "parcial", msg: "Não conseguiu enviar agora — sem conexão com o servidor. Vai tentar de novo sozinho." });
+      }
     } finally {
       setSincronizando(false);
     }
@@ -180,6 +203,10 @@ export default function Pagina() {
 
   if (secaoAberta === "recria") {
     return <Recria onVoltar={() => setSecaoAberta(null)} />;
+  }
+
+  if (secaoAberta === "protocolos") {
+    return <Protocolos onVoltar={() => setSecaoAberta(null)} />;
   }
 
   // Qualquer admin (ver ehAdmin()) — mesmo gate do site (/usuarios via AuthShell).
@@ -226,6 +253,7 @@ export default function Pagina() {
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
+    { id: "protocolos", label: "Protocolos", icone: <ListChecks size={26} />, cor: "var(--mob-roxo)" },
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
     ...(montado && ehDono() ? [{ id: "painelCowData", label: "Painel CowData", icone: <Building2 size={26} />, cor: "var(--mob-dourado)" }] : []),
     ...(montado && ehAdmin() ? [{ id: "assistente", label: "Assistente Virtual", icone: <Sparkles size={26} />, cor: "var(--mob-dourado)" }] : []),
@@ -251,7 +279,7 @@ export default function Pagina() {
           if (id === "sair") { logout(); return; }
           if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
           if (id === "siteCompleto") { router.push("/"); return; }
-          setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso");
+          setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "protocolos" | "controleAcesso");
         }}
       />
 
@@ -267,6 +295,11 @@ export default function Pagina() {
             {!item.erro && (
               <div style={{ marginTop: "0.35rem", fontSize: "0.78rem", color: "var(--mob-muted)" }}>
                 {(item.tentativas || 0) > 0 ? `Aguardando envio (tentativa ${item.tentativas})…` : "Aguardando envio…"}
+                {item.debugUltimoErro && (
+                  <div style={{ marginTop: "0.2rem", color: "var(--mob-ambar)", fontSize: "0.72rem" }}>
+                    Última falha: {item.debugUltimoErro}
+                  </div>
+                )}
               </div>
             )}
             {item.erro && (
@@ -282,12 +315,21 @@ export default function Pagina() {
         ))}
 
         {fila.length > 0 && (
-          <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={!online || sincronizando} style={{ marginTop: "0.2rem" }}>
-            <CloudUpload size={17} /> {sincronizando ? "Enviando…" : online ? "Enviar agora" : "Sem internet"}
+          // Não trava no estado `online` (React, só atualiza via evento
+          // 'online'/'offline' — pode ficar desatualizado se o WebView não
+          // disparar o evento) — sempre permite tentar; sincronizar() já
+          // lida bem com estar realmente offline (falha rápido, tenta depois).
+          <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={sincronizando} style={{ marginTop: "0.2rem" }}>
+            <CloudUpload size={17} /> {sincronizando ? "Enviando…" : "Enviar agora"}
           </button>
         )}
-        {avisoSync && fila.length > 0 && (
-          <MobAviso tipo="offline">Ainda sem conseguir enviar — tentando de novo automaticamente.</MobAviso>
+        {resultadoEnvio && (
+          <p style={{
+            marginTop: "0.5rem", fontSize: "0.82rem", textAlign: "center",
+            color: resultadoEnvio.tipo === "ok" ? "var(--mob-verde)" : "var(--mob-ambar)",
+          }}>
+            {resultadoEnvio.msg}
+          </p>
         )}
       </div>
 

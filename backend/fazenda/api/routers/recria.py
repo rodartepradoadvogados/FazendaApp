@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, BenchmarkRecria, CategoriaManejo, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
+    Animal, BenchmarkRecria, CategoriaManejo, Doenca, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
     Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Secagem, Servico, Usuario,
 )
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
@@ -31,6 +31,7 @@ from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
 )
+from fazenda.rules.visibilidade import visivel
 from fazenda.rules.reproducao_dossie import (
     DIAS_MES, custo_recria_excedente, distribuicao_idade_parto, estatisticas_idade_parto, taxa_prenhez_ciclos,
 )
@@ -74,6 +75,17 @@ def _fases(session: Session, fazenda_id: int | None = None) -> list[dict]:
         return FASES_PADRAO
     return [{"nome": f.nome, "dia_min": f.dia_min, "dia_max": f.dia_max}
             for f in sorted(linhas, key=lambda x: (x.ordem, x.dia_min))]
+
+
+def _texto_doenca_do_catalogo(session: Session, doenca_id: int | None, fazenda_id: int | None) -> str | None:
+    """Nome da Doenca do catálogo (visível pela fazenda: global + a própria) —
+    usado para denormalizar o texto (`doenca`) a partir do vínculo
+    (`doenca_id`) escolhido no seletor, em vez de confiar no texto digitado.
+    None se o id não vier, não existir ou não for visível por esta fazenda."""
+    if doenca_id is None:
+        return None
+    d = session.exec(visivel(select(Doenca).where(Doenca.id == doenca_id), Doenca, fazenda_id)).first()
+    return d.nome if d else None
 
 
 # --- Pilar Saúde -----------------------------------------------------------
@@ -222,6 +234,7 @@ def reproducao_idade_parto(
     meta = _meta_recria(session, fazenda_id)
     return {
         "meta_idade_parto": meta.idade_parto_meses,
+        "meta_desvio_padrao": meta.desvio_padrao_meta,
         "estatisticas": estatisticas_idade_parto(idades),
         "distribuicao": distribuicao_idade_parto(idades),
         "custo_excedente": custo_recria_excedente(idades, meta.idade_parto_meses, meta.custo_diario_recria),
@@ -252,10 +265,12 @@ def reproducao_taxa_prenhez(
     # Resumo do período: PR média ponderada pelos elegíveis.
     tot_el = sum(c["elegiveis"] for c in ciclos)
     tot_pr = sum((c["taxa_prenhez"] or 0) * c["elegiveis"] for c in ciclos)
+    meta = _meta_recria(session, fazenda_id)
     return {
         "ciclos": ciclos,
         "taxa_prenhez_media": round(tot_pr / tot_el, 1) if tot_el else None,
         "total_servicos": len(servicos),
+        "meta_taxa_prenhez": meta.taxa_prenhez_meta,
     }
 
 
@@ -579,8 +594,13 @@ def categoria_sugerida_animal(
         secagens_query = secagens_query.where(Secagem.fazenda_id == fazenda_id)
     ult = session.exec(peso_query).all()
     peso = ult[-1].peso_kg if ult else None
-    servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero)).all()
-    partos = session.exec(select(Parto).where(Parto.numero_matriz == numero)).all()
+    servicos_query = select(Servico).where(Servico.numero_matriz == numero)
+    partos_query = select(Parto).where(Parto.numero_matriz == numero)
+    if fazenda_id is not None:
+        servicos_query = servicos_query.where(Servico.fazenda_id == fazenda_id)
+        partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
+    servicos = session.exec(servicos_query).all()
+    partos = session.exec(partos_query).all()
     secagens = session.exec(secagens_query).all()
     ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens)
     return {"categoria": classificar_categoria(ctx, categorias)}
@@ -815,6 +835,7 @@ def excluir_cocho(
 class OcorrenciaIn(BaseModel):
     numero_matriz: str
     doenca: str
+    doenca_id: int | None = None  # vínculo com o catálogo — opcional, ver _texto_doenca_do_catalogo
     data_ocorrencia: date
     observacao: str | None = None
 
@@ -848,8 +869,13 @@ def criar_ocorrencia(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.numero_matriz.strip() or not dados.doenca.strip():
         raise HTTPException(status_code=400, detail="Informe o animal e a doença.")
+    # Quando vem doenca_id (seletor do catálogo), o texto é denormalizado a
+    # partir do nome cadastrado — mantém o texto digitado como fallback se o
+    # vínculo não resolver (id de outra fazenda, catálogo removido etc.).
+    texto_catalogo = _texto_doenca_do_catalogo(session, dados.doenca_id, fazenda_id)
     o = OcorrenciaClinica(
-        numero_matriz=dados.numero_matriz.strip(), doenca=dados.doenca.strip(),
+        numero_matriz=dados.numero_matriz.strip(), doenca=texto_catalogo or dados.doenca.strip(),
+        doenca_id=dados.doenca_id,
         data_ocorrencia=dados.data_ocorrencia, observacao=(dados.observacao or None), origem="manual",
         usuario_id=user.id, fazenda_id=fazenda_id,
     )
@@ -1016,6 +1042,7 @@ def excluir_fase(
 # --- Cadastros: Janelas de ponto crítico -----------------------------------
 class JanelaIn(BaseModel):
     doenca: str
+    doenca_id: int | None = None  # vínculo com o catálogo — opcional, ver _texto_doenca_do_catalogo
     dia_min: int
     dia_max: int
     dias_antecedencia: int = 3
@@ -1042,7 +1069,13 @@ def criar_janela(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.dia_min > dados.dia_max:
         raise HTTPException(status_code=400, detail="Dia inicial não pode ser maior que o final.")
-    j = JanelaPontoCritico(**dados.model_dump(), fazenda_id=fazenda_id)
+    # Quando vem doenca_id (seletor do catálogo), o texto é denormalizado a
+    # partir do nome cadastrado — mesma regra de criar_ocorrencia acima.
+    texto_catalogo = _texto_doenca_do_catalogo(session, dados.doenca_id, fazenda_id)
+    dados_dict = dados.model_dump()
+    if texto_catalogo:
+        dados_dict["doenca"] = texto_catalogo
+    j = JanelaPontoCritico(**dados_dict, fazenda_id=fazenda_id)
     session.add(j)
     session.commit()
     session.refresh(j)

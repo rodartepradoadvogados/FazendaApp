@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
+import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3, History } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { IndicadoresGerais } from "@/app/indicadores/page";
 import { fetchAnimais, fetchEstratificacaoRebanho, fetchEstadosReprodutivos, marcarADescartar, type Estratificacao, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
@@ -11,6 +11,7 @@ import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
+import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro, Indicador } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
@@ -353,8 +354,8 @@ function RebanhoVisaoGeral() {
     [ordenarPorNumeracao, porNumero, grupoLista, estadosPorNumero]
   );
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
-  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
@@ -415,7 +416,7 @@ function RebanhoVisaoGeral() {
                   <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
                   <YAxis type="category" dataKey="grupo" tick={{ fill: "var(--text-muted)", fontSize: 9 }} width={150} />
                   <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
+                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #416180)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
                     onClick={(e: any) => e?.grupo && setModal({ title: e.grupo, list: filtrados.filter((a) => (a.grupo_primario || "(sem grupo)") === e.grupo) })} />
                 </BarChart>
               </ResponsiveContainer>
@@ -498,7 +499,7 @@ function RebanhoVisaoGeral() {
                 {grupoLista.map(([grupo, lista]) => {
                   const aberto = abertos.has(grupo);
                   return (
-                    <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+                    <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
                       <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                         {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                         <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>
@@ -526,8 +527,8 @@ function RebanhoVisaoGeral() {
 
 // Movimentar/Comprar/Baixar ficam apenas em Lançamentos › Animais — aqui o
 // Rebanho é só consulta (visão, ficha e sugestões).
-type Aba = "visao" | "descarte" | "sugestoes" | "ficha" | "touros" | "indicadores";
-const ABAS_VALIDAS: Aba[] = ["visao", "descarte", "sugestoes", "ficha", "touros", "indicadores"];
+type Aba = "visao" | "descarte" | "sugestoes" | "ficha" | "touros" | "movimentacoes" | "indicadores";
+const ABAS_VALIDAS: Aba[] = ["visao", "descarte", "sugestoes", "ficha", "touros", "movimentacoes", "indicadores"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: CowIcon, title: "Visão geral do rebanho por grupo" },
@@ -535,6 +536,7 @@ const ABAS_REBANHO = [
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
+  { id: "movimentacoes", label: "Movimentações", icon: History, title: "Histórico de transferências entre lotes" },
   { id: "indicadores", label: "Indicadores", icon: BarChart3, title: "Indicadores do rebanho: composição, eficiência reprodutiva e produção" },
 ] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
 
@@ -565,6 +567,7 @@ export default function RebanhoPage() {
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "ficha" && <FichaAnimal numeroInicial={fichaNumeroInicial} />}
         {aba === "touros" && <RebanhoTouros onAbrirFicha={(numero) => { setFichaNumeroInicial(numero); trocarAba("ficha"); }} />}
+        {aba === "movimentacoes" && <HistoricoMovimentacoes />}
         {aba === "indicadores" && <IndicadoresGerais />}
       </div>
     </div>

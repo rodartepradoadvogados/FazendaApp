@@ -27,7 +27,7 @@ function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.Mutable
         {ativos.map((p) => {
           const aberto = abertos.has(p.lancamento_id);
           return (
-            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
               <button onClick={() => toggle(p.lancamento_id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "var(--surface)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                 {aberto ? <ChevronDown size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} /> : <ChevronRight size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}
                 <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{p.nome_protocolo}</span>
@@ -107,7 +107,14 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
         protocolo_id: Number(protocoloId), animais: animaisAlvo, data_d0: dataD0,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
-      setSucesso(`Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
+      // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
+      // protocolo, mesmo D0, mesmos animais) e reaproveitou em vez de duplicar
+      // — acontece em duplo clique ou no retry da fila offline do app. Sem
+      // este ramo a tela dizia "lançado ... — 0 eventos na Agenda", que parece
+      // defeito.
+      setSucesso(r.criado === false
+        ? (r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
+        : `Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
       setSel(new Set()); setLotesSelecionados([]);
       recarregarAtivosRef.current();
     } catch (e: any) {

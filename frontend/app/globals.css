@@ -112,15 +112,19 @@
 /* ── Tema CLARO — minimalista, fundo cinza claro, painéis brancos ── */
 :root[data-theme="claro"] {
   color-scheme: light;
-  --bg:          #F3F4F6;
+  --bg:          #F4F6F9;
   --surface:     #FFFFFF;
   --surface-2:   #F9FAFB;
-  --border:      #E5E7EB;
+  --border:      #DCE3EA;
+  /* Borda mais forte — contorno de campo, botão secundário, moldura de
+     tabela. Só existe no claro (proposta "Institucional"); nos outros temas,
+     todo uso cai no fallback var(--border-strong, var(--border)). */
+  --border-strong: #C3CDD8;
   --text:        #1F2937;
   --text-muted:  #6B7280;
   --card-header-bg: var(--surface);
   --card-header-fg: var(--vinho);
-  --thead-bg:    #F3F4F6;
+  --thead-bg:    #F1F4F8;
   --thead-fg:    var(--vinho);
   --row-stripe:  rgba(0, 0, 0, 0.025);
   --alert-fg:    var(--red);
@@ -250,22 +254,38 @@
    paleta "Verde"; azul-escuro (navy) como cor de marca, azul claro só nos
    poucos destaques pontuais (--dourado-light), nunca como fundo. */
 :root[data-theme="escuro"][data-paleta="azul"] {
-  --vinho:       #153A66;
-  --vinho-light: #2563EB;
-  --vinho-dark:  #0D2340;
-  --dourado:     #2563EB;
-  --dourado-light: #7DD3FC;
-  --sidebar-active-bg: rgba(21, 58, 102, 0.4);
-  --pill-active-bg: rgba(21, 58, 102, 0.4);
+  /* Mesma direção "Institucional" do claro (ver bloco abaixo), adaptada ao
+     fundo escuro: marinho mais claro que o do claro (precisa se destacar do
+     --bg quase preto, não escurecer ainda mais), azul-aço mais claro para
+     continuar lendo como dado sobre fundo escuro, ouro claro assume o papel
+     de "ouro escurecido" (o par --dourado/--dourado-light do claro existe
+     pelo contraste no CLARO — no escuro o mais claro dos dois já è o que
+     rende contraste suficiente pros dois usos). */
+  --vinho:       #1B3A5C; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #5B85A8; /* azul-aço — série de dados primária, hovers */
+  --vinho-dark:  #081627; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #C9A44C; /* ouro — números de destaque, réguas, "salvar" */
+  --dourado-light: #E3C077; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
+  --sidebar-active-bg: rgba(27, 58, 92, 0.4);
+  --pill-active-bg: rgba(27, 58, 92, 0.4);
 }
 :root[data-theme="claro"][data-paleta="azul"] {
-  --vinho:       #153A66;
-  --vinho-light: #2563EB;
-  --vinho-dark:  #0D2340;
-  --dourado:     #2563EB;
-  --dourado-light: #7DD3FC;
-  --sidebar-active-bg: rgba(21, 58, 102, 0.08);
-  --sidebar-subnav-outline-bg: rgba(21, 58, 102, 0.06);
+  /* Direção "Institucional" (proposta 1A): cor reservada à estrutura, não ao
+     dado — marinho na navegação/estrutura, uma família de azul-aço nos
+     gráficos, ouro escurecido só em números de destaque e réguas finas. */
+  --vinho:       #0E2A47; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #416180; /* azul-aço — série de dados primária, hovers */
+  --vinho-dark:  #0A1F36; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #8A6D2F; /* ouro escurecido — números de destaque, réguas, "salvar" */
+  --dourado-light: #C9A44C; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
+  /* BUG corrigido: --sidebar-active-bg escureceu (marinho sólido) mas
+     --sidebar-active-fg continuava herdando var(--vinho) do bloco claro base
+     (linha ~137) — também marinho escuro, texto ilegível sobre o próprio
+     fundo. Aba ativa agora tem texto claro (dourado, mesmo tratamento do
+     tema misto/escuro para pílula ativa sobre fundo marinho sólido). */
+  --sidebar-active-bg: #17385A;
+  --sidebar-active-fg: var(--dourado-light);
+  --sidebar-subnav-outline-bg: rgba(14, 42, 71, 0.06);
   --sidebar-subnav-bg: #E4E7EB;
 }
 :root[data-theme="misto"][data-paleta="azul"] {
@@ -316,10 +336,28 @@
   box-sizing: border-box;
 }
 
+/* Tipografia — Barlow (corpo) + Barlow Condensed (títulos/rótulos/números)
+   no SITE; o app de campo (/app, ver .mob abaixo) continua em Inter, sem
+   mudança nenhuma — o redesign visual desta rodada é só do site. Exposta
+   como token (não hardcoded) para o .mob poder sobrescrever por herança de
+   CSS custom property, em vez de precisar de um seletor por elemento. */
+:root {
+  --font-body: var(--font-barlow), 'Inter', sans-serif;
+  --font-heading: var(--font-barlow-condensed), 'Inter', sans-serif;
+}
+.mob {
+  --font-body: var(--font-inter), sans-serif;
+  --font-heading: var(--font-inter), sans-serif;
+}
+
 body {
   background-color: var(--bg);
   color: var(--text);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-body);
+}
+
+h1, h2, h3, h4, .card-header, .kpi-value {
+  font-family: var(--font-heading);
 }
 
 /* Cursivo usado só no "milk" da marca d'água da tela de login (ver
@@ -353,13 +391,16 @@ textarea:focus-visible, [tabindex]:focus-visible {
 ::-webkit-scrollbar-thumb { background: var(--vinho); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--vinho-light); }
 
-/* ── Escala única de cantos (proposta de refinamento visual) — substitui as
-   5-6 medidas ad hoc que conviviam sem regra (4/6/8/12/14px). Cartão do app
-   já usava 16px; --r-lg alinha o site a essa mesma medida. */
+/* ── Escala única de cantos — direção "Institucional" (proposta 1A): cantos
+   quase retos em vez de arredondados, é isso que tira a sensação de app
+   genérico e aproxima de relatório impresso. Era 8/12/16px. */
 :root {
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
+  --r-sm: 2px;
+  --r-md: 2px;
+  --r-lg: 2px;
+  /* Sombra única e discreta — nada de sombra pesada nem deslocamento no
+     hover de card/botão (ver .card, .kpi-card, .btn-primary). */
+  --shadow-sm: 0 1px 4px rgba(20, 30, 45, 0.10);
 }
 
 /* ── Cards ── */
@@ -367,12 +408,13 @@ textarea:focus-visible, [tabindex]:focus-visible {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
   padding: 1.25rem;
 }
 
 .card-header {
   background: var(--card-header-bg);
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
   padding: 0.75rem 1rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -404,11 +446,13 @@ textarea:focus-visible, [tabindex]:focus-visible {
   padding: 0.6rem 0.875rem;
   text-align: left;
   color: var(--thead-fg);
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-family: var(--font-heading);
+  font-size: 0.6875rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.13em;
   white-space: nowrap;
+  border-bottom: 1px solid var(--border-strong, var(--border));
 }
 .fazenda-table tbody tr {
   border-bottom: 1px solid var(--border);
@@ -419,31 +463,54 @@ textarea:focus-visible, [tabindex]:focus-visible {
   padding: 0.55rem 0.875rem;
   color: var(--text);
 }
-.fazenda-table tbody tr:nth-child(even) { background: var(--row-stripe); }
+/* Zebra removida (proposta "Institucional") — a separação entre linhas passa
+   a ser só o filete de 1px (.fazenda-table tbody tr já tem border-bottom). */
 
 /* ── Botões ──
-   CTA primário (Saiba mais, Entrar, Salvar, Lançar...) é sempre ouro com
-   texto escuro — o vinho vira ação SECUNDÁRIA (ver .btn-ghost). Antes o
-   primário era vinho com texto dourado, o que quase some sobre foto escura
-   (ex.: hero do login) — ouro sobre qualquer fundo lê bem. */
+   Proposta "Institucional" (1A): CTA primário vira marinho sólido com texto
+   branco — sem gradiente, sem deslocamento no hover ("lê como relatório de
+   banco", não como botão de app). O ouro sólido (.btn-primary-gold) fica
+   reservado para a ação de gravar/confirmar — reforço visual pontual, não
+   a cor de todo botão primário como era antes. */
 .btn-primary {
-  background: linear-gradient(135deg, var(--gold), var(--gold-deep));
-  color: var(--ink);
-  border: 1px solid var(--gold-deep);
+  background: var(--vinho);
+  color: #FFFFFF;
+  border: 1px solid var(--vinho);
   padding: 0.5rem 1.25rem;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-weight: 600;
   font-size: 0.875rem;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s, border-color 0.15s;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
 }
 .btn-primary:hover {
-  background: linear-gradient(135deg, var(--gold-pale), var(--gold));
-  transform: translateY(-1px);
-  box-shadow: 0 4px 15px rgba(224, 166, 60, 0.4);
+  background: color-mix(in srgb, var(--vinho) 85%, black);
+  border-color: color-mix(in srgb, var(--vinho) 85%, black);
+}
+
+/* Variante ouro — ação de gravar/confirmar (ver briefing de redesign). Mesmo
+   formato do .btn-primary, só troca a cor; usar nos pontos de "Salvar"/
+   "Confirmar" mais críticos, não em todo botão primário do site. */
+.btn-primary-gold {
+  background: var(--dourado);
+  color: #FFFFFF;
+  border: 1px solid var(--dourado);
+  padding: 0.5rem 1.25rem;
+  border-radius: var(--r-sm);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-primary-gold:hover {
+  background: color-mix(in srgb, var(--dourado) 85%, black);
+  border-color: color-mix(in srgb, var(--dourado) 85%, black);
 }
 
 .btn-ghost {
@@ -451,43 +518,65 @@ textarea:focus-visible, [tabindex]:focus-visible {
   color: var(--text-muted);
   border: 1px solid var(--border);
   padding: 0.5rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s;
 }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
 
-/* ── KPI cards ── */
+/* Botão "secundário" — usado nos toggles de filtro (pills) ao lado de um
+   .btn-primary ativo. Referenciado em dezenas de telas mas nunca tinha sido
+   definido: sem esta classe, os botões inativos caíam no reset do Tailwind
+   (sem borda/fundo/padding) e liam como texto corrido em vez de um quadro
+   clicável. */
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong, var(--border));
+  padding: 0.5rem 1rem;
+  border-radius: var(--r-sm);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-secondary:hover { background: var(--surface); color: var(--text); border-color: var(--gold-deep); }
+
+/* ── KPI cards ──
+   Proposta "Institucional" (1A): a faixa de 3px em gradiente no topo vira um
+   filete de 3px à esquerda, sólido — marinho por padrão. Indicadores de
+   destaque (reprodutivos/IATF) usam a classe .kpi-card--destaque para o
+   filete e o valor virarem ouro; aplicar seletivamente por página, não é
+   automático. Sem elevação no hover (nada de translateY). */
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--vinho);
   border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
   padding: 1.25rem;
   position: relative;
   overflow: hidden;
-  transition: transform 0.2s;
 }
-.kpi-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--vinho), var(--dourado));
-}
-.kpi-card:hover { transform: translateY(-2px); }
+.kpi-card--destaque { border-left-color: var(--dourado); }
 .kpi-value {
   font-size: 2rem;
   font-weight: 800;
-  color: var(--dourado-light);
+  color: var(--vinho);
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
+.kpi-card--destaque .kpi-value { color: var(--dourado); }
 .kpi-label {
-  font-size: 0.8rem;
+  font-family: var(--font-heading);
+  font-size: 0.6875rem;
+  font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.13em;
   margin-top: 0.25rem;
 }
 
@@ -519,7 +608,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .alert-critico {
   background: rgba(192, 57, 43, 0.15);
   border: 1px solid var(--red);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0.75rem 1rem;
   display: flex;
   align-items: center;
@@ -531,7 +620,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 /* ── Upload dropzone ── */
 .dropzone {
   border: 2px dashed var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 3rem;
   text-align: center;
   cursor: pointer;
@@ -563,13 +652,13 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 
 /* Respeita a preferência do sistema por menos movimento: desliga a entrada
-   animada de página (.animate-in), o "pulsar" do indicador de notificação, e
-   o deslocamento (translateY) dos hovers de botão/card — mantém as
-   transições de cor, que não costumam disparar problema vestibular. */
+   animada de página (.animate-in) e o "pulsar" do indicador de notificação —
+   mantém as transições de cor, que não costumam disparar problema
+   vestibular. (O hover de botão/card não desloca mais nada, ver .btn-primary/
+   .kpi-card — proposta "Institucional".) */
 @media (prefers-reduced-motion: reduce) {
   .animate-in { animation: none; }
   .pulse-dot { animation: none; }
-  .btn-primary:hover, .kpi-card:hover { transform: none; }
 }
 
 /* Verde luminoso com brilho — para tendências positivas e metas batidas. */
@@ -607,15 +696,48 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .fazenda-table thead th, .fazenda-table tbody td { padding: 0.45rem 0.6rem; }
 }
 
-/* Faixa de botões do topo do site (News + Manual da Fazenda quando presente,
-   ver AuthShell.tsx) — um único container fixed com gap, em vez de cada botão
-   calcular sua própria posição (foi assim que os dois ficaram sobrepostos).
+/* Faixa de botões do topo do site (Manual da Fazenda quando presente, News,
+   tema e sino de notificações — ver AuthShell.tsx) — um ÚNICO container fixed
+   com gap, em vez de cada botão calcular sua própria posição em "right"
+   (era assim que ficavam sobrepostos: tema e sino tinham cada um seu próprio
+   position:fixed com offset fixo, sem saber do tamanho um do outro nem da
+   faixa de News/Manual ao lado — qualquer mudança de largura de um
+   empurrava/cobria o vizinho). env(safe-area-inset-*) evita ficar atrás da
+   barra de status do celular (relógio/bateria) em telas com notch.
    No celular/tablet estreito (abaixo do breakpoint md do Sidebar), desce para
-   ficar abaixo da barra fixa do menu hambúrguer (3.25rem de altura, ver
-   Sidebar.tsx) em vez de sobrepor o logotipo. */
-.site-top-actions { position: fixed; top: 1rem; right: 16rem; z-index: 60; display: inline-flex; align-items: center; gap: 0.6rem; }
+   ficar abaixo da barra fixa do menu hambúrguer (3.25rem de altura + a
+   própria faixa de segurança do topo, ver Sidebar.tsx) em vez de sobrepor o
+   logotipo. */
+.site-top-actions {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 1rem);
+  right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
 @media (max-width: 767px) {
-  .site-top-actions { top: 3.65rem; right: 0.6rem; }
+  .site-top-actions {
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem);
+    right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
+  }
+}
+
+/* Painel do sino (NotificationBell) — mesma lógica de segurança de topo do
+   .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões). */
+.notification-panel {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+  right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
+  z-index: 61;
+}
+@media (max-width: 767px) {
+  .notification-panel {
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+    right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

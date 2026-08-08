@@ -309,6 +309,28 @@ def bloquear_escrita_contador():
     return _dep
 
 
+def exigir_nao_consultor():
+    """Dependência de endpoint (não de router inteiro) — bloqueia quem tem o
+    vínculo `consultor` (veterinário/agrônomo convidado, ver
+    fazenda/models/multitenant.py::UsuarioFazenda) mesmo já tendo acesso ao
+    módulo financeiro. Usada só em pontos sensíveis específicos (ex.: link
+    para o banco de dados externo em Relatórios financeiros) — o consultor
+    continua com o mesmo acesso de um funcionário comum no resto do sistema."""
+    def _dep(
+        user: Usuario = Depends(get_current_user),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is None:
+            return
+        vinculo = session.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
+        ).first()
+        if vinculo and vinculo.consultor:
+            raise HTTPException(status_code=403, detail="Consultores não têm acesso a esta funcionalidade")
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Trava por PLANO CONTRATADO (fazenda/tenant) — camada ACIMA da permissão por
 # usuário acima (exigir_modulo/tem_modulo). Aquela decide o que um FUNCIONÁRIO

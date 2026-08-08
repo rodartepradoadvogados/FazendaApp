@@ -6,9 +6,11 @@ import {
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
   type SugestoesCadastro, type SugestaoCadastroItem,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
-  FINALIDADES_ESTOQUE,
+  FINALIDADES_ESTOQUE, type PatrimonioPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
@@ -21,7 +23,7 @@ import { onPedidoLancamentoFinanceiroDeEvento, type OrigemVinculoSanitarioReprod
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
@@ -46,10 +48,22 @@ type Item = {
   codigo_conta_gerencial: string; nome_conta_gerencial: string;
   tipo_item: TipoItem; produto: string; descricao: string;
   quantidade: string; valor_unitario: string; valor_total: string; modoValor: ModoValor;
+  // "estoque" escolhe de um item já cadastrado (EstoquePicker); "livre" digita
+  // qualquer nome — compra de algo que não está (e não precisa estar) no
+  // catálogo de estoque, ex.: "Supermercado", "Material de escritório". Some
+  // não tem por que travar o lançamento a um cadastro prévio.
+  modoProduto: "estoque" | "livre";
+  // Checkbox "É vale de funcionário?" da linha do item — quando preenchido,
+  // ao salvar o lançamento este item vira um vale de verdade (funcionário:
+  // desconto na folha; empreiteiro/diarista: abatimento de empreitada/
+  // contrato/diária) e some dos relatórios gerenciais (ver ValeItemModal e
+  // rules/vale_item.py no backend). null (padrão) = item normal da fazenda.
+  vale: ValeItemDados | null;
 };
 const itemVazio = (): Item => ({
   codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto", produto: "", descricao: "",
-  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario",
+  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario", modoProduto: "estoque",
+  vale: null,
 });
 
 type Opcoes = {
@@ -81,7 +95,7 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura }: {
+export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura, apresentacaoModais }: {
   tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void;
   // Recebe a mesma mensagem de sucesso mostrada dentro do formulário — o pai
   // (contas a pagar/receber) reaproveita pra mostrar a confirmação no topo da
@@ -91,6 +105,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // usado pelo ModalDivididoDocumento pra mostrar a prévia do documento ao
   // lado do formulário (ver app/financeiro/page.tsx).
   onArquivoParaLeitura?: (file: File) => void;
+  // Como o ValeItemModal (checkbox "É vale de funcionário?" de cada item)
+  // aparece: "modal" (pop-up, desktop) ou "tela" (tela cheia com botão
+  // voltar, app mobile — ver components/mobile/lancar/FormFinanceiroApp.tsx).
+  // Default "modal": os demais usos deste formulário fora do app não passam
+  // a prop e continuam com o pop-up.
+  apresentacaoModais?: "modal" | "tela";
 }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
@@ -140,12 +160,49 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [modoAdicionar, setModoAdicionar] = useState<"produto" | "servico" | "conta">("produto");
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
 
+  // Checkbox "É vale de funcionário?" de cada item — `valeAbertoPara` é o
+  // índice do item cujo ValeItemModal está aberto (marcar ou "alterar" um já
+  // marcado); `desmarcandoVale` é o índice pedindo confirmação antes de
+  // remover a marcação de um item AINDA NÃO SALVO (aqui não existe vale de
+  // verdade a excluir — essa pergunta acontece em FormEditarLancamento,
+  // app/financeiro/page.tsx, para um item já salvo com vale já criado).
+  const [valeAbertoPara, setValeAbertoPara] = useState<number | null>(null);
+  const [desmarcandoVale, setDesmarcandoVale] = useState<number | null>(null);
+  function pedirDesmarcarVale(idx: number) { setDesmarcandoVale(idx); }
+  // 409 de "estourou 40% do salário" recebido ao SALVAR O LANÇAMENTO inteiro
+  // (não da marcação isolada de um item, que aqui só grava estado local — o
+  // vale de verdade só nasce no POST /financeiro/lancamentos, ver salvar()
+  // abaixo). Reabre o ValeItemModal do item ofensor já mostrando o aviso: a
+  // 1ª tentativa de confirmar dentro do modal reproduz o mesmo erro (ver
+  // onConfirmar do ValeItemModal, JSX abaixo); ao clicar "Lançar mesmo
+  // assim", o item guarda `confirmar: true` para a próxima tentativa de
+  // salvar. Heurística (o backend não devolve QUAL item estourou): o
+  // primeiro item marcado como vale de folha que ainda não tem `confirmar`.
+  const [pendingErro409, setPendingErro409] = useState<{ idx: number; mensagem: string; competencias_excedidas: { competencia: string; total: number }[] } | null>(null);
+
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   // Pré-preenchimento via query string (ex.: botão "Lançar financeiro" do
   // calendário sanitário → /lancamentos?ir=financeiro_despesa&servico=Exame%20de%20brucelose).
+  // "patrimonio_*" vem de Controle Financeiro > Patrimônio > "+ Novo
+  // patrimônio" > "É uma compra agora?" — a criação do item de Patrimônio só
+  // acontece quando ESTE lançamento for salvo (ver criarPatrimonio abaixo e
+  // POST /financeiro/lancamentos, campo criar_patrimonio).
+  const [criarPatrimonio, setCriarPatrimonio] = useState<PatrimonioPayload | null>(null);
   useEffect(() => {
-    const servico = new URLSearchParams(window.location.search).get("servico");
+    const params = new URLSearchParams(window.location.search);
+    const servico = params.get("servico");
     if (servico) setItens([{ ...itemVazio(), tipo_item: "servico", produto: servico }]);
+    const patrimonioNome = params.get("patrimonio_nome");
+    if (patrimonioNome) {
+      const valor = params.get("patrimonio_valor") || "";
+      setItens([{ ...itemVazio(), tipo_item: "produto", produto: patrimonioNome, valor_total: valor, modoValor: "total" }]);
+      setCriarPatrimonio({
+        nome: patrimonioNome,
+        tipo: params.get("patrimonio_tipo") || null,
+        valor_total: valor ? Number(valor) : null,
+        depreciavel: params.get("patrimonio_depreciavel") !== "0",
+      });
+    }
   }, []);
   // Pré-preenchimento vindo do Balanço de estoque ("gerar movimentação
   // financeira" ao lançar entrada/saída) — puxa produto, conta gerencial,
@@ -295,7 +352,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // tipo produto (para serviço não faz sentido "entrada"/"entregue").
   function handleDataEmissaoChange(valor: string) {
     setDataEmissao(valor);
-    if (!valor) return;
+    // O <input type="date"> dispara onChange a cada dígito digitado (não só
+    // quando a data fica completa) — ao digitar o ano dígito a dígito, o
+    // primeiro dígito chega aqui como um ano de 1 dígito só (ex.: "0002-08-05"
+    // ao digitar o "2" de 2026, já com dia/mês prontos). Os campos abaixo só
+    // preenchem se ainda estiverem vazios, então sem esta checagem eles
+    // travavam com esse ano incompleto/errado do primeiro dígito, e nunca
+    // mais eram corrigidos mesmo com a emissão completa depois (bug relatado:
+    // vencimento/previsão de entrada/data do pedido nascendo em "0002").
+    // Só propaga para os campos dependentes com a data de emissão COMPLETA.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(valor)) return;
     setDataVencimento((atual) => atual || valor);
     if (itens.some((i) => i.tipo_item === "produto")) {
       setDataPrevistaEntrada((atual) => atual || valor);
@@ -434,6 +500,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         valor_total: it.valor_total != null ? String(it.valor_total) : "",
         // Preserva o total informado na nota (não recalcula por quantidade × unitário).
         modoValor: it.valor_total != null ? "total" : "unitario",
+        // Nome extraído da nota, não necessariamente igual a um item já
+        // cadastrado no estoque — começa em texto livre pra não forçar o
+        // usuário a bater o nome exato antes de poder editar.
+        modoProduto: "livre",
+        vale: null,
       })));
     } else if (dados.valor_total != null) {
       setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), modoValor: "total" }]);
@@ -574,11 +645,23 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   }
 
   function tratarArquivo(file: File) {
-    if (file.type === "application/pdf" || file.type === "image/jpeg" || file.type === "image/png") {
+    // Antes, só passava pela leitura automática (IA) quando file.type fosse
+    // EXATAMENTE "application/pdf"/"image/jpeg"/"image/png" — qualquer outra
+    // coisa (foto salva como "image/jpg" por câmera/app mais antigo, WEBP,
+    // HEIC/HEIF de iPhone, ou MIME vazio, comum em drag-and-drop de alguns
+    // gerenciadores de arquivo) caía no ramo de XML: o binário da imagem era
+    // lido como texto e mandado pro parser de NF-e, que sempre falhava com
+    // 400 "Não foi possível ler o XML" — daí o erro 400 ao anexar/arrastar
+    // documento normal em Contas a pagar. O backend (/financeiro/ler-documento)
+    // já tolera esses formatos (ver MIME_ACEITOS em leitura_documento.py); a
+    // checagem aqui só precisa distinguir XML (rota de texto) do resto
+    // (rota de leitura de documento/imagem via IA).
+    const ehXml = file.type === "text/xml" || file.type === "application/xml" || /\.xml$/i.test(file.name);
+    if (ehXml) {
+      file.text().then(importarXml);
+    } else {
       onArquivoParaLeitura?.(file);
       lerDocumentoAnexado(file);
-    } else {
-      file.text().then(importarXml);
     }
   }
   function onDrop(e: React.DragEvent) {
@@ -605,6 +688,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           quantidade: i.quantidade ? Number(i.quantidade) : null,
           valor_unitario: i.valor_unitario ? Number(i.valor_unitario) : null,
           valor_total: Number(i.valor_total) || 0,
+          // Só os campos do contrato (ValeItemNovoIn) — pessoa_nome/origem_label
+          // são de UI (ver checkbox acima e ValeItemModal), não vão no payload.
+          vale: i.vale ? {
+            pessoa_id: i.vale.pessoa_id, modo: i.vale.modo,
+            parcelas: i.vale.parcelas, competencia_inicio: i.vale.competencia_inicio || null,
+            origem_tipo: i.vale.origem_tipo || null, origem_id: i.vale.origem_id || null,
+            observacao: i.vale.observacao || null, confirmar: i.vale.confirmar || false,
+          } : null,
         })),
       centro_custo: centroCusto || null,
       fornecedor_cliente: fornecedor || null,
@@ -647,6 +738,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       conta_bancaria: !parcelado && jaPago ? contaBancaria || null : null,
       numero_documento_pagamento: !parcelado && jaPago ? numeroDocumentoPagamento || null : null,
       forma_pagamento: !parcelado && jaPago ? formaPagamento || null : null,
+      criar_patrimonio: criarPatrimonio,
     };
   }
 
@@ -656,6 +748,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     if (!validos.length) { setErro("Informe ao menos um produto ou serviço."); return; }
     if (!centroCusto.trim()) { setErro("Selecione o centro de custo."); return; }
     if (valorLiquido <= 0) { setErro("O valor líquido do lançamento deve ser positivo."); return; }
+    if (itens.some((i) => i.vale && (Number(i.valor_total) || 0) <= 0)) {
+      setErro("Item marcado como vale precisa de valor maior que zero."); return;
+    }
     if (!confirmandoDuplicado) {
       setVerificandoDuplicado(true);
       try {
@@ -694,7 +789,18 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       onSujo?.(false);
       onSalvo?.(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
     } catch (e: any) {
-      setErro(e.message || "Erro ao salvar lançamento");
+      if (e.status === 409 && e.detail?.competencias_excedidas) {
+        const idx = itens.findIndex((i) => i.vale?.modo === "folha" && !i.vale?.confirmar);
+        if (idx !== -1) {
+          setErro("Um dos itens marcados como vale passa do limite de 40% do salário na competência. Revise a marcação destacada abaixo.");
+          setPendingErro409({ idx, mensagem: e.detail.mensagem, competencias_excedidas: e.detail.competencias_excedidas || [] });
+          setValeAbertoPara(idx);
+        } else {
+          setErro(e.message || "Erro ao salvar lançamento");
+        }
+      } else {
+        setErro(e.message || "Erro ao salvar lançamento");
+      }
     } finally {
       setSalvando(false); setConfirmando(false); setConfirmandoDuplicado(false); setDuplicados([]);
     }
@@ -702,6 +808,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   return (
     <>
+      {criarPatrimonio && (
+        <div className="card mb-3" style={{ border: "1px solid var(--dourado)", background: "rgba(94,26,46,0.08)" }}>
+          <p style={{ fontSize: "0.8rem", margin: 0 }}>
+            Ao salvar, esta compra cria o item de patrimônio <strong>{criarPatrimonio.nome}</strong>
+            {criarPatrimonio.tipo ? ` (${criarPatrimonio.tipo})` : ""} já vinculado a este lançamento.
+          </p>
+        </div>
+      )}
       {/* Rascunho não salvo de uma edição anterior — retomar ou descartar */}
       {rascunhoPendente && !sujo && (
         <div className="card mb-3" style={{ border: "1px solid var(--amber)", background: "rgba(217,119,6,0.08)" }}>
@@ -740,7 +854,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           <button type="button" className="btn-ghost" title="Colar o código XML da nota fiscal" onClick={() => setXmlAberto((v) => !v)} style={{ fontSize: "0.78rem" }}>colar código XML</button>
           {importando && <Loader2 size={14} className="animate-spin" style={{ color: "var(--dourado-light)" }} />}
         </div>
-        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/png" onChange={onFileSelect} style={{ display: "none" }} />
+        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,image/heic,image/heif" onChange={onFileSelect} style={{ display: "none" }} />
         {xmlAberto && (
           <div style={{ marginTop: "0.6rem", textAlign: "left" }}>
             <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o conteúdo do XML da nota fiscal…"
@@ -786,16 +900,42 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   </select>
                 </Campo>
               ) : (
-                <Campo label="Produto">
-                  <EstoquePicker itens={produtosEstoque} value={it.produto} finalidades={FINALIDADES_ESTOQUE} onChange={(nomeProduto) => {
-                    const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                    const patch: Partial<Item> = { produto: nomeProduto };
-                    const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
-                    if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                    atualizarItem(idx, patch);
-                    if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
-                  }} />
-                </Campo>
+                <div>
+                  <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
+                    <label style={lbl}>Produto</label>
+                    <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                      value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
+                      title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro — não entra automaticamente no estoque.">
+                      <option value="estoque">do estoque</option>
+                      <option value="livre">texto livre</option>
+                    </select>
+                  </div>
+                  {it.modoProduto === "estoque" ? (
+                    // incluirNaoEstocaveis: aqui é lançamento financeiro, não
+                    // consumo de estoque — um item cadastrado só para
+                    // organização financeira (sem controle de saldo) tem que
+                    // aparecer igual a um estocável.
+                    <EstoquePicker itens={produtosEstoque} value={it.produto} finalidades={FINALIDADES_ESTOQUE} incluirNaoEstocaveis onChange={(nomeProduto) => {
+                      const match = produtosEstoque.find((p) => p.nome === nomeProduto);
+                      const patch: Partial<Item> = { produto: nomeProduto };
+                      const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+                      if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+                      atualizarItem(idx, patch);
+                      if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
+                    }} />
+                  ) : (
+                    <>
+                      <input list={`produtos-financeiro-${idx}`} style={inputStyle} value={it.produto}
+                        onChange={(e) => atualizarItem(idx, { produto: e.target.value })}
+                        placeholder="ex.: Supermercado, Material de escritório…" />
+                      {/* Histórico de nomes já usados em lançamentos — não precisa
+                          estar no estoque pra sugerir aqui (ver Opcoes.produtos). */}
+                      <datalist id={`produtos-financeiro-${idx}`}>
+                        {opcoes.produtos.map((p) => <option key={p} value={p} />)}
+                      </datalist>
+                    </>
+                  )}
+                </div>
               )}
               <Campo label="Conta gerencial">
                 <SeletorContaGerencial
@@ -828,18 +968,35 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
               <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
               <Campo label={it.modoValor === "unitario" ? "Valor unitário (R$)" : "Valor unitário (R$) — calculado"}>
-                <input type="number" inputMode="decimal"
+                <CampoMoeda
                   style={it.modoValor === "unitario" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
-                  value={it.valor_unitario} readOnly={it.modoValor === "total"}
-                  onChange={(e) => atualizarItem(idx, { valor_unitario: e.target.value })} />
+                  value={Number(it.valor_unitario) || 0} disabled={it.modoValor === "total"}
+                  onChange={(v) => atualizarItem(idx, { valor_unitario: v ? String(v) : "" })} />
               </Campo>
               <Campo label={it.modoValor === "total" ? "Valor total (R$)" : "Valor total (R$) — calculado"}>
-                <input type="number" inputMode="decimal"
+                <CampoMoeda
                   style={it.modoValor === "total" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
-                  value={it.valor_total} readOnly={it.modoValor === "unitario"}
-                  onChange={(e) => atualizarItem(idx, { valor_total: e.target.value })} />
+                  value={Number(it.valor_total) || 0} disabled={it.modoValor === "unitario"}
+                  onChange={(v) => atualizarItem(idx, { valor_total: v ? String(v) : "" })} />
               </Campo>
             </div>
+            {tipo === "despesa" && (
+              <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
+                <input id={`vale-item-${idx}`} type="checkbox" checked={!!it.vale}
+                  onChange={(e) => e.target.checked ? setValeAbertoPara(idx) : pedirDesmarcarVale(idx)} />
+                <label htmlFor={`vale-item-${idx}`} style={{ fontSize: "0.8rem" }}>É vale de funcionário?</label>
+                {it.vale && (
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    {it.vale.pessoa_nome} — {it.vale.modo === "folha"
+                      ? `${it.vale.parcelas}x na folha a partir de ${it.vale.competencia_inicio}`
+                      : it.vale.origem_label}
+                    {" "}
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                      onClick={() => setValeAbertoPara(idx)}>alterar</button>
+                  </span>
+                )}
+              </div>
+            )}
             <button type="button" className="btn-ghost" title="Cadastrar um novo produto, serviço ou conta gerencial" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
               onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
               <Plus size={13} /> Adicionar {it.tipo_item === "servico" ? "serviço" : "produto"} ou conta gerencial novo(a)
@@ -929,8 +1086,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <input type="checkbox" checked={entregue} onChange={(e) => { entregueTocadoRef.current = true; setEntregue(e.target.checked); }} /> Já entregue / recebido
           </label>
         </Campo>
-        <Campo label="Desconto (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={desconto} onChange={(e) => setDesconto(e.target.value)} placeholder="0,00" /></Campo>
-        <Campo label="Acréscimo (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} placeholder="0,00" /></Campo>
+        <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
+        <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
         <div>
           <label style={lbl}>Valor líquido da nota</label>
           <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
@@ -965,8 +1122,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                       <td>{i + 1}/{parcelas.length}</td>
                       <td><input type="date" style={inputStyle} value={p.data_vencimento}
                         onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-                      <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }} value={p.valor}
-                        onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                      <td><CampoMoeda style={{ ...inputStyle, textAlign: "right" }} value={Number(p.valor) || 0}
+                        onChange={(v) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
                       <td><input style={inputStyle} value={p.numero_boleto || ""} placeholder="opcional" title="Linha digitável desta parcela, se houver"
                         onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, numero_boleto: e.target.value } : x))} /></td>
                       <td style={{ textAlign: "center" }}>
@@ -977,15 +1134,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                     {p.pago && (
                       <tr>
                         <td colSpan={5} style={{ padding: 0, border: 0 }}>
-                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "6px", margin: "0.2rem 0 0.5rem" }}>
+                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "var(--r-sm)", margin: "0.2rem 0 0.5rem" }}>
                             <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
                               <Campo label="Data de pagamento">
                                 <input type="date" style={inputStyle} value={p.data_pagamento || ""}
                                   onChange={(e) => atualizarBaixaParcela(i, { data_pagamento: e.target.value })} />
                               </Campo>
                               <Campo label="Valor pago (R$)">
-                                <input type="number" inputMode="decimal" style={inputStyle} value={p.valor_pago || ""}
-                                  onChange={(e) => atualizarBaixaParcela(i, { valor_pago: e.target.value })} />
+                                <CampoMoeda style={inputStyle} value={Number(p.valor_pago) || 0}
+                                  onChange={(v) => atualizarBaixaParcela(i, { valor_pago: v ? String(v) : "" })} />
                               </Campo>
                               <Campo label="Conta bancária">
                                 <select style={inputStyle} value={p.conta_bancaria || ""} onChange={(e) => atualizarBaixaParcela(i, { conta_bancaria: e.target.value })}>
@@ -1109,7 +1266,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           {jaPago && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
               <Campo label="Data de pagamento"><input type="date" style={inputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></Campo>
-              <Campo label="Valor pago (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={valorPago} onChange={(e) => setValorPago(e.target.value)} /></Campo>
+              <Campo label="Valor pago (R$)"><CampoMoeda style={inputStyle} value={Number(valorPago) || 0} onChange={(v) => setValorPago(v ? String(v) : "")} /></Campo>
               <Campo label="Conta bancária">
                 <select style={inputStyle} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
                   <option value="">Selecione…</option>
@@ -1346,6 +1503,48 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             </div>
           </div>
         </div>
+      )}
+
+      {valeAbertoPara !== null && (
+        <ValeItemModal apresentacao={apresentacaoModais ?? "modal"}
+          valorItem={Number(itens[valeAbertoPara].valor_total) || 0}
+          dataItem={dataEmissao || new Date().toISOString().slice(0, 10)}
+          produtoItem={itens[valeAbertoPara].produto}
+          inicial={itens[valeAbertoPara].vale}
+          onConfirmar={(d) => {
+            // Reabertura após 409 de 40% do salário (ver `pendingErro409` e o
+            // catch de salvar() acima): a 1ª tentativa de confirmar dentro do
+            // modal reproduz o mesmo erro recebido do backend — o modal
+            // mostra o aviso e troca o botão para "Lançar mesmo assim"; só
+            // na 2ª tentativa (já com `confirmar: true`) o vínculo é
+            // gravado localmente, pronto para o usuário clicar de novo em
+            // "Salvar lançamento".
+            if (pendingErro409 && pendingErro409.idx === valeAbertoPara) {
+              const detalhe = pendingErro409;
+              setPendingErro409(null);
+              const err: any = new Error(detalhe.mensagem);
+              err.status = 409; err.detail = { mensagem: detalhe.mensagem, competencias_excedidas: detalhe.competencias_excedidas };
+              return Promise.reject(err);
+            }
+            atualizarItem(valeAbertoPara, { vale: d });
+            setValeAbertoPara(null);
+          }}
+          onCancelar={() => { setPendingErro409(null); setValeAbertoPara(null); }} />
+      )}
+
+      {desmarcandoVale !== null && (
+        <Modal title="Remover o vale deste item?" onClose={() => setDesmarcandoVale(null)} width="440px">
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            Este item ainda não foi salvo, então nenhum vale foi criado. Remover a marcação vai descartar os
+            dados informados (beneficiário e forma de desconto). Confirmar?
+          </p>
+          <div className="flex items-center gap-3 mt-3">
+            <button className="btn-primary" onClick={() => { atualizarItem(desmarcandoVale, { vale: null }); setDesmarcandoVale(null); }}>
+              <Check size={14} /> Sim, remover
+            </button>
+            <button className="btn-ghost" onClick={() => setDesmarcandoVale(null)}><X size={14} /> Não, manter</button>
+          </div>
+        </Modal>
       )}
     </>
   );

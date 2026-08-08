@@ -4,6 +4,7 @@ import { Dna } from "lucide-react";
 import { fetchPedido, fetchPedidos, fetchPlanoContas, movimentarEstoque, FINALIDADES_ESTOQUE } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { EstoquePicker } from "@/components/EstoquePicker";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { Campo, inputStyle, type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES } from "@/components/lancamentos/_shared";
 
@@ -229,7 +230,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
         </Campo>
         {lancarValor && (
           <Campo label="Valor unitário (R$)">
-            <input type="number" inputMode="decimal" style={inputStyle} value={valorUnitario} onChange={(e) => setValorUnitario(e.target.value)} />
+            <CampoMoeda style={inputStyle} value={Number(valorUnitario) || 0} onChange={(v) => setValorUnitario(v ? String(v) : "")} />
           </Campo>
         )}
         <Campo label="Gerar movimentação financeira?" full>

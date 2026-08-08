@@ -125,7 +125,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
-              <CowDataMark size={22} />
+              <CowDataMark size={22} legado />
               <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
               {/* Bolinha de conexão: verde luminoso online, vermelha offline */}
               <span
@@ -147,6 +147,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </Link>
             )}
             <Link href="/app/menu#news" title="News — notícias de pecuária leiteira" aria-label="Abrir News"
+              onClick={(e) => {
+                // Já estamos em /app/menu: o Next faz a navegação por
+                // pushState (mesma rota, sem remontar a página) — pushState
+                // NÃO dispara o evento 'hashchange' que a página escuta, então
+                // o clique não abria nada. Avisa direto por evento customizado.
+                if (path === "/app/menu") {
+                  e.preventDefault();
+                  if (window.location.hash !== "#news") history.pushState(null, "", "/app/menu#news");
+                  window.dispatchEvent(new CustomEvent("app-abrir-news"));
+                }
+              }}
               style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
               <NewsIcon size={19} color="var(--mob-header-fg)" />
             </Link>

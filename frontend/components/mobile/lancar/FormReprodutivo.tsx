@@ -6,14 +6,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import {
-  fetchEstoqueSemen, fetchTouros, fetchAgendaVeterinario, sugestaoLoteEvento, criarMovimentacao,
-  LISTAS_AGENDA_VETERINARIO, type Touro, type AgendaVetResposta,
+  fetchSemenDisponivel, fetchTouros, fetchAgendaVeterinario, sugestaoLoteEvento, criarMovimentacao,
+  LISTAS_AGENDA_VETERINARIO, type SemenDisponivel, type Touro, type AgendaVetResposta,
 } from "@/lib/api";
 import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import {
-  type Animal, type Semen, useCache, useEnvio, hoje, rotuloAnimal,
+  type Animal, useCache, useEnvio, hoje, rotuloAnimal,
   BotoesEscolha, SeletorAnimal, GradeAcoes, MobPill, LinhaPills,
 } from "./comum";
 
@@ -62,65 +62,83 @@ export function FormReprodutivo({ animais, animalFixado }: { animais: Animal[]; 
 }
 
 // ── Inseminação → POST /reproducao/servico ───────────────────────────────────
+// Categoria "fazenda" = cobertura por touro da fazenda (monta natural, sem
+// sêmen estocado) — mesmo conceito do site (FormInseminacao.tsx). Precisa de
+// tratamento à parte porque muda o que é enviado como tipo_servico: sem essa
+// opção, toda cobertura lançada pelo app virava "IA" e debitava dose de sêmen
+// que nunca foi usada de verdade (ver reproducao.py::registrar_servico).
 function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
-  const semen = useCache<Semen[]>("semen", () => fetchEstoqueSemen(), []);
+  const semen = useCache<SemenDisponivel | null>("semen_disponivel", () => fetchSemenDisponivel(), null);
   const [matriz, setMatriz] = useState(animalFixado || "");
   const [data, setData] = useState(hoje());
-  const [categoria, setCategoria] = useState<"convencional" | "sexado">("convencional");
+  const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
   const [touro, setTouro] = useState("");
   const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [catalogoTouros, setCatalogoTouros] = useState<Touro[]>([]);
+  const ehFazenda = categoria === "fazenda";
 
   function salvar() {
     if (!matriz) return erroValidacao("Selecione a matriz.");
     if (!data) return erroValidacao("Informe a data da inseminação.");
     enviar(
       "/reproducao/servico",
-      { numero_matriz: matriz, data_servico: data, tipo_servico: "IA", reprodutor: touro || undefined, tipo_semen: categoria },
-      `Inseminação — matriz ${matriz}${touro ? ` (${touro})` : ""}`,
+      {
+        numero_matriz: matriz, data_servico: data,
+        tipo_servico: ehFazenda ? "Monta natural" : "IA",
+        reprodutor: touro || undefined,
+        tipo_semen: ehFazenda ? undefined : categoria,
+      },
+      `${ehFazenda ? "Monta natural" : "Inseminação"} — matriz ${matriz}${touro ? ` (${touro})` : ""}`,
       () => setTouro(""),
     );
   }
 
-  const opcoes = semen.dados.filter((s) => (s.tipo || "convencional") === categoria).map((s) => s.touro_nome).filter(Boolean);
+  const touros = semen.dados?.touros || [];
+  const opcoes = touros.filter((t) => t.tipo === categoria).map((t) => t.nome);
   const itensCatalogo: TouroPickerItem[] = catalogoTouros.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
   return (
     <>
       <MobCampo label="Matriz (nº / nome)">
         <SeletorAnimal animais={animais} valor={matriz} onChange={setMatriz} placeholder="Buscar matriz…" />
       </MobCampo>
-      <MobCampo label="Data da inseminação">
+      <MobCampo label="Data da inseminação/cobertura">
         <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
       </MobCampo>
-      <MobCampo label="Sêmen sexado ou convencional?">
+      <MobCampo label="Categoria do touro / sêmen">
         <BotoesEscolha
-          opcoes={[{ valor: "convencional", label: "Convencional" }, { valor: "sexado", label: "Sexado" }]}
-          valor={categoria} onChange={(v) => { setCategoria(v); setTouro(""); }}
+          opcoes={[
+            { valor: "convencional", label: "Convencional" }, { valor: "sexado", label: "Sexado" },
+            { valor: "fazenda", label: "Touro da fazenda" },
+          ]}
+          valor={categoria} onChange={(v) => { setCategoria(v); setTouro(""); setIncluirSemEstoque(false); }}
         />
+        {ehFazenda && <p style={{ fontSize: "0.72rem", color: "var(--mob-muted)", marginTop: "0.4rem" }}>Touro da fazenda — registrado como <strong>monta natural</strong>, sem debitar dose de sêmen.</p>}
       </MobCampo>
-      <MobCampo label="Touro / sêmen (opcional)">
-        {!incluirSemEstoque ? (
+      <MobCampo label={ehFazenda ? "Touro (monta natural)" : "Touro / sêmen (opcional)"}>
+        {!incluirSemEstoque || ehFazenda ? (
           <select className="mob-input" value={touro} onChange={(e) => setTouro(e.target.value)}>
-            <option value="">Selecione o sêmen…</option>
+            <option value="">{ehFazenda ? "Selecione o touro…" : "Selecione o sêmen…"}</option>
             {opcoes.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         ) : (
           <TouroPicker className="mob-input" itens={itensCatalogo} value={touro} placeholder="Buscar touro no catálogo NAAB..."
             onChangeTexto={setTouro} onSelecionar={(t) => setTouro(t.nome)} />
         )}
-        {!incluirSemEstoque && !opcoes.length && <p style={{ fontSize: "0.72rem", color: "var(--mob-laranja)", marginTop: 2 }}>Nenhum sêmen {categoria} em estoque.</p>}
-        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--mob-muted)" }}>
-          <input type="checkbox" checked={incluirSemEstoque}
-            onChange={(e) => {
-              setIncluirSemEstoque(e.target.checked);
-              setTouro("");
-              if (e.target.checked && !catalogoTouros.length) {
-                fetchComCache<Touro[]>("touros_naab", () => fetchTouros()).then(({ dados }) => { if (dados) setCatalogoTouros(dados); });
-              }
-            }} />
-          Incluir touros sem estoque (catálogo NAAB)
-        </label>
+        {!opcoes.length && <p style={{ fontSize: "0.72rem", color: "var(--mob-laranja)", marginTop: 2 }}>{ehFazenda ? "Nenhum touro da fazenda cadastrado." : `Nenhum sêmen ${categoria} em estoque.`}</p>}
+        {!ehFazenda && (
+          <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--mob-muted)" }}>
+            <input type="checkbox" checked={incluirSemEstoque}
+              onChange={(e) => {
+                setIncluirSemEstoque(e.target.checked);
+                setTouro("");
+                if (e.target.checked && !catalogoTouros.length) {
+                  fetchComCache<Touro[]>("touros_naab", () => fetchTouros()).then(({ dados }) => { if (dados) setCatalogoTouros(dados); });
+                }
+              }} />
+            Incluir touros sem estoque (catálogo NAAB)
+          </label>
+        )}
       </MobCampo>
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
@@ -484,7 +502,9 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
 // Lança o D0 do protocolo para uma ou mais matrizes. As etapas seguintes
 // (D7/D9/D11) entram na agenda pelo backend. O protocolo hormonal é fixo no
 // backend — aqui exibimos os hormônios de cada dia para conferência.
-function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+// Exportado para a tela Lançar > Protocolos usar o MESMO formulário — dois
+// caminhos até o mesmo lançamento, uma só implementação (ver FormProtocolos).
+export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const { rotuloDe } = useEstadosReprodutivos();
   const [matrizes, setMatrizes] = useState<string[]>(animalFixado ? [animalFixado] : []);

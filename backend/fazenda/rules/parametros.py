@@ -32,6 +32,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "estoque_semen": "Estoque de sêmen",
     "folha_rh": "Folha de pagamento / RH",
     "estrutura_fazenda": "Estrutura da fazenda",
+    "financeiro": "Financeiro",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -85,7 +86,11 @@ DEFINICOES: list[dict] = [
     # ---- Agenda e sistema ------------------------------------------------------
     {"chave": "janela_eventos_sanitarios_passado", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no passado", "valor": 120, "unidade": "dias"},
     {"chave": "janela_eventos_sanitarios_futuro", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no futuro", "valor": 180, "unidade": "dias"},
+    {"chave": "cronograma_sanitario_dias_aviso", "grupo": "agenda_sistema", "label": "Cronograma sanitário — aviso obrigatório antes do evento sem veterinário definido", "valor": 5, "unidade": "dias"},
+    {"chave": "cronograma_sanitario_min_animais_agrupamento", "grupo": "agenda_sistema", "label": "Calendário sanitário — mínimo de animais para sugerir chamada do veterinário", "valor": 15, "unidade": "animais"},
+    {"chave": "cronograma_sanitario_janela_agrupamento_dias", "grupo": "agenda_sistema", "label": "Calendário sanitário — janela de agrupamento entre eventos próximos", "valor": 7, "unidade": "dias"},
     {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
+    {"chave": "patrimonio_atualizacao_valor_mercado_meses", "grupo": "agenda_sistema", "label": "Patrimônio não depreciável — frequência padrão de atualização do valor de mercado (0 = nunca)", "valor": 12, "unidade": "meses"},
     {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
 
     # ---- Metas reprodutivas ----------------------------------------------------
@@ -127,6 +132,11 @@ DEFINICOES: list[dict] = [
     # (nem em Lote, nem em models já existentes), então entra aqui como um
     # parâmetro simples, editável em Configurações > Parâmetros.
     {"chave": "area_total_hectares", "grupo": "estrutura_fazenda", "label": "Área total da fazenda", "valor": 0, "tipo": "float", "unidade": "ha"},
+
+    # ---- Financeiro — RMCA (Receita Menos Custo com Alimentação, Financeiro
+    # > RMCA). Padrão 0 (ponto de equilíbrio) preserva o comportamento atual
+    # (verde se RMCA >= 0) até o usuário definir uma meta de margem própria.
+    {"chave": "meta_rmca", "grupo": "financeiro", "label": "RMCA mínimo aceitável", "valor": 0, "tipo": "float", "unidade": "R$"},
 ]
 
 
@@ -351,6 +361,25 @@ def janela_eventos_sanitarios_futuro() -> int:
     return int(get_param("janela_eventos_sanitarios_futuro", 180) or 180)
 
 
+def cronograma_sanitario_dias_aviso() -> int:
+    return int(get_param("cronograma_sanitario_dias_aviso", 5) or 5)
+
+
+def cronograma_sanitario_min_animais_agrupamento() -> int:
+    return int(get_param("cronograma_sanitario_min_animais_agrupamento", 15) or 15)
+
+
+def cronograma_sanitario_janela_agrupamento_dias() -> int:
+    return int(get_param("cronograma_sanitario_janela_agrupamento_dias", 7) or 7)
+
+
+def patrimonio_atualizacao_valor_mercado_meses() -> int:
+    """Frequência padrão (em meses) de "atualizar valor de mercado" pra
+    patrimônio não depreciável (ex.: terra) sem override próprio — ver
+    Patrimonio.atualizacao_valor_mercado_frequencia_meses. 0 = nunca."""
+    return int(get_param("patrimonio_atualizacao_valor_mercado_meses", 12) or 12)
+
+
 def dias_contas_a_pagar_agenda() -> int:
     return int(get_param("dias_contas_a_pagar_agenda", 10) or 10)
 
@@ -394,6 +423,15 @@ def area_total_hectares() -> float:
     return float(get_param("area_total_hectares", 0) or 0)
 
 
+def meta_rmca() -> float:
+    """Valor mínimo aceitável de RMCA (Receita Menos Custo com Alimentação)
+    no período (Configurações > Parâmetros > Financeiro) — usado para
+    colorir o indicador em Financeiro > RMCA (site e app). Padrão 0 (ponto
+    de equilíbrio), preservando o comportamento anterior (RMCA >= 0 = verde)
+    até o usuário definir uma meta de margem própria."""
+    return float(get_param("meta_rmca", 0) or 0)
+
+
 def minimos_semen_por_tipo() -> dict[str, int]:
     """Único ponto de leitura do estoque mínimo de sêmen, agregado por tipo —
     usado em `cadastro.semen_disponivel` e no alerta de sêmen abaixo do
@@ -402,10 +440,39 @@ def minimos_semen_por_tipo() -> dict[str, int]:
     return {"convencional": estoque_minimo_semen_convencional(), "sexado": estoque_minimo_semen_sexado()}
 
 
+def meta_taxa_servico() -> float:
+    """Meta de taxa de serviço do rebanho (Configurações > Parâmetros >
+    Metas reprodutivas) — usada em `relatorios_gerenciais.taxa_servico_prenhez`
+    e no benchmark reprodutivo da Capa (`indicadores._metas_benchmark`)."""
+    return float(get_param("meta_taxa_servico", 50) or 50)
+
+
+def meta_taxa_prenhez() -> float:
+    """Meta de taxa de prenhez do rebanho — usada no benchmark reprodutivo da
+    Capa (`indicadores._metas_benchmark`, chave "taxa_prenhez_ciclo")."""
+    return float(get_param("meta_taxa_prenhez", 18) or 18)
+
+
+def meta_taxa_concepcao() -> float:
+    """Meta de taxa de concepção em vacas — usada no benchmark reprodutivo da
+    Capa (`indicadores._metas_benchmark`, categorias "todas"/"vaca")."""
+    return float(get_param("meta_taxa_concepcao", 35) or 35)
+
+
+def meta_concepcao_novilha() -> float:
+    """Meta de taxa de concepção em novilhas — usada no benchmark reprodutivo
+    da Capa (`indicadores._metas_benchmark`, categoria "novilha"), separada
+    da meta de vacas acima (`meta_taxa_concepcao`)."""
+    return float(get_param("meta_concepcao_novilha", 60) or 60)
+
+
 # Metas do benchmark (nosso valor será comparado a estes) — usadas na capa.
-# meta = alvo da fazenda; media_pais = referência de mercado. Ainda não
-# exposto na UI de Parâmetros (candidato a exposição futura — ver CSV
-# entregue ao usuário em 2026-07-16).
+# meta = alvo da fazenda; media_pais = referência de mercado. As 3 primeiras
+# chaves (taxa_servico/taxa_concepcao/taxa_prenhez_ciclo) têm parâmetro
+# editável próprio (accessors acima) — o "meta" delas aqui só serve de
+# fallback (nunca lido diretamente, ver `indicadores._metas_benchmark`). As
+# demais ainda não têm parâmetro equivalente, continuam fixas (candidato a
+# exposição futura — ver CSV entregue ao usuário em 2026-07-16).
 BENCHMARK_METAS: dict[str, dict] = {
     "taxa_servico":        {"meta": 50.0, "media_pais": 55.0, "maior_melhor": True},
     "taxa_concepcao":      {"meta": 35.0, "media_pais": 40.0, "maior_melhor": True},

@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe } from "lucide-react";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, formatDate, ehAdmin } from "@/lib/api";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X } from "lucide-react";
+import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -269,7 +269,7 @@ export function ProducaoLeiteira() {
     producaoFmt: r.producao_kg != null ? r.producao_kg : "—",
   })), [filtradosOrdenadosBase]);
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
   const badgeStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" };
 
   const animaisDisponiveis = useMemo(() => opcoes(regs ?? [], (r) => r.numero), [regs]);
@@ -631,7 +631,7 @@ export function ProducaoLeiteira() {
                   {curva.map((c) => (
                     <div key={c.rot} className="flex items-center gap-2">
                       <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", minWidth: "4rem" }}>{c.rot}d</span>
-                      <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "4px", height: "16px", overflow: "hidden" }}><div style={{ width: `${(c.media / maxCurva) * 100}%`, height: "100%", background: "var(--green-light)", minWidth: "2px" }} /></div>
+                      <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "var(--r-sm)", height: "16px", overflow: "hidden" }}><div style={{ width: `${(c.media / maxCurva) * 100}%`, height: "100%", background: "var(--green-light)", minWidth: "2px" }} /></div>
                       <span style={{ fontSize: "0.75rem", fontWeight: 700, minWidth: "5.5rem", textAlign: "right" }}>{c.media} kg <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>({c.n})</span></span>
                     </div>
                   ))}
@@ -790,7 +790,7 @@ export function RelatoriosPesagemView() {
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  useEffect(() => {
+  const carregarRelatorio = () => {
     setCarregando(true); setErro(null);
     fetchRelatorioPesagemCorporal({
       numero_matriz: relTipo === "animal" ? relAnimal || undefined : undefined,
@@ -798,13 +798,70 @@ export function RelatoriosPesagemView() {
       data_inicio: relIni || undefined,
       data_fim: relFim || undefined,
     }).then((d) => setLinhas(d.linhas)).catch((e) => setErro(e.message)).finally(() => setCarregando(false));
-  }, [relTipo, relAnimal, relLote, relIni, relFim]);
+  };
+  useEffect(carregarRelatorio, [relTipo, relAnimal, relLote, relIni, relFim]);
+
+  // G7 — "Pesagens lançadas": listagem individual (com id), mesmos filtros do
+  // relatório acima, para editar (peso/data) ou excluir uma pesagem específica.
+  const admin = ehAdmin();
+  const [pesagens, setPesagens] = useState<PesagemLinha[] | null>(null);
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editVals, setEditVals] = useState({ data: "", peso: "" });
+
+  const carregarPesagens = () => {
+    fetchPesagens({
+      numero_matriz: relTipo === "animal" ? relAnimal || undefined : undefined,
+      grupo: relTipo === "lote" ? relLote || undefined : undefined,
+      data_inicio: relIni || undefined,
+      data_fim: relFim || undefined,
+    }).then((d) => setPesagens(d.pesagens)).catch(() => setPesagens([]));
+  };
+  useEffect(carregarPesagens, [relTipo, relAnimal, relLote, relIni, relFim]);
+
+  const iniciarEdicaoPesagem = (p: PesagemLinha) => {
+    setEditId(p.id);
+    setEditVals({ data: p.data_pesagem, peso: String(p.peso_kg) });
+  };
+
+  const salvarEdicaoPesagem = async (p: PesagemLinha) => {
+    setOcupado(p.id);
+    try {
+      await atualizarPesagem(p.id, { data_pesagem: editVals.data || undefined, peso_kg: editVals.peso ? Number(editVals.peso.replace(",", ".")) : undefined });
+      setEditId(null);
+      carregarPesagens();
+      carregarRelatorio();
+    } catch (e: any) { setErro(e.message || "Erro ao editar pesagem"); }
+    finally { setOcupado(null); }
+  };
+
+  // Mesmo padrão de app/sanidade/page.tsx: admin exclui na hora, operador
+  // solicita e aguarda aprovação — via motor genérico de exclusões.
+  const excluirPesagem = async (p: PesagemLinha) => {
+    const msg = admin
+      ? `Excluir a pesagem de ${p.numero_matriz} em ${formatDate(p.data_pesagem)}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão da pesagem de ${p.numero_matriz} em ${formatDate(p.data_pesagem)}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setOcupado(p.id); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("pesagem_corporal", String(p.id));
+      if (r.status === "excluido") {
+        carregarPesagens();
+        carregarRelatorio();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) { setErro(e.message || "Erro ao excluir"); }
+    finally { setOcupado(null); }
+  };
 
   const inputStyle: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
   };
   const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
+  const inpEdit: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
 
   return (
     <div className="px-6 pt-6 space-y-4">
@@ -870,6 +927,59 @@ export function RelatoriosPesagemView() {
         )}
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.35rem" }}>GMD: ganho médio diário entre a primeira e a última pesagem do período. GPD: média dos ganhos diários entre pesagens consecutivas.</p>
       </div>
+
+      <div className="card">
+        <div className="card-header mb-3">Pesagens lançadas</div>
+        {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
+        <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
+          <table className="fazenda-table">
+            <thead>
+              <tr><th>Data</th><th>Animal</th><th>Lote</th><th style={{ textAlign: "right" }}>Peso (kg)</th><th>Fase</th><th style={{ textAlign: "right" }}>Ações</th></tr>
+            </thead>
+            <tbody>
+              {(pesagens || []).map((p) => {
+                const editando = editId === p.id;
+                return (
+                  <Fragment key={p.id}>
+                    <tr>
+                      <td style={{ fontSize: "0.78rem" }}>{formatDate(p.data_pesagem)}</td>
+                      <td style={{ fontWeight: 700 }}>{p.numero_matriz}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{p.grupo_primario || "—"}</td>
+                      <td style={{ textAlign: "right" }}>{p.peso_kg}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{p.fase || "—"}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {!editando && (
+                          <span style={{ display: "inline-flex", gap: "0.3rem" }}>
+                            <button title="Editar" onClick={() => iniciarEdicaoPesagem(p)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></button>
+                            <button title={admin ? "Excluir" : "Solicitar exclusão"} disabled={ocupado === p.id} onClick={() => excluirPesagem(p)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                    {editando && (
+                      <tr>
+                        <td colSpan={6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
+                              <input type="date" style={inpEdit} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
+                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Peso (kg)</label>
+                              <input type="number" inputMode="decimal" style={inpEdit} value={editVals.peso} onChange={(e) => setEditVals((s) => ({ ...s, peso: e.target.value }))} /></div>
+                          </div>
+                          <div className="flex gap-2 mt-2">
+                            <button className="btn-primary" disabled={ocupado === p.id} onClick={() => salvarEdicaoPesagem(p)} style={{ fontSize: "0.78rem" }}><Check size={13} /> {ocupado === p.id ? "…" : "Salvar"}</button>
+                            <button className="btn-ghost" disabled={ocupado === p.id} onClick={() => setEditId(null)} style={{ fontSize: "0.78rem" }}><X size={13} /> Cancelar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {!(pesagens || []).length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma pesagem lançada no filtro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -888,6 +998,11 @@ export function RelatoriosBstView() {
   const [fDe, setFDe] = useState("");
   const [fAte, setFAte] = useState("");
   const [ajustarAberto, setAjustarAberto] = useState(false);
+  // Como olhar o histórico: "animal" é a tabela linha-a-linha de sempre;
+  // "data" agrupa num cartão por dia de aplicação (é assim que o BST acontece
+  // na prática — o técnico vem, aplica no lote inteiro e vai embora).
+  const [verPor, setVerPor] = useState<"animal" | "data">("animal");
+  const [diaAberto, setDiaAberto] = useState<string | null>(null);
 
   const carregar = () => {
     fetchRelatorioBst().then((d) => setHistorico(d.aplicacoes)).catch((e) => setErro(e.message));
@@ -910,6 +1025,25 @@ export function RelatoriosBstView() {
 
   const vacasDistintas = useMemo(() => new Set(filtrado.map((r) => r.numero_matriz)).size, [filtrado]);
   const nuncaAplicadas: any[] = agenda?.bst_nunca_aplicados ?? [];
+
+  // Um grupo por dia de aplicação, do mais recente para o mais antigo.
+  // Aplicação sem data cai num grupo próprio no fim, em vez de sumir.
+  const porDia = useMemo(() => {
+    const mapa = new Map<string, AplicacaoBst[]>();
+    filtrado.forEach((r) => {
+      const chave = r.data_aplicacao || "";
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave)!.push(r);
+    });
+    return Array.from(mapa.entries())
+      .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+      .map(([data, itens]) => ({
+        data,
+        itens,
+        animais: new Set(itens.map((r) => r.numero_matriz)).size,
+        produtos: Array.from(new Set(itens.map((r) => r.produto).filter(Boolean))),
+      }));
+  }, [filtrado]);
 
   const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
   const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -945,26 +1079,96 @@ export function RelatoriosBstView() {
       </div>
 
       <div className="card">
-        <div className="card-header mb-2 flex items-center gap-2"><Syringe size={14} /> Histórico de aplicações ({filtrado.length})</div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead><tr><th style={th}>Data</th><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
-            <tbody>
-              {filtrado.map((r, i) => (
-                <tr key={`${r.numero_matriz}-${r.data_aplicacao}-${i}`}>
-                  <td style={td}>{r.data_aplicacao ? new Date(r.data_aplicacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
-                  <td style={td}>{r.lote || "—"}</td>
-                  <td style={td}>{r.categoria || "—"}</td>
-                  <td style={td}>{r.produto}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
-                  <td style={td}>{r.responsavel || "—"}</td>
-                </tr>
-              ))}
-              {!filtrado.length && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "var(--text-muted)" }}>Nenhuma aplicação no filtro.</td></tr>}
-            </tbody>
-          </table>
+        <div className="card-header mb-2 flex items-center justify-between gap-2" style={{ flexWrap: "wrap" }}>
+          <span className="flex items-center gap-2"><Syringe size={14} /> Histórico de aplicações ({filtrado.length})</span>
+          <span className="flex items-center gap-3" style={{ fontSize: "0.78rem", fontWeight: 400, textTransform: "none" }}>
+            <span style={{ color: "var(--text-muted)" }}>Ver por:</span>
+            {([["animal", "Animal"], ["data", "Data"]] as const).map(([v, rotulo]) => (
+              <label key={v} className="flex items-center gap-1.5" style={{ cursor: "pointer" }}>
+                <input type="radio" name="bst-ver-por" checked={verPor === v}
+                  onChange={() => { setVerPor(v); setDiaAberto(null); }} />
+                {rotulo}
+              </label>
+            ))}
+          </span>
         </div>
+
+        {verPor === "animal" ? (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead><tr><th style={th}>Data</th><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
+              <tbody>
+                {filtrado.map((r, i) => (
+                  <tr key={`${r.numero_matriz}-${r.data_aplicacao}-${i}`}>
+                    <td style={td}>{r.data_aplicacao ? new Date(r.data_aplicacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
+                    <td style={td}>{r.lote || "—"}</td>
+                    <td style={td}>{r.categoria || "—"}</td>
+                    <td style={td}>{r.produto}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
+                    <td style={td}>{r.responsavel || "—"}</td>
+                  </tr>
+                ))}
+                {!filtrado.length && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "var(--text-muted)" }}>Nenhuma aplicação no filtro.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {porDia.map((g) => {
+              const aberto = diaAberto === g.data;
+              return (
+                <div key={g.data || "sem-data"} style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setDiaAberto(aberto ? null : g.data)}
+                    aria-expanded={aberto}
+                    title={aberto ? "Recolher as aplicações deste dia" : "Ver as aplicações deste dia"}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap",
+                      padding: "0.6rem 0.8rem", background: "none", border: "none", color: "var(--text)",
+                      cursor: "pointer", textAlign: "left", fontSize: "0.85rem",
+                    }}
+                  >
+                    {aberto ? <ChevronDown size={14} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />}
+                    <span style={{ fontWeight: 700 }}>
+                      Data: {g.data ? new Date(g.data + "T00:00:00").toLocaleDateString("pt-BR") : "Sem data"}
+                    </span>
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Qtde: <strong style={{ color: "var(--text)" }}>{g.animais}</strong> {g.animais === 1 ? "animal" : "animais"}
+                    </span>
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Produto: <strong style={{ color: "var(--text)" }}>{g.produtos.join(", ") || "—"}</strong>
+                    </span>
+                  </button>
+
+                  {aberto && (
+                    <div style={{ overflowX: "auto", borderTop: "1px solid var(--border)" }}>
+                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                        <thead><tr><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
+                        <tbody>
+                          {g.itens.map((r, i) => (
+                            <tr key={`${r.numero_matriz}-${i}`}>
+                              <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
+                              <td style={td}>{r.lote || "—"}</td>
+                              <td style={td}>{r.categoria || "—"}</td>
+                              <td style={td}>{r.produto}</td>
+                              <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
+                              <td style={td}>{r.responsavel || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {!porDia.length && (
+              <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", padding: "0.6rem" }}>Nenhuma aplicação no filtro.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {ajustarAberto && (

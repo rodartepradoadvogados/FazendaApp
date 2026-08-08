@@ -45,7 +45,7 @@ export default function CadastroSemenMinimo() {
 
   const inputStyle = {
     width: "5rem", textAlign: "right" as const, background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.2rem 0.4rem", fontSize: "0.82rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.2rem 0.4rem", fontSize: "0.82rem",
   };
 
   return (

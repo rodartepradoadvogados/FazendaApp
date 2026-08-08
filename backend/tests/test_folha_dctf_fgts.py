@@ -1,12 +1,13 @@
 """
-FGTS/DCTF na folha de pagamento (campos opcionais por lançamento) + geração
-das guias consolidadas de FGTS/DCTF (contas a pagar de PROJEÇÃO — nenhuma
-fórmula legal real de FGTS/DCTF, nenhuma integração com sistemas do governo):
+FGTS/DCTF na folha de pagamento:
 - `_calcular_encargo_projetado`: valor explícito tem prioridade sobre
-  percentual×bruto; sem os dois, fica None e não afeta nada;
-- `POST /cadastro/folha-pagamento/gerar-guias`: soma o valor_fgts/valor_dctf
-  de TODOS os lançamentos da competência, cria duas ContaGerencial com
-  vencimento no dia 20 do mês seguinte (editável), e bloqueia duplicata.
+  percentual×bruto; sem os dois, fica None e não afeta nada (campos
+  opcionais por lançamento de folha, informativos).
+- `POST /cadastro/folha-pagamento/guias`: lança uma guia de FGTS/DCTF de
+  verdade (manual ou por leitura automática), criando a conta a pagar E o
+  registro estruturado em GuiaFolhaEncargo — substitui o antigo "gerar
+  guias" (soma projetada sem vínculo com guia real, removido por decisão
+  do usuário).
 """
 from __future__ import annotations
 
@@ -142,129 +143,76 @@ def test_editar_folha_recalcula_fgts_dctf(client):
 
 
 # ---------------------------------------------------------------------------
-# Geração das guias consolidadas
+# Lançamento de guia de FGTS/DCTF (manual ou por leitura automática)
 # ---------------------------------------------------------------------------
-def test_preview_guias_soma_todos_os_funcionarios(client):
+def test_lancar_guia_fgts_cria_conta_a_pagar_e_registro_estruturado(client):
     c, engine = client
-    p1 = _criar_pessoa(engine, "Fulano")
-    p2 = _criar_pessoa(engine, "Beltrano")
-
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": p1, "competencia": "2026-07", "valor_bruto": 3000.0, "valor_fgts": 240.0, "valor_dctf": 100.0,
+    r = c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "fgts", "competencia": "2026-07", "valor_principal": 1240.0,
+        "data_vencimento": "2026-08-20", "linha_digitavel": "858700000012400123456789012345678901234567",
     })
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": p2, "competencia": "2026-07", "valor_bruto": 2000.0, "valor_fgts": 160.0, "valor_dctf": 80.0,
-    })
-    # Um lançamento de outra competência não deve entrar na soma.
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": p1, "competencia": "2026-08", "valor_bruto": 3000.0, "valor_fgts": 999.0,
-    })
-
-    r = c.get("/cadastro/folha-pagamento/guias-preview", params={"competencia": "2026-07"})
     assert r.status_code == 200, r.text
     dados = r.json()
-    assert dados["valor_fgts"] == 400.0
-    assert dados["valor_dctf"] == 180.0
-    assert dados["quantidade_lancamentos"] == 2
-    assert dados["data_vencimento_sugerida"] == "2026-08-20"
-    assert dados["ja_gerado"] is False
+    assert dados["tipo"] == "fgts"
+    assert dados["valor_total"] == 1240.0
+    assert dados["origem"] == "manual"
+    numero_lancamento = dados["numero_lancamento"]
+    assert numero_lancamento
+
+    with Session(engine) as s:
+        conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+        assert conta is not None
+        assert conta.tipo_documento == "Guia FGTS"
+        assert conta.valor_total == 1240.0
+        assert conta.data_vencimento == date(2026, 8, 20)
+        assert conta.numero_boleto == "858700000012400123456789012345678901234567"
 
 
-def test_gerar_guias_cria_duas_contas_com_vencimento_dia_20_mes_seguinte(client):
+def test_lancar_guia_dctf_soma_principal_multa_juros_no_valor_total(client):
     c, engine = client
-    p1 = _criar_pessoa(engine, "Fulano")
-    p2 = _criar_pessoa(engine, "Beltrano")
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": p1, "competencia": "2026-07", "valor_bruto": 3000.0, "valor_fgts": 240.0, "valor_dctf": 100.0,
+    r = c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "dctf", "competencia": "2026-07", "codigo_receita": "1017",
+        "valor_principal": 850.0, "valor_multa": 20.0, "valor_juros": 22.5,
+        "data_vencimento": "2026-08-20", "origem": "leitura_automatica",
     })
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": p2, "competencia": "2026-07", "valor_bruto": 2000.0, "valor_fgts": 160.0, "valor_dctf": 80.0,
-    })
-
-    r = c.post("/cadastro/folha-pagamento/gerar-guias", json={"competencia": "2026-07"})
     assert r.status_code == 200, r.text
     dados = r.json()
-    assert dados["data_vencimento"] == "2026-08-20"
-    contas = dados["contas"]
-    assert len(contas) == 2
-    fgts = next(x for x in contas if x["tipo_documento"] == "Guia FGTS")
-    dctf = next(x for x in contas if x["tipo_documento"] == "Guia DCTF")
-    assert fgts["valor_total"] == 400.0
-    assert dctf["valor_total"] == 180.0
-    assert fgts["data_vencimento"] == "2026-08-20"
-    assert fgts["tipo"] == "despesa"
-    assert fgts["origem"] == "auto"
-    assert fgts["centro_custo"] == "Pecuária Leiteira"
+    assert dados["tipo"] == "dctf"
+    assert dados["codigo_receita"] == "1017"
+    assert dados["valor_total"] == 892.5
+    assert dados["origem"] == "leitura_automatica"
 
     with Session(engine) as s:
-        todas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento.in_(["Guia FGTS", "Guia DCTF"]))).all()
-        assert len(todas) == 2
-        assert {c.numero_lancamento for c in todas} == {fgts["numero_lancamento"], dctf["numero_lancamento"]}
+        conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados["numero_lancamento"])).first()
+        assert conta.tipo_documento == "Guia DCTF"
+        assert conta.valor_total == 892.5
 
 
-def test_gerar_guias_aceita_valor_e_vencimento_editados_antes_de_confirmar(client):
+def test_lancar_guia_tipo_invalido_da_erro(client):
     c, engine = client
-    pessoa_id = _criar_pessoa(engine)
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3000.0, "valor_fgts": 240.0,
+    r = c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "outro", "competencia": "2026-07", "valor_principal": 100.0, "data_vencimento": "2026-08-20",
     })
+    assert r.status_code == 400
 
-    r = c.post("/cadastro/folha-pagamento/gerar-guias", json={
-        "competencia": "2026-07", "valor_fgts": 999.0, "data_vencimento": "2026-08-25",
+
+def test_lancar_guia_valor_total_zero_da_erro(client):
+    c, engine = client
+    r = c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "fgts", "competencia": "2026-07", "valor_principal": 0.0, "data_vencimento": "2026-08-20",
     })
+    assert r.status_code == 400
+
+
+def test_listar_guias_traz_as_mais_recentes_primeiro(client):
+    c, engine = client
+    c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "fgts", "competencia": "2026-06", "valor_principal": 100.0, "data_vencimento": "2026-07-20",
+    })
+    c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "dctf", "competencia": "2026-07", "valor_principal": 200.0, "data_vencimento": "2026-08-20",
+    })
+    r = c.get("/cadastro/folha-pagamento/guias")
     assert r.status_code == 200, r.text
-    fgts = next(x for x in r.json()["contas"] if x["tipo_documento"] == "Guia FGTS")
-    assert fgts["valor_total"] == 999.0
-    assert fgts["data_vencimento"] == "2026-08-25"
-
-
-def test_gerar_guias_bloqueia_duplicata(client):
-    c, engine = client
-    pessoa_id = _criar_pessoa(engine)
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3000.0, "valor_fgts": 240.0, "valor_dctf": 100.0,
-    })
-
-    r1 = c.post("/cadastro/folha-pagamento/gerar-guias", json={"competencia": "2026-07"})
-    assert r1.status_code == 200, r1.text
-
-    r2 = c.post("/cadastro/folha-pagamento/gerar-guias", json={"competencia": "2026-07"})
-    assert r2.status_code == 400, r2.text
-    assert "já foram geradas" in r2.json()["detail"]
-
-    # E o preview passa a refletir isso.
-    preview = c.get("/cadastro/folha-pagamento/guias-preview", params={"competencia": "2026-07"})
-    assert preview.json()["ja_gerado"] is True
-
-    with Session(engine) as s:
-        todas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento.in_(["Guia FGTS", "Guia DCTF"]))).all()
-        assert len(todas) == 2  # não duplicou
-
-
-def test_gerar_guias_sem_lancamentos_na_competencia_falha(client):
-    c, engine = client
-    r = c.post("/cadastro/folha-pagamento/gerar-guias", json={"competencia": "2026-07"})
-    assert r.status_code == 404, r.text
-
-
-def test_gerar_guias_sem_nenhum_valor_fgts_dctf_lancado_falha(client):
-    c, engine = client
-    pessoa_id = _criar_pessoa(engine)
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3000.0,
-    })
-    r = c.post("/cadastro/folha-pagamento/gerar-guias", json={"competencia": "2026-07"})
-    assert r.status_code == 400, r.text
-
-
-def test_gerar_guias_com_apenas_fgts_lancado_cria_so_uma_conta(client):
-    c, engine = client
-    pessoa_id = _criar_pessoa(engine)
-    c.post("/cadastro/folha-pagamento", json={
-        "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3000.0, "valor_fgts": 240.0,
-    })
-    r = c.post("/cadastro/folha-pagamento/gerar-guias", json={"competencia": "2026-07"})
-    assert r.status_code == 200, r.text
-    contas = r.json()["contas"]
-    assert len(contas) == 1
-    assert contas[0]["tipo_documento"] == "Guia FGTS"
+    competencias = [g["competencia"] for g in r.json()]
+    assert competencias == ["2026-07", "2026-06"]

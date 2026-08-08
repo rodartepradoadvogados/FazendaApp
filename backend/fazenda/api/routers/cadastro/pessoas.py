@@ -23,7 +23,7 @@ router = APIRouter()
 # validação de tipos passou a consultar a tabela TipoPessoa (ver
 # seed_tipos_pessoa/_validar_tipos), que é editável em tempo de execução pelo
 # botão "+" do Cadastro de Pessoas.
-TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços", "Inseminador"]
+TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Diarista", "Prestador de serviços", "Inseminador"]
 
 # "Empreiteiro" já nasce cadastrado — usado pelo módulo de Empreita (Financeiro
 # > Ações > Folha de Pagamento).

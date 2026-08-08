@@ -7,12 +7,14 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 
-const LABEL_TIPO: Record<string, string> = { funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
+const LABEL_TIPO: Record<string, string> = {
+  funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
+};
 const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
 
 const selStyle: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 

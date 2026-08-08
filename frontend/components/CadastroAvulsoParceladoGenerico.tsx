@@ -15,6 +15,7 @@ import { SecaoRecolhivel } from "@/components/ui";
 import { ParcelamentoEditor, type Parcela } from "@/components/ParcelamentoEditor";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 export type ParcelaAvulsa = { id: number; data_vencimento: string; valor: number; status: string; numero_lancamento_gerado?: string | null };
 export type ValeItemAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
@@ -192,7 +193,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
           </div>
           <div>
             <label style={lbl}>Valor total (R$)</label>
-            <input type="number" step="0.01" style={inputSm} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} />
+            <CampoMoeda style={inputSm} value={Number(valorTotal) || 0} onChange={(v) => setValorTotal(v ? String(v) : "")} />
           </div>
           <div>
             <label style={lbl}>Forma de pagamento</label>
@@ -247,7 +248,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
         {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{textoVazioListagem}</p>}
         {itens && itens.map((item) => (
-          <div key={item.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.8rem", marginBottom: "0.8rem" }}>
+          <div key={item.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.8rem", marginBottom: "0.8rem" }}>
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <strong>{item.pessoa_nome}</strong> — {item.descricao}
@@ -292,7 +293,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
                                 <div><label style={lbl}>Vencimento</label>
                                   <input type="date" style={inputSm} value={editParcelaData} onChange={(e) => setEditParcelaData(e.target.value)} /></div>
                                 <div><label style={lbl}>Valor (R$)</label>
-                                  <input type="number" step="0.01" style={inputSm} value={editParcelaValor} onChange={(e) => setEditParcelaValor(e.target.value)} /></div>
+                                  <CampoMoeda style={inputSm} value={Number(editParcelaValor) || 0} onChange={(v) => setEditParcelaValor(v ? String(v) : "")} /></div>
                               </div>
                               {parcelaMsg && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0 0 0.5rem" }}>{parcelaMsg}</p>}
                               <div style={{ display: "flex", gap: "0.5rem" }}>

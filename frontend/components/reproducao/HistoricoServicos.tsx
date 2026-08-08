@@ -4,8 +4,8 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Plus, Search, X } from "lucide-react";
-import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -31,7 +31,7 @@ const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLoca
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const ddmm = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
-const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
 export default function HistoricoServicos({ foco, titulo, descricao }: { foco: Foco; titulo: string; descricao: string }) {
   const [regs, setRegs] = useState<Serv[] | null>(null);
@@ -69,6 +69,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
   });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
 
   const abrirEdicao = (s: Serv) => {
     setEditando(s);
@@ -99,6 +100,32 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       carregar();
     } catch (e: any) {
       setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
+
+  // Passa pelo fluxo central e auditado de exclusão (POST /exclusoes/confirmar),
+  // igual ao botão de frontend/app/sanidade/page.tsx:960-982 — admin exclui na
+  // hora (e a dose de sêmen debitada por este serviço é estornada
+  // automaticamente pelo motor genérico), operador vira uma solicitação
+  // pendente de aprovação.
+  const excluir = async (s: Serv) => {
+    const msg = admin
+      ? `Excluir o serviço de "${s.numero}" em ${fmtDia(s.data)}? Se houve baixa de dose de sêmen, ela será devolvida ao estoque. Isso não pode ser desfeito.`
+      : `Solicitar a exclusão do serviço de "${s.numero}" em ${fmtDia(s.data)}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setSalvandoEdicao(true); setErroEdicao(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("servico", String(s.id));
+      if (r.status === "excluido") {
+        setEditando(null);
+        carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao excluir");
     } finally {
       setSalvandoEdicao(false);
     }
@@ -190,6 +217,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o reprodutivo</a>.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && <>
@@ -290,7 +318,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       </>}
 
       {editando && (
-        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "420px", maxWidth: "95vw" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar — matriz {editando.numero}</div>
@@ -337,9 +365,19 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
               )}
             </div>
             {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
-            <div className="flex items-center gap-3 mt-4">
-              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
-              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            <div className="flex items-center justify-between gap-3 mt-4">
+              <div className="flex items-center gap-3">
+                <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+                <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => excluir(editando)}
+                disabled={salvandoEdicao}
+              >
+                <Trash2 size={14} /> Excluir
+              </button>
             </div>
           </div>
         </div>

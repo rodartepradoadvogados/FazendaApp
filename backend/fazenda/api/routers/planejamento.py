@@ -31,6 +31,7 @@ from fazenda.models import (
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
+from fazenda.rules.vale_item import sem_itens_de_vale
 from fazenda.api.routers.pedidos import _proximo_numero_pedido
 
 router = APIRouter(prefix="/planejamento", tags=["planejamento"])
@@ -171,7 +172,9 @@ def comparativo_orcado_realizado(
     # Último dia real do mes_fim (evita cortar lançamentos do dia 29-31).
     data_fim = date(ano, mes_fim, calendar.monthrange(ano, mes_fim)[1])
 
-    query_itens = select(LancamentoItem).where(LancamentoItem.data_competencia >= data_ini, LancamentoItem.data_competencia <= data_fim)
+    query_itens = sem_itens_de_vale(
+        select(LancamentoItem).where(LancamentoItem.data_competencia >= data_ini, LancamentoItem.data_competencia <= data_fim)
+    )
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = session.exec(query_itens).all()

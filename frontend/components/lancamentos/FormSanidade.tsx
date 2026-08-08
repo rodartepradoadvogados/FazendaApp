@@ -1,8 +1,8 @@
 "use client";
-import React, { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { criarAplicacaoSanidade, fetchApresentacoesFarmacia, fetchDoencas, fetchMedicamentos, fetchPrincipiosAtivos, marcarEventoRealizado } from "@/lib/api";
-import type { ApresentacaoFarmacia } from "@/lib/api";
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, Plus, ShoppingCart, Sparkles, Trash2 } from "lucide-react";
+import { criarAplicacaoSanidade, fetchApresentacoesFarmacia, fetchDoencas, fetchIndicacoesDoenca, fetchMedicamentos, fetchPrincipiosAtivos, marcarEventoRealizado } from "@/lib/api";
+import type { ApresentacaoFarmacia, OpcaoIndicacaoDoenca } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { EstoquePicker } from "@/components/EstoquePicker";
@@ -11,6 +11,59 @@ import {
   type EstoqueItem, type ItemSanidade, itemSanidadeVazio, unidadesCompativeis, EstoqueRestante,
 } from "@/components/lancamentos/comumForms";
 import { SelectAnimal } from "@/components/lancamentos/_shared";
+
+// Banner "substituto inteligente": quando o produto escolhido por doença está
+// com estoque baixo/zerado, mostra os próximos princípios ativos indicados
+// para a mesma doença (por prioridade clínica) — os que já resolvem na hora
+// separados dos que precisam ser comprados. Mesmo padrão visual do cartão de
+// substituto em FormProtocoloSanitario.tsx (borda âmbar, mesmas cores).
+function BannerSubstitutosDoenca({
+  produto, zerado, doenca, opcoes, principioAtual, onUsar,
+}: {
+  produto: string; zerado: boolean; doenca: string; opcoes: OpcaoIndicacaoDoenca[];
+  principioAtual: string | null | undefined; onUsar: (opcao: OpcaoIndicacaoDoenca) => void;
+}) {
+  const restantes = opcoes.filter((o) => o.nome !== principioAtual);
+  if (!restantes.length) return null;
+  const disponiveis = restantes.filter((o) => o.status_estoque === "ok");
+  const precisamComprar = restantes.filter((o) => o.status_estoque !== "ok");
+  return (
+    <div style={{ marginTop: "0.6rem", border: "1px solid var(--amber)", background: "rgba(217,119,6,.08)", borderRadius: 8, padding: "0.6rem 0.7rem" }}>
+      <p className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--amber)", margin: 0, fontWeight: 600 }}>
+        <AlertTriangle size={14} /> "{produto}" está {zerado ? "sem estoque agora." : "com estoque baixo."}
+      </p>
+      <p className="flex items-center gap-2" style={{ fontSize: "0.76rem", color: "var(--dourado-light)", margin: "0.4rem 0 0.3rem" }}>
+        <Sparkles size={13} /> Substitutos indicados para {doenca}
+      </p>
+      {disponiveis.length > 0 && (
+        <div style={{ marginBottom: precisamComprar.length ? "0.5rem" : 0 }}>
+          <p className="flex items-center gap-1" style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--green-light)", margin: "0 0 0.25rem" }}>
+            <CheckCircle2 size={12} /> Disponível agora
+          </p>
+          {disponiveis.map((o) => (
+            <div key={o.principio_ativo_id} className="flex items-center justify-between gap-2" style={{ fontSize: "0.75rem", padding: "0.15rem 0" }}>
+              <span>🟢 {o.nome}{o.marcas.length ? ` · ${o.marcas.join(", ")}` : ""}</span>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => onUsar(o)}>Usar este</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {precisamComprar.length > 0 && (
+        <div>
+          <p className="flex items-center gap-1" style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--amber)", margin: "0 0 0.25rem" }}>
+            <ShoppingCart size={12} /> Precisa comprar
+          </p>
+          {precisamComprar.map((o) => (
+            <div key={o.principio_ativo_id} className="flex items-center justify-between gap-2" style={{ fontSize: "0.75rem", padding: "0.15rem 0", color: "var(--text-muted)" }}>
+              <span>{o.status_estoque === "out" ? "🔴" : "🟡"} {o.nome}{o.marcas.length ? ` · ${o.marcas.join(", ")}` : ""}</span>
+              <span style={{ fontSize: "0.68rem" }}>Sem estoque suficiente</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
@@ -38,7 +91,11 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   // filtrados por item.
   const [principiosNomes, setPrincipiosNomes] = useState<string[]>([]);
   const [doencasNomes, setDoencasNomes] = useState<string[]>([]);
+  const [doencaIdPorNome, setDoencaIdPorNome] = useState<Record<string, number>>({});
   const [opcoesPorItem, setOpcoesPorItem] = useState<Record<number, string[]>>({});
+  // Substituto inteligente: opções de princípio ativo indicadas para a doença
+  // do item, carregadas quando o produto escolhido está com estoque baixo/zerado.
+  const [indicacoesPorItem, setIndicacoesPorItem] = useState<Record<number, OpcaoIndicacaoDoenca[]>>({});
   // Catálogo geral de medicamento/hormônio/vacina (finalidade "Medicamento",
   // com saldo em estoque) para o modo "Medicamento (todos)" — ração/material/
   // equipamento não aparecem mais aqui. "Incluir itens sem estoque" resolve o
@@ -50,7 +107,10 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   }, [incluirSemEstoque]);
   useEffect(() => {
     fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosNomes(d.map((p) => p.nome))).catch(() => {});
-    fetchDoencas().then((d: any[]) => setDoencasNomes(d.map((x) => x.nome))).catch(() => {});
+    fetchDoencas().then((d: any[]) => {
+      setDoencasNomes(d.map((x) => x.nome));
+      setDoencaIdPorNome(Object.fromEntries(d.map((x) => [x.nome, x.id])));
+    }).catch(() => {});
   }, []);
 
   // Pré-preenche a partir da Agenda (medicamento padrão do evento sanitário),
@@ -76,18 +136,39 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   // complementada pelo catálogo geral de medicamento/hormônio/vacina em estoque.
   const listaProdutos = Array.from(new Set([...produtos, ...catalogoMedicamentos])).sort();
 
+  // Mesma regra do backend p/ estoque baixo/zerado (padrão em FormProtocoloSanitario).
+  const estoquePorNome = useMemo(() => new Map(estoque.map((e) => [e.nome, e])), [estoque]);
+  const estoqueBaixo = (produto: string) => {
+    const item = estoquePorNome.get(produto);
+    if (!item) return false;
+    const qtd = item.quantidade ?? 0;
+    return qtd <= 0 || (item.estoque_minimo != null && qtd < item.estoque_minimo);
+  };
+  const carregarIndicacoes = (idx: number, doencaNome: string) => {
+    const doencaId = doencaIdPorNome[doencaNome];
+    if (doencaId == null) { setIndicacoesPorItem((o) => ({ ...o, [idx]: [] })); return; }
+    fetchIndicacoesDoenca(doencaId)
+      .then((r) => setIndicacoesPorItem((o) => ({ ...o, [idx]: r.opcoes })))
+      .catch(() => setIndicacoesPorItem((o) => ({ ...o, [idx]: [] })));
+  };
+
   const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => {
     const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n;
   });
-  const escolherProduto = (idx: number, produto: string) => {
+  const escolherProduto = (idx: number, produto: string, principioAtivoId?: number) => {
     const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
     atualizarItem(idx, { produto, unidade: compativeis[0] || "", estoque_id: null });
     // "Qual frasco?": busca as apresentações do mesmo princípio ativo. Mais de
     // uma → o usuário escolhe; só uma → já fixa nela.
-    fetchApresentacoesFarmacia({ produto }).then((fr) => {
+    fetchApresentacoesFarmacia(principioAtivoId != null ? { principio_ativo_id: principioAtivoId } : { produto }).then((fr) => {
       setFrascosPorItem((p) => ({ ...p, [idx]: fr }));
       if (fr.length === 1) atualizarItem(idx, { estoque_id: fr[0].estoque_id });
     }).catch(() => setFrascosPorItem((p) => ({ ...p, [idx]: [] })));
+    // Substituto inteligente: só busca indicações quando o item está definido
+    // por doença e o produto escolhido está com estoque baixo/zerado.
+    const item = itens[idx];
+    if (item?.definirPor === "doenca" && item.criterio && estoqueBaixo(produto)) carregarIndicacoes(idx, item.criterio);
+    else setIndicacoesPorItem((o) => ({ ...o, [idx]: [] }));
   };
   const acrescentarItem = () => setItens((p) => [...p, itemSanidadeVazio()]);
   const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
@@ -96,9 +177,11 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   const escolherDefinirPor = (idx: number, valor: ItemSanidade["definirPor"]) => {
     atualizarItem(idx, { definirPor: valor, criterio: "", produto: "", unidade: "", estoque_id: null });
     setOpcoesPorItem((o) => ({ ...o, [idx]: [] }));
+    setIndicacoesPorItem((o) => ({ ...o, [idx]: [] }));
   };
   const escolherCriterio = (idx: number, criterio: string) => {
     atualizarItem(idx, { criterio, produto: "", unidade: "", estoque_id: null });
+    setIndicacoesPorItem((o) => ({ ...o, [idx]: [] }));
     if (!criterio) { setOpcoesPorItem((o) => ({ ...o, [idx]: [] })); return; }
     const def = itens[idx].definirPor;
     const filtro = def === "principio_ativo" ? { principio_ativo: criterio } : { doenca: criterio };
@@ -175,7 +258,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
           const estoqueItem = estoque.find((e) => e.nome === item.produto);
           const compativeis = unidadesCompativeis(estoqueItem?.unidade);
           return (
-            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem", position: "relative" }}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ marginBottom: "0.6rem" }}>
                 <Campo label="Definir medicamento por">
                   <select style={inputStyle} value={item.definirPor} onChange={(e) => escolherDefinirPor(idx, e.target.value as ItemSanidade["definirPor"])}>
@@ -217,6 +300,16 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
                   </select>
                 </Campo>
               </div>
+              {item.definirPor === "doenca" && item.produto && estoqueBaixo(item.produto) && (indicacoesPorItem[idx]?.length ?? 0) > 0 && (
+                <BannerSubstitutosDoenca
+                  produto={item.produto}
+                  zerado={(estoquePorNome.get(item.produto)?.quantidade ?? 0) <= 0}
+                  doenca={item.criterio}
+                  opcoes={indicacoesPorItem[idx] || []}
+                  principioAtual={estoquePorNome.get(item.produto)?.principio_ativo}
+                  onUsar={(opcao) => escolherProduto(idx, opcao.nome, opcao.principio_ativo_id)}
+                />
+              )}
               {(frascosPorItem[idx]?.length ?? 0) > 1 && (
                 <div style={{ marginTop: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
                   <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--dourado-light)", display: "block", marginBottom: "0.3rem" }}>

@@ -5,7 +5,7 @@ import { ajustarProximaAplicacaoBst } from "@/lib/api";
 
 const inputStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.85rem",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.85rem",
 };
 
 function fmtBr(iso: string | null) {
