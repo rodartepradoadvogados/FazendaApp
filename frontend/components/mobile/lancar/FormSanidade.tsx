@@ -370,7 +370,7 @@ function SubstitutoBanner({ indicacoes, zerado, produto, doenca, onUsar }: {
                 {o.marcas.length > 0 && <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)" }}>{o.marcas.join(", ")}</div>}
               </div>
               <button type="button" onClick={() => onUsar(o.marcas[0] || o.nome)}
-                style={{ fontSize: "0.78rem", fontWeight: 700, color: "#fff", background: "var(--mob-verde)", border: "none", borderRadius: 8, padding: "0.4rem 0.75rem", cursor: "pointer", flexShrink: 0 }}>
+                style={{ fontSize: "0.78rem", fontWeight: 700, color: "#fff", background: "var(--mob-verde)", border: "none", borderRadius: "var(--r-app)", padding: "0.4rem 0.75rem", cursor: "pointer", flexShrink: 0 }}>
                 Usar
               </button>
             </div>

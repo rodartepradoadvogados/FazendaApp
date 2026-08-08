@@ -753,11 +753,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-text:      #101828;
   --mob-muted:     #5B6470;
   --mob-border:    #E4E7EC;
-  --mob-header:    linear-gradient(160deg, var(--wine), var(--ink-2));
-  --mob-header-fg: #F5EEF1;
-  --mob-vinho:     var(--wine);
-  --mob-dourado:   var(--gold-deep);
-  --mob-dourado-2: var(--gold);
+  --mob-header:    linear-gradient(160deg, #0E2A47, #0A1F36);
+  --mob-header-fg: #EAF0F6;
+  --mob-vinho:     #0E2A47;
+  --mob-dourado:   #8A6D2F;
+  --mob-dourado-2: #C9A44C;
   /* Dourado sempre marca "ativo"/destaque — cor de marca estável entre temas
      (antes vinho no claro/misto, dourado só no escuro; agora dourado nos dois). */
   --mob-acao:      var(--mob-dourado);   /* #B8860B */
@@ -775,8 +775,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
      do animal) no modo escuro. Ao contrário de --mob-vinho, NÃO são trocados
      pelo bloco de paleta "verde" abaixo: o contorno alterna vinho/verde sempre,
      independentemente da paleta que o usuário escolheu. */
-  --mob-vinho-fixo: var(--wine);
+  --mob-vinho-fixo: #0E2A47;
   --mob-verde-fixo: #047857;
+
+  --r-app: 0px;                    /* cantos retos institucionais — pílulas usam 999px, círculos 50% */
+  --mob-aco:            #416180;   /* azul-aço — filete de estado "normal" na Agenda */
+  --mob-nav-inativa:    #62707E;
+  --mob-nav-agenda:     #35688F;
+  --mob-nav-lancar:     var(--mob-dourado);
+  --mob-nav-rebanho:    #2E7A57;
+  --mob-nav-menu:       #6A5A96;
+  --mob-fs-body:   16px;
+  --mob-fs-apoio:  14px;
+  --mob-fs-rotulo: 12px;
 
   min-height: 100dvh;
   background: var(--mob-bg);
@@ -793,7 +804,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-text:      #F3F4F6;
   --mob-muted:     #9AA1AA;
   --mob-border:    color-mix(in srgb, var(--mob-vinho) 18%, #242424);
-  --mob-header:    linear-gradient(160deg, #340F1C, #200A12);
+  --mob-header:    linear-gradient(160deg, #10263F, #081627);
   --mob-header-fg: #F5EEF1;
   --mob-acao:      var(--mob-dourado-2);  /* dourado-claro no escuro (mesma marca, mais luminoso) */
   --mob-acao-fg:   #1A1A1A;
@@ -804,38 +815,19 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-roxo:      #A78BFA;
   --mob-laranja:   #FB923C;
   --mob-amarelo:   #FBBF24;
-  --mob-vinho-fixo: #9C3F5F;
+  --mob-vinho-fixo: #1B3A5C;
   --mob-verde-fixo: #00E08C;
+
+  --mob-aco:         #5B85A8;
+  --mob-nav-inativa: #8A96A4;
+  --mob-nav-agenda:  #7FB6DC;
+  --mob-nav-lancar:  var(--mob-dourado-2);
+  --mob-nav-rebanho: #4ADE80;
+  --mob-nav-menu:    #A78BFA;
 }
 
-/* ── PALETA "Verde" no app móvel — mesma dimensão independente do tema
-   descrita no bloco --vinho/--dourado do site; troca --mob-vinho/--mob-dourado*
-   quando data-paleta="verde" (--mob-acao referencia var(--mob-dourado*) e
-   acompanha sozinho). */
-:root[data-paleta="verde"] .mob {
-  --mob-vinho:     #1F5C3D;
-  /* Dourado é o token que dirige --mob-acao (cor de "ativo" no rodapé) — na
-     paleta verde ele precisa de tanto "pop" quanto o dourado da vinho
-     (#B8860B), senão o rodapé fica sem o mesmo efeito colorido ao clicar
-     (#524). Um verde mais saturado/vívido, não o verde-oliva antigo. */
-  --mob-dourado:   #16A34A;
-  --mob-dourado-2: #4ADE80;
-  --mob-header:    linear-gradient(160deg, #1F5C3D, #164430);
-}
-:root[data-theme="escuro"][data-paleta="verde"] .mob {
-  --mob-header:    linear-gradient(160deg, #16402B, #0E2E1F);
-}
-
-/* ── PALETA "Azul" no app móvel — mesmo padrão da paleta "Verde" acima. */
-:root[data-paleta="azul"] .mob {
-  --mob-vinho:     #153A66;
-  --mob-dourado:   #2563EB;
-  --mob-dourado-2: #7DD3FC;
-  --mob-header:    linear-gradient(160deg, #153A66, #0D2340);
-}
-:root[data-theme="escuro"][data-paleta="azul"] .mob {
-  --mob-header:    linear-gradient(160deg, #0D2340, #081729);
-}
+/* O app de campo NÃO segue mais data-paleta — estrutura sempre marinho/dourado
+   institucional, independente da paleta escolhida no site. */
 
 /* Área de conteúdo rola por baixo da barra fixa inferior. */
 .mob-conteudo { padding: 1rem 1rem 6.5rem; max-width: 560px; margin: 0 auto; }
@@ -844,44 +836,21 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-card {
   background: var(--mob-surface);
   border: 1px solid var(--mob-border);
-  border-radius: 16px;
+  border-radius: var(--r-app);
+  border-left: 4px solid transparent;
   box-shadow: var(--mob-sombra);
 }
+.mob-card[data-estado="atrasado"] { border-left-color: var(--mob-vermelho); }
+.mob-card[data-estado="normal"]   { border-left-color: var(--mob-aco); }
+.mob-card[data-estado="feito"]    { border-left-color: var(--mob-verde); }
 
-/* Alternância de cor dos cartões em sequência (Agenda, Ficha do animal):
-   .mob-card-a = 1º, 3º, 5º...; .mob-card-b = 2º, 4º, 6º...
-   Claro: A fica branco (igual a .mob-card); B ganha um tom leve da PALETA
-   ativa (vinho ou verde — var(--mob-vinho) já reflete a paleta escolhida),
-   com transparência sobre o branco para não atrapalhar a leitura.
-   Escuro: os dois ficam pretos (--mob-surface); o que muda é o contorno —
-   A sempre vinho, B sempre verde, usando os tokens *-fixo (não seguem a
-   paleta escolhida, conforme pedido). */
-.mob-card-b {
-  background: color-mix(in srgb, var(--mob-vinho) 14%, var(--mob-surface));
-  border-color: color-mix(in srgb, var(--mob-vinho) 32%, var(--mob-border));
-}
-:root[data-theme="escuro"] .mob-card-a {
-  border: 2px solid var(--mob-vinho-fixo);
-}
-:root[data-theme="escuro"] .mob-card-b {
-  background: var(--mob-surface);
-  border: 2px solid var(--mob-verde-fixo);
-}
-
-/* Mesma alternância acima, mas para .mob-linha (Rebanho > Animais) — seletor
-   composto para vencer as declarações de background/border do .mob-linha
-   base independente da ordem no arquivo. */
-.mob-linha.mob-card-b {
-  background: color-mix(in srgb, var(--mob-vinho) 14%, var(--mob-surface));
-  border-color: color-mix(in srgb, var(--mob-vinho) 32%, var(--mob-border));
-}
-:root[data-theme="escuro"] .mob-linha.mob-card-a {
-  border: 2px solid var(--mob-vinho-fixo);
-}
-:root[data-theme="escuro"] .mob-linha.mob-card-b {
-  background: var(--mob-surface);
-  border: 2px solid var(--mob-verde-fixo);
-}
+/* Alternância de cor dos cartões em sequência (Agenda, Ficha do animal;
+   Rebanho > Animais via .mob-linha): .mob-card-a = 1º, 3º, 5º... fica no
+   fundo padrão (herda de .mob-card/.mob-linha, sem regra própria); .mob-card-b
+   = 2º, 4º, 6º... ganha um tom neutro levemente distinto, igual nos dois
+   temas (--mob-surface-2 já tem o valor certo por tema). Não usa mais cor
+   como decoração — a cor fica reservada ao filete de estado (data-estado). */
+.mob-card-b, .mob-linha.mob-card-b { background: var(--mob-surface-2); }
 
 /* Agenda do Veterinário (Menu): caixas com fundo translúcido da cor da
    PALETA ativa no claro (--mob-acao já segue a paleta escolhida), sem
@@ -914,7 +883,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   background: var(--mob-surface);
   color: var(--mob-text);
   border: 1px solid var(--mob-border);
-  border-radius: 12px;
+  border-radius: var(--r-app);
   padding: 0.8rem 0.9rem;
   font-size: 1rem;
 }
@@ -923,7 +892,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 
 /* Check circular grande da Agenda — vira verde luminoso ao concluir. */
 .mob-check {
-  width: 46px; height: 46px; border-radius: 50%;
+  width: 48px; height: 48px; border-radius: 50%;
   border: 2px solid var(--mob-border);
   background: transparent;
   color: var(--mob-muted);
@@ -949,28 +918,28 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-nav a {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 0.55rem 0 0.5rem; font-size: 0.8rem; font-weight: 700;
-  color: var(--mob-muted); text-decoration: none;
+  color: var(--mob-nav-inativa); text-decoration: none;
 }
-.mob-nav a.ativo { color: var(--mob-acao); }
+.mob-nav a.ativo { color: var(--aba, var(--mob-acao)); }
 .mob-nav-icone {
   width: 42px; height: 26px; border-radius: 999px;
   display: flex; align-items: center; justify-content: center;
   transition: background-color 0.15s ease;
 }
-.mob-nav a.ativo .mob-nav-icone { background: color-mix(in srgb, var(--mob-acao) 16%, transparent); }
-/* "Lançar" — botão mais evidente, cheio na cor da paleta, saltando acima da barra. */
+.mob-nav a.ativo .mob-nav-icone { background: color-mix(in srgb, var(--aba, var(--mob-acao)) 16%, transparent); }
+/* "Lançar" — botão mais evidente, cheio de dourado, saltando acima da barra. */
 .mob-nav-lancar {
   width: 50px; height: 50px; margin-top: -20px;
-  background: var(--mob-vinho); color: #fff;
+  background: var(--mob-nav-lancar); color: #fff;
   border: 3px solid var(--mob-surface);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
 }
-.mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-vinho); color: #fff; }
+.mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-nav-lancar); color: #fff; }
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem;
-  min-height: 7.5rem; border-radius: 16px; cursor: pointer;
+  min-height: 7.5rem; border-radius: var(--r-app); cursor: pointer;
   background: var(--mob-surface); border: 1px solid var(--mob-border);
   box-shadow: var(--mob-sombra);
   color: var(--mob-text); font-weight: 700; font-size: 0.9rem;
@@ -989,24 +958,25 @@ html, body { max-width: 100%; overflow-x: hidden; }
 
 /* Botão de ação principal, largura total. */
 .mob-btn {
-  width: 100%; border: none; border-radius: 14px; cursor: pointer;
+  width: 100%; border: none; border-radius: var(--r-app); cursor: pointer;
   padding: 0.95rem 1rem; font-size: 1rem; font-weight: 700;
   background: var(--mob-acao); color: var(--mob-acao-fg);
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 .mob-btn:disabled { opacity: 0.55; }
 .mob-btn-2 {
-  width: 100%; border: 1px solid var(--mob-border); border-radius: 14px; cursor: pointer;
+  width: 100%; border: 1px solid var(--mob-border); border-radius: var(--r-app); cursor: pointer;
   padding: 0.9rem 1rem; font-size: 0.95rem; font-weight: 600;
   background: var(--mob-surface); color: var(--mob-text);
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
+.mob-btn.mob-btn-sec { background: var(--mob-surface); color: var(--mob-text); border: 1px solid var(--mob-border); }
 
 /* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). Padding vertical
    calibrado para >= 44px de altura de toque (dedo sujo/com luva no curral). */
 .mob-pill {
-  padding: 0.8rem 1.1rem; border-radius: 12px; cursor: pointer;
-  font-size: 0.9rem; font-weight: 700; min-height: 44px;
+  padding: 0.8rem 1.1rem; border-radius: 999px; cursor: pointer;
+  font-size: 0.9rem; font-weight: 700; min-height: 48px;
   border: 1px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
 }
 .mob-pill.ativa { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #F8E9B0; }
@@ -1014,7 +984,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 
 /* Título de seção discreto ("ANIMAIS RECENTES"). */
 .mob-secao {
-  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+  font-size: var(--mob-fs-rotulo); font-weight: 700; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--mob-muted); margin: 1.1rem 0 0.5rem;
 }
 
@@ -1022,7 +992,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-linha {
   display: flex; align-items: center; gap: 0.75rem; width: 100%;
   padding: 0.95rem 1rem; background: var(--mob-surface);
-  border: 1px solid var(--mob-border); border-radius: 14px;
+  border: 1px solid var(--mob-border); border-radius: var(--r-app);
   color: var(--mob-text); text-align: left; cursor: pointer;
   box-shadow: var(--mob-sombra); text-decoration: none;
 }
@@ -1035,8 +1005,8 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-form-embutido input, .mob-form-embutido select, .mob-form-embutido textarea {
   font-size: 16px !important;
   padding: 0.7rem 0.8rem !important;
-  min-height: 44px;
+  min-height: 48px;
 }
 .mob-form-embutido button {
-  min-height: 44px;
+  min-height: 48px;
 }

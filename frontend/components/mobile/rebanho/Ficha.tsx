@@ -80,7 +80,7 @@ function Secao({ chave, titulo, linhas, campos, altInicio }: { chave: string; ti
   if (!linhas.length) return null;
   return (
     <details style={{ marginBottom: "0.7rem" }}>
-      <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+      <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
         <span>{titulo}</span>
         <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{linhas.length}</span>
       </summary>

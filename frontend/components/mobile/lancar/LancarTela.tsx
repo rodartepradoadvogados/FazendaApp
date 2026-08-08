@@ -150,7 +150,7 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1.1rem",
-      padding: "0.7rem 0.8rem 0.7rem 1rem", borderRadius: 14,
+      padding: "0.7rem 0.8rem 0.7rem 1rem", borderRadius: "var(--r-app)",
       background: "var(--mob-vinho)", color: "#FFFFFF",
     }}>
       <span style={{ flex: 1, minWidth: 0 }}>
@@ -158,7 +158,7 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
         {rotuloAnimal(animal) && <span style={{ display: "block", fontSize: "0.8rem", opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rotuloAnimal(animal)}</span>}
       </span>
       <button type="button" onClick={onSoltar} aria-label="Soltar animal"
-        style={{ width: 44, height: 44, borderRadius: 10, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <X size={18} />
       </button>
     </div>

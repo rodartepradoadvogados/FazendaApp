@@ -186,6 +186,21 @@ export function cacheEm(chave: string): string | null {
   try { const raw = localStorage.getItem(PREFIXO_CACHE + chave); return raw ? JSON.parse(raw).em : null; } catch { return null; }
 }
 
+/** Leitura síncrona só dos dados de uma chave de cache (sem buscar nada nem
+ *  tocar rede) — mesmo esquema de chave/prefixo e mesmo formato salvo por
+ *  fetchComCache ({ dados, em }). Usado para estatísticas ao vivo (ex.: Menu)
+ *  que reaproveitam um cache já escrito por outra tela, sem custar requisição
+ *  nova. Null tanto se a chave nunca foi salva quanto se o JSON está corrompido. */
+export function lerCache<T>(chave: string): T | null {
+  try {
+    const raw = localStorage.getItem(PREFIXO_CACHE + chave);
+    if (!raw) return null;
+    return (JSON.parse(raw).dados as T) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Fila de envio (outbox) — leitura ─────────────────────────────────────────
 /** Snapshot síncrono do espelho em memória — vazio até a primeira hidratação
  *  (que acontece ~logo após o mount de usePendentes() ou de

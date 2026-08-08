@@ -108,7 +108,7 @@ export function PaginacaoMob({
           disabled={pagina <= 1}
           style={{
             display: "flex", alignItems: "center", gap: "0.15rem", fontSize: "0.74rem", padding: "0.3rem 0.55rem",
-            borderRadius: 8, border: "1px solid var(--mob-border)", background: "var(--mob-surface-2)",
+            borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface-2)",
             color: "var(--mob-text)", opacity: pagina <= 1 ? 0.5 : 1,
           }}
         >
@@ -120,7 +120,7 @@ export function PaginacaoMob({
           disabled={pagina >= totalPaginas}
           style={{
             display: "flex", alignItems: "center", gap: "0.15rem", fontSize: "0.74rem", padding: "0.3rem 0.55rem",
-            borderRadius: 8, border: "1px solid var(--mob-border)", background: "var(--mob-surface-2)",
+            borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface-2)",
             color: "var(--mob-text)", opacity: pagina >= totalPaginas ? 0.5 : 1,
           }}
         >

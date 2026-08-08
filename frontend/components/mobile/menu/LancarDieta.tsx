@@ -164,7 +164,7 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
         <Plus size={16} /> Acrescentar produto
       </button>
 
-      <div style={{ padding: "0.6rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 10, fontSize: "0.88rem", fontWeight: 800, marginBottom: "0.7rem" }}>
+      <div style={{ padding: "0.6rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", fontSize: "0.88rem", fontWeight: 800, marginBottom: "0.7rem" }}>
         Vagão: <span style={{ color: "var(--mob-verde)" }}>{num(vagaoKg / NUM_TRATOS)} kg/trato</span> · {num(vagaoKg)} kg/dia
       </div>
 

@@ -78,7 +78,7 @@ function Composicao() {
     <div>
       {porLote.map(([lote, lista]) => (
         <details key={lote} style={{ marginBottom: "0.7rem" }}>
-          <summary className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+          <summary className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
             <span>{lote}</span>
             <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal(is)</span>
           </summary>

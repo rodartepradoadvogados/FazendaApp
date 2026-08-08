@@ -17,7 +17,6 @@ export function CowDataMark({
   size = 32,
   variant = "escuro",
   color = "var(--gold)",
-  legado = false,
 }: {
   size?: number | string;
   /** "escuro": tile marinho com curva em gradiente ouro (padrão, lê bem
@@ -28,11 +27,6 @@ export function CowDataMark({
   variant?: CowDataMarkVariant;
   /** Só usado em variant="mono" — cor sólida da curva e do ponto. */
   color?: string;
-  /** true: mantém o tile vinho/ouro antigo (pré-redesign) — só o app de
-   *  campo usa isso hoje (ver app/app/layout.tsx), porque o app ainda não
-   *  entrou na rodada do redesign "Institucional". Nenhum outro lugar do
-   *  site deve passar isso. */
-  legado?: boolean;
 }) {
   const gradId = useId();
 
@@ -45,12 +39,8 @@ export function CowDataMark({
     );
   }
 
-  const tileBg = legado
-    ? (variant === "claro" ? "#3A0F1A" : "#1E0F16")
-    : (variant === "claro" ? "#0E2A47" : "#0A1F36");
-  const golds = legado
-    ? { grad0: "#B9831F", grad1: "#F0C874", ring: "#E0A63C", linha: "#7A2233" }
-    : { grad0: "#8A6D2F", grad1: "#C9A44C", ring: "#C9A44C", linha: "#416180" };
+  const tileBg = variant === "claro" ? "#0E2A47" : "#0A1F36";
+  const golds = { grad0: "#8A6D2F", grad1: "#C9A44C", ring: "#C9A44C", linha: "#416180" };
   return (
     <svg width={size} height={size} viewBox="0 0 120 120" aria-label="CowData" style={{ flexShrink: 0 }}>
       <defs>

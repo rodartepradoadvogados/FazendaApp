@@ -45,17 +45,17 @@ const config: CapacitorConfig = {
       // pra sempre.
       launchShowDuration: 4000,
       launchAutoHide: true,
-      // Vinho claro (misto) — mesma cor de COR_TOPO.vinho.clara em
+      // Marinho institucional — mesma cor de COR_TOPO.azul.clara em
       // lib/themeColorTopo.ts (fonte única, também usada pelo manifest PWA e
       // pela <meta name="theme-color">). Sem variação por paleta aqui porque
       // a paleta é lida do localStorage, que o splash nativo não acessa.
-      backgroundColor: "#3A0F1A",
+      backgroundColor: "#0A1F36",
       androidScaleType: "CENTER_CROP",
       showSpinner: false,
     },
     StatusBar: {
       style: "DARK", // ícones claros sobre o header escuro do app
-      backgroundColor: "#3A0F1A",
+      backgroundColor: "#0A1F36",
       overlaysWebView: false, // o layout já reserva a faixa de segurança do topo
     },
   },

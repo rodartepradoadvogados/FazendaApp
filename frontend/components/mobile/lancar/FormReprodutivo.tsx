@@ -581,7 +581,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; an
               const ehD0 = e.dia === 0;
               return (
                 <div key={e.dia} style={{
-                  padding: "0.7rem 0.8rem", borderRadius: 12,
+                  padding: "0.7rem 0.8rem", borderRadius: "var(--r-app)",
                   border: `1px solid ${ehD0 ? "var(--mob-vinho)" : "var(--mob-border)"}`,
                   background: ehD0 ? "color-mix(in srgb, var(--mob-vinho) 8%, transparent)" : "var(--mob-surface)",
                 }}>
