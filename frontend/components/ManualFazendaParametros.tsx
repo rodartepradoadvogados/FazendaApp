@@ -13,7 +13,7 @@ import {
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.82rem",
+  borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.82rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
@@ -81,7 +81,7 @@ export default function ManualFazendaParametros({ podeEditar }: { podeEditar: bo
 
       {p && (
         <>
-          <div style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.9rem 1rem", marginBottom: "1rem" }}>
+          <div style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.9rem 1rem", marginBottom: "1rem" }}>
             <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", fontWeight: 600, cursor: podeEditar ? "pointer" : "default" }}>
               <input type="checkbox" checked={p.email_semanal_ativo} disabled={!podeEditar}
                 onChange={(e) => salvar({ email_semanal_ativo: e.target.checked })} />
@@ -180,7 +180,7 @@ function CadastroSugestoes({ podeEditar }: { podeEditar: boolean }) {
   };
 
   const FormSugestao = (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.9rem", marginBottom: "0.8rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.9rem", marginBottom: "0.8rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
         <div style={{ gridColumn: "span 2" }}>
           <label style={lbl}>Texto da sugestão</label>
@@ -232,7 +232,7 @@ function CadastroSugestoes({ podeEditar }: { podeEditar: boolean }) {
         <div className="space-y-2">
           {sugestoes.map((s) => (
             <div key={s.id}>
-              <div className="flex items-center justify-between gap-2" style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.5rem 0.75rem" }}>
+              <div className="flex items-center justify-between gap-2" style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem" }}>
                 <div>
                   <span style={{ fontSize: "0.82rem" }}>{s.texto}</span>
                   <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginLeft: "0.5rem" }}>

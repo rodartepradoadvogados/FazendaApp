@@ -12,7 +12,7 @@ export default function ProdutoRobosCowData() {
         despacho de push. Hoje esses status só existem em log/console do servidor; agrupar aqui é
         trabalho futuro.
       </p>
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "2rem", textAlign: "center", color: COR.mudo, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.6rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "2rem", textAlign: "center", color: COR.mudo, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.6rem" }}>
         <Bot size={28} />
         Em construção.
       </div>

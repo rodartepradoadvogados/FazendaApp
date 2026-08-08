@@ -66,11 +66,11 @@ function dentroPeriodo(data: string | null, inicio: string, fim: string) {
 }
 
 const estiloCard: React.CSSProperties = {
-  background: CORES_CONTADOR.painel, border: `1px solid ${CORES_CONTADOR.borda}`, borderRadius: "4px", padding: "1.3rem",
+  background: CORES_CONTADOR.painel, border: `1px solid ${CORES_CONTADOR.borda}`, borderRadius: "var(--r-sm)", padding: "1.3rem",
 };
 const estiloInput: React.CSSProperties = {
   background: CORES_CONTADOR.painelAlt, color: CORES_CONTADOR.texto, border: `1px solid ${CORES_CONTADOR.borda}`,
-  borderRadius: "3px", padding: "0.4rem 0.6rem", fontSize: "0.85rem",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem",
 };
 const estiloTh: React.CSSProperties = {
   textAlign: "left", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em",
@@ -123,7 +123,7 @@ function AnexosLinha({ numeroLancamento }: { numeroLancamento: string }) {
       {aberto && (
         <div style={{
           position: "absolute", top: "1.4rem", right: 0, zIndex: 10, minWidth: "12rem",
-          background: CORES_CONTADOR.painelAlt, border: `1px solid ${CORES_CONTADOR.bordaClara}`, borderRadius: "3px", padding: "0.5rem",
+          background: CORES_CONTADOR.painelAlt, border: `1px solid ${CORES_CONTADOR.bordaClara}`, borderRadius: "var(--r-sm)", padding: "0.5rem",
         }}>
           {anexos === null && <p style={{ fontSize: "0.75rem", color: CORES_CONTADOR.mudo, margin: 0 }}>Carregando…</p>}
           {anexos?.length === 0 && <p style={{ fontSize: "0.75rem", color: CORES_CONTADOR.mudo, margin: 0 }}>Sem anexos.</p>}
@@ -299,7 +299,7 @@ export default function PainelContadorPage() {
         <button type="button" onClick={exportarFechamentoMensal} disabled={exportando}
           style={{
             display: "flex", alignItems: "center", gap: "0.4rem", background: CORES_CONTADOR.cobre, color: "#fff",
-            border: "none", borderRadius: "3px", padding: "0.55rem 0.9rem", fontSize: "0.8rem", fontWeight: 700, cursor: "pointer",
+            border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 0.9rem", fontSize: "0.8rem", fontWeight: 700, cursor: "pointer",
           }}>
           <Download size={14} /> {exportando ? "Gerando…" : "Fechamento mensal (Excel)"}
         </button>

@@ -64,7 +64,7 @@ function ExportarCabecalho() {
       <button type="button" onClick={() => setAberto((a) => !a)} disabled={gerando !== null || dados.linhas.length === 0}
         title="Exportar esta tela em PDF ou Excel"
         style={{
-          display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "6px",
+          display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
           border: "1px solid rgba(255,255,255,0.22)", background: "rgba(255,255,255,0.08)", color: "#F5EEF1",
           fontSize: "0.8rem", fontWeight: 600, cursor: dados.linhas.length === 0 ? "not-allowed" : "pointer",
           opacity: dados.linhas.length === 0 ? 0.5 : 1,
@@ -77,7 +77,7 @@ function ExportarCabecalho() {
           <div style={{ position: "fixed", inset: 0, zIndex: 29 }} onClick={() => setAberto(false)} />
           <div style={{
             position: "absolute", top: "calc(100% + 0.4rem)", right: 0, zIndex: 30, minWidth: "10rem",
-            background: "#0E2A47", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "8px",
+            background: "#0E2A47", border: "1px solid rgba(255,255,255,0.16)", borderRadius: "var(--r-sm)",
             boxShadow: "0 12px 28px rgba(0,0,0,0.35)", overflow: "hidden",
           }}>
             <button type="button" onClick={() => rodar("excel")}
@@ -135,7 +135,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
             <ExportarCabecalho />
             <button type="button" onClick={() => router.push("/")} title="Voltar à Capa da fazenda, nesta mesma aba"
               style={{
-                display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "6px",
+                display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
                 border: "1px solid #8A6D2F", background: "transparent", color: "#C9A44C", fontSize: "0.8rem", fontWeight: 700, cursor: "pointer",
               }}>
               <ArrowLeft size={14} /> Voltar

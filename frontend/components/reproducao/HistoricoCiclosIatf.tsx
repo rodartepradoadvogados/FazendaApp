@@ -89,7 +89,7 @@ export default function HistoricoCiclosIatf() {
         {!passados.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum ciclo concluído ainda.</p>}
         <div className="space-y-2">
           {passados.map((g) => (
-            <div key={g.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.9rem" }}>
+            <div key={g.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.9rem" }}>
               <p style={{ fontSize: "0.82rem", fontWeight: 700 }}>
                 {g.nome_protocolo} — D0 {fmtDia(g.data_d0)} - D11 {fmtDia(g.data_d11)}
               </p>

@@ -248,7 +248,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
         {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{textoVazioListagem}</p>}
         {itens && itens.map((item) => (
-          <div key={item.id} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.8rem", marginBottom: "0.8rem" }}>
+          <div key={item.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.8rem", marginBottom: "0.8rem" }}>
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <strong>{item.pessoa_nome}</strong> — {item.descricao}

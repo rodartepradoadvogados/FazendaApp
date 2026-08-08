@@ -14,7 +14,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { SecaoRecolhivel } from "@/components/ui";
 
-const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
+const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 // `defaultAberta` deixa o chamador decidir: no app (tela dedicada "Acessos e
@@ -123,7 +123,7 @@ export function AuditoriaAtividade({ defaultAberta = true }: { defaultAberta?: b
                 {tipos.size > 0 && <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setTipos(new Set())}>Limpar seleção</button>}
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", maxHeight: "9rem", overflowY: "auto" }}>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem", maxHeight: "9rem", overflowY: "auto" }}>
               {opcoes.tipos.map((t) => (
                 <label key={t.chave} className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
                   <input type="checkbox" checked={tipos.has(t.chave)} onChange={() => toggleTipo(t.chave)} /> {t.label}

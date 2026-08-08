@@ -8,7 +8,7 @@ const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e
 
 function Cartao({ titulo, valor, icon: Icon, cor }: { titulo: string; valor: string; icon: any; cor?: string }) {
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, marginBottom: "0.5rem" }}>
         <Icon size={13} /> {titulo}
       </div>
@@ -39,7 +39,7 @@ export default function CockpitCowData() {
         <Cartao titulo="Aguardando aprovação" valor={resumo ? String(resumo.aguardando_aprovacao) : "—"} icon={Clock} cor={resumo && resumo.aguardando_aprovacao > 0 ? COR.dourado : undefined} />
       </div>
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.2rem 1.4rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.2rem 1.4rem" }}>
         <h2 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: "0.6rem" }}>Atalhos</h2>
         <div style={{ display: "flex", gap: "0.8rem", flexWrap: "wrap" }}>
           <Link href="/painel-cowdata/assinaturas" style={{ color: COR.dourado, fontSize: "0.82rem", textDecoration: "none" }}>Ver assinaturas →</Link>

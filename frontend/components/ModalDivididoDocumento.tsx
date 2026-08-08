@@ -31,7 +31,7 @@ export function ModalDivididoDocumento({ title, onClose, arquivo, children }: {
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
       <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
         style={{ width: "80vw", height: "80vh", maxWidth: "95vw", maxHeight: "92vh",
-          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "10px",
+          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
           display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div className="flex items-center justify-between" style={{ padding: "0.7rem 1rem", borderBottom: "1px solid var(--border)" }}>
           <div className="card-header" style={{ margin: 0 }}>{title}</div>
@@ -43,7 +43,7 @@ export function ModalDivididoDocumento({ title, onClose, arquivo, children }: {
               {url && arquivo.type === "application/pdf" ? (
                 <iframe src={url} title={arquivo.name} style={{ width: "100%", height: "100%", border: "none", minHeight: "100%" }} />
               ) : url ? (
-                <img src={url} alt={arquivo.name} style={{ maxWidth: "100%", borderRadius: "6px" }} />
+                <img src={url} alt={arquivo.name} style={{ maxWidth: "100%", borderRadius: "var(--r-sm)" }} />
               ) : null}
             </div>
             <div className="flex items-start gap-2" style={{ padding: "0.6rem 0.8rem", borderTop: "1px solid var(--border)", fontSize: "0.72rem", color: "var(--text-muted)" }}>

@@ -140,7 +140,7 @@ function RelatorioEventosVidaView({
     data_evento_fmt: formatDate(a.data_evento),
   }));
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
   return (
     <>
@@ -266,13 +266,13 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
       </p>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Exame</label>
-          <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+          <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
             value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
             <option value="">Todos</option>
             {eventosExame.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
           </select></div>
         <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Resultado</label>
-          <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+          <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
             value={resultadoFiltro} onChange={(e) => setResultadoFiltro(e.target.value)}>
             <option value="">Todos</option>
             <option value="positivo">Positivo</option>
@@ -280,10 +280,10 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
             <option value="indefinido">Indefinido</option>
           </select></div>
         <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
-          <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+          <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
             value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
         <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
-          <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+          <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
             value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
       </div>
 
@@ -605,7 +605,7 @@ function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" |
     window.location.href = `/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(servico)}`;
   };
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
   return (
     <>
@@ -798,7 +798,7 @@ function CronogramasSanitariosView({ calendarioIdInicial, onLimparFiltro }: { ca
         <div className="card mb-3">
           <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Regra vinculada (obrigatório)</label>
           <select
-            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%", maxWidth: 420 }}
+            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%", maxWidth: 420 }}
             value={novaRegraId} onChange={(e) => setNovaRegraId(e.target.value)}
           >
             <option value="">
@@ -1065,8 +1065,8 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
 
   const animaisTratados = new Set(filtrados.map((a) => a.numero)).size;
   const produtos = new Set(filtrados.map((a) => a.produto)).size;
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
-  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 
   return (
     <>
@@ -1205,7 +1205,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                 <tbody>
                   {pagAplicacoes.linhasPagina.map((a) => {
                     const editando = editId === a.id;
-                    const inp: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "5px", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
+                    const inp: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
                     return (
                     <Fragment key={a.id}>
                       <tr>
@@ -1323,7 +1323,7 @@ function DoencaMotivoView() {
     return Array.from(m.values()).sort((a, b) => b.casos.length - a.casos.length);
   }, [filtrados]);
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
   const filtroAtivo = !!(buscaAnimal || fLote || fCategoria || ini || fim);
 
   return (
@@ -1434,7 +1434,7 @@ function ProtocolosSanitariosView() {
     (!fim || l.data_inicio <= fim)
   ), [lancs, buscaAnimal, fProtocolo, fStatus, ini, fim]);
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
   return (
     <>
@@ -1601,7 +1601,7 @@ function TaxaCuraView() {
       .sort((a, b) => a.taxa - b.taxa);
   }, [filtrados]);
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
   return (
     <>
@@ -1743,7 +1743,7 @@ function TaxaCuraView() {
 
 const inputStyleRastreabilidade: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
 };
 const COLUNAS_RASTREABILIDADE = [
   { header: "Animal", key: "numero_animal" }, { header: "Nome", key: "nome_animal" },

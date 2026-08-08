@@ -18,7 +18,7 @@ export function CadeadoWidget({ cadeado }: { cadeado: Cadeado }) {
       <div style={{
         display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.7rem 1rem",
         background: "color-mix(in srgb, " + C.positivo + " 12%, " + C.painel + ")",
-        border: `1px solid ${C.positivo}`, borderRadius: "4px", marginBottom: "1.2rem",
+        border: `1px solid ${C.positivo}`, borderRadius: "var(--r-sm)", marginBottom: "1.2rem",
       }}>
         <Unlock size={16} color={C.positivo} />
         <p style={{ margin: 0, fontSize: "0.82rem", color: C.texto }}>
@@ -33,7 +33,7 @@ export function CadeadoWidget({ cadeado }: { cadeado: Cadeado }) {
   }
 
   return (
-    <div style={{ padding: "0.9rem 1rem", background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "4px", marginBottom: "1.2rem" }}>
+    <div style={{ padding: "0.9rem 1rem", background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "var(--r-sm)", marginBottom: "1.2rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
         <Lock size={16} color={C.cobreClaro} />
         <p style={{ margin: 0, fontSize: "0.82rem", color: C.texto }}>
@@ -42,7 +42,7 @@ export function CadeadoWidget({ cadeado }: { cadeado: Cadeado }) {
         {!aberto && (
           <button type="button" onClick={() => setAberto(true)}
             style={{
-              marginLeft: "auto", background: C.cobre, color: "#fff", border: "none", borderRadius: "3px",
+              marginLeft: "auto", background: C.cobre, color: "#fff", border: "none", borderRadius: "var(--r-sm)",
               padding: "0.4rem 0.8rem", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer",
             }}>
             Destravar
@@ -63,12 +63,12 @@ export function CadeadoWidget({ cadeado }: { cadeado: Cadeado }) {
             placeholder="Sua senha"
             style={{
               flex: 1, background: C.painelAlt, color: C.texto, border: `1px solid ${C.borda}`,
-              borderRadius: "3px", padding: "0.45rem 0.6rem", fontSize: "0.82rem",
+              borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.82rem",
             }}
           />
           <button type="submit" disabled={cadeado.destravando || !senha}
             style={{
-              background: C.cobre, color: "#fff", border: "none", borderRadius: "3px",
+              background: C.cobre, color: "#fff", border: "none", borderRadius: "var(--r-sm)",
               padding: "0.45rem 0.8rem", fontSize: "0.78rem", fontWeight: 700, cursor: "pointer",
               opacity: cadeado.destravando || !senha ? 0.6 : 1,
             }}>

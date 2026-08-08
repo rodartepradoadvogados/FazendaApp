@@ -44,7 +44,7 @@ function EsqueciSenhaModal({
   if (!etapa) return null;
   const input: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
   };
   return (
     <div style={{
@@ -231,7 +231,7 @@ function Hero() {
 
   const input: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
   };
 
   return (
@@ -355,7 +355,7 @@ function MilkNewsCallout() {
       <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
         <Link href="/news" style={{
           display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1.2rem", textDecoration: "none",
-          padding: "1.6rem 1.8rem", borderRadius: "16px",
+          padding: "1.6rem 1.8rem", borderRadius: "var(--r-sm)",
           background: "linear-gradient(135deg, var(--vinho), var(--vinho-dark))",
           border: "1px solid var(--vinho-light)", boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
         }}>

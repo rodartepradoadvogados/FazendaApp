@@ -110,7 +110,7 @@ const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
 ];
 const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
-const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 // "2026-07" → "jul/2026" (rótulo legível do mês de competência)
@@ -562,7 +562,7 @@ export default function FinanceiroPage() {
   });
   const pagLivro = usePaginacao(livroOrdenado);
 
-  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
@@ -971,7 +971,7 @@ export default function FinanceiroPage() {
 
 const selStyleLote: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 // Cabeçalho fixo ao rolar as tabelas de notas (Contas a pagar/receber/pagas/
@@ -1176,7 +1176,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
         </ModalDivididoDocumento>
       )}
 
-      <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
           <span style={{ fontSize: "0.85rem" }}>
             {filtrados.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}
@@ -1590,7 +1590,7 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
 
   const inputStyle: React.CSSProperties = {
     background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
   };
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -1598,7 +1598,7 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
     <Modal title={item ? `Editar patrimônio — ${item.nome}` : "Novo patrimônio"} onClose={onClose} width="640px">
       <div className="space-y-3">
         {!item && (
-          <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", background: "var(--surface-2)", padding: "0.5rem 0.7rem", borderRadius: "6px" }}>
+          <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", background: "var(--surface-2)", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)" }}>
             <input type="checkbox" checked={ehCompraAgora} onChange={(e) => setEhCompraAgora(e.target.checked)} />
             É uma compra agora? (leva para Lançar &gt; Financeiro já com estes dados — o patrimônio é criado junto com o lançamento)
           </label>
@@ -1675,7 +1675,7 @@ function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPat
 
   const inputStyle: React.CSSProperties = {
     background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
   };
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -1770,7 +1770,7 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
 
   const inputStyle: React.CSSProperties = {
     background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
   };
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -1882,7 +1882,7 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
 // ─────────────────────── Cartão de crédito ───────────────────────
 const cartaoInputStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
 };
 const cartaoLabelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -1890,7 +1890,7 @@ function CartaoVisual({ cartao }: { cartao: CartaoCredito }) {
   return (
     <div style={{
       background: "linear-gradient(135deg, var(--vinho, #5E1A2E) 0%, var(--vinho-forte, #431322) 100%)",
-      borderRadius: "10px", padding: "1rem 1.1rem", color: "#fff", display: "grid", gap: "0.5rem",
+      borderRadius: "var(--r-sm)", padding: "1rem 1.1rem", color: "#fff", display: "grid", gap: "0.5rem",
       position: "relative", overflow: "hidden", minHeight: "110px",
     }}>
       <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 85% 15%, rgba(232,199,102,0.25), transparent 55%)" }} />
@@ -2266,7 +2266,7 @@ function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: Fatura
 
 const inputStyleRelCompraVenda: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
 };
 const COLUNAS_REL_COMPRA_VENDA_ANIMAL = [
   { header: "Tipo", key: "tipoLabel" }, { header: "Nº animal", key: "numero_animal" },
@@ -2525,7 +2525,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   return (
     <div className="space-y-3">
       {lanc.parcela_total && lanc.parcela_total > 1 && (
-        <p style={{ fontSize: "0.75rem", color: "var(--amber)", background: "rgba(180,120,0,0.12)", padding: "0.5rem 0.7rem", borderRadius: "8px" }}>
+        <p style={{ fontSize: "0.75rem", color: "var(--amber)", background: "rgba(180,120,0,0.12)", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)" }}>
           Esta é a parcela {lanc.parcela_num}/{lanc.parcela_total}. A edição altera <strong>só esta parcela</strong> — as outras seguem como estão.
         </p>
       )}
@@ -3171,7 +3171,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
         </ModalDivididoDocumento>
       )}
 
-      <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
           <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
@@ -3249,7 +3249,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             )}
           </div>
           {diferenca !== 0 && (
-            <div style={{ marginTop: "0.7rem", padding: "0.7rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+            <div style={{ marginTop: "0.7rem", padding: "0.7rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
               <p style={{ fontSize: "0.78rem", margin: "0 0 0.5rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
                 {diferenca < 0 ? `Desconto de ${formatBRL(Math.abs(diferenca))}` : `Acréscimo de ${formatBRL(diferenca)}`} em relação ao valor do lançamento. O que fazer com a diferença?
               </p>

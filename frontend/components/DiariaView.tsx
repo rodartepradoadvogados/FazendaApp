@@ -274,7 +274,7 @@ export default function DiariaView() {
           </div>
         </div>
         {estimativa && (
-          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "6px", padding: "0.5rem 0.7rem", marginBottom: "0.75rem" }}>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem", marginBottom: "0.75rem" }}>
             {estimativa.futura ? (
               <>Estimativa: <strong>{estimativa.totalDias}</strong> diária(s) no período (<strong>{formatBRL(estimativa.totalValor)}</strong>) — até hoje, <strong>{estimativa.diasAteHoje}</strong> diária(s) (<strong>{formatBRL(estimativa.valorAteHoje)}</strong>).</>
             ) : (

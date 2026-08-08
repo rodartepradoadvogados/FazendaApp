@@ -88,7 +88,7 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
               return (
                 <Link key={item.href} href={item.href} onClick={() => setAberto(false)}
                   style={{
-                    display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.45rem 0.6rem", borderRadius: "8px",
+                    display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.45rem 0.6rem", borderRadius: "var(--r-sm)",
                     fontSize: "0.8rem", textDecoration: "none", marginBottom: "0.15rem",
                     color: ativo ? COR.doradoClaro : "#c3cbde",
                     background: ativo ? "rgba(201,164,76,0.14)" : "transparent",

@@ -27,7 +27,7 @@ const STATUS_INFO: Record<string, { label: string; cor: string }> = {
   cancelado: { label: "Cancelado", cor: "var(--text-muted)" },
 };
 
-const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
 function Badge({ status }: { status: string }) {

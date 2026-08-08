@@ -13,7 +13,7 @@ type Movimento = {
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 
 // Montado como aba "Movimentações" em Rebanho (app/rebanho/page.tsx) — antes

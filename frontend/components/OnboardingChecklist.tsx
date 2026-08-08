@@ -22,7 +22,7 @@ export function OnboardingChecklist() {
   }
 
   return (
-    <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.9rem 1.1rem" }}>
+    <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.9rem 1.1rem" }}>
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>Primeiros passos</p>

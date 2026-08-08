@@ -47,7 +47,7 @@ const CAMPOS_FINANCEIROS_DEDICADOS = new Set([
 
 const inputStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.82rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.82rem", width: "100%",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 

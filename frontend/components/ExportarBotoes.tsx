@@ -39,7 +39,7 @@ export function ExportarBotoes({
   };
 
   const btn: React.CSSProperties = {
-    display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "6px",
+    display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "var(--r-sm)",
     border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)",
     fontSize: "0.78rem", fontWeight: 600, cursor: semDados ? "not-allowed" : "pointer", opacity: semDados ? 0.5 : 1,
   };

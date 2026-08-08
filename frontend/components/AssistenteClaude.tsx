@@ -79,7 +79,7 @@ export default function AssistenteClaude() {
         <div style={{
           position: "fixed", bottom: "5.2rem", right: "1.5rem", zIndex: 70,
           width: "24rem", maxWidth: "calc(100vw - 2rem)", height: "30rem", maxHeight: "calc(100vh - 8rem)",
-          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "12px",
+          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
           boxShadow: "0 8px 32px rgba(0,0,0,0.4)", display: "flex", flexDirection: "column", overflow: "hidden",
         }}>
           <div style={{ padding: "0.7rem 1rem 0", borderBottom: "1px solid var(--border)" }}>
@@ -108,7 +108,7 @@ export default function AssistenteClaude() {
                 {mensagens.map((m, i) => (
                   <div key={i} style={{
                     alignSelf: m.autor === "usuario" ? "flex-end" : "flex-start",
-                    maxWidth: "85%", padding: "0.5rem 0.7rem", borderRadius: "10px", fontSize: "0.8rem", whiteSpace: "pre-wrap",
+                    maxWidth: "85%", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)", fontSize: "0.8rem", whiteSpace: "pre-wrap",
                     background: m.autor === "usuario" ? "var(--dourado)" : m.autor === "erro" ? "var(--red)" : "var(--surface-2)",
                     color: m.autor === "usuario" ? "#1a1a1a" : m.autor === "erro" ? "#fff" : "var(--text)",
                   }}>
@@ -125,7 +125,7 @@ export default function AssistenteClaude() {
                   onChange={(e) => setPergunta(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") enviar(); }}
                   placeholder="Pergunte algo…"
-                  style={{ flex: 1, background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.4rem 0.6rem", fontSize: "0.8rem" }}
+                  style={{ flex: 1, background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.8rem" }}
                 />
                 <button onClick={enviar} disabled={enviando || !pergunta.trim()} className="btn-primary" style={{ padding: "0.4rem 0.6rem" }}>
                   <Send size={14} />
@@ -234,7 +234,7 @@ function EnsinamentosPainel() {
 
   const inputStyle: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-    borderRadius: "8px", padding: "0.4rem 0.6rem", fontSize: "0.8rem", boxSizing: "border-box",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.8rem", boxSizing: "border-box",
   };
 
   return (
@@ -247,7 +247,7 @@ function EnsinamentosPainel() {
       {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginBottom: "0.6rem", fontWeight: 600 }}>{erro}</p>}
 
       {(criando || editandoId != null) ? (
-        <div style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.6rem", marginBottom: "0.7rem" }}>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem", marginBottom: "0.7rem" }}>
           <input value={titulo} onChange={(e) => setTitulo(e.target.value)}
             placeholder="Título curto (ex.: Regra do lote 04)" style={{ ...inputStyle, marginBottom: "0.5rem" }} />
           <textarea value={texto} onChange={(e) => setTexto(e.target.value)}
@@ -257,13 +257,13 @@ function EnsinamentosPainel() {
             <button type="button" onClick={salvar} className="btn-primary" style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "0.3rem", padding: "0.4rem" }}>
               <Check size={14} /> Salvar
             </button>
-            <button type="button" onClick={fecharForm} style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "0.3rem", padding: "0.4rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", cursor: "pointer", fontSize: "0.8rem" }}>
+            <button type="button" onClick={fecharForm} style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "0.3rem", padding: "0.4rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", cursor: "pointer", fontSize: "0.8rem" }}>
               <X size={14} /> Cancelar
             </button>
           </div>
         </div>
       ) : (
-        <button type="button" onClick={abrirNovo} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", marginBottom: "0.8rem", padding: "0.4rem 0.7rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", cursor: "pointer", fontSize: "0.8rem" }}>
+        <button type="button" onClick={abrirNovo} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", marginBottom: "0.8rem", padding: "0.4rem 0.7rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", cursor: "pointer", fontSize: "0.8rem" }}>
           <Plus size={14} /> Novo ensinamento
         </button>
       )}
@@ -274,7 +274,7 @@ function EnsinamentosPainel() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", textAlign: "center", padding: "1rem 0" }}>Nenhum ensinamento cadastrado ainda.</p>
       ) : (
         itens.map((e) => (
-          <div key={e.id} style={{ border: "1px solid var(--border)", borderRadius: "10px", padding: "0.55rem 0.65rem", marginBottom: "0.5rem", opacity: e.ativo ? 1 : 0.6 }}>
+          <div key={e.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.55rem 0.65rem", marginBottom: "0.5rem", opacity: e.ativo ? 1 : 0.6 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
               <span style={{ fontWeight: 700, fontSize: "0.82rem", flex: 1, minWidth: 0 }}>{e.titulo}</span>
               <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>

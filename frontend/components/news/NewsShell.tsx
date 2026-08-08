@@ -51,7 +51,7 @@ export function NewsShell({
         </Link>
         <Link href={voltarHref} className="news-voltar" style={{
           display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", fontWeight: 600,
-          color: "var(--text)", textDecoration: "none", padding: "0.4rem 0.8rem", borderRadius: "8px",
+          color: "var(--text)", textDecoration: "none", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
           border: "1px solid var(--border)",
         }}>
           {voltarLabel}

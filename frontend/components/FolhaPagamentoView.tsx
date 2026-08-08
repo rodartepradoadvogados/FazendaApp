@@ -52,7 +52,7 @@ function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
 
 const selStyleLote: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
@@ -831,7 +831,7 @@ export default function FolhaPagamentoView() {
       )}
 
       {/* 1) Novo lançamento de folha — acento dourado */}
-      <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "8px", marginBottom: "0.9rem" }}>
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Nova folha — Funcionário" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
         <div className="mb-3" style={{ textAlign: "right" }}>
           <button className="btn-ghost" title="Anexar recibo ou comprovante e preencher por leitura automática" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
@@ -895,7 +895,7 @@ export default function FolhaPagamentoView() {
       </div>
 
       {/* 2) Vale de funcionário — acento verde */}
-      <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "8px", marginBottom: "0.9rem" }}>
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel titulo="Novo vale" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
         <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
@@ -903,7 +903,7 @@ export default function FolhaPagamentoView() {
 
       {/* 3) Lançar guia de FGTS/DCTF — acento vermelho — manual ou por leitura
           automática do PDF/foto da guia real. */}
-      <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "8px", marginBottom: "0.9rem" }}>
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel
         titulo="Lançar guia de FGTS/DCTF" icon={Plus} defaultAberta={false}
         descricao="Manual ou por leitura automática do PDF/foto da guia — cria a conta a pagar e guarda os dados para relatório"
@@ -956,7 +956,7 @@ export default function FolhaPagamentoView() {
             <Printer size={13} /> Imprimir holerite do mês
           </button>
           {imprimindoHoleriteMes && (
-            <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 6, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem", whiteSpace: "nowrap" }}>
+            <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 6, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem", whiteSpace: "nowrap" }}>
               <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
               <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleritesDoMes("pdf")}>PDF</button>
               <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleritesDoMes("excel")}>Excel</button>
@@ -1114,7 +1114,7 @@ export default function FolhaPagamentoView() {
                               <Printer size={13} />
                             </button>
                             {imprimindoHoleriteChave === chave && (
-                              <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", whiteSpace: "nowrap" }}>
+                              <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem", whiteSpace: "nowrap" }}>
                                 <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleriteLinha(r, "pdf")}>PDF</button>
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleriteLinha(r, "excel")}>Excel</button>
@@ -1626,7 +1626,7 @@ export default function FolhaPagamentoView() {
       {excluindoParcela && (
         <Modal title="Excluir parcela do vale" onClose={() => setExcluindoParcela(null)} width="460px">
           <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.85rem" }}>
-            <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.7rem 0.9rem" }}>
+            <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
               <p style={{ marginBottom: "0.3rem" }}>Excluir esta parcela muda o valor total lançado do vale.</p>
               <p>Valor da parcela: <b>{formatBRL(excluindoParcela.valor_parcela)}</b></p>
               <p>Valor do vale: <b>{formatBRL(excluindoParcela.valor_vale)}</b></p>

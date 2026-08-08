@@ -15,7 +15,7 @@ export default function ConsultorInstitucional() {
       />
       <SecaoConteudo>
         <div style={{
-          display: "flex", alignItems: "center", gap: "0.7rem", padding: "0.9rem 1.1rem", borderRadius: "10px",
+          display: "flex", alignItems: "center", gap: "0.7rem", padding: "0.9rem 1.1rem", borderRadius: "var(--r-sm)",
           background: "rgba(201,164,76,0.1)", border: "1px solid rgba(201,164,76,0.3)",
         }}>
           <Construction size={18} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />

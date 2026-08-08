@@ -63,7 +63,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: selecionados.size ? "var(--text)" : "var(--text-muted)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
     textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
   };
 
@@ -89,11 +89,11 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
               <div style={{ position: "relative", flex: "1 1 220px" }}>
                 <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
                 <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo, categoria…"
-                  style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
+                  style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
               </div>
               {lotes.length > 1 && (
                 <select value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)} title="Filtrar por lote"
-                  style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
+                  style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
                   <option value="">Todos os lotes</option>
                   {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>

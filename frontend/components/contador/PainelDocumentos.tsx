@@ -14,9 +14,9 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Dropzone } from "@/components/Dropzone";
 
 const C = CORES_CONTADOR;
-const estiloCard: React.CSSProperties = { background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "4px", padding: "1.3rem" };
+const estiloCard: React.CSSProperties = { background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "var(--r-sm)", padding: "1.3rem" };
 const estiloInput: React.CSSProperties = {
-  background: C.painelAlt, color: C.texto, border: `1px solid ${C.borda}`, borderRadius: "3px",
+  background: C.painelAlt, color: C.texto, border: `1px solid ${C.borda}`, borderRadius: "var(--r-sm)",
   padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
 };
 const estiloLabel: React.CSSProperties = { fontSize: "0.68rem", color: C.mudo, display: "block", marginBottom: "0.2rem", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -124,7 +124,7 @@ export function PainelDocumentos() {
             <button type="submit" disabled={!arquivo || !categoria || enviando}
               style={{
                 display: "flex", alignItems: "center", gap: "0.4rem", background: C.cobre, color: "#fff",
-                border: "none", borderRadius: "3px", padding: "0.55rem 0.9rem", fontSize: "0.82rem", fontWeight: 700,
+                border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 0.9rem", fontSize: "0.82rem", fontWeight: 700,
                 cursor: "pointer", opacity: !arquivo || !categoria || enviando ? 0.6 : 1,
               }}>
               <UploadCloud size={14} /> {enviando ? "Arquivando…" : "Arquivar documento"}

@@ -5,7 +5,7 @@ import { CampoMoeda } from "@/components/CampoMoeda";
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
@@ -47,7 +47,7 @@ export default function ComissaoCorretagemForm({
       </label>
 
       {pagarComissao && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", marginTop: "0.5rem" }}>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem", marginTop: "0.5rem" }}>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div><label style={labelStyle}>Corretor</label>
               <input style={selStyle} list="lista-corretores" value={corretorNome} onChange={(e) => setCorretorNome(e.target.value)} placeholder="Nome do corretor" />

@@ -167,7 +167,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   };
 
   const futura = dataAplicacao > new Date().toISOString().slice(0, 10);
-  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   const lotesDisponiveis = useMemo(() => {
     const todos: any[] = [

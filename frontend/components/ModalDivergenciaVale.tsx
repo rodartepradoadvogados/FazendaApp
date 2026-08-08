@@ -6,7 +6,7 @@ import { formatBRL } from "@/lib/api";
 
 const inp: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
@@ -77,7 +77,7 @@ export function ModalDivergenciaVale({
   return (
     <Modal title="Valor diferente do calculado" onClose={onCancelar} width="560px">
       <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
-        <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.7rem 0.9rem" }}>
+        <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--dourado)", flexShrink: 0, marginTop: "0.1rem" }} />
           <div style={{ fontSize: "0.85rem" }}>
             <p style={{ marginBottom: "0.3rem" }}>O valor informado é diferente do valor calculado.</p>
@@ -178,7 +178,7 @@ export function ModalConfirmarDivergenciaTotal({
   return (
     <Modal title="Valor total diferente do valor do vale" onClose={onCancelar} width="460px">
       <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.85rem" }}>
-        <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.7rem 0.9rem" }}>
+        <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--dourado)", flexShrink: 0, marginTop: "0.1rem" }} />
           <div>
             <p style={{ marginBottom: "0.3rem" }}>Com os valores lançados, o total das parcelas fica diferente do que foi efetivamente pago no vale.</p>

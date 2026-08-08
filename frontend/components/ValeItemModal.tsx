@@ -7,7 +7,7 @@ import { MobVoltar } from "@/components/mobile/ui";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
@@ -193,7 +193,7 @@ export default function ValeItemModal({
 
       {opcoes && opcoes.bloqueio && (
         <div>
-          <div style={{ fontSize: "0.82rem", color: "var(--red)", background: "rgba(190,40,40,0.1)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+          <div style={{ fontSize: "0.82rem", color: "var(--red)", background: "rgba(190,40,40,0.1)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem" }}>
             <AlertTriangle size={14} style={{ display: "inline", marginRight: "0.3rem", verticalAlign: "-2px" }} />
             {opcoes.bloqueio}
           </div>
@@ -244,7 +244,7 @@ export default function ValeItemModal({
       )}
 
       {erro409 && (
-        <div style={{ fontSize: "0.8rem", color: "var(--amber)", background: "rgba(217,119,6,0.1)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+        <div style={{ fontSize: "0.8rem", color: "var(--amber)", background: "rgba(217,119,6,0.1)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem" }}>
           <AlertTriangle size={14} style={{ display: "inline", marginRight: "0.3rem", verticalAlign: "-2px" }} />
           {erro409.mensagem}
           {erro409.competencias_excedidas.length > 0 && (

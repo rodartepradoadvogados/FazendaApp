@@ -56,7 +56,7 @@ export function TouroPicker({ itens, value, onChangeTexto, onSelecionar, placeho
           onMouseDown={(e) => { if (blurTimeout.current) clearTimeout(blurTimeout.current); e.preventDefault(); }}
           style={{
             position: "absolute", zIndex: 60, top: "100%", left: 0, right: 0, marginTop: "0.25rem",
-            background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
+            background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
             maxHeight: "16rem", overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
           }}
         >

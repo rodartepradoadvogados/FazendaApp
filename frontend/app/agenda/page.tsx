@@ -860,7 +860,7 @@ export default function AgendaPage() {
         itensGrupoAtivo.every((it) => selecionadosLote[d]?.has(it.id));
 
       return (
-        <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+        <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", background: "var(--surface-2)" }}>
             <button onClick={() => toggleData(d)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
               {aberto ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
@@ -1550,7 +1550,7 @@ export default function AgendaPage() {
                 <button key={iso} type="button" onClick={() => abrirDiaCalendario(iso)}
                   title={evs.length ? `${evs.length} evento${evs.length !== 1 ? "s" : ""}` : undefined}
                   style={{
-                    minHeight: "4.4rem", padding: "0.3rem 0.35rem", borderRadius: "8px", textAlign: "left", cursor: "pointer",
+                    minHeight: "4.4rem", padding: "0.3rem 0.35rem", borderRadius: "var(--r-sm)", textAlign: "left", cursor: "pointer",
                     display: "flex", flexDirection: "column", gap: "0.25rem",
                     border: "1px solid " + (ehSelecionado ? "var(--dourado)" : ehHoje ? "var(--dourado-light)" : "var(--border)"),
                     background: ehSelecionado ? "rgba(184,134,11,0.18)" : ehHoje ? "rgba(184,134,11,0.08)" : "var(--surface-2)",
@@ -1674,7 +1674,7 @@ export default function AgendaPage() {
     const [gerando, setGerando] = useState(false);
     const semDados = eventos.length === 0;
     const btn: React.CSSProperties = {
-      display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "6px",
+      display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "var(--r-sm)",
       border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)",
       fontSize: "0.78rem", fontWeight: 600, cursor: semDados ? "not-allowed" : "pointer", opacity: semDados ? 0.5 : 1,
     };
@@ -1708,12 +1708,12 @@ export default function AgendaPage() {
               <div>
                 <label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>De</label>
                 <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
               </div>
               <div>
                 <label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Até</label>
                 <input type="date" value={fim} onChange={(e) => setFim(e.target.value)}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
               </div>
             </div>
             <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>Deixe em branco para exportar tudo o que está carregado.</p>
@@ -1749,7 +1749,7 @@ export default function AgendaPage() {
               onChange={e => setData(e.target.value)}
               className="btn-ghost"
               title="Data de referência: ancora toda a agenda — eventos, contas e visitas são calculados a partir dela."
-              style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "8px" }}
+              style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "var(--r-sm)" }}
             />
           </div>
           <button onClick={carregar} className="btn-ghost" title="Recarregar">
@@ -1768,7 +1768,7 @@ export default function AgendaPage() {
 
       {/* Feedback transitório de ações (sucesso em verde, erro em vermelho) */}
       {feedback && (
-        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "8px",
+        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "var(--r-sm)",
           background: feedback.erro ? "rgba(192,57,43,0.15)" : "rgba(20,83,45,0.35)",
           border: "1px solid " + (feedback.erro ? "var(--red)" : "var(--green-light)"),
           color: feedback.erro ? "var(--red)" : "var(--green-light)" }}>
@@ -1874,7 +1874,7 @@ export default function AgendaPage() {
                   {ordIatf.linhasOrdenadas.map((c: any, i: number) => (
                     <tr key={i}>
                       <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
-                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "var(--r-sm)", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
                       <td>{c.del_dias ?? "—"}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
                       <td><BotaoAgendar numero={c.numero_matriz} descricao="IATF: candidata a novo serviço" categoria="Reprodutivo" /></td>
@@ -1895,7 +1895,7 @@ export default function AgendaPage() {
                       <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
                       <td style={{ fontSize: "0.78rem" }}>{a.nome_protocolo}</td>
                       <td style={{ fontSize: "0.78rem" }}>{fmtCurta(a.data_d0)}</td>
-                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{a.etapa_atual}</span></td>
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "var(--r-sm)", fontSize: "0.75rem" }}>{a.etapa_atual}</span></td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{a.data_etapa_atual ? fmtCurta(a.data_etapa_atual) : "—"}</td>
                     </tr>
                   ))}
@@ -1973,15 +1973,15 @@ export default function AgendaPage() {
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar agenda</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
-            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
-            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
+            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
               <option value="">Todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
             </select></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar</label>
-            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
         </div>
         {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
       </div>
@@ -1996,7 +1996,7 @@ export default function AgendaPage() {
           </div>
           <div className="space-y-2">
             {comunicados.map((e: any) => (
-              <div key={e.id} className="flex items-start justify-between gap-3" style={{ padding: "0.6rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              <div key={e.id} className="flex items-start justify-between gap-3" style={{ padding: "0.6rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
                 <div>
                   <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>{e.descricao}</p>
                   {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
@@ -2081,14 +2081,14 @@ export default function AgendaPage() {
           {paineis.has("estoqueAlertas") && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
               {estoqueNegativo.map((i) => (
-                <div key={`neg_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "10px", background: "color-mix(in srgb, var(--vinho) 25%, transparent)", border: "1px solid var(--red)" }}>
+                <div key={`neg_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "var(--r-sm)", background: "color-mix(in srgb, var(--vinho) 25%, transparent)", border: "1px solid var(--red)" }}>
                   <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>{i.nome}</p>
                   <p style={{ fontSize: "0.85rem", color: "var(--red)", fontWeight: 700, marginTop: "0.2rem" }}>{i.quantidade} {i.unidade || ""}</p>
                   <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>saldo negativo</p>
                 </div>
               ))}
               {estoqueAbaixoMinimo.map((i) => (
-                <div key={`min_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "10px", background: "color-mix(in srgb, var(--dourado) 20%, transparent)", border: "1px solid var(--amber)" }}>
+                <div key={`min_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "var(--r-sm)", background: "color-mix(in srgb, var(--dourado) 20%, transparent)", border: "1px solid var(--amber)" }}>
                   <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>{i.nome}</p>
                   <p style={{ fontSize: "0.85rem", fontWeight: 700, marginTop: "0.2rem" }}>{i.quantidade} de {i.estoque_minimo} {i.unidade || ""}</p>
                   <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>abaixo do mínimo</p>
@@ -2115,7 +2115,7 @@ export default function AgendaPage() {
             </label>
             <select
               value={destinoMov} onChange={(e) => setDestinoMov(e.target.value)}
-              style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem", marginBottom: "1rem" }}
+              style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem", marginBottom: "1rem" }}
             >
               {sugestaoMovAberta.lotes_sugeridos?.map((l: any) => (
                 <option key={l.codigo} value={l.codigo}>{l.rotulo} (sugerido)</option>
@@ -2153,7 +2153,7 @@ export default function AgendaPage() {
                     type={f.type}
                     value={(form as any)[f.key]}
                     onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                    style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                    style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                   />
                 </div>
               ))}
@@ -2195,7 +2195,7 @@ export default function AgendaPage() {
                 <select
                   value={form.categoria}
                   onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 >
                   {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
                 </select>
@@ -2206,7 +2206,7 @@ export default function AgendaPage() {
                 <select
                   value={form.tipo_evento}
                   onChange={e => setForm(p => ({ ...p, tipo_evento: e.target.value }))}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 >
                   <option value="">—</option>
                   {TIPOS_EVENTO.map(t => <option key={t}>{t}</option>)}
@@ -2218,7 +2218,7 @@ export default function AgendaPage() {
                 <input
                   type="text" value={form.observacao}
                   onChange={e => setForm(p => ({ ...p, observacao: e.target.value }))}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 />
               </div>
 
@@ -2231,10 +2231,10 @@ export default function AgendaPage() {
                     <span style={{ fontSize: "0.8rem" }}>A cada</span>
                     <input type="number" min={1} value={form.recorrenciaNumero}
                       onChange={e => setForm(p => ({ ...p, recorrenciaNumero: e.target.value }))}
-                      style={{ width: "5rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.5rem", color: "var(--text)", fontSize: "0.875rem" }} />
+                      style={{ width: "5rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.5rem", color: "var(--text)", fontSize: "0.875rem" }} />
                     <select value={form.recorrenciaFrequencia}
                       onChange={e => setForm(p => ({ ...p, recorrenciaFrequencia: e.target.value as "dias" | "meses" }))}
-                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}>
+                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}>
                       <option value="dias">dias</option>
                       <option value="meses">meses</option>
                     </select>

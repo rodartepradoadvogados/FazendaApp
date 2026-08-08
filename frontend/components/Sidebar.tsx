@@ -331,7 +331,7 @@ export function Sidebar() {
                   title="Digite parte do nome para pular direto a uma sub-aba, sem abrir grupo por grupo"
                   style={{
                     width: "100%", boxSizing: "border-box", padding: "0.3rem 0.5rem 0.3rem 1.6rem", fontSize: "10px",
-                    borderRadius: "6px", border: "1px solid var(--sidebar-border)",
+                    borderRadius: "var(--r-sm)", border: "1px solid var(--sidebar-border)",
                     background: "var(--sidebar-bg)", color: "var(--sidebar-fg)",
                   }}
                 />
@@ -350,7 +350,7 @@ export function Sidebar() {
                       title={f.caminho ? `${f.caminho} › ${f.label}` : f.label}
                       style={{
                         width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", textAlign: "left", cursor: "pointer",
-                        padding: "0.4rem 0.6rem", borderRadius: "8px",
+                        padding: "0.4rem 0.6rem", borderRadius: "var(--r-sm)",
                         border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
                         background: ativo ? "var(--sidebar-active-bg)" : "transparent",
                         color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
@@ -538,7 +538,7 @@ export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLa
         return (
           <div key={n.id}
             style={grupoAberto ? {
-              border: "1.5px solid var(--sidebar-subnav-outline)", borderRadius: "10px",
+              border: "1.5px solid var(--sidebar-subnav-outline)", borderRadius: "var(--r-sm)",
               padding: "0.3rem", background: "var(--sidebar-subnav-outline-bg)",
             } : undefined}>
             <SubNavItem node={n} depth={depth} ativo={ativo} temFilhos={temFilhos} activeId={activeId}
@@ -583,7 +583,7 @@ function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, p
       <button onClick={aoClicar}
         style={{
           flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
-          padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
+          padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer", textAlign: "left",
           border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
           background: ativo ? "var(--sidebar-active-bg)" : "transparent",
           color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
@@ -599,7 +599,7 @@ function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, p
           title={recolhido ? "Expandir sub-menu" : "Recolher sub-menu"}
           style={{
             display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            width: "1.3rem", background: "none", border: "none", borderRadius: "6px",
+            width: "1.3rem", background: "none", border: "none", borderRadius: "var(--r-sm)",
             color: "var(--sidebar-muted)", opacity: 0.55, cursor: "pointer",
           }}
         >
@@ -621,7 +621,7 @@ function UsuarioLogado() {
       </div>
       <button onClick={logout} title="Encerra a sessão — a próxima pessoa faz login com o próprio usuário"
         className="flex items-center justify-center gap-1.5 mx-auto"
-        style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "6px", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
+        style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "var(--r-sm)", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
         <LogOut size={12} /> Sair / trocar de usuário
       </button>
     </div>

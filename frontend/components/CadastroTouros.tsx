@@ -65,12 +65,12 @@ export function FormTouro({ inicial, onSalvar, onCancelar }: { inicial: TouroIn;
     }
   }
 
-  const inputStyle: React.CSSProperties = { width: "100%", padding: "0.45rem 0.6rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" };
+  const inputStyle: React.CSSProperties = { width: "100%", padding: "0.45rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" };
   const labelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 200, overflowY: "auto", padding: "2rem 1rem" }}>
-      <div style={{ background: "var(--bg)", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "42rem", border: "1px solid var(--border)" }}>
+      <div style={{ background: "var(--bg)", borderRadius: "var(--r-sm)", padding: "1.5rem", width: "100%", maxWidth: "42rem", border: "1px solid var(--border)" }}>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-bold flex items-center gap-2"><Dna size={18} style={{ color: "var(--dourado)" }} /> {inicial.naab ? "Editar touro" : "Novo touro"}</h3>
           <button onClick={onCancelar} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><X size={18} /></button>
@@ -253,7 +253,7 @@ export default function CadastroTouros() {
         <div style={{ position: "relative", flex: "1 1 16rem", maxWidth: "22rem" }}>
           <Search size={15} style={{ position: "absolute", left: "0.6rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
           <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por NAAB, nome, central ou raça..."
-            style={{ width: "100%", padding: "0.5rem 0.6rem 0.5rem 2rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" }} />
+            style={{ width: "100%", padding: "0.5rem 0.6rem 0.5rem 2rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" }} />
         </div>
         <button onClick={carregar} className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <RefreshCw size={14} /> Atualizar
@@ -270,7 +270,7 @@ export default function CadastroTouros() {
           Nenhum touro cadastrado ainda. Importe o catálogo em Configurações › Importar dados › Touros (NAAB), ou clique em "Novo touro".
         </p>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: "10px" }}>
+        <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: "60rem" }}>
             <thead>
               <tr>

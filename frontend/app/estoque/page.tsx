@@ -55,7 +55,7 @@ type Item = {
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)"];
 
-const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
 function EstoqueInventario() {
   const [itens, setItens] = useState<Item[] | null>(null);
@@ -108,7 +108,7 @@ function EstoqueInventario() {
     return Array.from(by.entries()).map(([cat, valor]) => ({ cat, valor })).sort((a, b) => b.valor - a.valor).slice(0, 8);
   }, [filtrados]);
 
-  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
