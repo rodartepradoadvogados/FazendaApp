@@ -32,7 +32,10 @@ const ABAS: Aba[] = [
   { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
   { href: "/contador", label: "Painel do Contador", donoOnly: true },
   { href: "/portal", label: "Portal" },
-  { href: "/consultor", label: "Consultor" },
+  // Consultor (assinatura independente) saiu da navegação — o consultor
+  // passa a existir só dentro da própria fazenda (vínculo UsuarioFazenda.
+  // consultor) e como Consultor CowData (Equipe CowData); a remoção
+  // completa do produto/rota /consultor é escopo à parte (backlog #122).
   { href: "/configuracoes", label: "Configurações", requerConfig: true },
 ];
 
