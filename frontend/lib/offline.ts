@@ -51,6 +51,22 @@
 //     ligado, ver capacitor.config.ts) e incrementam tentativas com o mesmo
 //     backoff dos outros ramos, só pra tornar o retry visível (não muda o
 //     design de nunca marcar erro definitivo por falha de rede).
+//   - "onLine=true rede=4g 9.5Mbps" no debugUltimoErro (diagnóstico da
+//     correção acima) mostrou um relato real de sincronização travada por
+//     dias a fio, sempre com sinal de rádio bom — mas isso só prova que a
+//     RÁDIO do aparelho está conectada, nunca que o SERVIDOR está alcançável
+//     (DNS/TLS/roteamento até nós pode falhar com sinal ótimo — comum em
+//     bloqueio de operadora ou WebView com certificado desatualizado). A
+//     bolinha verde/vermelha do cabeçalho do app (`app/app/layout.tsx`)
+//     também usava só navigator.onLine, então dizia "conectado" mesmo nesse
+//     cenário — dado enganoso bater de frente com "não sincroniza nada".
+//     Duas correções: (1) diagnosticoFalhaRede() (abaixo) agora tenta de
+//     verdade um GET /health com timeout curto (5s) toda vez que um envio
+//     falha por rede, e anota se o SERVIDOR respondeu ou não — separando
+//     "sinal bom mas nosso servidor inalcançável" de "falha pontual deste
+//     envio só". (2) useConectividadeReal() (abaixo) faz o mesmo ping
+//     periódico usado pelo indicador do site desktop (ver Sidebar.tsx) — a
+//     bolinha do app agora reflete se o SERVIDOR respondeu, não só a rádio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
 import { API, getToken, getFazendaAtual, mensagemErroApi } from "@/lib/api";
@@ -166,6 +182,26 @@ export function useOnline(): boolean {
   return online;
 }
 
+/** Diferente de useOnline() (rádio do aparelho, pode mentir) — pinga de
+ *  verdade GET /health, mesmo padrão já usado no indicador do site desktop
+ *  (ver Sidebar.tsx). Usado na bolinha do cabeçalho do app (app/app/layout.tsx)
+ *  pra ela parar de dizer "conectado" quando o aparelho tem rádio mas nosso
+ *  servidor está inalcançável — exatamente o cenário que confundia o
+ *  diagnóstico de "sincronização não funciona" (rádio bom, bolinha verde,
+ *  mas nada sincroniza). Otimista (`true`) até a 1ª checagem responder, pra
+ *  não piscar vermelho no instante de abrir o app. */
+export function useConectividadeReal(): boolean {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    let ativo = true;
+    const checar = () => probarServidorAlcancavel().then((ok) => { if (ativo) setOnline(ok); });
+    checar();
+    const id = setInterval(checar, 30000);
+    return () => { ativo = false; clearInterval(id); };
+  }, []);
+  return online;
+}
+
 // ── Cache de leitura (GET) ───────────────────────────────────────────────────
 export async function fetchComCache<T>(chave: string, buscar: () => Promise<T>): Promise<{ dados: T | null; doCache: boolean }> {
   try {
@@ -237,15 +273,41 @@ function proximaTentativa(tentativas: number): string {
   return new Date(Date.now() + espera).toISOString();
 }
 
-/** Contexto de rede no momento da falha — anexado à mensagem técnica
+// Timeout curto — só para o probe de diagnóstico abaixo, nunca deve
+// pendurar o loop de sincronização esperando por ele.
+const TIMEOUT_PROBE_MS = 5000;
+
+/** GET /health com timeout curto — só para diagnóstico (nunca decide se
+ *  enfileira ou não; isso continua vindo do fetch real do próprio envio).
+ *  `false` tanto para falha de rede quanto para timeout quanto para
+ *  resposta não-2xx — qualquer um desses já significa "não dá pra dizer que
+ *  o servidor está alcançável agora". */
+async function probarServidorAlcancavel(): Promise<boolean> {
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_PROBE_MS);
+  try {
+    const res = await fetch(`${API}/health`, { cache: "no-store", signal: controlador.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** Diagnóstico do momento da falha — anexado à mensagem técnica
  *  (debugUltimoErro) pra separar "sem sinal de verdade" de "tem sinal mas o
  *  fetch falhou mesmo assim" (ex.: WebView com problema, DNS, certificado) —
  *  sem isso, "TypeError: Failed to fetch" sozinho não diz qual dos dois é,
  *  e foi exatamente essa dúvida que travou o diagnóstico de um relato real
- *  ("app não envia dados", com Wi-Fi supostamente bom). navigator.connection
- *  só existe em Chrome/WebView Android — undefined em iOS/Safari, ok ficar
- *  de fora nesse caso. */
-function descreverConectividade(): string {
+ *  ("app não envia dados", com sinal 4G bom informado pelo próprio
+ *  aparelho). navigator.connection só existe em Chrome/WebView Android —
+ *  undefined em iOS/Safari, ok ficar de fora nesse caso. Além do sinal de
+ *  rádio (que só prova que a operadora está conectada, nunca que NOSSO
+ *  servidor está alcançável), tenta de verdade um GET /health com timeout
+ *  curto — se ele TAMBÉM falhar, é bloqueio/instabilidade de rede até o
+ *  servidor (DNS, TLS, operadora), não uma falha pontual deste envio. */
+async function diagnosticoFalhaRede(): Promise<string> {
   const partes: string[] = [`onLine=${typeof navigator !== "undefined" ? navigator.onLine : "?"}`];
   const conexao = typeof navigator !== "undefined" ? (navigator as any).connection : undefined;
   if (conexao) {
@@ -253,6 +315,12 @@ function descreverConectividade(): string {
     if (typeof conexao.downlink === "number") partes.push(`${conexao.downlink}Mbps`);
     if (conexao.saveData) partes.push("economiaDeDados=on");
   }
+  const servidorAlcancavel = await probarServidorAlcancavel();
+  partes.push(
+    servidorAlcancavel
+      ? "servidorRespondeu=sim(provável falha pontual só deste envio)"
+      : "servidorRespondeu=NÃO(nosso servidor está inalcançável a partir daqui, mesmo com sinal — não é só sinal fraco)",
+  );
   return partes.join(" ");
 }
 
@@ -312,7 +380,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
       const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       await inserirItem({
         id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente",
-        fazendaId: getFazendaAtual()?.id ?? null, debugUltimoErro: `${motivo} (${descreverConectividade()})`,
+        fazendaId: getFazendaAtual()?.id ?? null, debugUltimoErro: `${motivo} (${await diagnosticoFalhaRede()})`,
       });
       await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
       return { enviado: false };
@@ -532,7 +600,7 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
           await atualizarItem(atual.id, {
             tentativas, proximaTentativaEm: proximaTentativa(tentativas),
-            debugUltimoErro: `${motivo} (${descreverConectividade()})`,
+            debugUltimoErro: `${motivo} (${await diagnosticoFalhaRede()})`,
           });
           break;
         }

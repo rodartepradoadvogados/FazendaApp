@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { fetchAgenda, today } from "@/lib/api";
-import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
+import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes } from "@/lib/offline";
 import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -34,7 +34,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathRef = useRef(path);
   pathRef.current = path;
-  const online = useOnline();
+  // Ping real ao servidor (não só a rádio do aparelho, que pode dizer
+  // "conectado" mesmo com nosso servidor inalcançável — ver lib/offline.ts).
+  const online = useConectividadeReal();
   const fila = usePendentes();
   const [escuro, setEscuro] = useState(false);
   // Cabeçalho FIXO (não some ao rolar). Medimos a altura real — que varia com a
@@ -131,9 +133,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
               <CowDataMark size={22} />
               <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
-              {/* Bolinha de conexão: verde luminoso online, vermelha offline */}
+              {/* Bolinha de conexão: verde luminoso quando o SERVIDOR responde de
+                  verdade (ping real, não só a rádio do aparelho — ver
+                  useConectividadeReal em lib/offline.ts), vermelha quando não. */}
               <span
-                title={online ? "Conectado à internet" : "Sem internet — os lançamentos ficam guardados e serão enviados quando conectar"}
+                title={online ? "Servidor CowData respondendo" : "Servidor CowData inalcançável agora — os lançamentos ficam guardados e serão enviados quando voltar"}
                 style={{
                   width: 9, height: 9, borderRadius: "50%", display: "inline-block",
                   background: online ? "var(--mob-verde-neon)" : "#FF4D4D",
