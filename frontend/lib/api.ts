@@ -419,13 +419,22 @@ export type PessoaCowData = {
   cpf_cnpj?: string | null; cep?: string | null;
   salario_base?: number | null; data_admissao?: string | null;
   observacoes?: string | null; ativo: boolean;
+  rg?: string | null; genero?: string | null; estado_civil?: string | null;
+  endereco_rua?: string | null; endereco_numero?: string | null; endereco_bairro?: string | null;
+  endereco_cidade?: string | null; endereco_uf?: string | null;
+  tipo_vinculo?: "funcionario" | "pj" | null; subtipo_pj?: string | null; pagamento_mensal?: number | null;
 };
 export type PessoaCowDataIn = {
   nome: string; cargo: string; telefones?: string[]; emails?: string[];
   cpf_cnpj?: string | null; cep?: string | null;
   salario_base?: number | null; data_admissao?: string | null;
   observacoes?: string | null; ativo?: boolean;
+  rg?: string | null; genero?: string | null; estado_civil?: string | null;
+  endereco_rua?: string | null; endereco_numero?: string | null; endereco_bairro?: string | null;
+  endereco_cidade?: string | null; endereco_uf?: string | null;
+  tipo_vinculo?: "funcionario" | "pj" | null; subtipo_pj?: string | null; pagamento_mensal?: number | null;
 };
+export const fetchTiposVinculoCowData = (): Promise<{ tipos_vinculo: string[]; subtipos_pj: string[] }> => _pcGet(`/equipe/tipos-vinculo`);
 export type FolhaCowData = {
   id: number; pessoa_id: number; competencia: string; valor_bruto: number; descontos: number;
   valor_liquido: number; status: "pendente" | "pago"; data_pagamento?: string | null; observacao?: string | null;

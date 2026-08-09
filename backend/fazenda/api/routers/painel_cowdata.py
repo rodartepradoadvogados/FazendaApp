@@ -30,7 +30,10 @@ router = APIRouter(prefix="/painel-cowdata", tags=["painel-cowdata"])
 
 NOME_FAZENDA_COWDATA = "CowData (empresa)"
 
-CARGOS_COWDATA = ["Sócio", "Comercial", "T.I.", "Financeiro", "Marketing", "Suporte"]
+CARGOS_COWDATA = ["Sócio", "Comercial", "T.I.", "Financeiro", "Marketing", "Suporte", "Consultor"]
+
+TIPOS_VINCULO = ["funcionario", "pj"]
+SUBTIPOS_PJ = ["MEI", "ME", "EPP", "Outros"]
 
 
 def seed_cowdata_empresa(session: Session) -> Fazenda:
@@ -54,6 +57,13 @@ def seed_cowdata_empresa(session: Session) -> Fazenda:
             if not existe:
                 session.add(TipoPessoa(nome=nome, fazenda_id=fazenda.id))
         session.add(SeedFlag(chave=chave))
+        session.commit()
+    # "Consultor" (ago/2026) chegou depois do SeedFlag original já ter
+    # rodado em produção — garante a existência dele à parte, sem depender
+    # de um SeedFlag novo (idempotente por natureza: só cria se não existir,
+    # nunca reseta cargos que o usuário já editou/removeu de propósito).
+    if not session.exec(select(TipoPessoa).where(TipoPessoa.nome == "Consultor", TipoPessoa.fazenda_id == fazenda.id)).first():
+        session.add(TipoPessoa(nome="Consultor", fazenda_id=fazenda.id))
         session.commit()
     return fazenda
 
@@ -79,6 +89,28 @@ class PessoaCowDataIn(BaseModel):
     data_admissao: Optional[date] = None
     observacoes: Optional[str] = None
     ativo: bool = True
+    # Campos acrescentados a pedido do usuário (ago/2026) — RG/gênero/estado
+    # civil/endereço já existiam em Pessoa (colunas jul/2026, reaproveitadas
+    # aqui pela primeira vez neste formulário específico); tipo_vinculo/
+    # subtipo_pj/pagamento_mensal são novos (ver models/pessoal.py).
+    rg: Optional[str] = None
+    genero: Optional[str] = None
+    estado_civil: Optional[str] = None
+    endereco_rua: Optional[str] = None
+    endereco_numero: Optional[str] = None
+    endereco_bairro: Optional[str] = None
+    endereco_cidade: Optional[str] = None
+    endereco_uf: Optional[str] = None
+    tipo_vinculo: Optional[str] = None  # "funcionario" | "pj"
+    subtipo_pj: Optional[str] = None  # obrigatório (validado abaixo) quando tipo_vinculo == "pj"
+    pagamento_mensal: Optional[float] = None
+
+
+def _validar_vinculo(dados: "PessoaCowDataIn") -> None:
+    if dados.tipo_vinculo is not None and dados.tipo_vinculo not in TIPOS_VINCULO:
+        raise HTTPException(status_code=400, detail="Tipo de vínculo inválido")
+    if dados.tipo_vinculo == "pj" and dados.subtipo_pj and dados.subtipo_pj not in SUBTIPOS_PJ:
+        raise HTTPException(status_code=400, detail="Subtipo de PJ inválido — escolha MEI, ME, EPP ou Outros")
 
 
 def _pessoa_publica(p: Pessoa) -> dict:
@@ -94,7 +126,23 @@ def _pessoa_publica(p: Pessoa) -> dict:
         "data_admissao": p.data_admissao,
         "observacoes": p.observacoes,
         "ativo": p.ativo,
+        "rg": p.rg,
+        "genero": p.genero,
+        "estado_civil": p.estado_civil,
+        "endereco_rua": p.endereco_rua,
+        "endereco_numero": p.endereco_numero,
+        "endereco_bairro": p.endereco_bairro,
+        "endereco_cidade": p.endereco_cidade,
+        "endereco_uf": p.endereco_uf,
+        "tipo_vinculo": p.tipo_vinculo,
+        "subtipo_pj": p.subtipo_pj,
+        "pagamento_mensal": p.pagamento_mensal,
     }
+
+
+@router.get("/equipe/tipos-vinculo")
+def listar_tipos_vinculo(_: Usuario = Depends(exigir_dono)) -> dict:
+    return {"tipos_vinculo": TIPOS_VINCULO, "subtipos_pj": SUBTIPOS_PJ}
 
 
 @router.get("/equipe/cargos")
@@ -123,6 +171,7 @@ def criar_membro_equipe(
     ).first()
     if not cargo_existe:
         raise HTTPException(status_code=400, detail="Cargo inválido")
+    _validar_vinculo(dados)
     pessoa = Pessoa(
         fazenda_id=fazenda_id,
         nome=dados.nome,
@@ -137,6 +186,17 @@ def criar_membro_equipe(
         data_admissao=dados.data_admissao,
         observacoes=dados.observacoes,
         ativo=dados.ativo,
+        rg=dados.rg,
+        genero=dados.genero,
+        estado_civil=dados.estado_civil,
+        endereco_rua=dados.endereco_rua,
+        endereco_numero=dados.endereco_numero,
+        endereco_bairro=dados.endereco_bairro,
+        endereco_cidade=dados.endereco_cidade,
+        endereco_uf=dados.endereco_uf,
+        tipo_vinculo=dados.tipo_vinculo,
+        subtipo_pj=dados.subtipo_pj if dados.tipo_vinculo == "pj" else None,
+        pagamento_mensal=dados.pagamento_mensal,
     )
     session.add(pessoa)
     session.commit()
@@ -157,6 +217,7 @@ def editar_membro_equipe(
     pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
+    _validar_vinculo(dados)
     pessoa.nome = dados.nome
     pessoa.tipo = dados.cargo
     pessoa.telefones = json.dumps(dados.telefones) if dados.telefones else None
@@ -169,6 +230,17 @@ def editar_membro_equipe(
     pessoa.data_admissao = dados.data_admissao
     pessoa.observacoes = dados.observacoes
     pessoa.ativo = dados.ativo
+    pessoa.rg = dados.rg
+    pessoa.genero = dados.genero
+    pessoa.estado_civil = dados.estado_civil
+    pessoa.endereco_rua = dados.endereco_rua
+    pessoa.endereco_numero = dados.endereco_numero
+    pessoa.endereco_bairro = dados.endereco_bairro
+    pessoa.endereco_cidade = dados.endereco_cidade
+    pessoa.endereco_uf = dados.endereco_uf
+    pessoa.tipo_vinculo = dados.tipo_vinculo
+    pessoa.subtipo_pj = dados.subtipo_pj if dados.tipo_vinculo == "pj" else None
+    pessoa.pagamento_mensal = dados.pagamento_mensal
     session.add(pessoa)
     session.commit()
     session.refresh(pessoa)
