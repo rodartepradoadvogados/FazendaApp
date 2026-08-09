@@ -92,6 +92,20 @@ def _indexar(servicos: list[dict], partos: list[dict]) -> tuple[dict, dict]:
     return serv_idx, parto_idx
 
 
+def _indexar_secagens(secagens: list[dict] | None) -> dict[str, list[dict]]:
+    idx: dict[str, list[dict]] = {}
+    for s in secagens or []:
+        m = s.get("numero_matriz")
+        if m:
+            idx.setdefault(m, []).append(s)
+    return idx
+
+
+def _ultima_secagem(numero: str, secagens_por_animal: dict[str, list[dict]]) -> date | None:
+    datas = [s["data_secagem"] for s in secagens_por_animal.get(numero, []) if s.get("data_secagem")]
+    return max(datas) if datas else None
+
+
 def _prenhe(animal: dict, ult_pos: dict | None) -> bool:
     sit = (animal.get("sit_rep") or "").strip()
     if sit == "Ges.":
@@ -106,7 +120,7 @@ def _prenhe(animal: dict, ult_pos: dict | None) -> bool:
 # MANEJO — 8 listas semaforizadas
 # ===========================================================================
 def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[dict],
-                      semen: list[dict], hoje: date) -> dict:
+                      semen: list[dict], hoje: date, secagens: list[dict] | None = None) -> dict:
     pev = int(get_param("pev_dias", 45) or 45)
     meta_1a = int(get_param("meta_del_max_1o_servico", 100) or 100)
     dias_toque = int(get_param("dias_toque", 30) or 30)
@@ -115,6 +129,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
     seco = int(get_param("periodo_seco_dias", 60) or 60)
 
     serv_idx, parto_idx = _indexar(servicos, partos)
+    secagem_idx = _indexar_secagens(secagens)
     femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"]
     # Sexado/convencional por nome do touro — fallback para serviços antigos
     # que não gravaram tipo_semen no momento da inseminação (ver Servico.tipo_semen).
@@ -251,8 +266,15 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                               "dpp_concepcao": dpp_conc, "previsao_parto": prev_parto,
                               "reconfirmada": reconfirmada_efetiva, "cor": cor})
 
-            # 6) Secagem — vaca prenhe em lactação
-            if eh_vaca and (a.get("del_dias") or 0) > 0 and concep:
+            # 6) Secagem — vaca prenhe em lactação. "Em lactação" AO VIVO (secagem
+            # mais recente, se houver, é ANTERIOR ao último parto — senão já foi
+            # secada nesse ciclo), não `Animal.del_dias` (congelado no valor do
+            # último GERAL.csv, nunca atualizado por uma Secagem lançada no app —
+            # uma vaca recém-parida pelo app nunca entrava aqui, e uma vaca
+            # recém-secada pelo app nunca saía, ver auditoria ago/2026).
+            ult_secagem = _ultima_secagem(num, secagem_idx)
+            em_lactacao_viva = ult_secagem is None or (dparto is not None and ult_secagem < dparto)
+            if eh_vaca and em_lactacao_viva and concep:
                 prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
                 d_secar = _dias(hoje, prev_secagem)
                 if d_secar is not None and d_secar < -LIMITE_SECAGEM_RETROATIVA_DIAS:

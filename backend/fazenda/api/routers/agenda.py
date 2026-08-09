@@ -20,7 +20,7 @@ from fazenda.models import (
     Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
-    SeedFlag, Servico,
+    Secagem, SeedFlag, Servico,
 )
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.ordenacao import chave_numero
@@ -279,6 +279,10 @@ def calcular_agenda(
         ).all()
     ]
     partos = [_model_to_dict(p) for p in session.exec(_da_fazenda(select(Parto), Parto)).all()]
+    # Alimenta o DEL AO VIVO no motor (ver AgendaEngine.calcular, param
+    # `secagens`) — sem isso, Secagem/Pré-parto e o DEL usado no BST ficavam
+    # presos ao `Animal.del_dias` congelado no último GERAL.csv.
+    secagens = [_model_to_dict(s) for s in session.exec(_da_fazenda(select(Secagem), Secagem)).all()]
     estoque = [_model_to_dict(e) for e in session.exec(_da_fazenda(select(Estoque), Estoque)).all()]
     contas = [_model_to_dict(c) for c in session.exec(_da_fazenda(select(ContaGerencial), ContaGerencial)).all()]
     # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
@@ -337,6 +341,7 @@ def calcular_agenda(
         dias_contas_a_pagar=dias,
         proxima_visita_bst_real=proxima_visita_bst_real,
         lotes=lotes,
+        secagens=secagens,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
