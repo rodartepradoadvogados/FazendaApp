@@ -89,6 +89,16 @@ class Pessoa(SQLModel, table=True):
     endereco_cidade: Optional[str] = None
     endereco_uf: Optional[str] = None
 
+    # Tipo de vínculo (ago/2026) — hoje só coletado/usado pelo cadastro de
+    # Equipe CowData (ver painel_cowdata.py), mas mora aqui (não num modelo
+    # à parte) pelo mesmo motivo dos campos civis acima: Pessoa já é o
+    # cadastro reaproveitado por Equipe CowData, e nada impede uma
+    # fazenda-cliente usar os mesmos campos no futuro. "funcionario" usa
+    # salario_base (acima); "pj" usa pagamento_mensal + subtipo_pj.
+    tipo_vinculo: Optional[str] = None  # "funcionario" | "pj"
+    subtipo_pj: Optional[str] = None  # "MEI" | "ME" | "EPP" | "Outros" — só quando tipo_vinculo="pj"
+    pagamento_mensal: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 # Folha de pagamento — lançamento e acompanhamento por pessoa/competência.

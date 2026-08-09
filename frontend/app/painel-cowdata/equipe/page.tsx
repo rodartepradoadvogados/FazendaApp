@@ -3,9 +3,14 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Trash2, UserPlus } from "lucide-react";
 import {
   fetchCargosCowData, fetchEquipeCowData, criarMembroEquipeCowData, editarMembroEquipeCowData, excluirMembroEquipeCowData,
-  fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData,
-  type PessoaCowData, type FolhaCowData,
+  fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData, fetchTiposVinculoCowData,
+  fetchUsuarioEquipeCowData, criarUsuarioEquipeCowData, editarUsuarioEquipeCowData,
+  AREAS_PAINEL_COWDATA, LABEL_AREA_PAINEL_COWDATA,
+  type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData,
 } from "@/lib/api";
+
+const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
+const ESTADOS_CIVIS = ["Solteiro(a)", "Casado(a)", "União estável", "Divorciado(a)", "Viúvo(a)"];
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
@@ -21,20 +26,30 @@ function mesAtual(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+const NOVO_VAZIO = {
+  nome: "", cargo: "", telefone: "", email: "", cpf_cnpj: "",
+  rg: "", genero: "", estado_civil: "",
+  cep: "", endereco_rua: "", endereco_numero: "", endereco_bairro: "", endereco_cidade: "", endereco_uf: "",
+  tipo_vinculo: "funcionario" as "funcionario" | "pj", subtipo_pj: "MEI",
+  data_admissao: "", salario_base: "", pagamento_mensal: "",
+};
+
 export default function EquipeCowData() {
   const [cargos, setCargos] = useState<string[]>([]);
+  const [subtiposPj, setSubtiposPj] = useState<string[]>([]);
   const [equipe, setEquipe] = useState<PessoaCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [expandidoId, setExpandidoId] = useState<number | null>(null);
 
-  const [novo, setNovo] = useState({ nome: "", cargo: "", telefone: "", email: "", cpf_cnpj: "", salario_base: "" });
+  const [novo, setNovo] = useState(NOVO_VAZIO);
 
   function carregar() {
     fetchEquipeCowData().then(setEquipe).catch((e) => setErro(e.message));
   }
   useEffect(() => {
     fetchCargosCowData().then((c) => { setCargos(c); setNovo((n) => ({ ...n, cargo: n.cargo || c[0] || "" })); }).catch((e) => setErro(e.message));
+    fetchTiposVinculoCowData().then((d) => setSubtiposPj(d.subtipos_pj)).catch(() => {});
     carregar();
   }, []);
 
@@ -45,9 +60,16 @@ export default function EquipeCowData() {
       await criarMembroEquipeCowData({
         nome: novo.nome.trim(), cargo: novo.cargo,
         telefones: novo.telefone ? [novo.telefone] : [], emails: novo.email ? [novo.email] : [],
-        cpf_cnpj: novo.cpf_cnpj || null, salario_base: novo.salario_base ? Number(novo.salario_base) : null,
+        cpf_cnpj: novo.cpf_cnpj || null,
+        rg: novo.rg || null, genero: novo.genero || null, estado_civil: novo.estado_civil || null,
+        cep: novo.cep || null, endereco_rua: novo.endereco_rua || null, endereco_numero: novo.endereco_numero || null,
+        endereco_bairro: novo.endereco_bairro || null, endereco_cidade: novo.endereco_cidade || null, endereco_uf: novo.endereco_uf || null,
+        tipo_vinculo: novo.tipo_vinculo, subtipo_pj: novo.tipo_vinculo === "pj" ? novo.subtipo_pj : null,
+        data_admissao: novo.data_admissao || null,
+        salario_base: novo.tipo_vinculo === "funcionario" && novo.salario_base ? Number(novo.salario_base) : null,
+        pagamento_mensal: novo.tipo_vinculo === "pj" && novo.pagamento_mensal ? Number(novo.pagamento_mensal) : null,
       });
-      setNovo({ nome: "", cargo: cargos[0] || "", telefone: "", email: "", cpf_cnpj: "", salario_base: "" });
+      setNovo({ ...NOVO_VAZIO, cargo: cargos[0] || "" });
       setMostrarForm(false);
       carregar();
     } catch (e: any) { setErro(e.message); }
@@ -59,6 +81,10 @@ export default function EquipeCowData() {
         nome: p.nome, cargo: p.cargo, telefones: p.telefones, emails: p.emails,
         cpf_cnpj: p.cpf_cnpj, cep: p.cep, salario_base: p.salario_base, data_admissao: p.data_admissao,
         observacoes: p.observacoes, ativo: !p.ativo,
+        rg: p.rg, genero: p.genero, estado_civil: p.estado_civil,
+        endereco_rua: p.endereco_rua, endereco_numero: p.endereco_numero, endereco_bairro: p.endereco_bairro,
+        endereco_cidade: p.endereco_cidade, endereco_uf: p.endereco_uf,
+        tipo_vinculo: p.tipo_vinculo, subtipo_pj: p.subtipo_pj, pagamento_mensal: p.pagamento_mensal,
       });
       carregar();
     } catch (e: any) { setErro(e.message); }
@@ -88,6 +114,7 @@ export default function EquipeCowData() {
 
       {mostrarForm && (
         <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
+          <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.5rem" }}>Identificação</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))", gap: "0.7rem" }}>
             <div>
               <label style={labelStyle}>Nome</label>
@@ -112,10 +139,90 @@ export default function EquipeCowData() {
               <input style={inputStyle} value={novo.cpf_cnpj} onChange={(e) => setNovo({ ...novo, cpf_cnpj: e.target.value })} />
             </div>
             <div>
-              <label style={labelStyle}>Salário base (R$)</label>
-              <CampoMoeda style={inputStyle} value={Number(novo.salario_base) || 0} onChange={(v) => setNovo({ ...novo, salario_base: v ? String(v) : "" })} />
+              <label style={labelStyle}>RG</label>
+              <input style={inputStyle} value={novo.rg} onChange={(e) => setNovo({ ...novo, rg: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Estado civil</label>
+              <select style={inputStyle} value={novo.estado_civil} onChange={(e) => setNovo({ ...novo, estado_civil: e.target.value })}>
+                <option value="">—</option>
+                {ESTADOS_CIVIS.map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Gênero (opcional)</label>
+              <input style={inputStyle} value={novo.genero} onChange={(e) => setNovo({ ...novo, genero: e.target.value })} />
             </div>
           </div>
+
+          <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", margin: "0.9rem 0 0.5rem" }}>Endereço</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(9rem, 1fr))", gap: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>CEP</label>
+              <input style={inputStyle} value={novo.cep} onChange={(e) => setNovo({ ...novo, cep: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Rua</label>
+              <input style={inputStyle} value={novo.endereco_rua} onChange={(e) => setNovo({ ...novo, endereco_rua: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Número</label>
+              <input style={inputStyle} value={novo.endereco_numero} onChange={(e) => setNovo({ ...novo, endereco_numero: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Bairro</label>
+              <input style={inputStyle} value={novo.endereco_bairro} onChange={(e) => setNovo({ ...novo, endereco_bairro: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Cidade</label>
+              <input style={inputStyle} value={novo.endereco_cidade} onChange={(e) => setNovo({ ...novo, endereco_cidade: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>UF</label>
+              <select style={inputStyle} value={novo.endereco_uf} onChange={(e) => setNovo({ ...novo, endereco_uf: e.target.value })}>
+                <option value="">—</option>
+                {UFS.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", margin: "0.9rem 0 0.5rem" }}>Vínculo</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))", gap: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>Tipo de vínculo</label>
+              <select style={inputStyle} value={novo.tipo_vinculo} onChange={(e) => setNovo({ ...novo, tipo_vinculo: e.target.value as "funcionario" | "pj" })}>
+                <option value="funcionario">Funcionário</option>
+                <option value="pj">PJ</option>
+              </select>
+            </div>
+            {novo.tipo_vinculo === "pj" && (
+              <div>
+                <label style={labelStyle}>Tipo de PJ</label>
+                <select style={inputStyle} value={novo.subtipo_pj} onChange={(e) => setNovo({ ...novo, subtipo_pj: e.target.value })}>
+                  {(subtiposPj.length ? subtiposPj : ["MEI", "ME", "EPP", "Outros"]).map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+            <div>
+              <label style={labelStyle}>Data de admissão</label>
+              <input type="date" style={inputStyle} value={novo.data_admissao} onChange={(e) => setNovo({ ...novo, data_admissao: e.target.value })} />
+            </div>
+            {novo.tipo_vinculo === "funcionario" ? (
+              <div>
+                <label style={labelStyle}>Salário base (R$)</label>
+                <CampoMoeda style={inputStyle} value={Number(novo.salario_base) || 0} onChange={(v) => setNovo({ ...novo, salario_base: v ? String(v) : "" })} />
+              </div>
+            ) : (
+              <div>
+                <label style={labelStyle}>Pagamento mensal (R$)</label>
+                <CampoMoeda style={inputStyle} value={Number(novo.pagamento_mensal) || 0} onChange={(v) => setNovo({ ...novo, pagamento_mensal: v ? String(v) : "" })} />
+              </div>
+            )}
+          </div>
+          <p style={{ fontSize: "0.7rem", color: COR.mudo, marginTop: "0.6rem" }}>
+            Contrato ({novo.tipo_vinculo === "pj" ? "prestação de serviços PJ" : "funcionário"}) para baixar: em preparação — ainda não disponível nesta tela.
+          </p>
+
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvarNovo}
               style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
@@ -211,6 +318,8 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
             </div>
 
+            <LoginEquipe pessoa={pessoa} />
+
             <div style={{ display: "flex", gap: "0.6rem", alignItems: "flex-end", flexWrap: "wrap", marginBottom: "0.8rem" }}>
               <div>
                 <label style={labelStyle}>Competência</label>
@@ -271,5 +380,161 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
         </tr>
       )}
     </>
+  );
+}
+
+const LOGIN_VAZIO = {
+  username: "", email: "", senha: "", ativo: true, areas: [] as AreaPainelCowData[],
+  pode_suspender_assinatura: false, pode_acessar_fazendas: false,
+  pode_alterar_cadastro: false, pode_modificar_suspender_plano: false, pode_emitir_auditar_contratos: false,
+  pode_emitir_cobrancas: false, pode_vincular_usuarios: false, pode_cadastrar_usuarios: false,
+};
+
+// Login + permissões do membro no próprio Painel CowData — pedido explícito
+// do usuário. Mostrado dentro da linha expandida (FichaLinha, acima), tanto
+// pra cadastrar um login novo quanto pra editar o existente.
+function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
+  const [usuario, setUsuario] = useState<UsuarioEquipeCowData | null | undefined>(undefined); // undefined = carregando
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState(LOGIN_VAZIO);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    fetchUsuarioEquipeCowData(pessoa.id).then(setUsuario).catch((e) => { setErro(e.message); setUsuario(null); });
+  }, [pessoa.id]);
+
+  function abrirEdicao() {
+    setForm(usuario ? {
+      username: usuario.username, email: usuario.email, senha: "", ativo: usuario.ativo,
+      areas: usuario.areas as AreaPainelCowData[],
+      pode_suspender_assinatura: usuario.pode_suspender_assinatura, pode_acessar_fazendas: usuario.pode_acessar_fazendas,
+      pode_alterar_cadastro: usuario.pode_alterar_cadastro, pode_modificar_suspender_plano: usuario.pode_modificar_suspender_plano,
+      pode_emitir_auditar_contratos: usuario.pode_emitir_auditar_contratos, pode_emitir_cobrancas: usuario.pode_emitir_cobrancas,
+      pode_vincular_usuarios: usuario.pode_vincular_usuarios, pode_cadastrar_usuarios: usuario.pode_cadastrar_usuarios,
+    } : { ...LOGIN_VAZIO, email: pessoa.emails[0] || "" });
+    setErro(null);
+    setEditando(true);
+  }
+
+  function alternarArea(area: AreaPainelCowData) {
+    setForm((f) => ({ ...f, areas: f.areas.includes(area) ? f.areas.filter((a) => a !== area) : [...f.areas, area] }));
+  }
+
+  async function salvar() {
+    if (!form.username.trim() || !form.email.trim()) { setErro("Usuário e e-mail são obrigatórios."); return; }
+    if (!usuario && !form.senha.trim()) { setErro("Defina uma senha para criar o login."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const payload = { ...form, senha: form.senha.trim() || null };
+      const salvo = usuario ? await editarUsuarioEquipeCowData(pessoa.id, payload) : await criarUsuarioEquipeCowData(pessoa.id, payload);
+      setUsuario(salvo);
+      setEditando(false);
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  if (usuario === undefined) return null;
+
+  return (
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem", marginBottom: "0.8rem" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: editando ? "0.7rem" : 0 }}>
+        <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Login no Painel CowData
+        </p>
+        {!editando && (
+          <button onClick={abrirEdicao} style={{ fontSize: "0.72rem", color: COR.dourado, background: "transparent", border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "0.25rem 0.6rem", cursor: "pointer" }}>
+            {usuario ? "Editar login/permissões" : "Cadastrar login"}
+          </button>
+        )}
+      </div>
+
+      {!editando && usuario && (
+        <p style={{ fontSize: "0.78rem", color: COR.mudo }}>
+          {usuario.username} · {usuario.email} · {usuario.ativo ? <span style={{ color: COR.verde }}>ativo</span> : <span style={{ color: COR.vermelho }}>inativo</span>}
+          {" · áreas: "}{usuario.areas.length ? usuario.areas.map((a) => LABEL_AREA_PAINEL_COWDATA[a as AreaPainelCowData] || a).join(", ") : "nenhuma"}
+        </p>
+      )}
+      {!editando && !usuario && (
+        <p style={{ fontSize: "0.78rem", color: COR.mudo }}>Este membro ainda não tem login para o Painel CowData.</p>
+      )}
+
+      {editando && (
+        <div>
+          {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.5rem" }}>{erro}</p>}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))", gap: "0.6rem", marginBottom: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>Usuário (login)</label>
+              <input style={inputStyle} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>E-mail</label>
+              <input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>{usuario ? "Nova senha (opcional)" : "Senha"}</label>
+              <input type="password" style={inputStyle} value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select style={inputStyle} value={form.ativo ? "1" : "0"} onChange={(e) => setForm({ ...form, ativo: e.target.value === "1" })}>
+                <option value="1">Ativo</option>
+                <option value="0">Inativo</option>
+              </select>
+            </div>
+          </div>
+
+          <p style={labelStyle}>Tipo — acesso a quais dados do Painel CowData</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.8rem" }}>
+            {AREAS_PAINEL_COWDATA.map((a) => (
+              <label key={a} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", color: COR.texto, cursor: "pointer" }}>
+                <input type="checkbox" checked={form.areas.includes(a)} onChange={() => alternarArea(a)} />
+                {LABEL_AREA_PAINEL_COWDATA[a]}
+              </label>
+            ))}
+          </div>
+
+          <p style={labelStyle}>Permissão de acesso</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.5rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.pode_suspender_assinatura} onChange={(e) => setForm({ ...form, pode_suspender_assinatura: e.target.checked })} />
+              Pode suspender assinatura?
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.pode_acessar_fazendas} onChange={(e) => setForm({ ...form, pode_acessar_fazendas: e.target.checked })} />
+              Pode acessar fazendas?
+            </label>
+            {form.pode_acessar_fazendas && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginLeft: "1.4rem", paddingLeft: "0.7rem", borderLeft: `1px solid ${COR.borda}` }}>
+                {([
+                  ["pode_alterar_cadastro", "Pode alterar dados de cadastro?"],
+                  ["pode_modificar_suspender_plano", "Pode modificar e/ou suspender plano?"],
+                  ["pode_emitir_auditar_contratos", "Pode emitir e auditar contratos?"],
+                  ["pode_emitir_cobrancas", "Pode emitir cobranças?"],
+                  ["pode_vincular_usuarios", "Pode vincular usuários?"],
+                  ["pode_cadastrar_usuarios", "Pode cadastrar usuários para serem vinculados?"],
+                ] as const).map(([campo, texto]) => (
+                  <label key={campo} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.76rem", cursor: "pointer" }}>
+                    <input type="checkbox" checked={form[campo]} onChange={(e) => setForm({ ...form, [campo]: e.target.checked })} />
+                    {texto}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.8rem" }}>
+            <button onClick={salvar} disabled={salvando}
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
+              {salvando ? "Salvando…" : "Salvar login"}
+            </button>
+            <button onClick={() => setEditando(false)} disabled={salvando}
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, ExternalLink } from "lucide-react";
-import { podeModulo, ehAdmin, ehDono, podePublicarMaterias } from "@/lib/api";
+import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, ExternalLink, ShieldCheck } from "lucide-react";
+import { podeModulo, ehAdmin, ehDono, podePublicarMaterias, ehContratanteAdministrador } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
@@ -13,10 +13,11 @@ import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import NewsAdmin from "@/components/NewsAdmin";
 import { AprovacoesView } from "@/components/AprovacoesView";
+import { AuditoriaCowDataView } from "@/components/AuditoriaCowDataView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "aprovacoes" | "aparencia";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "aprovacoes" | "auditoria-cowdata" | "aparencia";
 type AbaParametros = "gerais" | "financeiro";
 // Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
 const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
@@ -46,6 +47,9 @@ export default function ConfiguracoesPage() {
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (podePublicarMaterias()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Publicação e aprovação de matérias do blog de notícias de pecuária leiteira" });
     if (ehAdmin()) abas.push({ id: "aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" });
+    // Logo abaixo de Aprovações, só para o contratante-administrador (quem
+    // contratou o plano) — pedido explícito do usuário.
+    if (ehContratanteAdministrador()) abas.push({ id: "auditoria-cowdata", label: "Auditoria CowData", icon: ShieldCheck, title: "Acessos de suporte da CowData a esta fazenda, e compromissos de confiança/LGPD" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);
@@ -144,6 +148,7 @@ export default function ConfiguracoesPage() {
         {aba === "importar" && <ImportarDados />}
         {aba === "news" && <NewsAdmin />}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
+        {aba === "auditoria-cowdata" && <div className="px-6"><AuditoriaCowDataView /></div>}
       </div>
     </div>
   );

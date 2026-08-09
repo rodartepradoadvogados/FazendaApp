@@ -190,6 +190,10 @@ from .cofre_acesso import (
     PedidoAcessoSuporte,
     SessaoAcessoSuporte,
     AuditoriaAcessoSuporte,
+    AcaoAuditoriaSuporte,
+)
+from .equipe_cowdata_acesso import (
+    PermissaoEquipeCowData,
 )
 from .consultores import (
     ContratoConsultor,

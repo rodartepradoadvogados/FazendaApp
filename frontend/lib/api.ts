@@ -111,6 +111,20 @@ export function ehAdmin(): boolean {
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
 }
+// Membro da Equipe CowData com login próprio (ago/2026) — não é dono, mas
+// entra no Painel CowData com acesso restrito às áreas liberadas (ver
+// backend/fazenda/models/equipe_cowdata_acesso.py e
+// fazenda/api/routers/auth.py::_publico). Usado por AuthShell.tsx (gate de
+// /painel-cowdata) e pelo menu do painel (filtra por área).
+export function ehMembroEquipeCowData(): boolean {
+  return getUsuario()?.eh_equipe_cowdata === true;
+}
+export function areasPainelCowData(): string[] {
+  return Array.isArray(getUsuario()?.areas_painel_cowdata) ? getUsuario().areas_painel_cowdata : [];
+}
+export function temAreaPainelCowData(area: string): boolean {
+  return ehDono() || areasPainelCowData().includes(area);
+}
 // Tipos de Pessoa vinculados a um Usuario operador que recebem o menu
 // restrito do app de campo — empreiteiro/prestador/diarista/funcionário
 // não veem Aprovações nem Financeiro, e Protocolos sobe pro topo do menu.
@@ -145,6 +159,15 @@ export function podeFormularDietas(): boolean {
   return ehDono() || ehAdmin()
     || getFazendaAtual()?.vinculo_contratante === true
     || getFazendaAtual()?.vinculo_consultor === true;
+}
+// "Contratante-administrador": quem pode ver Configurações > Auditoria
+// CowData (auditoria de acessos de suporte + Confiança e LGPD) — dono
+// sempre pode; senão precisa ser admin desta fazenda E o vínculo
+// contratante (o usuário mestre que contratou o plano), não qualquer admin.
+// Espelha o gate real do backend (exigir_contratante_ou_dono, usado em
+// GET /painel-cowdata/cofre/minha-fazenda/acoes).
+export function ehContratanteAdministrador(): boolean {
+  return ehDono() || (ehAdmin() && getFazendaAtual()?.vinculo_contratante === true);
 }
 // Administração de News/Blog (matérias: criar, editar, revisar, aprovar) —
 // o dono sempre pode; além dele, só quem o dono designar via o toggle
@@ -410,13 +433,22 @@ export type PessoaCowData = {
   cpf_cnpj?: string | null; cep?: string | null;
   salario_base?: number | null; data_admissao?: string | null;
   observacoes?: string | null; ativo: boolean;
+  rg?: string | null; genero?: string | null; estado_civil?: string | null;
+  endereco_rua?: string | null; endereco_numero?: string | null; endereco_bairro?: string | null;
+  endereco_cidade?: string | null; endereco_uf?: string | null;
+  tipo_vinculo?: "funcionario" | "pj" | null; subtipo_pj?: string | null; pagamento_mensal?: number | null;
 };
 export type PessoaCowDataIn = {
   nome: string; cargo: string; telefones?: string[]; emails?: string[];
   cpf_cnpj?: string | null; cep?: string | null;
   salario_base?: number | null; data_admissao?: string | null;
   observacoes?: string | null; ativo?: boolean;
+  rg?: string | null; genero?: string | null; estado_civil?: string | null;
+  endereco_rua?: string | null; endereco_numero?: string | null; endereco_bairro?: string | null;
+  endereco_cidade?: string | null; endereco_uf?: string | null;
+  tipo_vinculo?: "funcionario" | "pj" | null; subtipo_pj?: string | null; pagamento_mensal?: number | null;
 };
+export const fetchTiposVinculoCowData = (): Promise<{ tipos_vinculo: string[]; subtipos_pj: string[] }> => _pcGet(`/equipe/tipos-vinculo`);
 export type FolhaCowData = {
   id: number; pessoa_id: number; competencia: string; valor_bruto: number; descontos: number;
   valor_liquido: number; status: "pendente" | "pago"; data_pagamento?: string | null; observacao?: string | null;
@@ -456,6 +488,32 @@ export const criarMembroEquipeCowData = (d: PessoaCowDataIn): Promise<PessoaCowD
 export const editarMembroEquipeCowData = (id: number, d: PessoaCowDataIn): Promise<PessoaCowData> => _pcSend(`/equipe/pessoas/${id}`, "PUT", d);
 export const excluirMembroEquipeCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/equipe/pessoas/${id}`, "DELETE");
 
+// Login + permissões de um membro no próprio Painel CowData (ago/2026) —
+// ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
+export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca"] as const;
+export type AreaPainelCowData = typeof AREAS_PAINEL_COWDATA[number];
+export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
+  cockpit: "Cockpit", assinaturas: "Assinaturas", fazendas: "Fazendas", financeiro: "Financeiro",
+  equipe: "Equipe", produto: "Produtos e robôs", cofre: "Cofre de acesso (Suporte)", confianca: "Confiança e LGPD",
+};
+export type UsuarioEquipeCowData = {
+  usuario_id: number; username: string; email: string; ativo: boolean; areas: string[];
+  pode_suspender_assinatura: boolean; pode_acessar_fazendas: boolean; pode_alterar_cadastro: boolean;
+  pode_modificar_suspender_plano: boolean; pode_emitir_auditar_contratos: boolean; pode_emitir_cobrancas: boolean;
+  pode_vincular_usuarios: boolean; pode_cadastrar_usuarios: boolean;
+};
+export type UsuarioEquipeCowDataIn = {
+  username: string; email: string; senha?: string | null; ativo?: boolean; areas: string[];
+  pode_suspender_assinatura?: boolean; pode_acessar_fazendas?: boolean; pode_alterar_cadastro?: boolean;
+  pode_modificar_suspender_plano?: boolean; pode_emitir_auditar_contratos?: boolean; pode_emitir_cobrancas?: boolean;
+  pode_vincular_usuarios?: boolean; pode_cadastrar_usuarios?: boolean;
+};
+export const fetchUsuarioEquipeCowData = (pessoaId: number): Promise<UsuarioEquipeCowData | null> => _pcGet(`/equipe/pessoas/${pessoaId}/usuario`);
+export const criarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
+  _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "POST", d);
+export const editarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
+  _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "PUT", d);
+
 export const fetchFolhaMembroCowData = (pessoaId: number): Promise<FolhaCowData[]> => _pcGet(`/equipe/pessoas/${pessoaId}/folha`);
 export const lancarFolhaMembroCowData = (pessoaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> =>
   _pcSend(`/equipe/pessoas/${pessoaId}/folha`, "POST", d);
@@ -485,10 +543,13 @@ export const fetchDreCowData = (ano: number): Promise<DreCowData> => _pcGet(`/fi
 
 // ── Cofre de acesso — pedido/sessão/auditoria de suporte por fazenda-cliente ──
 // Ver backend/fazenda/models/cofre_acesso.py e fazenda/api/routers/cofre_acesso.py.
-export type FazendaCofre = { id: number; nome: string; exige_aprovacao_suporte: boolean };
+export type FazendaCofre = {
+  id: number; nome: string; exige_aprovacao_suporte: boolean;
+  plano_nome: string | null; modulos: string[];
+};
 export type PedidoAcessoSuporte = {
-  id: number; fazenda_id: number; fazenda_nome: string; usuario_id: number; solicitante_nome: string | null;
-  motivo: string; status: "aguardando_aprovacao" | "aprovado" | "negado";
+  id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string; usuario_id: number; solicitante_nome: string | null;
+  motivo: string; assunto_chamado: string | null; observacao: string | null; status: "aguardando_aprovacao" | "aprovado" | "negado";
   aprovador_nome: string | null; pedido_em: string; decidido_em: string | null;
   // Presentes só quando status vira "aprovado" na hora (fazenda sem
   // exige_aprovacao_suporte — ver POST /cofre/pedidos): token novo, já
@@ -497,13 +558,20 @@ export type PedidoAcessoSuporte = {
   token?: string; sessao_id?: number; sessao_expira_em?: string;
 };
 export type SessaoAcessoSuporte = {
-  id: number; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
-  motivo: string; iniciada_em: string; expira_em: string; encerrada_em: string | null;
+  id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
+  motivo: string; assunto_chamado: string | null; iniciada_em: string; expira_em: string; encerrada_em: string | null;
   ativa: boolean; segundos_restantes: number;
 };
 export type AuditoriaAcessoSuporte = {
   id: number; quando: string; fazenda_id: number; fazenda_nome: string; usuario_id: number;
   membro_nome: string | null; acao: "entrada" | "saida";
+};
+// Auditoria granular — uma linha por escrita (POST/PUT/PATCH/DELETE)
+// tentada durante uma sessão de suporte, permitida ou bloqueada.
+export type AcaoAuditoriaSuporte = {
+  id: number; sessao_id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string;
+  usuario_id: number; membro_nome: string | null; metodo: string; caminho: string;
+  status_code: number | null; bloqueado: boolean; quando: string;
 };
 
 export const fetchMotivosAcessoSuporte = (): Promise<string[]> => _pcGet(`/cofre/motivos`);
@@ -511,7 +579,14 @@ export const fetchFazendasCofre = (): Promise<FazendaCofre[]> => _pcGet(`/cofre/
 export const fetchSessoesAtivasCofre = (): Promise<SessaoAcessoSuporte[]> => _pcGet(`/cofre/sessoes-ativas`);
 export const fetchPedidosRecentesCofre = (): Promise<PedidoAcessoSuporte[]> => _pcGet(`/cofre/pedidos`);
 export const fetchAuditoriaRecenteCofre = (): Promise<AuditoriaAcessoSuporte[]> => _pcGet(`/cofre/auditoria`);
-export const solicitarAcessoCofre = (d: { fazenda_id: number; motivo: string }): Promise<PedidoAcessoSuporte> =>
+export const fetchAcoesSuporte = (sessaoId?: number): Promise<AcaoAuditoriaSuporte[]> =>
+  _pcGet(`/cofre/acoes${sessaoId ? `?sessao_id=${sessaoId}` : ""}`);
+// Lado do cliente: só a fazenda selecionada, só para contratante-admin dela
+// (ou dono) — usado em Configurações > Auditoria CowData. Mesma rota
+// /painel-cowdata/cofre/*, mas gated por exigir_contratante_ou_dono, não
+// exigir_dono (ver fazenda/api/routers/cofre_acesso.py).
+export const fetchAcoesSuporteDaMinhaFazenda = (): Promise<AcaoAuditoriaSuporte[]> => _pcGet(`/cofre/minha-fazenda/acoes`);
+export const solicitarAcessoCofre = (d: { fazenda_id: number; motivo: string; assunto_chamado: string; observacao?: string }): Promise<PedidoAcessoSuporte> =>
   _pcSend(`/cofre/pedidos`, "POST", d);
 export const aprovarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _pcSend(`/cofre/pedidos/${id}/aprovar`, "POST");
 export const negarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _pcSend(`/cofre/pedidos/${id}/negar`, "POST");
@@ -522,7 +597,13 @@ export const negarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _p
 // resposta de solicitarAcessoCofre já devolve). Gravado no momento em que o
 // pedido de acesso é aprovado (entrarComoSuporte, abaixo) e limpo ao
 // encerrar a sessão, fazer logout, ou logar/trocar de fazenda de novo.
-export type ModoSuporte = { sessaoId: number; fazendaNome: string; expiraEm: string };
+export type ModoSuporte = {
+  sessaoId: number; protocolo: string | null; fazendaNome: string; expiraEm: string;
+  // Campos exigidos pela faixa fixa (ver SuporteBanner.tsx): nome de quem
+  // entrou, hora exata da entrada e motivo escolhido — tudo isso já vem na
+  // resposta do próprio pedido aprovado, sem chamada extra.
+  membroNome: string; entradaEm: string; motivo: string;
+};
 export function getModoSuporte(): ModoSuporte | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("modo_suporte") || "null"); } catch { return null; }
@@ -536,16 +617,20 @@ function limparModoSuporte() {
  *  já troca o token guardado pelo de suporte e devolve a fazenda pra
  *  navegar pra dentro dela. Lança se ficar "aguardando_aprovacao" (fazenda
  *  rara com essa trava ligada) — quem chamar deve tratar esse caso à parte. */
-export async function entrarComoSuporte(fazendaId: number, motivo: string): Promise<FazendaAtual> {
-  const pedido = await solicitarAcessoCofre({ fazenda_id: fazendaId, motivo });
+export async function entrarComoSuporte(
+  fazendaId: number, motivo: string, assuntoChamado: string, observacao?: string,
+): Promise<FazendaAtual> {
+  const pedido = await solicitarAcessoCofre({ fazenda_id: fazendaId, motivo, assunto_chamado: assuntoChamado, observacao });
   if (pedido.status !== "aprovado" || !pedido.token || !pedido.sessao_id || !pedido.sessao_expira_em) {
     throw new Error("Pedido enviado, mas aguardando aprovação — essa fazenda exige aprovação prévia de acesso de suporte.");
   }
   localStorage.setItem("token", pedido.token);
   const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome };
   localStorage.setItem("fazenda_atual", JSON.stringify(fazendaAtual));
+  const membroNome = getUsuario()?.nome || getUsuario()?.username || "Equipe CowData";
   localStorage.setItem("modo_suporte", JSON.stringify({
-    sessaoId: pedido.sessao_id, fazendaNome: pedido.fazenda_nome, expiraEm: pedido.sessao_expira_em,
+    sessaoId: pedido.sessao_id, protocolo: pedido.protocolo, fazendaNome: pedido.fazenda_nome,
+    expiraEm: pedido.sessao_expira_em, membroNome, entradaEm: new Date().toISOString(), motivo,
   } satisfies ModoSuporte));
   return fazendaAtual;
 }

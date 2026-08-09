@@ -15,9 +15,10 @@ from datetime import datetime, timedelta
 
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_email_dono_equivalente,
-    exigir_dono, get_current_user, get_fazenda_atual_id, get_suporte_do_token, hash_senha, token_manter_conectado,
-    verificar_senha,
+    eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id, get_suporte_do_token, hash_senha,
+    token_manter_conectado, verificar_senha,
 )
+from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session
 from fazenda.models import Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
@@ -91,11 +92,21 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
         # pra restringir o Menu de operadores vinculados a certos tipos de
         # Pessoa (empreiteiro/prestador/diarista/funcionário).
         pessoa_tipo = pessoa.tipo if pessoa else None
+    eh_equipe_cowdata = False
+    areas_cowdata: list[str] = []
+    if session is not None and not eh_email_dono_equivalente(u.email) and eh_membro_equipe_cowdata(session, u):
+        eh_equipe_cowdata = True
+        perm = session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == u.id)).first()
+        areas_cowdata = [a for a in (perm.areas or "").split(",") if a] if perm else []
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
             "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
             "email": u.email, "eh_dono": eh_email_dono_equivalente(u.email),
             "pode_publicar_materias_blog": u.pode_publicar_materias_blog,
-            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome, "pessoa_tipo": pessoa_tipo}
+            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome, "pessoa_tipo": pessoa_tipo,
+            # Membro da Equipe CowData (não dono) com login próprio — ver
+            # fazenda/models/equipe_cowdata_acesso.py. `areas_painel_cowdata`
+            # alimenta o filtro do menu do Painel CowData no frontend.
+            "eh_equipe_cowdata": eh_equipe_cowdata, "areas_painel_cowdata": areas_cowdata}
 
 
 def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario_id: int | None = None) -> Pessoa:
@@ -185,17 +196,25 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     # arriscar travar quem só tinha esse acesso indireto.
     fazendas = _fazendas_vinculadas(session, user.id)
     eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
-    fazenda_auto = fazendas[0] if (len(fazendas) == 1 and not eh_admin_cowdata) else None
+    # Membro da Equipe CowData com login próprio (ago/2026, ver
+    # eh_membro_equipe_cowdata) — mesma tela de escolha do dono, mas SEM a
+    # trava "len(fazendas) >= 1": ao contrário do dono (que sempre tem o
+    # bypass por e-mail como rede de segurança), um membro comum da equipe
+    # pode legitimamente não ter NENHUMA fazenda vinculada e mesmo assim
+    # precisa cair no Painel CowData, não ficar sem destino nenhum.
+    eh_membro_cowdata = not eh_email_dono_equivalente(user.email) and eh_membro_equipe_cowdata(session, user)
+    mostrar_opcao_cowdata = eh_admin_cowdata or eh_membro_cowdata
+    fazenda_auto = fazendas[0] if (len(fazendas) == 1 and not mostrar_opcao_cowdata) else None
     resposta = {
         "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None, manter_conectado=dados.manter_conectado),
         "usuario": _publico(user, session),
     }
     if fazenda_auto:
         resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id))
-    if len(fazendas) > 1 or eh_admin_cowdata:
+    if len(fazendas) > 1 or mostrar_opcao_cowdata:
         resposta["selecao_fazenda_necessaria"] = True
         opcoes = [_fazenda_publica(f) for f in fazendas]
-        if eh_admin_cowdata:
+        if mostrar_opcao_cowdata:
             # Sentinela id=0 (fazendas de verdade começam em 1) — o frontend
             # reconhece pelo campo "cowdata" e, ao escolher, só navega pro
             # Painel CowData usando o token já emitido acima (fid=None), sem

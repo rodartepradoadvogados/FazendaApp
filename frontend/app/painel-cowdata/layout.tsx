@@ -7,7 +7,7 @@
 // neutro sobre grafite), não duas identidades diferentes.
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X,
@@ -16,6 +16,14 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { ehAppOuPwa } from "@/lib/nativo";
 import { CORES_CONTADOR } from "@/app/contador/layout";
+import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api";
+
+// Só estas 3 áreas têm a permissão de verdade aplicada nas rotas do backend
+// hoje (ver exigir_area_painel_cowdata em painel_cowdata.py/cofre_acesso.py)
+// — as demais ficam fora do menu de quem não é dono, mesmo que a área
+// esteja marcada no cadastro dele, pra nunca mostrar um item que ainda
+// devolve 403 nas rotas de verdade.
+const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre"];
 
 const COR = {
   bg: CORES_CONTADOR.bg, texto: CORES_CONTADOR.texto,
@@ -23,41 +31,69 @@ const COR = {
   mudo: CORES_CONTADOR.mudo, dourado: CORES_CONTADOR.cobre, doradoClaro: CORES_CONTADOR.cobreClaro,
 };
 
-const GRUPOS = [
+// `area` casa com AREAS_PAINEL_COWDATA (backend) — dono vê tudo; um membro
+// da Equipe CowData com login próprio (ver lib/api.ts::temAreaPainelCowData)
+// só vê os itens cuja área está liberada pra ele. Hoje só Equipe/Financeiro/
+// Suporte têm a permissão de verdade aplicada nas rotas (ver
+// exigir_area_painel_cowdata no backend) — os demais ficam escondidos por
+// enquanto para quem não é dono, mesmo que a área apareça marcada no
+// cadastro dele (ver docstring de equipe_cowdata_acesso.py).
+const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any; area: AreaPainelCowData }[] }[] = [
   {
     titulo: "Negócio",
     itens: [
-      { href: "/painel-cowdata", label: "Cockpit", icon: LayoutGrid },
-      { href: "/painel-cowdata/assinaturas", label: "Assinaturas", icon: CreditCard },
-      { href: "/painel-cowdata/fazendas", label: "Fazendas (clientes)", icon: Building2 },
+      { href: "/painel-cowdata", label: "Cockpit", icon: LayoutGrid, area: "cockpit" },
+      { href: "/painel-cowdata/assinaturas", label: "Assinaturas", icon: CreditCard, area: "assinaturas" },
+      { href: "/painel-cowdata/fazendas", label: "Fazendas (clientes)", icon: Building2, area: "fazendas" },
     ],
   },
   {
     titulo: "Administração",
     itens: [
-      { href: "/painel-cowdata/financeiro", label: "Financeiro CowData", icon: Wallet },
-      { href: "/painel-cowdata/equipe", label: "Equipe CowData", icon: Users },
+      { href: "/painel-cowdata/financeiro", label: "Financeiro CowData", icon: Wallet, area: "financeiro" },
+      { href: "/painel-cowdata/equipe", label: "Equipe CowData", icon: Users, area: "equipe" },
     ],
   },
   {
     titulo: "Operação",
     itens: [
-      { href: "/painel-cowdata/produto", label: "Produto e robôs", icon: Bot },
-      { href: "/painel-cowdata/cofre", label: "Cofre de acesso", icon: Lock },
-      { href: "/painel-cowdata/confianca", label: "Confiança e LGPD", icon: ShieldCheck },
+      { href: "/painel-cowdata/produto", label: "Produto e robôs", icon: Bot, area: "produto" },
+      // Rota continua /cofre (histórico, testes e o próprio dado gravado já
+      // usam esse nome) — só o rótulo do menu virou "Suporte", a pedido do
+      // usuário, com 2 sub-abas dentro da própria página (Acesso CowData /
+      // Auditoria de Acessos CowData — ver painel-cowdata/cofre/page.tsx).
+      { href: "/painel-cowdata/cofre", label: "Suporte", icon: Lock, area: "cofre" },
+      { href: "/painel-cowdata/confianca", label: "Confiança e LGPD", icon: ShieldCheck, area: "confianca" },
     ],
   },
 ];
 
 export default function PainelCowDataLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const router = useRouter();
   const [aberto, setAberto] = useState(false);
+  // Cockpit (raiz /painel-cowdata) ainda não tem a área aplicada de verdade
+  // na rota (ver AREAS_ENFORCADAS acima) — sem isso, um membro da equipe
+  // sem ser dono cairia numa tela quebrada (403 no fetch do resumo) logo
+  // após escolher "Painel CowData" no login. Manda pra primeira área de
+  // verdade que ele tiver, em vez disso.
+  useEffect(() => {
+    if (ehDono() || path !== "/painel-cowdata") return;
+    const primeiraArea = GRUPOS.flatMap((g) => g.itens).find((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area));
+    router.replace(primeiraArea?.href || "/");
+  }, [path, router]);
   // Chegou aqui pelo item "Painel CowData" do Menu do app (ver
   // app/app/menu/page.tsx) — "voltar à fazenda" precisa cair no /app, nunca
   // no site desktop completo (mesma regra do AuthShell::destinoRaiz). Cobre
   // app nativo E PWA instalado (ver lib/nativo.ts::ehAppOuPwa).
   const [voltarHref, setVoltarHref] = useState("/");
   useEffect(() => { ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); }); }, []);
+
+  const gruposVisiveis = ehDono()
+    ? GRUPOS
+    : GRUPOS
+        .map((g) => ({ ...g, itens: g.itens.filter((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area)) }))
+        .filter((g) => g.itens.length > 0);
 
   const navConteudo = (
     <>
@@ -74,7 +110,7 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
         </p>
       </div>
       <nav style={{ flex: 1, padding: "0.4rem 0.8rem", overflowY: "auto" }}>
-        {GRUPOS.map((g) => (
+        {gruposVisiveis.map((g) => (
           <div key={g.titulo} style={{ marginBottom: "1.1rem" }}>
             <p style={{ fontSize: "0.62rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: COR.mudo, margin: "0 0 0.4rem 0.5rem" }}>
               {g.titulo}
