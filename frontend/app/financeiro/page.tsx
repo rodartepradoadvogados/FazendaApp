@@ -22,7 +22,7 @@ import {
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
   marcarItemComoVale, desmarcarItemComoVale,
   estornarPagamentoLancamento, type EstornoLancamentoOut,
-  fetchEstoque, fetchServicosCadastro, FINALIDADES_ESTOQUE,
+  fetchEstoque, fetchServicosCadastro,
 } from "@/lib/api";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
@@ -2626,7 +2626,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
                     </select>
                   </div>
                   {modoProduto === "estoque" ? (
-                    <EstoquePicker itens={produtosEstoqueEdicao} value={produto} finalidades={FINALIDADES_ESTOQUE} incluirNaoEstocaveis onChange={setProduto} />
+                    <EstoquePicker itens={produtosEstoqueEdicao} value={produto} todasFinalidades incluirNaoEstocaveis onChange={setProduto} />
                   ) : (
                     <>
                       <input list="produtos-editar-lancamento" style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}

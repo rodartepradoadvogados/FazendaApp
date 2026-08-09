@@ -6,7 +6,7 @@ import {
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
   type SugestoesCadastro, type SugestaoCadastroItem,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
-  FINALIDADES_ESTOQUE, type PatrimonioPayload,
+  type PatrimonioPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
@@ -916,7 +916,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                     // consumo de estoque — um item cadastrado só para
                     // organização financeira (sem controle de saldo) tem que
                     // aparecer igual a um estocável.
-                    <EstoquePicker itens={produtosEstoque} value={it.produto} finalidades={FINALIDADES_ESTOQUE} incluirNaoEstocaveis onChange={(nomeProduto) => {
+                    <EstoquePicker itens={produtosEstoque} value={it.produto} todasFinalidades incluirNaoEstocaveis onChange={(nomeProduto) => {
                       const match = produtosEstoque.find((p) => p.nome === nomeProduto);
                       const patch: Partial<Item> = { produto: nomeProduto };
                       const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
