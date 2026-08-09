@@ -37,6 +37,24 @@ const config: CapacitorConfig = {
   },
 
   plugins: {
+    // Faz fetch()/XMLHttpRequest do app inteiro passar pela ponte nativa
+    // (OkHttp no Android) em vez do motor de rede embutido na WebView —
+    // diagnóstico real (ago/2026): o mesmo celular, mesma rede 4G, sincroniza
+    // sem problema pelo PWA (roda em cima do Chrome instalado, que se
+    // autoatualiza) mas nunca consegue enviar nada pelo app Capacitor
+    // instalado (roda na Android System WebView, componente separado do
+    // Chrome, que em aparelho sem atualização frequente — comum em uso
+    // rural — pode ficar com TLS/certificado desatualizado o bastante para
+    // toda requisição falhar com "TypeError: Failed to fetch", mesmo com
+    // sinal de rádio bom). A ponte nativa usa a pilha de rede do próprio
+    // Android (atualizada via Google Play Services, independente da
+    // WebView), contornando esse problema. Continua funcionando com
+    // FormData/Blob (upload de fotos, ver lib/offline.ts) — o fetch/XHR
+    // corrigido aqui suporta os dois, diferente da API CapacitorHttp.post()
+    // chamada direto (essa sim exigiria converter para base64).
+    CapacitorHttp: {
+      enabled: true,
+    },
     SplashScreen: {
       // O site pode demorar em 3G rural — hide() é chamado manualmente pelo
       // app assim que a tela carrega (ver lib/nativo.ts), mas mantém um teto
