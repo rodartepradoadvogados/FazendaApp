@@ -178,7 +178,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
     // espaçador abaixo reserva a mesma altura da faixa (2.2rem) só quando ela
     // aparece, empurrando o conteúdo pra baixo em vez de deixar a faixa
     // sobrepor o topo da página (título, "Configurações", "News" etc.).
-    <div style={{ height: "100vh", position: "relative", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "calc(100vh - var(--suporte-banner-h, 0px))", position: "relative", display: "flex", flexDirection: "column" }}>
       {temAbasExtras && <div className="hidden md:block" style={{ height: "2.2rem", flexShrink: 0 }} aria-hidden="true" />}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={estiloPainel("nativa")}>
@@ -202,7 +202,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
         <div
           className="hidden md:flex left-0 md:left-56"
           style={{
-            position: "fixed", top: 0, right: 0, zIndex: 65,
+            position: "fixed", top: "var(--suporte-banner-h, 0px)", right: 0, zIndex: 65,
             alignItems: "stretch", height: "2.2rem",
             background: "var(--surface-2)", borderBottom: "1px solid var(--border)", overflowX: "auto",
             boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
@@ -320,7 +320,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
           role="alert"
           className="hidden md:flex left-0 md:left-56"
           style={{
-            position: "fixed", right: 0, top: temAbasExtras ? "2.2rem" : 0, zIndex: 64,
+            position: "fixed", right: 0, top: temAbasExtras ? "calc(2.2rem + var(--suporte-banner-h, 0px))" : "var(--suporte-banner-h, 0px)", zIndex: 64,
             padding: "0.5rem 0.9rem", background: "var(--amber-bg, #F7EEDA)", color: "var(--amber, #B9831F)",
             fontSize: "0.78rem", fontWeight: 600, alignItems: "center", justifyContent: "space-between", gap: "0.6rem",
           }}

@@ -9,7 +9,7 @@
 // ativo: [membro] entrou às [hora]. Motivo: [motivo]" com o timer mm:ss e o
 // botão "Encerrar agora" à direita; linha 2 = "Você está atuando como
 // [fazenda]". ~3-5cm de altura no desktop (aprox. 4.2rem no total).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { getModoSuporte, encerrarModoSuporte, type ModoSuporte } from "@/lib/api";
@@ -29,6 +29,7 @@ export function SuporteBanner() {
   const [modo, setModo] = useState<ModoSuporte | null>(null);
   const [agora, setAgora] = useState<number>(0);
   const [encerrando, setEncerrando] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setModo(getModoSuporte());
@@ -38,6 +39,28 @@ export function SuporteBanner() {
     const t = setInterval(() => setAgora(Date.now()), 1_000);
     return () => clearInterval(t);
   }, []);
+
+  // Publica a altura real da faixa (varia com quebra de linha do texto) em
+  // uma CSS var global, para que todo elemento fixed do resto do app
+  // (botões do topo, cabeçalho mobile) e o padding-top do body saibam
+  // quanto empurrar o conteúdo pra baixo — ver app/globals.css. Zera ao
+  // desmontar (fim do modo suporte) para não deixar espaço fantasma.
+  useEffect(() => {
+    if (!modo) {
+      document.documentElement.style.setProperty("--suporte-banner-h", "0px");
+      return;
+    }
+    const el = ref.current;
+    if (!el) return;
+    const publicar = () => document.documentElement.style.setProperty("--suporte-banner-h", `${el.offsetHeight}px`);
+    publicar();
+    const ro = new ResizeObserver(publicar);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.documentElement.style.setProperty("--suporte-banner-h", "0px");
+    };
+  }, [modo]);
 
   if (!modo) return null;
 
@@ -51,8 +74,8 @@ export function SuporteBanner() {
   }
 
   return (
-    <div style={{
-      position: "sticky", top: 0, zIndex: 25, background: VERMELHO, color: "#FCEBEB",
+    <div ref={ref} style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, background: VERMELHO, color: "#FCEBEB",
       padding: "0.6rem 1rem", display: "flex", flexDirection: "column", gap: "0.4rem",
       minHeight: "3.6rem", justifyContent: "center", boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
     }}>

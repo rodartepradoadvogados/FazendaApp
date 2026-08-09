@@ -354,6 +354,12 @@ body {
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
+  /* Empurra TODA a tela (conteúdo em fluxo normal) para baixo da faixa
+     vermelha de sessão de suporte (ver SuporteBanner.tsx), que é
+     position:fixed e por isso não reserva espaço sozinha. A variável é
+     publicada pelo próprio SuporteBanner via JS (mede a altura real, que
+     varia com quebra de linha) e some (0px) fora do modo suporte. */
+  padding-top: var(--suporte-banner-h, 0px);
 }
 
 h1, h2, h3, h4, .card-header, .kpi-value {
@@ -724,9 +730,20 @@ html, body { max-width: 100%; overflow-x: hidden; }
    ficar abaixo da barra fixa do menu hambúrguer (3.25rem de altura + a
    própria faixa de segurança do topo, ver Sidebar.tsx) em vez de sobrepor o
    logotipo. */
+/* Substitui a utilitária md:h-screen (100vh fixo) da casca padrão da fazenda
+   (ver AuthShell.tsx): com a faixa de suporte somando padding-top no <body>,
+   um filho de 100vh sem desconto ficaria mais alto que a viewport visível e
+   o rodapé (md:overflow-hidden) cortaria ~a altura da faixa. Só entra a
+   partir do breakpoint md, mesmo threshold do md:h-screen que substitui. */
+@media (min-width: 768px) {
+  .farm-shell-h {
+    height: calc(100vh - var(--suporte-banner-h, 0px));
+  }
+}
+
 .site-top-actions {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 1rem);
+  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--suporte-banner-h, 0px));
   right: calc(env(safe-area-inset-right, 0px) + 1.25rem);
   z-index: 60;
   display: inline-flex;
@@ -736,7 +753,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 @media (max-width: 767px) {
   .site-top-actions {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem);
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 0.5rem + var(--suporte-banner-h, 0px));
     right: calc(env(safe-area-inset-right, 0px) + 0.6rem);
   }
 }

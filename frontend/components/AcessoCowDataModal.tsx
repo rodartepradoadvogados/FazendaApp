@@ -9,8 +9,8 @@
 // Reaproveita a mecânica já existente de pedido→sessão (entrarComoSuporte,
 // ver lib/api.ts) — só a apresentação em 3 passos é nova.
 import { useEffect, useMemo, useState } from "react";
-import { LogIn, ShieldAlert } from "lucide-react";
-import { Modal } from "@/components/Modal";
+import { createPortal } from "react-dom";
+import { LogIn, ShieldAlert, X } from "lucide-react";
 import {
   fetchMotivosAcessoSuporte, fetchFazendasCofre, entrarComoSuporte,
   type FazendaCofre,
@@ -19,6 +19,42 @@ import {
 const COR = {
   cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", texto: "#F1F3F5", vermelho: "#b5544a",
 };
+
+// Janela própria (não o <Modal> genérico) — de propósito: o <Modal>
+// genérico usa a classe .card, que pega a cor de fundo/texto do TEMA
+// PESSOAL de quem está logado (var(--surface)/var(--text)) porque é
+// renderizado via portal direto em document.body, escapando os tokens
+// escuros escopados ao Painel CowData (ver tokensPainel em
+// app/painel-cowdata/layout.tsx — só valem dentro daquela árvore). Resultado
+// bugado: texto quase branco (COR.texto) sobre o card do tema claro, quase
+// invisível — reportado pelo usuário na lista de fazendas do Acesso
+// CowData. Esta janela pinta o próprio fundo/texto explicitamente, sempre
+// no mesmo escuro do resto do painel, não importa o tema pessoal do usuário.
+function JanelaEscura({ titulo, onClose, width = "560px", children }: { titulo: string; onClose: () => void; width?: string; children: React.ReactNode }) {
+  const [montado, setMontado] = useState(false);
+  useEffect(() => { setMontado(true); }, []);
+  if (!montado) return null;
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}
+      onClick={onClose}>
+      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+        style={{
+          width, maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column",
+          background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-md)",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+        }}>
+        <div className="flex items-center justify-between" style={{ padding: "0.9rem 1.1rem", borderBottom: `1px solid ${COR.borda}` }}>
+          <div style={{ fontWeight: 700, fontSize: "0.85rem", color: COR.dourado, textTransform: "uppercase", letterSpacing: "0.04em" }}>{titulo}</div>
+          <button onClick={onClose} aria-label="Fechar" style={{ background: "transparent", border: "none", color: COR.mudo, cursor: "pointer", display: "flex" }}>
+            <X size={16} />
+          </button>
+        </div>
+        <div style={{ padding: "1.1rem", overflowY: "auto" }}>{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
+}
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)",
   padding: "0.5rem 0.65rem", color: COR.texto, fontSize: "0.85rem",
@@ -72,7 +108,7 @@ export function AcessoCowDataModal({ onClose, onEntrou }: { onClose: () => void;
 
   if (passo === "fazenda") {
     return (
-      <Modal title="Acesso CowData — escolha a fazenda" onClose={onClose} width="560px">
+      <JanelaEscura titulo="Acesso CowData — escolha a fazenda" onClose={onClose} width="560px">
         <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar fazenda…" style={{ ...inputStyle, marginBottom: "0.7rem" }} />
         <div style={{ maxHeight: "50vh", overflowY: "auto", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)" }}>
           {filtradas.length === 0 && <p style={{ padding: "1rem", color: COR.mudo, fontSize: "0.82rem" }}>Nenhuma fazenda encontrada.</p>}
@@ -88,14 +124,14 @@ export function AcessoCowDataModal({ onClose, onEntrou }: { onClose: () => void;
           ))}
         </div>
         {erro && <p style={{ color: COR.vermelho, fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      </Modal>
+      </JanelaEscura>
     );
   }
 
   if (passo === "plano" && fazenda) {
     return (
-      <Modal title={`Deseja entrar na Fazenda ${fazenda.nome}?`} onClose={onClose} width="480px">
-        <p style={{ fontSize: "0.85rem", marginBottom: "0.8rem" }}>
+      <JanelaEscura titulo={`Deseja entrar na Fazenda ${fazenda.nome}?`} onClose={onClose} width="480px">
+        <p style={{ fontSize: "0.85rem", marginBottom: "0.8rem", color: COR.texto }}>
           Plano: <strong>{fazenda.plano_nome || "—"}</strong>
         </p>
         <p style={labelStyle}>Módulos contratados</p>
@@ -111,13 +147,13 @@ export function AcessoCowDataModal({ onClose, onEntrou }: { onClose: () => void;
           <button type="button" style={btnPrimario} onClick={() => setPasso("motivo")}>Confirmar</button>
           <button type="button" style={btnGhost} onClick={() => setPasso("fazenda")}>Voltar</button>
         </div>
-      </Modal>
+      </JanelaEscura>
     );
   }
 
   if (passo === "motivo" && fazenda) {
     return (
-      <Modal title={`Motivo do acesso — ${fazenda.nome}`} onClose={onClose} width="560px">
+      <JanelaEscura titulo={`Motivo do acesso — ${fazenda.nome}`} onClose={onClose} width="560px">
         <div style={{ marginBottom: "0.8rem" }}>
           <label style={labelStyle}>Motivo do acesso</label>
           <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={inputStyle}>
@@ -146,7 +182,7 @@ export function AcessoCowDataModal({ onClose, onEntrou }: { onClose: () => void;
           </button>
           <button type="button" style={btnGhost} onClick={() => setPasso("plano")} disabled={enviando}>Voltar</button>
         </div>
-      </Modal>
+      </JanelaEscura>
     );
   }
 

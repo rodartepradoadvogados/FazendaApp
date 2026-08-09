@@ -163,54 +163,80 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     return <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>Carregando…</div>;
   }
 
-  // App móvel: o layout de /app cuida de cabeçalho e navegação inferior.
-  if (ehApp) return <>{children}</>;
-
   // Painel CowData: casca própria (PainelCowDataLayout), nunca a Sidebar da
-  // fazenda — ver comentário no topo deste componente.
+  // fazenda — ver comentário no topo deste componente. Sem SuporteBanner
+  // aqui: modo suporte é "estar dentro de uma fazenda-cliente como se fosse
+  // o admin dela" — o Painel CowData é a base da própria CowData, não faz
+  // sentido a faixa aparecer nele (quem quer ver sessões ativas usa a
+  // própria tela de Suporte, ver painel-cowdata/cofre/page.tsx).
   if (ehPainelCowData) return <>{children}</>;
 
+  // Todas as demais cascas logadas (app móvel, Painel do Contador, portais
+  // Insights e Dietas, e a casca padrão da fazenda montada abaixo) recebem a
+  // faixa de suporte quando ativa — pedido explícito do usuário: antes ela
+  // só existia dentro da casca padrão, e sumia ao entrar em Insights e
+  // Administração ou Formulação de Dietas (cascas próprias, que nem
+  // chegavam a este ponto do componente). SuporteBanner é `position: fixed`
+  // e mede a própria altura para publicar --suporte-banner-h (ver
+  // SuporteBanner.tsx) — todo elemento fixo no topo do resto do app
+  // (.site-top-actions, barra mobile da Sidebar, cabeçalho do app móvel)
+  // soma essa variável ao próprio "top" para nunca ficar por baixo dela;
+  // o restante do conteúdo (fluxo normal) desce sozinho via padding-top no
+  // <body> (ver globals.css).
+  let conteudo: React.ReactNode;
+
+  // App móvel: o layout de /app cuida de cabeçalho e navegação inferior.
+  if (ehApp) {
+    conteudo = children;
   // Painel do Contador: casca própria (frontend/app/contador/layout.tsx),
   // nunca a Sidebar da fazenda nem a casca do app móvel — ver comentário
   // no topo deste componente.
-  if (ehPainelContador) return <>{children}</>;
-
+  } else if (ehPainelContador) {
+    conteudo = children;
   // Portal Insights e Administração: casca própria (InsightsLayout via
   // layout.tsx da rota) — ver comentário no topo deste componente.
-  if (ehInsightsPortal) return <>{children}</>;
-
+  } else if (ehInsightsPortal) {
+    conteudo = children;
   // Portal Formulação de Dietas: casca própria (DietasLayout via
   // app/dietas/layout.tsx) — ver comentário no topo deste componente.
-  if (ehDietasPortal) return <>{children}</>;
+  } else if (ehDietasPortal) {
+    conteudo = children;
+  } else {
+    conteudo = (
+      <div
+        className="md:flex farm-shell-h bg-fazenda-bg md:overflow-hidden"
+        // --top-actions-width: exposta aqui (ancestral comum) porque
+        // .site-top-actions e <main>/SubNavTabs são IRMÃOS — uma custom
+        // property só herda para descendentes, nunca entre irmãos, então
+        // declarar isso dentro de .site-top-actions nunca chegaria à SubNavTabs.
+        style={{ ["--top-actions-width" as any]: `${larguraTopActions}px` }}
+      >
+        <Sidebar />
+        {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
+            sino de notificações também moram aqui — os quatro num único
+            container fixed com gap (.site-top-actions, ver globals.css) em vez
+            de cada um calcular sua própria posição (era assim que ficavam
+            sobrepostos, ver comentário em globals.css). */}
+        <div className="site-top-actions" ref={topActionsRef}>
+          {path === "/" && <ManualFazendaButton />}
+          <NewsButton />
+          <ThemeSwitcher />
+          <NotificationBell />
+        </div>
+        <AssistenteClaude />
+        <main className="flex-1 md:overflow-y-auto app-main">
+          <SubNavTabs />
+          <SectionBackground />
+          <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
+        </main>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden"
-      // --top-actions-width: exposta aqui (ancestral comum) porque
-      // .site-top-actions e <main>/SubNavTabs são IRMÃOS — uma custom
-      // property só herda para descendentes, nunca entre irmãos, então
-      // declarar isso dentro de .site-top-actions nunca chegaria à SubNavTabs.
-      style={{ ["--top-actions-width" as any]: `${larguraTopActions}px` }}
-    >
-      <Sidebar />
-      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
-          sino de notificações também moram aqui — os quatro num único
-          container fixed com gap (.site-top-actions, ver globals.css) em vez
-          de cada um calcular sua própria posição (era assim que ficavam
-          sobrepostos, ver comentário em globals.css). */}
-      <div className="site-top-actions" ref={topActionsRef}>
-        {path === "/" && <ManualFazendaButton />}
-        <NewsButton />
-        <ThemeSwitcher />
-        <NotificationBell />
-      </div>
-      <AssistenteClaude />
-      <main className="flex-1 md:overflow-y-auto app-main">
-        <SuporteBanner />
-        <SubNavTabs />
-        <SectionBackground />
-        <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
-      </main>
-    </div>
+    <>
+      <SuporteBanner />
+      {conteudo}
+    </>
   );
 }
