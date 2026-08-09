@@ -10,7 +10,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
-  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks,
+  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -68,6 +68,10 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
       // fazendas-cliente de uma vez, ou só às selecionadas — ver
       // painel-cowdata/cadastros/page.tsx.
       { href: "/painel-cowdata/cadastros", label: "Cadastros globais", icon: ListChecks, area: "cadastros" },
+      // Catálogo de touros — mesma tela/rotas do Cadastro > Touros de
+      // qualquer fazenda (Touro não tem fazenda_id: é global por natureza,
+      // não precisa de mecânica de "aplicar em fazendas" nenhuma).
+      { href: "/painel-cowdata/touros", label: "Touros Naab", icon: Dna, area: "cadastros" },
     ],
   },
 ];
