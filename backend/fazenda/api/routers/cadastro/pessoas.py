@@ -14,7 +14,22 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Pessoa, SeedFlag, TipoPessoa
+from fazenda.models import (
+    Contrato,
+    CronogramaSanitario,
+    DecimoTerceiro,
+    Diaria,
+    Empreitada,
+    FeriasFuncionario,
+    FolhaPagamento,
+    Pessoa,
+    RescisaoFuncionario,
+    SeedFlag,
+    TipoPessoa,
+    Usuario,
+    ValeAvulso,
+    ValeFuncionario,
+)
 from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter()
@@ -323,6 +338,62 @@ def atualizar_pessoa(
     session.commit()
     session.refresh(p)
     return _serializar_pessoa(p)
+
+
+# Toda tabela com FK real para pessoa.id (ver grep de "pessoa_id" em
+# fazenda/models/) — bloqueia a exclusão de fato se qualquer uma tiver
+# registro vinculado, mesma lógica de excluir_item_estoque (estoque.py).
+# Usuario.pessoa_id e CronogramaSanitario.veterinario_pessoa_id também são
+# FK para pessoa.id, então entram na mesma varredura (o 2º é checado à
+# parte abaixo por ter nome de coluna diferente de "pessoa_id").
+_TABELAS_COM_PESSOA_ID = [
+    (Usuario, "login de usuário"),
+    (FolhaPagamento, "folha de pagamento"),
+    (FeriasFuncionario, "férias"),
+    (DecimoTerceiro, "13º salário"),
+    (RescisaoFuncionario, "rescisão"),
+    (ValeFuncionario, "vale"),
+    (ValeAvulso, "vale avulso"),
+    (Empreitada, "empreitada"),
+    (Contrato, "contrato"),
+    (Diaria, "diária"),
+]
+
+
+@router.delete("/pessoas/{pessoa_id}")
+def excluir_pessoa(
+    pessoa_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Exclui uma pessoa de fato — só permitido quando não há nenhum registro
+    vinculado (login de usuário, folha/férias/13º/rescisão/vale, empreitada,
+    contrato, diária ou cronograma sanitário como veterinário agendado), 409
+    caso contrário, orientando a desativar em vez de excluir (mesmo padrão de
+    excluir_item_estoque em estoque.py)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    p = session.get(Pessoa, pessoa_id)
+    if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    vinculos = []
+    for modelo, rotulo in _TABELAS_COM_PESSOA_ID:
+        total = len(session.exec(select(modelo).where(modelo.pessoa_id == pessoa_id)).all())
+        if total:
+            vinculos.append(f"{total} {rotulo}" + ("s" if total > 1 else ""))
+    total_cronogramas_vet = len(
+        session.exec(select(CronogramaSanitario).where(CronogramaSanitario.veterinario_pessoa_id == pessoa_id)).all()
+    )
+    if total_cronogramas_vet:
+        vinculos.append(f"{total_cronogramas_vet} cronograma(s) sanitário(s) como veterinário agendado")
+    if vinculos:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'Não é possível excluir "{p.nome}" — há vínculo(s) com: {", ".join(vinculos)}. '
+                'Desative a pessoa (campo "Ativo") em vez de excluir.'
+            ),
+        )
+    session.delete(p)
+    session.commit()
+    return {"excluido": True}
 
 
 @router.get("/pessoas/inseminadores")

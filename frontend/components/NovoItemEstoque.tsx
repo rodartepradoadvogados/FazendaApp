@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import {
   criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos,
+  criarPrincipioAtivo,
   CLASSIFICACOES_MEDICAMENTO,
   fetchCategoriasEstoqueCadastro, fetchFinalidadesEstoqueCadastro, fetchUnidadesEstoqueCadastro,
   fetchUnidadesEmbalagemEstoqueCadastro, fetchUnidadesMedidaEmbalagemEstoqueCadastro, fetchLocaisArmazenamento,
@@ -46,6 +47,10 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   const [centrosCusto, setCentrosCusto] = useState<string[]>([]);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [principiosAtivos, setPrincipiosAtivos] = useState<PrincipioAtivo[]>([]);
+  const [novoPrincipioAberto, setNovoPrincipioAberto] = useState(false);
+  const [novoPrincipioNome, setNovoPrincipioNome] = useState("");
+  const [salvandoPrincipio, setSalvandoPrincipio] = useState(false);
+  const [erroPrincipio, setErroPrincipio] = useState<string | null>(null);
   const [categorias, setCategorias] = useState<ItemCadastroSimples[]>([]);
   const [finalidades, setFinalidades] = useState<ItemCadastroSimples[]>([]);
   const [unidades, setUnidades] = useState<ItemCadastroSimples[]>([]);
@@ -118,6 +123,26 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editando, planoContas]);
+
+  // Cadastra um princípio ativo novo sem sair do formulário do item — o
+  // backend já suportava (POST /cadastro/principios-ativos), só faltava
+  // esta UI (antes só dava para escolher entre os já existentes).
+  async function criarNovoPrincipio() {
+    if (!novoPrincipioNome.trim()) { setErroPrincipio("Nome é obrigatório."); return; }
+    setSalvandoPrincipio(true); setErroPrincipio(null);
+    try {
+      const criado = await criarPrincipioAtivo({ nome: novoPrincipioNome.trim() });
+      const lista = await fetchPrincipiosAtivos();
+      setPrincipiosAtivos(lista.filter((p: PrincipioAtivo) => p.ativo !== false));
+      set({ principio_ativo_id: String(criado.id), principio_ativo: criado.nome });
+      setNovoPrincipioAberto(false);
+      setNovoPrincipioNome("");
+    } catch (e: any) {
+      setErroPrincipio(e.message || "Erro ao criar princípio ativo");
+    } finally {
+      setSalvandoPrincipio(false);
+    }
+  }
 
   async function salvar() {
     if (!form.nome.trim()) { setErro("Nome é obrigatório."); return; }
@@ -201,19 +226,45 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
           </span>
         </div>
         {form.finalidade === "Medicamento" && (
-          <div><label style={labelStyle}>Princípio ativo (medicamento)</label>
-            <select
-              style={inputStyle}
-              value={form.principio_ativo_id}
-              onChange={(e) => {
-                const id = e.target.value;
-                const encontrado = principiosAtivos.find((p) => String(p.id) === id);
-                set({ principio_ativo_id: id, principio_ativo: encontrado?.nome || "" });
-              }}
-            >
-              <option value="">—</option>
-              {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-            </select>
+          <div>
+            <div className="flex items-center justify-between">
+              <label style={labelStyle}>Princípio ativo (medicamento)</label>
+              <button type="button" className="btn-ghost" title="Cadastrar um princípio ativo que ainda não existe na lista"
+                style={{ fontSize: "0.68rem", display: "flex", alignItems: "center", gap: "0.2rem", padding: "0.1rem 0.4rem" }}
+                onClick={() => { setNovoPrincipioAberto(true); setErroPrincipio(null); }}>
+                <Plus size={12} /> Novo
+              </button>
+            </div>
+            {!novoPrincipioAberto ? (
+              <select
+                style={inputStyle}
+                value={form.principio_ativo_id}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const encontrado = principiosAtivos.find((p) => String(p.id) === id);
+                  set({ principio_ativo_id: id, principio_ativo: encontrado?.nome || "" });
+                }}
+              >
+                <option value="">—</option>
+                {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select>
+            ) : (
+              <div>
+                <div className="flex items-center gap-1">
+                  <input style={inputStyle} value={novoPrincipioNome} onChange={(e) => setNovoPrincipioNome(e.target.value)}
+                    placeholder="Nome do princípio ativo" autoFocus />
+                  <button type="button" className="btn-ghost" title="Salvar" style={{ padding: "0.3rem" }}
+                    disabled={salvandoPrincipio} onClick={criarNovoPrincipio}>
+                    <Check size={14} />
+                  </button>
+                  <button type="button" className="btn-ghost" title="Cancelar" style={{ padding: "0.3rem" }}
+                    onClick={() => { setNovoPrincipioAberto(false); setNovoPrincipioNome(""); setErroPrincipio(null); }}>
+                    <X size={14} />
+                  </button>
+                </div>
+                {erroPrincipio && <p style={{ color: "var(--red)", fontSize: "0.7rem", marginTop: "0.2rem" }}>{erroPrincipio}</p>}
+              </div>
+            )}
           </div>
         )}
         {form.finalidade === "Medicamento" && (

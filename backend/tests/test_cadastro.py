@@ -409,6 +409,60 @@ class TestPessoas:
             pessoa = s.exec(select(Pessoa).where(Pessoa.nome == "Funcionário Recibo")).first()
             assert pessoa.email == "principal@x.com"
 
+    def test_exclui_pessoa_sem_vinculo(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Descartável", "tipos": ["Diarista"]}).json()["id"]
+        r = c.delete(f"/cadastro/pessoas/{pessoa_id}")
+        assert r.status_code == 200
+        assert r.json() == {"excluido": True}
+        assert not any(p["id"] == pessoa_id for p in c.get("/cadastro/pessoas").json())
+
+    def test_exclui_pessoa_inexistente_404(self, client):
+        c, engine = client
+        r = c.delete("/cadastro/pessoas/999999")
+        assert r.status_code == 404
+
+    def test_bloqueia_exclusao_de_pessoa_com_usuario_vinculado(self, client):
+        """Login de usuário é FK real para pessoa.id (Usuario.pessoa_id) —
+        excluir a pessoa órfã quebraria o login, então o backend bloqueia com
+        409 e orienta a desativar em vez de excluir (ver excluir_pessoa)."""
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Com Login", "tipos": ["Funcionário"]}).json()["id"]
+        with Session(engine) as s:
+            from fazenda.models import Usuario
+            s.add(Usuario(username="comlogin", senha_hash="x", pessoa_id=pessoa_id))
+            s.commit()
+        r = c.delete(f"/cadastro/pessoas/{pessoa_id}")
+        assert r.status_code == 409
+        assert "desative" in r.json()["detail"].lower()
+        assert any(p["id"] == pessoa_id for p in c.get("/cadastro/pessoas").json())
+
+    def test_bloqueia_exclusao_de_pessoa_com_cronograma_sanitario_como_veterinario(self, client):
+        """CronogramaSanitario.veterinario_pessoa_id é FK real para pessoa.id
+        (workflow de agendamento de vacina/exame, ver models/sanidade.py) —
+        checado à parte de _TABELAS_COM_PESSOA_ID por ter nome de coluna
+        diferente (ver excluir_pessoa)."""
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Dra. Vet", "tipos": ["Veterinário"]}).json()["id"]
+        with Session(engine) as s:
+            from fazenda.models import CalendarioSanitario, CronogramaSanitario, EventoSanitario
+            evento = EventoSanitario(nome="Brucelose B19")
+            s.add(evento)
+            s.commit()
+            s.refresh(evento)
+            regra = CalendarioSanitario(
+                evento_sanitario_id=evento.id, frequencia_valor=1, frequencia_unidade="anos",
+                data_evento=date.today(), usa_cronograma=True,
+            )
+            s.add(regra)
+            s.commit()
+            s.refresh(regra)
+            s.add(CronogramaSanitario(calendario_sanitario_id=regra.id, data_evento=date.today(), veterinario_pessoa_id=pessoa_id))
+            s.commit()
+        r = c.delete(f"/cadastro/pessoas/{pessoa_id}")
+        assert r.status_code == 409
+        assert "cronograma" in r.json()["detail"].lower()
+
 
 class TestTipoPessoa:
     def test_lista_tipos_seedados(self, client):
