@@ -11,7 +11,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna, Pill, UserCog,
-  SlidersHorizontal,
+  SlidersHorizontal, Newspaper,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -85,6 +85,10 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
       // (ParametroFazenda) — mesma mecânica de Cadastros globais (aplicar em
       // todas ou só nas selecionadas). Ver painel-cowdata/parametros/page.tsx.
       { href: "/painel-cowdata/parametros", label: "Parâmetros", icon: SlidersHorizontal, area: "cadastros" },
+      // Admin do blog (NoticiaNews/FonteNews) — não tem fazenda_id, é global
+      // por natureza; mesmo componente de Configurações > News de qualquer
+      // fazenda. Ver app/painel-cowdata/news/page.tsx.
+      { href: "/painel-cowdata/news", label: "News", icon: Newspaper, area: "cadastros" },
     ],
   },
 ];
