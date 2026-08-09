@@ -543,11 +543,12 @@ export const excluirMembroEquipeCowData = (id: number): Promise<{ ok: boolean }>
 
 // Login + permissões de um membro no próprio Painel CowData (ago/2026) —
 // ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
-export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca"] as const;
+export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros"] as const;
 export type AreaPainelCowData = typeof AREAS_PAINEL_COWDATA[number];
 export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
   cockpit: "Cockpit", assinaturas: "Assinaturas", fazendas: "Fazendas", financeiro: "Financeiro",
   equipe: "Equipe", produto: "Produtos e robôs", cofre: "Cofre de acesso (Suporte)", confianca: "Confiança e LGPD",
+  cadastros: "Cadastros globais",
 };
 export type UsuarioEquipeCowData = {
   usuario_id: number; username: string; email: string; ativo: boolean; areas: string[];
@@ -566,6 +567,40 @@ export const criarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowD
   _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "POST", d);
 export const editarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
   _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "PUT", d);
+
+// Cadastros globais (Painel CowData > Cadastros): motivos/raças/grau de
+// sangue/unidades de estoque/tipos e métodos de serviço reprodutivo,
+// aplicáveis a todas as fazendas-cliente de uma vez ou só às selecionadas —
+// ver backend/fazenda/api/routers/painel_cowdata_cadastros.py.
+export type CategoriaCadastroCowData =
+  | "motivo_baixa" | "motivo_movimentacao" | "raca" | "grau_sangue" | "tipo_servico"
+  | "estoque_local" | "estoque_categoria" | "estoque_finalidade" | "estoque_unidade"
+  | "estoque_unidade_embalagem" | "estoque_unidade_medida_embalagem";
+export type FazendaCadastroCowData = { id: number; nome: string };
+export type ItemCadastroCowData = { nome: string; fracao_holandes: number | null; em_fazendas: number[]; total_fazendas: number };
+export type ItemMetodoCadastroCowData = { tipo_nome: string; nome: string; em_fazendas: number[]; total_fazendas: number };
+export type AplicarCadastroResultado = { criados: number; atualizados: number; ja_existiam: number; total_fazendas: number };
+
+export const fetchCategoriasCadastroCowData = (): Promise<{ chave: string; label: string }[]> => _pcGet(`/cadastros/categorias`);
+export const fetchFazendasCadastroCowData = (): Promise<FazendaCadastroCowData[]> => _pcGet(`/cadastros/fazendas`);
+export const fetchItensCadastroCowData = (categoria: CategoriaCadastroCowData): Promise<{ itens: ItemCadastroCowData[]; fazendas: FazendaCadastroCowData[] }> =>
+  _pcGet(`/cadastros/${categoria}`);
+export const aplicarItemCadastroCowData = (
+  categoria: CategoriaCadastroCowData, dados: { nome: string; fracao_holandes?: number | null; fazenda_ids?: number[] | null },
+): Promise<AplicarCadastroResultado> => _pcSend(`/cadastros/${categoria}/aplicar`, "POST", dados);
+export const renomearItemCadastroCowData = (
+  categoria: CategoriaCadastroCowData, dados: { nome_atual: string; novo_nome: string; fazenda_ids?: number[] | null },
+): Promise<{ renomeados: number; pulados_por_conflito: number; nao_encontrados: number }> =>
+  _pcSend(`/cadastros/${categoria}/renomear`, "PUT", dados);
+export const desativarItemCadastroCowData = (
+  categoria: CategoriaCadastroCowData, dados: { nome: string; fazenda_ids?: number[] | null },
+): Promise<{ desativados: number }> => _pcSend(`/cadastros/${categoria}/desativar`, "POST", dados);
+
+export const fetchMetodosCadastroCowData = (): Promise<{ itens: ItemMetodoCadastroCowData[]; fazendas: FazendaCadastroCowData[] }> =>
+  _pcGet(`/cadastros/metodo_servico/listar`);
+export const aplicarMetodoCadastroCowData = (
+  dados: { tipo_nome: string; nome: string; fazenda_ids?: number[] | null },
+): Promise<AplicarCadastroResultado & { sem_tipo_correspondente: number }> => _pcSend(`/cadastros/metodo_servico/aplicar`, "POST", dados);
 
 export const fetchFolhaMembroCowData = (pessoaId: number): Promise<FolhaCowData[]> => _pcGet(`/equipe/pessoas/${pessoaId}/folha`);
 export const lancarFolhaMembroCowData = (pessoaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> =>
