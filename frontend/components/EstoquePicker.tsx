@@ -13,8 +13,18 @@ export type EstoqueItemPicker = { nome: string; categoria?: string | null; quant
  * não lançamento) — por isso restringe a itens com finalidade "Medicamento"
  * (ração/material/equipamento não fazem sentido aqui), sem exigir saldo.
  */
-export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], somenteVinculadosAlimento = false, incluirNaoEstocaveis = false, disabled = false }:
+export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], todasFinalidades = false, somenteVinculadosAlimento = false, incluirNaoEstocaveis = false, disabled = false }:
   { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string; finalidades?: string[];
+    // Ignora o filtro de `finalidades` inteiramente — mostra qualquer item,
+    // de qualquer finalidade. Usado no lançamento financeiro (Financeiro >
+    // Contas/Ações), onde não faz sentido restringir o que pode ser
+    // comprado/vendido pela finalidade de uso do item (ex.: "Cocho de
+    // concreto", finalidade "Benfeitoria" cadastrada à parte em
+    // Configurações > Cadastro > Estoque > Finalidades, nunca aparecia
+    // porque não está entre os 5 valores fixos de FINALIDADES_ESTOQUE —
+    // ver comentário em fazenda/rules/categorias.py). Passar `finalidades`
+    // junto com este prop não tem efeito: `todasFinalidades` sempre vence.
+    todasFinalidades?: boolean;
     // Restringe aos itens vinculados a um Alimento cadastrado (Configurações >
     // Cadastro > Alimentação > Alimentos) — ou seja, só volumosos, concentrados
     // (proteicos/energéticos), minerais e quaisquer outras categorias que o
@@ -34,9 +44,9 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
   const [busca, setBusca] = useState("");
   const disponiveis = useMemo(
     () => itens
-      .filter((i) => (incluirNaoEstocaveis || i.estocavel !== false) && (i.finalidade == null || finalidades.includes(i.finalidade)) && (!somenteVinculadosAlimento || i.alimento_id != null))
+      .filter((i) => (incluirNaoEstocaveis || i.estocavel !== false) && (todasFinalidades || i.finalidade == null || finalidades.includes(i.finalidade)) && (!somenteVinculadosAlimento || i.alimento_id != null))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
-    [itens, finalidades, somenteVinculadosAlimento, incluirNaoEstocaveis]
+    [itens, finalidades, todasFinalidades, somenteVinculadosAlimento, incluirNaoEstocaveis]
   );
   const sel = disponiveis.find((i) => i.nome === value);
 
