@@ -1,9 +1,9 @@
 "use client";
 import { Bot } from "lucide-react";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4" };
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 export default function ProdutoRobosCowData() {
+  const COR = usePainelCowDataCor();
   return (
     <div className="animate-in">
       <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: "0.2rem" }}>Produto e robôs</h1>

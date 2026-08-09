@@ -13,13 +13,7 @@ const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "
 const ESTADOS_CIVIS = ["Solteiro(a)", "Casado(a)", "União estável", "Divorciado(a)", "Viúvo(a)"];
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
-const inputStyle: React.CSSProperties = {
-  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
-  color: COR.texto, fontSize: "0.82rem", width: "100%",
-};
-const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
+import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
 function mesAtual(): string {
   const d = new Date();
@@ -35,6 +29,8 @@ const NOVO_VAZIO = {
 };
 
 export default function EquipeCowData() {
+  const { cor: COR, inputStyle: inputBase, labelStyle } = usePainelCowDataEstilos();
+  const inputStyle: React.CSSProperties = { ...inputBase, width: "100%" };
   const [cargos, setCargos] = useState<string[]>([]);
   const [subtiposPj, setSubtiposPj] = useState<string[]>([]);
   const [equipe, setEquipe] = useState<PessoaCowData[] | null>(null);
@@ -225,7 +221,7 @@ export default function EquipeCowData() {
 
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvarNovo}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
               Cadastrar
             </button>
             <button onClick={() => setMostrarForm(false)}
@@ -266,6 +262,8 @@ export default function EquipeCowData() {
 function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }: {
   pessoa: PessoaCowData; expandido: boolean; onToggle: () => void; onAlternarAtivo: () => void; onExcluir: () => void;
 }) {
+  const { cor: COR, inputStyle: inputBase, labelStyle } = usePainelCowDataEstilos();
+  const inputStyle: React.CSSProperties = { ...inputBase, width: "100%" };
   const [folhas, setFolhas] = useState<FolhaCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [novaFolha, setNovaFolha] = useState({ competencia: mesAtual(), valor_bruto: String(pessoa.salario_base || ""), descontos: "0", status: "pendente" as "pendente" | "pago" });
@@ -312,7 +310,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
       </tr>
       {expandido && (
         <tr>
-          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: "#1A2028", borderBottom: `1px solid ${COR.borda}` }}>
+          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: COR.bg, borderBottom: `1px solid ${COR.borda}` }}>
             {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.6rem" }}>{erro}</p>}
             <div style={{ fontSize: "0.75rem", color: COR.mudo, marginBottom: "0.6rem" }}>
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
@@ -341,7 +339,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
                 </select>
               </div>
               <button onClick={lancar}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
                 <Plus size={12} /> Lançar folha
               </button>
             </div>
@@ -394,6 +392,8 @@ const LOGIN_VAZIO = {
 // do usuário. Mostrado dentro da linha expandida (FichaLinha, acima), tanto
 // pra cadastrar um login novo quanto pra editar o existente.
 function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
+  const { cor: COR, inputStyle: inputBase, labelStyle } = usePainelCowDataEstilos();
+  const inputStyle: React.CSSProperties = { ...inputBase, width: "100%" };
   const [usuario, setUsuario] = useState<UsuarioEquipeCowData | null | undefined>(undefined); // undefined = carregando
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState(LOGIN_VAZIO);
@@ -525,7 +525,7 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
 
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.8rem" }}>
             <button onClick={salvar} disabled={salvando}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
               {salvando ? "Salvando…" : "Salvar login"}
             </button>
             <button onClick={() => setEditando(false)} disabled={salvando}

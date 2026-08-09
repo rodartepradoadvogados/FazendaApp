@@ -14,25 +14,12 @@ import {
   renomearItemCadastroCowData, desativarItemCadastroCowData, fetchMetodosCadastroCowData, aplicarMetodoCadastroCowData,
   type CategoriaCadastroCowData, type FazendaCadastroCowData, type ItemCadastroCowData, type ItemMetodoCadastroCowData,
 } from "@/lib/api";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
-const inputStyle: React.CSSProperties = {
-  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
-  color: COR.texto, fontSize: "0.82rem",
-};
-const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
-const btnPrimario: React.CSSProperties = {
-  background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.5rem 1rem",
-  fontSize: "0.82rem", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "0.4rem",
-};
-const btnGhost: React.CSSProperties = {
-  background: "transparent", color: COR.mudo, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)",
-  padding: "0.35rem 0.6rem", fontSize: "0.75rem", cursor: "pointer",
-};
+import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
 type Categoria = { chave: string; label: string };
 
 export default function CadastrosGlobaisCowData() {
+  const { cor: COR, inputStyle, labelStyle, btnPrimario, btnGhost } = usePainelCowDataEstilos();
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [fazendas, setFazendas] = useState<FazendaCadastroCowData[]>([]);
   const [categoriaAtiva, setCategoriaAtiva] = useState<string>("motivo_baixa");
@@ -239,7 +226,7 @@ export default function CadastrosGlobaisCowData() {
       <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-md)", overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
-            <tr style={{ background: "#1A2028" }}>
+            <tr style={{ background: COR.bg }}>
               {ehMetodo && <th style={{ textAlign: "left", padding: "0.55rem 0.8rem", color: COR.mudo, fontWeight: 600 }}>Tipo</th>}
               <th style={{ textAlign: "left", padding: "0.55rem 0.8rem", color: COR.mudo, fontWeight: 600 }}>Nome</th>
               <th style={{ textAlign: "left", padding: "0.55rem 0.8rem", color: COR.mudo, fontWeight: 600 }}>Em quantas fazendas</th>

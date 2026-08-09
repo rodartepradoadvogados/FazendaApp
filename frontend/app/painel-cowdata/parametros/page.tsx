@@ -15,22 +15,22 @@ import {
   fetchFazendasParametroCowData, fetchParametrosCowData, aplicarParametroCowData,
   type FazendaCadastroCowData, type ItemParametroCowData,
 } from "@/lib/api";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
-const inputStyle: React.CSSProperties = {
-  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.4rem 0.55rem",
-  color: COR.texto, fontSize: "0.82rem",
-};
-const btnPrimario: React.CSSProperties = {
-  background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.4rem 0.75rem",
-  fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem",
-};
-const btnGhost: React.CSSProperties = {
-  background: "transparent", color: COR.mudo, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)",
-  padding: "0.35rem 0.6rem", fontSize: "0.75rem", cursor: "pointer",
-};
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 export default function ParametrosCowData() {
+  const COR = usePainelCowDataCor();
+  const inputStyle: React.CSSProperties = {
+    background: COR.bg, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.4rem 0.55rem",
+    color: COR.texto, fontSize: "0.82rem",
+  };
+  const btnPrimario: React.CSSProperties = {
+    background: COR.dourado, color: COR.bg, border: "none", borderRadius: "var(--r-sm)", padding: "0.4rem 0.75rem",
+    fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem",
+  };
+  const btnGhost: React.CSSProperties = {
+    background: "transparent", color: COR.mudo, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)",
+    padding: "0.35rem 0.6rem", fontSize: "0.75rem", cursor: "pointer",
+  };
   const [grupos, setGrupos] = useState<Record<string, { titulo: string; itens: ItemParametroCowData[] }>>({});
   const [fazendas, setFazendas] = useState<FazendaCadastroCowData[]>([]);
   const [grupoAtivo, setGrupoAtivo] = useState<string>("");
