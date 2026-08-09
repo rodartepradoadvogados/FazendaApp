@@ -602,6 +602,26 @@ export const aplicarMetodoCadastroCowData = (
   dados: { tipo_nome: string; nome: string; fazenda_ids?: number[] | null },
 ): Promise<AplicarCadastroResultado & { sem_tipo_correspondente: number }> => _pcSend(`/cadastros/metodo_servico/aplicar`, "POST", dados);
 
+// Usuários (Painel CowData > Usuários): login de operador de UMA
+// fazenda-cliente escolhida explicitamente, sem entrar via modo suporte —
+// ver backend/fazenda/api/routers/painel_cowdata_usuarios.py. Diferente de
+// Cadastros globais, nunca "aplica em várias fazendas" — cada usuário é
+// sempre de uma fazenda só.
+export type PessoaUsuarioCowData = { id: number; nome: string; tipo: string; email: string | null; tem_usuario: boolean };
+export type UsuarioCowData = {
+  id: number; username: string; nome: string; papel: "admin" | "operador"; permissoes: string[]; ativo: boolean;
+  email: string | null; pessoa_id: number | null; pessoa_nome: string | null; vinculo_contratante: boolean;
+};
+export type NovoUsuarioCowData = { pessoa_id: number; username: string; senha: string; papel: "admin" | "operador"; permissoes?: string[]; email?: string | null };
+export type EditarUsuarioCowData = { username?: string; papel?: "admin" | "operador"; permissoes?: string[]; ativo?: boolean; senha?: string; email?: string | null };
+
+export const fetchPessoasUsuarioCowData = (fazendaId: number): Promise<PessoaUsuarioCowData[]> => _pcGet(`/usuarios/${fazendaId}/pessoas`);
+export const fetchUsuariosDaFazendaCowData = (fazendaId: number): Promise<UsuarioCowData[]> => _pcGet(`/usuarios/${fazendaId}`);
+export const criarUsuarioDaFazendaCowData = (fazendaId: number, dados: NovoUsuarioCowData): Promise<UsuarioCowData> =>
+  _pcSend(`/usuarios/${fazendaId}`, "POST", dados);
+export const editarUsuarioDaFazendaCowData = (fazendaId: number, usuarioId: number, dados: EditarUsuarioCowData): Promise<UsuarioCowData> =>
+  _pcSend(`/usuarios/${fazendaId}/${usuarioId}`, "PUT", dados);
+
 export const fetchFolhaMembroCowData = (pessoaId: number): Promise<FolhaCowData[]> => _pcGet(`/equipe/pessoas/${pessoaId}/folha`);
 export const lancarFolhaMembroCowData = (pessoaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> =>
   _pcSend(`/equipe/pessoas/${pessoaId}/folha`, "POST", d);
