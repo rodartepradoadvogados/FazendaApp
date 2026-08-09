@@ -19,12 +19,17 @@ from sqlmodel import Field, SQLModel
 
 # Vocabulário fechado do motivo do pedido — nunca texto livre (mesmo padrão
 # de MOTIVOS_BAIXA/MOTIVOS_VENDA: lista cadastrada, não input aberto).
+# Lista redefinida a pedido do usuário (ago/2026) — substitui a anterior
+# ("Configurar integração"/"Suporte técnico solicitado pelo cliente"/
+# "Manutenção preventiva agendada"/"Auditoria de rotina") por esta, mais
+# específica ao motivo jurídico/operacional do acesso.
 MOTIVOS_ACESSO_SUPORTE = [
-    "Configurar integração",
+    "Configurar parâmetros da fazenda",
+    "Auxílio/treinamento de usuário",
+    "Migração/importação de dados",
     "Diagnosticar erro relatado",
-    "Suporte técnico solicitado pelo cliente",
-    "Manutenção preventiva agendada",
-    "Auditoria de rotina",
+    "Incidente de segurança",
+    "Ordem judicial",
 ]
 
 STATUS_PEDIDO_ACESSO = ["aguardando_aprovacao", "aprovado", "negado"]
@@ -46,6 +51,12 @@ class PedidoAcessoSuporte(SQLModel, table=True):
     fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
     motivo: str
+    # Assunto do chamado (livre, obrigatório) e observação (livre, opcional)
+    # — pedido explícito do usuário para o fluxo de 3 janelas do Painel
+    # CowData > Suporte > Acesso CowData. `assunto_chamado` nullable só para
+    # não quebrar pedidos já gravados antes desta coluna existir.
+    assunto_chamado: Optional[str] = None
+    observacao: Optional[str] = None
     status: str = "aguardando_aprovacao"
     aprovado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     pedido_em: datetime = Field(default_factory=datetime.utcnow)
@@ -79,4 +90,29 @@ class AuditoriaAcessoSuporte(SQLModel, table=True):
     fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
     acao: str  # "entrada" | "saida"
+    quando: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AcaoAuditoriaSuporte(SQLModel, table=True):
+    """Log append-only de CADA escrita (POST/PUT/PATCH/DELETE) tentada
+    durante uma sessão de suporte — granularidade abaixo de
+    AuditoriaAcessoSuporte (que só marca entrada/saída da sessão como um
+    todo). Escrito pelo próprio middleware que decide bloquear ou deixar
+    passar (ver main.py::_bloquear_modo_suporte), então cobre tanto ações
+    permitidas quanto tentativas bloqueadas — pedido explícito do usuário:
+    "tudo o que ocorrer nesse acesso de suporte deve ficar disponível para
+    ser auditado". Alimenta a sub-aba Painel CowData > Suporte > Auditoria
+    de Acessos CowData e a aba da fazenda Configurações > Auditoria CowData
+    (só para contratante-administrador)."""
+
+    __tablename__ = "acao_auditoria_suporte"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sessao_id: int = Field(foreign_key="sessao_acesso_suporte.id", index=True)
+    fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    metodo: str  # POST | PUT | PATCH | DELETE
+    caminho: str  # request.url.path
+    status_code: Optional[int] = None
+    bloqueado: bool = False
     quando: datetime = Field(default_factory=datetime.utcnow)

@@ -129,7 +129,7 @@ def test_entrar_pelo_painel_cowdata_e_abrir_fazenda_gera_token_de_suporte(client
     fid = _fazenda_id(client)
     r = client.post(
         "/painel-cowdata/cofre/pedidos",
-        json={"fazenda_id": fid, "motivo": "Suporte técnico solicitado pelo cliente"},
+        json={"fazenda_id": fid, "motivo": "Auxílio/treinamento de usuário", "assunto_chamado": "Dúvida do cliente sobre relatório"},
         headers={"Authorization": f"Bearer {token_cowdata}"},
     )
     assert r.status_code == 200
@@ -151,7 +151,7 @@ def _token_suporte(client) -> str:
     fid = _fazenda_id(client)
     r = client.post(
         "/painel-cowdata/cofre/pedidos",
-        json={"fazenda_id": fid, "motivo": "Auditoria de rotina"},
+        json={"fazenda_id": fid, "motivo": "Configurar parâmetros da fazenda", "assunto_chamado": "Ajuste de parâmetro de teste"},
         headers={"Authorization": f"Bearer {login['token']}"},
     )
     return r.json()["token"]
@@ -184,7 +184,7 @@ def test_modo_suporte_consegue_encerrar_a_propria_sessao(client):
     fid = _fazenda_id(client)
     pedido = client.post(
         "/painel-cowdata/cofre/pedidos",
-        json={"fazenda_id": fid, "motivo": "Diagnosticar erro relatado"},
+        json={"fazenda_id": fid, "motivo": "Diagnosticar erro relatado", "assunto_chamado": "Erro relatado pelo cliente"},
         headers={"Authorization": f"Bearer {login['token']}"},
     ).json()
     token_suporte = pedido["token"]
@@ -194,3 +194,92 @@ def test_modo_suporte_consegue_encerrar_a_propria_sessao(client):
     r = client.post(f"/painel-cowdata/cofre/sessoes/{sessao_id}/encerrar", headers={"Authorization": f"Bearer {token_suporte}"})
     assert r.status_code == 200
     assert r.json()["encerrada_em"] is not None
+
+
+def test_pedido_exige_assunto_chamado(client):
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    fid = _fazenda_id(client)
+    r = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Diagnosticar erro relatado", "assunto_chamado": "   "},
+        headers={"Authorization": f"Bearer {login['token']}"},
+    )
+    assert r.status_code == 400
+    assert "assunto" in r.json()["detail"].lower()
+
+
+def test_pedido_rejeita_motivo_fora_da_lista(client):
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    fid = _fazenda_id(client)
+    r = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Motivo qualquer inventado", "assunto_chamado": "Teste"},
+        headers={"Authorization": f"Bearer {login['token']}"},
+    )
+    assert r.status_code == 400
+
+
+def test_pedido_e_sessao_trazem_protocolo_e_assunto(client):
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    fid = _fazenda_id(client)
+    pedido = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Incidente de segurança", "assunto_chamado": "Verificar login suspeito", "observacao": "Relatado por e-mail"},
+        headers={"Authorization": f"Bearer {login['token']}"},
+    ).json()
+    assert pedido["protocolo"] == f"SUP-{pedido['id']:06d}"
+    assert pedido["assunto_chamado"] == "Verificar login suspeito"
+    assert pedido["observacao"] == "Relatado por e-mail"
+
+    sessoes = client.get("/painel-cowdata/cofre/sessoes-ativas", headers={"Authorization": f"Bearer {login['token']}"}).json()
+    sessao = next(s for s in sessoes if s["fazenda_id"] == fid)
+    assert sessao["protocolo"] == pedido["protocolo"]
+    assert sessao["assunto_chamado"] == "Verificar login suspeito"
+
+
+def test_fazendas_cofre_traz_plano_e_modulos(client):
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    r = client.get("/painel-cowdata/cofre/fazendas", headers={"Authorization": f"Bearer {login['token']}"})
+    assert r.status_code == 200
+    fazenda = r.json()[0]
+    assert "plano_nome" in fazenda
+    assert "modulos" in fazenda
+    assert isinstance(fazenda["modulos"], list)
+
+
+def test_acoes_de_suporte_registram_escrita_bloqueada_e_permitida(client):
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    token_suporte = _token_suporte(client)
+
+    # DELETE é sempre bloqueado — vira uma linha "bloqueada" na auditoria.
+    client.delete("/rota-que-nao-existe", headers={"Authorization": f"Bearer {token_suporte}"})
+    # POST fora de prefixo sensível passa (o 404 é da rota inexistente, não
+    # do middleware) — vira uma linha "permitida", com o status real (404).
+    client.post("/rota-inofensiva-qualquer", json={}, headers={"Authorization": f"Bearer {token_suporte}"})
+
+    r = client.get("/painel-cowdata/cofre/acoes", headers={"Authorization": f"Bearer {login['token']}"})
+    assert r.status_code == 200
+    acoes = r.json()
+    bloqueadas = [a for a in acoes if a["metodo"] == "DELETE" and a["caminho"] == "/rota-que-nao-existe"]
+    permitidas = [a for a in acoes if a["metodo"] == "POST" and a["caminho"] == "/rota-inofensiva-qualquer"]
+    assert len(bloqueadas) == 1 and bloqueadas[0]["bloqueado"] is True
+    assert len(permitidas) == 1 and permitidas[0]["bloqueado"] is False and permitidas[0]["status_code"] == 404
+    assert bloqueadas[0]["protocolo"] is not None
+
+
+def test_acesso_a_minha_fazenda_acoes_exige_contratante_ou_dono(client):
+    fid = _fazenda_id(client)
+    token_suporte = _token_suporte(client)
+    client.delete("/rota-que-nao-existe", headers={"Authorization": f"Bearer {token_suporte}"})
+
+    # O dono, com a fazenda selecionada, enxerga a auditoria da fazenda.
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    sel = client.post("/auth/selecionar-fazenda", json={"fazenda_id": fid}, headers={"Authorization": f"Bearer {login['token']}"}).json()
+    r = client.get("/painel-cowdata/cofre/minha-fazenda/acoes", headers={"Authorization": f"Bearer {sel['token']}"})
+    assert r.status_code == 200
+    assert len(r.json()) >= 1
+
+    # Admin comum (vinculado, mas sem ser contratante) NÃO enxerga.
+    login_comum = client.post("/auth/login", json={"username": "admin-comum", "senha": "123"}).json()
+    r2 = client.get("/painel-cowdata/cofre/minha-fazenda/acoes", headers={"Authorization": f"Bearer {login_comum['token']}"})
+    assert r2.status_code == 403

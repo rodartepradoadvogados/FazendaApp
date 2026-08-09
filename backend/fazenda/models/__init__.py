@@ -190,6 +190,7 @@ from .cofre_acesso import (
     PedidoAcessoSuporte,
     SessaoAcessoSuporte,
     AuditoriaAcessoSuporte,
+    AcaoAuditoriaSuporte,
 )
 from .consultores import (
     ContratoConsultor,

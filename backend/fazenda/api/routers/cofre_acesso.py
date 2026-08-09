@@ -14,18 +14,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import criar_token, exigir_dono, token_manter_conectado
+from fazenda.auth import criar_token, exigir_contratante_ou_dono, exigir_dono, get_fazenda_atual_id, token_manter_conectado
 from fazenda.database import get_session
 from fazenda.models import Fazenda, Usuario
 from fazenda.models.cofre_acesso import (
     DURACAO_SESSAO_MINUTOS,
     MOTIVOS_ACESSO_SUPORTE,
+    AcaoAuditoriaSuporte,
     AuditoriaAcessoSuporte,
     PedidoAcessoSuporte,
     SessaoAcessoSuporte,
 )
+from fazenda.models.planos import PLANOS_CATALOGO, ContratoFazenda, ContratoFazendaModulo
 
 router = APIRouter(prefix="/painel-cowdata/cofre", tags=["cofre-acesso"])
+
+
+def _protocolo(pedido_id: Optional[int]) -> Optional[str]:
+    """Numeração de protocolo automática — pedido explícito do usuário para
+    aparecer igual na tela do cliente e na do membro CowData. Deriva do id
+    autoincrementado do próprio pedido (sequencial e único por natureza),
+    sem precisar de um contador/tabela à parte."""
+    return f"SUP-{pedido_id:06d}" if pedido_id else None
 
 
 def _nome_fazenda(session: Session, fazenda_id: int) -> str:
@@ -48,21 +58,37 @@ def listar_motivos(_: Usuario = Depends(exigir_dono)) -> list[str]:
 @router.get("/fazendas")
 def listar_fazendas_cofre(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
     """Fazendas-clientes elegíveis para pedido de acesso, com a política de
-    aprovação de cada uma (exibida no formulário de solicitação)."""
+    aprovação de cada uma e o plano/módulos contratados — a 2ª janela do
+    fluxo de entrada ("Plano: [nome] — módulos: [...]") lê daqui, sem
+    precisar de outra chamada."""
     fazendas = session.exec(select(Fazenda).where(Fazenda.eh_empresa_cowdata == False)).all()  # noqa: E712
-    return [{"id": f.id, "nome": f.nome, "exige_aprovacao_suporte": f.exige_aprovacao_suporte} for f in fazendas]
+    resultado = []
+    for f in fazendas:
+        contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == f.id)).first()
+        modulos_ativos = session.exec(
+            select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True)  # noqa: E712
+        ).all()
+        plano_nome = PLANOS_CATALOGO.get(contrato.plano, {}).get("nome") if contrato and contrato.plano else ("Sob medida" if contrato else None)
+        resultado.append({
+            "id": f.id, "nome": f.nome, "exige_aprovacao_suporte": f.exige_aprovacao_suporte,
+            "plano_nome": plano_nome,
+            "modulos": sorted(m.modulo for m in modulos_ativos),
+        })
+    return resultado
 
 
 class PedidoAcessoIn(BaseModel):
     fazenda_id: int
     motivo: str
+    assunto_chamado: str
+    observacao: Optional[str] = None
 
 
 def _publico_pedido(session: Session, p: PedidoAcessoSuporte) -> dict:
     return {
-        "id": p.id, "fazenda_id": p.fazenda_id, "fazenda_nome": _nome_fazenda(session, p.fazenda_id),
+        "id": p.id, "protocolo": _protocolo(p.id), "fazenda_id": p.fazenda_id, "fazenda_nome": _nome_fazenda(session, p.fazenda_id),
         "usuario_id": p.usuario_id, "solicitante_nome": _nome_usuario(session, p.usuario_id),
-        "motivo": p.motivo, "status": p.status,
+        "motivo": p.motivo, "assunto_chamado": p.assunto_chamado, "observacao": p.observacao, "status": p.status,
         "aprovador_nome": _nome_usuario(session, p.aprovado_por_usuario_id),
         "pedido_em": p.pedido_em.isoformat(), "decidido_em": p.decidido_em.isoformat() if p.decidido_em else None,
     }
@@ -71,10 +97,12 @@ def _publico_pedido(session: Session, p: PedidoAcessoSuporte) -> dict:
 def _publico_sessao(session: Session, s: SessaoAcessoSuporte) -> dict:
     agora = datetime.utcnow()
     segundos_restantes = (s.expira_em - agora).total_seconds()
+    pedido = session.get(PedidoAcessoSuporte, s.pedido_id)
     return {
-        "id": s.id, "fazenda_id": s.fazenda_id, "fazenda_nome": _nome_fazenda(session, s.fazenda_id),
+        "id": s.id, "protocolo": _protocolo(s.pedido_id), "fazenda_id": s.fazenda_id, "fazenda_nome": _nome_fazenda(session, s.fazenda_id),
         "usuario_id": s.usuario_id, "membro_nome": _nome_usuario(session, s.usuario_id),
-        "motivo": s.motivo, "iniciada_em": s.iniciada_em.isoformat(), "expira_em": s.expira_em.isoformat(),
+        "motivo": s.motivo, "assunto_chamado": pedido.assunto_chamado if pedido else None,
+        "iniciada_em": s.iniciada_em.isoformat(), "expira_em": s.expira_em.isoformat(),
         "encerrada_em": s.encerrada_em.isoformat() if s.encerrada_em else None,
         "ativa": s.encerrada_em is None and segundos_restantes > 0,
         "segundos_restantes": max(0, int(segundos_restantes)),
@@ -103,8 +131,13 @@ def solicitar_acesso(
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
     if dados.motivo not in MOTIVOS_ACESSO_SUPORTE:
         raise HTTPException(status_code=400, detail="Motivo inválido — escolha um da lista")
+    if not dados.assunto_chamado or not dados.assunto_chamado.strip():
+        raise HTTPException(status_code=400, detail="Informe o assunto do chamado")
 
-    pedido = PedidoAcessoSuporte(fazenda_id=dados.fazenda_id, usuario_id=user.id, motivo=dados.motivo)
+    pedido = PedidoAcessoSuporte(
+        fazenda_id=dados.fazenda_id, usuario_id=user.id, motivo=dados.motivo,
+        assunto_chamado=dados.assunto_chamado.strip(), observacao=(dados.observacao or "").strip() or None,
+    )
     if not fazenda.exige_aprovacao_suporte:
         pedido.status = "aprovado"
         pedido.aprovado_por_usuario_id = user.id
@@ -224,3 +257,49 @@ def listar_auditoria_recente(
         }
         for a in entradas
     ]
+
+
+def _publico_acao(session: Session, a: AcaoAuditoriaSuporte) -> dict:
+    sessao = session.get(SessaoAcessoSuporte, a.sessao_id)
+    return {
+        "id": a.id, "sessao_id": a.sessao_id, "protocolo": _protocolo(sessao.pedido_id) if sessao else None,
+        "fazenda_id": a.fazenda_id, "fazenda_nome": _nome_fazenda(session, a.fazenda_id),
+        "usuario_id": a.usuario_id, "membro_nome": _nome_usuario(session, a.usuario_id),
+        "metodo": a.metodo, "caminho": a.caminho, "status_code": a.status_code, "bloqueado": a.bloqueado,
+        "quando": a.quando.isoformat(),
+    }
+
+
+@router.get("/acoes")
+def listar_acoes_suporte(
+    limite: int = 100, sessao_id: Optional[int] = None,
+    _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> list[dict]:
+    """Auditoria granular (toda escrita tentada, não só entrada/saída) —
+    alimenta Painel CowData > Suporte > Auditoria de Acessos CowData.
+    Opcionalmente filtra por uma sessão específica."""
+    query = select(AcaoAuditoriaSuporte)
+    if sessao_id is not None:
+        query = query.where(AcaoAuditoriaSuporte.sessao_id == sessao_id)
+    acoes = session.exec(query.order_by(AcaoAuditoriaSuporte.quando.desc()).limit(limite)).all()
+    return [_publico_acao(session, a) for a in acoes]
+
+
+@router.get("/minha-fazenda/acoes")
+def listar_acoes_suporte_da_minha_fazenda(
+    limite: int = 100, _: Usuario = Depends(exigir_contratante_ou_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    """Mesma auditoria granular, mas do lado do cliente: só a fazenda
+    selecionada no token, só para quem é contratante-administrador dela (ou
+    dono). Alimenta Configurações > Auditoria CowData na própria fazenda —
+    ver frontend/app/configuracoes/page.tsx."""
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
+    acoes = session.exec(
+        select(AcaoAuditoriaSuporte)
+        .where(AcaoAuditoriaSuporte.fazenda_id == fazenda_id)
+        .order_by(AcaoAuditoriaSuporte.quando.desc())
+        .limit(limite)
+    ).all()
+    return [_publico_acao(session, a) for a in acoes]

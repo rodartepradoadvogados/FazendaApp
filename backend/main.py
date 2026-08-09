@@ -376,6 +376,33 @@ async def _carimbar_fazenda_atual(request, call_next):
 _PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas")
 
 
+def _registrar_acao_auditoria_suporte(request, dados: dict, bloqueado: bool, status_code: int | None) -> None:
+    """Grava uma linha de auditoria granular (uma por escrita tentada durante
+    modo suporte, permitida ou bloqueada) — ver AcaoAuditoriaSuporte. Nunca
+    deixa uma falha de auditoria derrubar o request de verdade: qualquer
+    erro aqui é engolido, só a escrita/bloqueio original importa pra quem
+    chamou a rota."""
+    try:
+        from sqlmodel import select
+
+        from fazenda.models import Usuario
+        from fazenda.models.cofre_acesso import AcaoAuditoriaSuporte
+
+        with _sessao_idempotencia(request) as session:
+            # O token só carrega "sub" (username), não o id numérico — resolve
+            # aqui, igual _nome_usuario/exigir_dono fazem em outras rotas.
+            usuario = session.exec(select(Usuario).where(Usuario.username == dados.get("sub"))).first()
+            if not usuario or dados.get("ssid") is None or dados.get("fid") is None:
+                return
+            session.add(AcaoAuditoriaSuporte(
+                sessao_id=dados["ssid"], fazenda_id=dados["fid"], usuario_id=usuario.id,
+                metodo=request.method, caminho=request.url.path, status_code=status_code, bloqueado=bloqueado,
+            ))
+            session.commit()
+    except Exception:
+        pass
+
+
 @app.middleware("http")
 async def _bloquear_modo_suporte(request, call_next):
     """Sessão aberta a partir do Painel CowData (ver cofre_acesso.py) carrega
@@ -384,7 +411,9 @@ async def _bloquear_modo_suporte(request, call_next):
     dono-equivalente. Quem entra DIRETO na fazenda (token sem essa claim)
     continua com acesso total de administrador, sem nenhuma mudança.
     Pedido explícito do usuário ("restringir ações" no modo suporte, não só
-    marcar/auditar)."""
+    marcar/auditar). Toda escrita tentada (bloqueada ou não) também vira uma
+    linha em AcaoAuditoriaSuporte — "tudo o que ocorrer nesse acesso de
+    suporte deve ficar disponível para ser auditado" (pedido explícito)."""
     from fastapi.responses import JSONResponse
 
     from fazenda.auth import _validar_token_payload
@@ -392,17 +421,27 @@ async def _bloquear_modo_suporte(request, call_next):
     auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
         dados = _validar_token_payload(auth.split(" ", 1)[1])
-        if dados and dados.get("suporte"):
+        if dados and dados.get("suporte") and request.method in ("POST", "PUT", "PATCH", "DELETE"):
             path = request.url.path
             bloquear = request.method == "DELETE" or (
                 request.method in ("POST", "PUT", "PATCH")
                 and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
             )
+            # A rota de encerrar a própria sessão de suporte não é uma "ação
+            # do cliente" — não teria sentido poluir a auditoria dele com o
+            # próprio encerramento do acesso.
+            eh_encerramento = path.startswith("/painel-cowdata/cofre/sessoes/") and path.endswith("/encerrar")
             if bloquear:
+                if not eh_encerramento:
+                    _registrar_acao_auditoria_suporte(request, dados, bloqueado=True, status_code=403)
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Ação bloqueada em modo suporte CowData — para isso, entre na fazenda como administrador."},
                 )
+            resposta = await call_next(request)
+            if not eh_encerramento:
+                _registrar_acao_auditoria_suporte(request, dados, bloqueado=False, status_code=resposta.status_code)
+            return resposta
     return await call_next(request)
 
 

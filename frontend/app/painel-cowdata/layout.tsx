@@ -43,7 +43,11 @@ const GRUPOS = [
     titulo: "Operação",
     itens: [
       { href: "/painel-cowdata/produto", label: "Produto e robôs", icon: Bot },
-      { href: "/painel-cowdata/cofre", label: "Cofre de acesso", icon: Lock },
+      // Rota continua /cofre (histórico, testes e o próprio dado gravado já
+      // usam esse nome) — só o rótulo do menu virou "Suporte", a pedido do
+      // usuário, com 2 sub-abas dentro da própria página (Acesso CowData /
+      // Auditoria de Acessos CowData — ver painel-cowdata/cofre/page.tsx).
+      { href: "/painel-cowdata/cofre", label: "Suporte", icon: Lock },
       { href: "/painel-cowdata/confianca", label: "Confiança e LGPD", icon: ShieldCheck },
     ],
   },
