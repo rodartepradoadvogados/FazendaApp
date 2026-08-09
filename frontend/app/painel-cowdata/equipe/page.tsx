@@ -4,7 +4,9 @@ import { ChevronDown, ChevronRight, Plus, Trash2, UserPlus } from "lucide-react"
 import {
   fetchCargosCowData, fetchEquipeCowData, criarMembroEquipeCowData, editarMembroEquipeCowData, excluirMembroEquipeCowData,
   fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData, fetchTiposVinculoCowData,
-  type PessoaCowData, type FolhaCowData,
+  fetchUsuarioEquipeCowData, criarUsuarioEquipeCowData, editarUsuarioEquipeCowData,
+  AREAS_PAINEL_COWDATA, LABEL_AREA_PAINEL_COWDATA,
+  type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData,
 } from "@/lib/api";
 
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
@@ -316,6 +318,8 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
             </div>
 
+            <LoginEquipe pessoa={pessoa} />
+
             <div style={{ display: "flex", gap: "0.6rem", alignItems: "flex-end", flexWrap: "wrap", marginBottom: "0.8rem" }}>
               <div>
                 <label style={labelStyle}>Competência</label>
@@ -376,5 +380,161 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
         </tr>
       )}
     </>
+  );
+}
+
+const LOGIN_VAZIO = {
+  username: "", email: "", senha: "", ativo: true, areas: [] as AreaPainelCowData[],
+  pode_suspender_assinatura: false, pode_acessar_fazendas: false,
+  pode_alterar_cadastro: false, pode_modificar_suspender_plano: false, pode_emitir_auditar_contratos: false,
+  pode_emitir_cobrancas: false, pode_vincular_usuarios: false, pode_cadastrar_usuarios: false,
+};
+
+// Login + permissões do membro no próprio Painel CowData — pedido explícito
+// do usuário. Mostrado dentro da linha expandida (FichaLinha, acima), tanto
+// pra cadastrar um login novo quanto pra editar o existente.
+function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
+  const [usuario, setUsuario] = useState<UsuarioEquipeCowData | null | undefined>(undefined); // undefined = carregando
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState(LOGIN_VAZIO);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    fetchUsuarioEquipeCowData(pessoa.id).then(setUsuario).catch((e) => { setErro(e.message); setUsuario(null); });
+  }, [pessoa.id]);
+
+  function abrirEdicao() {
+    setForm(usuario ? {
+      username: usuario.username, email: usuario.email, senha: "", ativo: usuario.ativo,
+      areas: usuario.areas as AreaPainelCowData[],
+      pode_suspender_assinatura: usuario.pode_suspender_assinatura, pode_acessar_fazendas: usuario.pode_acessar_fazendas,
+      pode_alterar_cadastro: usuario.pode_alterar_cadastro, pode_modificar_suspender_plano: usuario.pode_modificar_suspender_plano,
+      pode_emitir_auditar_contratos: usuario.pode_emitir_auditar_contratos, pode_emitir_cobrancas: usuario.pode_emitir_cobrancas,
+      pode_vincular_usuarios: usuario.pode_vincular_usuarios, pode_cadastrar_usuarios: usuario.pode_cadastrar_usuarios,
+    } : { ...LOGIN_VAZIO, email: pessoa.emails[0] || "" });
+    setErro(null);
+    setEditando(true);
+  }
+
+  function alternarArea(area: AreaPainelCowData) {
+    setForm((f) => ({ ...f, areas: f.areas.includes(area) ? f.areas.filter((a) => a !== area) : [...f.areas, area] }));
+  }
+
+  async function salvar() {
+    if (!form.username.trim() || !form.email.trim()) { setErro("Usuário e e-mail são obrigatórios."); return; }
+    if (!usuario && !form.senha.trim()) { setErro("Defina uma senha para criar o login."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const payload = { ...form, senha: form.senha.trim() || null };
+      const salvo = usuario ? await editarUsuarioEquipeCowData(pessoa.id, payload) : await criarUsuarioEquipeCowData(pessoa.id, payload);
+      setUsuario(salvo);
+      setEditando(false);
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  if (usuario === undefined) return null;
+
+  return (
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem", marginBottom: "0.8rem" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: editando ? "0.7rem" : 0 }}>
+        <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Login no Painel CowData
+        </p>
+        {!editando && (
+          <button onClick={abrirEdicao} style={{ fontSize: "0.72rem", color: COR.dourado, background: "transparent", border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "0.25rem 0.6rem", cursor: "pointer" }}>
+            {usuario ? "Editar login/permissões" : "Cadastrar login"}
+          </button>
+        )}
+      </div>
+
+      {!editando && usuario && (
+        <p style={{ fontSize: "0.78rem", color: COR.mudo }}>
+          {usuario.username} · {usuario.email} · {usuario.ativo ? <span style={{ color: COR.verde }}>ativo</span> : <span style={{ color: COR.vermelho }}>inativo</span>}
+          {" · áreas: "}{usuario.areas.length ? usuario.areas.map((a) => LABEL_AREA_PAINEL_COWDATA[a as AreaPainelCowData] || a).join(", ") : "nenhuma"}
+        </p>
+      )}
+      {!editando && !usuario && (
+        <p style={{ fontSize: "0.78rem", color: COR.mudo }}>Este membro ainda não tem login para o Painel CowData.</p>
+      )}
+
+      {editando && (
+        <div>
+          {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.5rem" }}>{erro}</p>}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))", gap: "0.6rem", marginBottom: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>Usuário (login)</label>
+              <input style={inputStyle} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>E-mail</label>
+              <input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>{usuario ? "Nova senha (opcional)" : "Senha"}</label>
+              <input type="password" style={inputStyle} value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select style={inputStyle} value={form.ativo ? "1" : "0"} onChange={(e) => setForm({ ...form, ativo: e.target.value === "1" })}>
+                <option value="1">Ativo</option>
+                <option value="0">Inativo</option>
+              </select>
+            </div>
+          </div>
+
+          <p style={labelStyle}>Tipo — acesso a quais dados do Painel CowData</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.8rem" }}>
+            {AREAS_PAINEL_COWDATA.map((a) => (
+              <label key={a} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", color: COR.texto, cursor: "pointer" }}>
+                <input type="checkbox" checked={form.areas.includes(a)} onChange={() => alternarArea(a)} />
+                {LABEL_AREA_PAINEL_COWDATA[a]}
+              </label>
+            ))}
+          </div>
+
+          <p style={labelStyle}>Permissão de acesso</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.5rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.pode_suspender_assinatura} onChange={(e) => setForm({ ...form, pode_suspender_assinatura: e.target.checked })} />
+              Pode suspender assinatura?
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.pode_acessar_fazendas} onChange={(e) => setForm({ ...form, pode_acessar_fazendas: e.target.checked })} />
+              Pode acessar fazendas?
+            </label>
+            {form.pode_acessar_fazendas && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginLeft: "1.4rem", paddingLeft: "0.7rem", borderLeft: `1px solid ${COR.borda}` }}>
+                {([
+                  ["pode_alterar_cadastro", "Pode alterar dados de cadastro?"],
+                  ["pode_modificar_suspender_plano", "Pode modificar e/ou suspender plano?"],
+                  ["pode_emitir_auditar_contratos", "Pode emitir e auditar contratos?"],
+                  ["pode_emitir_cobrancas", "Pode emitir cobranças?"],
+                  ["pode_vincular_usuarios", "Pode vincular usuários?"],
+                  ["pode_cadastrar_usuarios", "Pode cadastrar usuários para serem vinculados?"],
+                ] as const).map(([campo, texto]) => (
+                  <label key={campo} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.76rem", cursor: "pointer" }}>
+                    <input type="checkbox" checked={form[campo]} onChange={(e) => setForm({ ...form, [campo]: e.target.checked })} />
+                    {texto}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.8rem" }}>
+            <button onClick={salvar} disabled={salvando}
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
+              {salvando ? "Salvando…" : "Salvar login"}
+            </button>
+            <button onClick={() => setEditando(false)} disabled={salvando}
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

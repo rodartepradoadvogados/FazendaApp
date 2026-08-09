@@ -192,6 +192,9 @@ from .cofre_acesso import (
     AuditoriaAcessoSuporte,
     AcaoAuditoriaSuporte,
 )
+from .equipe_cowdata_acesso import (
+    PermissaoEquipeCowData,
+)
 from .consultores import (
     ContratoConsultor,
     FazendaGerenciada,

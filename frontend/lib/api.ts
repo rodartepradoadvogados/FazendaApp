@@ -111,6 +111,20 @@ export function ehAdmin(): boolean {
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
 }
+// Membro da Equipe CowData com login próprio (ago/2026) — não é dono, mas
+// entra no Painel CowData com acesso restrito às áreas liberadas (ver
+// backend/fazenda/models/equipe_cowdata_acesso.py e
+// fazenda/api/routers/auth.py::_publico). Usado por AuthShell.tsx (gate de
+// /painel-cowdata) e pelo menu do painel (filtra por área).
+export function ehMembroEquipeCowData(): boolean {
+  return getUsuario()?.eh_equipe_cowdata === true;
+}
+export function areasPainelCowData(): string[] {
+  return Array.isArray(getUsuario()?.areas_painel_cowdata) ? getUsuario().areas_painel_cowdata : [];
+}
+export function temAreaPainelCowData(area: string): boolean {
+  return ehDono() || areasPainelCowData().includes(area);
+}
 // Tipos de Pessoa vinculados a um Usuario operador que recebem o menu
 // restrito do app de campo — empreiteiro/prestador/diarista/funcionário
 // não veem Aprovações nem Financeiro, e Protocolos sobe pro topo do menu.
@@ -473,6 +487,32 @@ export const fetchEquipeCowData = (): Promise<PessoaCowData[]> => _pcGet(`/equip
 export const criarMembroEquipeCowData = (d: PessoaCowDataIn): Promise<PessoaCowData> => _pcSend(`/equipe/pessoas`, "POST", d);
 export const editarMembroEquipeCowData = (id: number, d: PessoaCowDataIn): Promise<PessoaCowData> => _pcSend(`/equipe/pessoas/${id}`, "PUT", d);
 export const excluirMembroEquipeCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/equipe/pessoas/${id}`, "DELETE");
+
+// Login + permissões de um membro no próprio Painel CowData (ago/2026) —
+// ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
+export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca"] as const;
+export type AreaPainelCowData = typeof AREAS_PAINEL_COWDATA[number];
+export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
+  cockpit: "Cockpit", assinaturas: "Assinaturas", fazendas: "Fazendas", financeiro: "Financeiro",
+  equipe: "Equipe", produto: "Produtos e robôs", cofre: "Cofre de acesso (Suporte)", confianca: "Confiança e LGPD",
+};
+export type UsuarioEquipeCowData = {
+  usuario_id: number; username: string; email: string; ativo: boolean; areas: string[];
+  pode_suspender_assinatura: boolean; pode_acessar_fazendas: boolean; pode_alterar_cadastro: boolean;
+  pode_modificar_suspender_plano: boolean; pode_emitir_auditar_contratos: boolean; pode_emitir_cobrancas: boolean;
+  pode_vincular_usuarios: boolean; pode_cadastrar_usuarios: boolean;
+};
+export type UsuarioEquipeCowDataIn = {
+  username: string; email: string; senha?: string | null; ativo?: boolean; areas: string[];
+  pode_suspender_assinatura?: boolean; pode_acessar_fazendas?: boolean; pode_alterar_cadastro?: boolean;
+  pode_modificar_suspender_plano?: boolean; pode_emitir_auditar_contratos?: boolean; pode_emitir_cobrancas?: boolean;
+  pode_vincular_usuarios?: boolean; pode_cadastrar_usuarios?: boolean;
+};
+export const fetchUsuarioEquipeCowData = (pessoaId: number): Promise<UsuarioEquipeCowData | null> => _pcGet(`/equipe/pessoas/${pessoaId}/usuario`);
+export const criarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
+  _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "POST", d);
+export const editarUsuarioEquipeCowData = (pessoaId: number, d: UsuarioEquipeCowDataIn): Promise<UsuarioEquipeCowData> =>
+  _pcSend(`/equipe/pessoas/${pessoaId}/usuario`, "PUT", d);
 
 export const fetchFolhaMembroCowData = (pessoaId: number): Promise<FolhaCowData[]> => _pcGet(`/equipe/pessoas/${pessoaId}/folha`);
 export const lancarFolhaMembroCowData = (pessoaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> =>

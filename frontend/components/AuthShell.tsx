@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { getToken, podeModulo, ehDono, ehContador, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
+import { getToken, podeModulo, ehDono, ehContador, ehMembroEquipeCowData, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -106,7 +106,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace(destinoRaiz); return; }
-    if (ehPainelCowData && !ehDono()) { router.replace(destinoRaiz); return; }
+    if (ehPainelCowData && !ehDono() && !ehMembroEquipeCowData()) { router.replace(destinoRaiz); return; }
     if (ehDietasPortal && !podeFormularDietas()) { router.replace(destinoRaiz); return; }
     // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
     // duas (a página em si esconde a sub-aba sem permissão).

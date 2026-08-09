@@ -3,7 +3,10 @@ Cofre de acesso — visão consolidada (todas as fazendas-clientes) do acesso
 de suporte da CowData: pedido → sessão → auditoria. Ver fazenda/models/
 cofre_acesso.py para o modelo de dados e o racional do desenho.
 
-Tudo aqui é `exigir_dono`-gated, mesmo padrão de painel_cowdata.py.
+Tudo aqui exige a área "cofre" do Painel CowData (dono sempre passa; membro
+da Equipe CowData só com essa área liberada — ver
+exigir_area_painel_cowdata em fazenda/auth.py), exceto /minha-fazenda/acoes,
+que é do lado do CLIENTE (contratante-admin da própria fazenda).
 """
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import criar_token, exigir_contratante_ou_dono, exigir_dono, get_fazenda_atual_id, token_manter_conectado
+from fazenda.auth import criar_token, exigir_area_painel_cowdata, exigir_contratante_ou_dono, get_fazenda_atual_id, token_manter_conectado
 from fazenda.database import get_session
 from fazenda.models import Fazenda, Usuario
 from fazenda.models.cofre_acesso import (
@@ -51,12 +54,12 @@ def _nome_usuario(session: Session, usuario_id: Optional[int]) -> Optional[str]:
 
 
 @router.get("/motivos")
-def listar_motivos(_: Usuario = Depends(exigir_dono)) -> list[str]:
+def listar_motivos(_: Usuario = Depends(exigir_area_painel_cowdata("cofre"))) -> list[str]:
     return MOTIVOS_ACESSO_SUPORTE
 
 
 @router.get("/fazendas")
-def listar_fazendas_cofre(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
+def listar_fazendas_cofre(_: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session)) -> list[dict]:
     """Fazendas-clientes elegíveis para pedido de acesso, com a política de
     aprovação de cada uma e o plano/módulos contratados — a 2ª janela do
     fluxo de entrada ("Plano: [nome] — módulos: [...]") lê daqui, sem
@@ -123,7 +126,7 @@ def _abrir_sessao(session: Session, pedido: PedidoAcessoSuporte) -> SessaoAcesso
 
 @router.post("/pedidos")
 def solicitar_acesso(
-    dados: PedidoAcessoIn, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+    dados: PedidoAcessoIn, user: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session),
     manter_conectado: bool = Depends(token_manter_conectado),
 ) -> dict:
     fazenda = session.get(Fazenda, dados.fazenda_id)
@@ -166,7 +169,7 @@ def solicitar_acesso(
 
 
 @router.post("/pedidos/{pedido_id}/aprovar")
-def aprovar_pedido(pedido_id: int, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def aprovar_pedido(pedido_id: int, user: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session)) -> dict:
     """LIMITAÇÃO CONHECIDA: ao contrário de solicitar_acesso (aprovação
     automática), esta rota não emite um token de suporte — quem aprova pode
     ser uma sessão/aba diferente de quem pediu, e o token pertence a quem vai
@@ -192,7 +195,7 @@ def aprovar_pedido(pedido_id: int, user: Usuario = Depends(exigir_dono), session
 
 
 @router.post("/pedidos/{pedido_id}/negar")
-def negar_pedido(pedido_id: int, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def negar_pedido(pedido_id: int, user: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session)) -> dict:
     pedido = session.get(PedidoAcessoSuporte, pedido_id)
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
@@ -208,7 +211,7 @@ def negar_pedido(pedido_id: int, user: Usuario = Depends(exigir_dono), session: 
 
 
 @router.post("/sessoes/{sessao_id}/encerrar")
-def encerrar_sessao(sessao_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def encerrar_sessao(sessao_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session)) -> dict:
     sessao = session.get(SessaoAcessoSuporte, sessao_id)
     if not sessao:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
@@ -222,7 +225,7 @@ def encerrar_sessao(sessao_id: int, _: Usuario = Depends(exigir_dono), session: 
 
 
 @router.get("/sessoes-ativas")
-def listar_sessoes_ativas(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
+def listar_sessoes_ativas(_: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session)) -> list[dict]:
     agora = datetime.utcnow()
     sessoes = session.exec(
         select(SessaoAcessoSuporte)
@@ -234,7 +237,7 @@ def listar_sessoes_ativas(_: Usuario = Depends(exigir_dono), session: Session = 
 
 @router.get("/pedidos")
 def listar_pedidos_recentes(
-    limite: int = 20, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+    limite: int = 20, _: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session),
 ) -> list[dict]:
     pedidos = session.exec(
         select(PedidoAcessoSuporte).order_by(PedidoAcessoSuporte.pedido_em.desc()).limit(limite)
@@ -244,7 +247,7 @@ def listar_pedidos_recentes(
 
 @router.get("/auditoria")
 def listar_auditoria_recente(
-    limite: int = 20, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+    limite: int = 20, _: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session),
 ) -> list[dict]:
     entradas = session.exec(
         select(AuditoriaAcessoSuporte).order_by(AuditoriaAcessoSuporte.quando.desc()).limit(limite)
@@ -273,7 +276,7 @@ def _publico_acao(session: Session, a: AcaoAuditoriaSuporte) -> dict:
 @router.get("/acoes")
 def listar_acoes_suporte(
     limite: int = 100, sessao_id: Optional[int] = None,
-    _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_area_painel_cowdata("cofre")), session: Session = Depends(get_session),
 ) -> list[dict]:
     """Auditoria granular (toda escrita tentada, não só entrada/saída) —
     alimenta Painel CowData > Suporte > Auditoria de Acessos CowData.

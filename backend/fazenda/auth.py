@@ -20,8 +20,9 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    ContratoConsultor, ContratoFazenda, ContratoFazendaModulo, SeedFlag, Usuario, UsuarioFazenda,
+    ContratoConsultor, ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
+from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -262,6 +263,44 @@ def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
     if not eh_email_dono_equivalente(user.email):
         raise HTTPException(status_code=403, detail="Acesso restrito ao proprietário")
     return user
+
+
+def eh_membro_equipe_cowdata(session: Session, user: Usuario) -> bool:
+    """True quando este Usuario pertence a um membro da Equipe CowData
+    (Pessoa cadastrada na fazenda interna eh_empresa_cowdata=True — ver
+    painel_cowdata.py). Não confundir com dono-equivalente: um membro comum
+    da equipe (Financeiro, Comercial, Consultor...) não é dono, só ganha
+    acesso ao que a PermissaoEquipeCowData dele liberar."""
+    if not user.pessoa_id:
+        return False
+    pessoa = session.get(Pessoa, user.pessoa_id)
+    if not pessoa or not pessoa.fazenda_id:
+        return False
+    fazenda = session.get(Fazenda, pessoa.fazenda_id)
+    return bool(fazenda and fazenda.eh_empresa_cowdata)
+
+
+def _permissao_equipe_cowdata(session: Session, usuario_id: int) -> PermissaoEquipeCowData | None:
+    return session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == usuario_id)).first()
+
+
+def exigir_area_painel_cowdata(area: str):
+    """Fábrica de dependência: dono-equivalente sempre passa (acesso total,
+    como sempre); senão exige ser membro da Equipe CowData com esta área
+    liberada em PermissaoEquipeCowData.areas. Usado nas rotas PRÓPRIAS do
+    Painel CowData (Equipe, Financeiro CowData, Suporte/Cofre) — ainda não
+    nas rotas de fazendas.py compartilhadas com o resto do sistema (ver
+    docstring de fazenda/models/equipe_cowdata_acesso.py)."""
+
+    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
+        if eh_email_dono_equivalente(user.email):
+            return user
+        perm = _permissao_equipe_cowdata(session, user.id)
+        if perm and area in (perm.areas or "").split(","):
+            return user
+        raise HTTPException(status_code=403, detail="Sem permissão para esta área do Painel CowData")
+
+    return _dep
 
 
 def exigir_contratante_ou_dono(

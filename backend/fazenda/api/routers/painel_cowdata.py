@@ -4,9 +4,13 @@ Financeiro/Marketing/Suporte) e Financeiro CowData (livro-caixa independente
 de qualquer fazenda-cliente). Ver fazenda/models/multitenant.py::
 Fazenda.eh_empresa_cowdata e fazenda/models/cowdata_interno.py::LancamentoCowData.
 
-Tudo aqui é `exigir_dono`-gated (só o proprietário da CowData) e opera sempre
-sobre a ÚNICA fazenda marcada `eh_empresa_cowdata=True` — nunca sobre a
-fazenda selecionada no token (get_fazenda_atual_id), que é irrelevante aqui.
+Tudo aqui exige a área "equipe" ou "financeiro" do Painel CowData conforme a
+seção (dono sempre passa; membro da Equipe CowData só com a área liberada —
+ver exigir_area_painel_cowdata em fazenda/auth.py), exceto a criação/edição
+do PRÓPRIO login de um membro (POST/PUT .../usuario), que fica restrita ao
+proprietário (`exigir_dono`). Opera sempre sobre a ÚNICA fazenda marcada
+`eh_empresa_cowdata=True` — nunca sobre a fazenda selecionada no token
+(get_fazenda_atual_id), que é irrelevante aqui.
 Reaproveita os modelos Pessoa/FolhaPagamento (mesmo formato da folha de
 pagamento de qualquer fazenda-cliente), mas por endpoints NOVOS e isolados —
 nenhuma alteração nos routers tenant-facing já testados.
@@ -14,17 +18,18 @@ nenhuma alteração nos routers tenant-facing já testados.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_dono
+from fazenda.auth import exigir_area_painel_cowdata, exigir_dono, hash_senha
 from fazenda.database import get_session
 from fazenda.models import CobrancaAsaas, Fazenda, FolhaPagamento, Pessoa, SeedFlag, TipoPessoa, Usuario
 from fazenda.models.cowdata_interno import LancamentoCowData
+from fazenda.models.equipe_cowdata_acesso import AREAS_PAINEL_COWDATA, PermissaoEquipeCowData
 
 router = APIRouter(prefix="/painel-cowdata", tags=["painel-cowdata"])
 
@@ -141,12 +146,12 @@ def _pessoa_publica(p: Pessoa) -> dict:
 
 
 @router.get("/equipe/tipos-vinculo")
-def listar_tipos_vinculo(_: Usuario = Depends(exigir_dono)) -> dict:
+def listar_tipos_vinculo(_: Usuario = Depends(exigir_area_painel_cowdata("equipe"))) -> dict:
     return {"tipos_vinculo": TIPOS_VINCULO, "subtipos_pj": SUBTIPOS_PJ}
 
 
 @router.get("/equipe/cargos")
-def listar_cargos(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[str]:
+def listar_cargos(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> list[str]:
     fazenda_id = _fazenda_cowdata_id(session)
     tipos = session.exec(
         select(TipoPessoa).where(TipoPessoa.fazenda_id == fazenda_id, TipoPessoa.ativo == True)  # noqa: E712
@@ -155,7 +160,7 @@ def listar_cargos(_: Usuario = Depends(exigir_dono), session: Session = Depends(
 
 
 @router.get("/equipe/pessoas")
-def listar_equipe(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
+def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> list[dict]:
     fazenda_id = _fazenda_cowdata_id(session)
     pessoas = session.exec(select(Pessoa).where(Pessoa.fazenda_id == fazenda_id)).all()
     return [_pessoa_publica(p) for p in sorted(pessoas, key=lambda p: p.nome)]
@@ -163,7 +168,7 @@ def listar_equipe(_: Usuario = Depends(exigir_dono), session: Session = Depends(
 
 @router.post("/equipe/pessoas")
 def criar_membro_equipe(
-    dados: PessoaCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
 ) -> dict:
     fazenda_id = _fazenda_cowdata_id(session)
     cargo_existe = session.exec(
@@ -214,7 +219,7 @@ def _pessoa_equipe_ou_404(session: Session, pessoa_id: int) -> Pessoa:
 
 @router.put("/equipe/pessoas/{pessoa_id}")
 def editar_membro_equipe(
-    pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     _validar_vinculo(dados)
@@ -249,12 +254,156 @@ def editar_membro_equipe(
 
 @router.delete("/equipe/pessoas/{pessoa_id}")
 def excluir_membro_equipe(
-    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
 ) -> dict:
     pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
     session.delete(pessoa)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Login + permissões de um membro da Equipe CowData no próprio Painel
+# CowData — pedido explícito do usuário. Gated por `exigir_dono` (não pela
+# área "equipe"): conceder/alterar um login e suas permissões é uma ação
+# de mais confiança do que só editar nome/cargo/salário, então fica
+# restrita ao proprietário mesmo — ver docstring de
+# fazenda/models/equipe_cowdata_acesso.py.
+# ---------------------------------------------------------------------------
+class UsuarioEquipeCowDataIn(BaseModel):
+    username: str
+    email: str
+    senha: Optional[str] = None  # obrigatório ao criar; opcional ao editar (None = mantém a senha atual)
+    ativo: bool = True
+    areas: list[str] = []
+    pode_suspender_assinatura: bool = False
+    pode_acessar_fazendas: bool = False
+    pode_alterar_cadastro: bool = False
+    pode_modificar_suspender_plano: bool = False
+    pode_emitir_auditar_contratos: bool = False
+    pode_emitir_cobrancas: bool = False
+    pode_vincular_usuarios: bool = False
+    pode_cadastrar_usuarios: bool = False
+
+
+def _validar_areas(areas: list[str]) -> None:
+    invalidas = [a for a in areas if a not in AREAS_PAINEL_COWDATA]
+    if invalidas:
+        raise HTTPException(status_code=400, detail=f"Área inválida: {', '.join(invalidas)}")
+
+
+def _usuario_equipe_publico(usuario: Usuario, perm: PermissaoEquipeCowData) -> dict:
+    return {
+        "usuario_id": usuario.id, "username": usuario.username, "email": usuario.email, "ativo": usuario.ativo,
+        "areas": [a for a in (perm.areas or "").split(",") if a],
+        "pode_suspender_assinatura": perm.pode_suspender_assinatura,
+        "pode_acessar_fazendas": perm.pode_acessar_fazendas,
+        "pode_alterar_cadastro": perm.pode_alterar_cadastro,
+        "pode_modificar_suspender_plano": perm.pode_modificar_suspender_plano,
+        "pode_emitir_auditar_contratos": perm.pode_emitir_auditar_contratos,
+        "pode_emitir_cobrancas": perm.pode_emitir_cobrancas,
+        "pode_vincular_usuarios": perm.pode_vincular_usuarios,
+        "pode_cadastrar_usuarios": perm.pode_cadastrar_usuarios,
+    }
+
+
+def _aplicar_subpermissoes(perm: PermissaoEquipeCowData, dados: UsuarioEquipeCowDataIn) -> None:
+    perm.pode_suspender_assinatura = dados.pode_suspender_assinatura
+    perm.pode_acessar_fazendas = dados.pode_acessar_fazendas
+    # As 6 sub-permissões só fazem sentido com pode_acessar_fazendas=True —
+    # reforçado aqui (não só no formulário) pra nunca gravar uma combinação
+    # que o próprio desenho do usuário não previu.
+    if dados.pode_acessar_fazendas:
+        perm.pode_alterar_cadastro = dados.pode_alterar_cadastro
+        perm.pode_modificar_suspender_plano = dados.pode_modificar_suspender_plano
+        perm.pode_emitir_auditar_contratos = dados.pode_emitir_auditar_contratos
+        perm.pode_emitir_cobrancas = dados.pode_emitir_cobrancas
+        perm.pode_vincular_usuarios = dados.pode_vincular_usuarios
+        perm.pode_cadastrar_usuarios = dados.pode_cadastrar_usuarios
+    else:
+        perm.pode_alterar_cadastro = False
+        perm.pode_modificar_suspender_plano = False
+        perm.pode_emitir_auditar_contratos = False
+        perm.pode_emitir_cobrancas = False
+        perm.pode_vincular_usuarios = False
+        perm.pode_cadastrar_usuarios = False
+
+
+@router.get("/equipe/pessoas/{pessoa_id}/usuario")
+def obter_usuario_equipe(
+    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+) -> Optional[dict]:
+    pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
+    usuario = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first()
+    if not usuario:
+        return None
+    perm = _permissao_equipe_cowdata_ou_vazia(session, usuario.id)
+    return _usuario_equipe_publico(usuario, perm)
+
+
+def _permissao_equipe_cowdata_ou_vazia(session: Session, usuario_id: int) -> PermissaoEquipeCowData:
+    perm = session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == usuario_id)).first()
+    return perm or PermissaoEquipeCowData(usuario_id=usuario_id)
+
+
+@router.post("/equipe/pessoas/{pessoa_id}/usuario")
+def criar_usuario_equipe(
+    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+) -> dict:
+    pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
+    if session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first():
+        raise HTTPException(status_code=400, detail="Este membro já tem um usuário de login — edite as permissões em vez de criar outro.")
+    if not dados.senha or not dados.senha.strip():
+        raise HTTPException(status_code=400, detail="Senha é obrigatória para criar o usuário")
+    if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
+        raise HTTPException(status_code=400, detail="Nome de usuário já em uso")
+    _validar_areas(dados.areas)
+
+    usuario = Usuario(
+        username=dados.username, nome=pessoa.nome, email=dados.email,
+        senha_hash=hash_senha(dados.senha), papel="operador", pessoa_id=pessoa.id, ativo=dados.ativo,
+    )
+    session.add(usuario)
+    session.commit()
+    session.refresh(usuario)
+
+    perm = PermissaoEquipeCowData(usuario_id=usuario.id, areas=",".join(dados.areas))
+    _aplicar_subpermissoes(perm, dados)
+    session.add(perm)
+    session.commit()
+    session.refresh(perm)
+    return _usuario_equipe_publico(usuario, perm)
+
+
+@router.put("/equipe/pessoas/{pessoa_id}/usuario")
+def editar_usuario_equipe(
+    pessoa_id: int, dados: UsuarioEquipeCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+) -> dict:
+    pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
+    usuario = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa.id)).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Este membro ainda não tem usuário de login")
+    outro = session.exec(select(Usuario).where(Usuario.username == dados.username, Usuario.id != usuario.id)).first()
+    if outro:
+        raise HTTPException(status_code=400, detail="Nome de usuário já em uso")
+    _validar_areas(dados.areas)
+
+    usuario.username = dados.username
+    usuario.email = dados.email
+    usuario.ativo = dados.ativo
+    if dados.senha and dados.senha.strip():
+        usuario.senha_hash = hash_senha(dados.senha)
+    session.add(usuario)
+
+    perm = _permissao_equipe_cowdata_ou_vazia(session, usuario.id)
+    perm.areas = ",".join(dados.areas)
+    _aplicar_subpermissoes(perm, dados)
+    perm.atualizado_em = datetime.utcnow()
+    session.add(perm)
+    session.commit()
+    session.refresh(usuario)
+    session.refresh(perm)
+    return _usuario_equipe_publico(usuario, perm)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +439,7 @@ def _folha_publica(f: FolhaPagamento) -> dict:
 
 @router.get("/equipe/pessoas/{pessoa_id}/folha")
 def listar_folha_membro(
-    pessoa_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
 ) -> list[dict]:
     _pessoa_equipe_ou_404(session, pessoa_id)
     lancamentos = session.exec(select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa_id)).all()
@@ -299,7 +448,7 @@ def listar_folha_membro(
 
 @router.post("/equipe/pessoas/{pessoa_id}/folha")
 def lancar_folha_membro(
-    pessoa_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    pessoa_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
 ) -> dict:
     fazenda_id = _fazenda_cowdata_id(session)
     _pessoa_equipe_ou_404(session, pessoa_id)
@@ -330,7 +479,7 @@ def _folha_equipe_ou_404(session: Session, folha_id: int) -> FolhaPagamento:
 
 @router.put("/equipe/folha/{folha_id}")
 def editar_folha_membro(
-    folha_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    folha_id: int, dados: FolhaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
 ) -> dict:
     folha = _folha_equipe_ou_404(session, folha_id)
     folha.competencia = dados.competencia
@@ -347,7 +496,7 @@ def editar_folha_membro(
 
 
 @router.delete("/equipe/folha/{folha_id}")
-def excluir_folha_membro(folha_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def excluir_folha_membro(folha_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)) -> dict:
     folha = _folha_equipe_ou_404(session, folha_id)
     session.delete(folha)
     session.commit()
@@ -385,7 +534,7 @@ def _lancamento_publico(l: LancamentoCowData) -> dict:  # noqa: E741
 
 
 @router.get("/financeiro/categorias")
-def listar_categorias(_: Usuario = Depends(exigir_dono)) -> dict:
+def listar_categorias(_: Usuario = Depends(exigir_area_painel_cowdata("financeiro"))) -> dict:
     return {"receita": CATEGORIAS_RECEITA, "despesa": CATEGORIAS_DESPESA}
 
 
@@ -393,7 +542,7 @@ def listar_categorias(_: Usuario = Depends(exigir_dono)) -> dict:
 def listar_lancamentos(
     de: Optional[date] = None,
     ate: Optional[date] = None,
-    _: Usuario = Depends(exigir_dono),
+    _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     query = select(LancamentoCowData)
@@ -407,7 +556,7 @@ def listar_lancamentos(
 
 @router.post("/financeiro/lancamentos")
 def criar_lancamento(
-    dados: LancamentoCowDataIn, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    dados: LancamentoCowDataIn, user: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
 ) -> dict:
     if dados.tipo not in ("receita", "despesa"):
         raise HTTPException(status_code=400, detail="Tipo deve ser receita ou despesa")
@@ -428,7 +577,7 @@ def criar_lancamento(
 
 @router.put("/financeiro/lancamentos/{lancamento_id}")
 def editar_lancamento(
-    lancamento_id: int, dados: LancamentoCowDataIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    lancamento_id: int, dados: LancamentoCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
 ) -> dict:
     lancamento = session.get(LancamentoCowData, lancamento_id)
     if not lancamento:
@@ -446,7 +595,7 @@ def editar_lancamento(
 
 
 @router.delete("/financeiro/lancamentos/{lancamento_id}")
-def excluir_lancamento(lancamento_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def excluir_lancamento(lancamento_id: int, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)) -> dict:
     lancamento = session.get(LancamentoCowData, lancamento_id)
     if not lancamento:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
@@ -504,7 +653,7 @@ def _movimentos_periodo(session: Session, de: date, ate: date) -> list[dict]:
 
 @router.get("/financeiro/resumo")
 def resumo_financeiro(
-    de: date, ate: date, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
 ) -> dict:
     movimentos = _movimentos_periodo(session, de, ate)
     receita = sum(m["valor"] for m in movimentos if m["tipo"] == "receita")
@@ -514,7 +663,7 @@ def resumo_financeiro(
 
 @router.get("/financeiro/livro-caixa")
 def livro_caixa(
-    de: date, ate: date, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
 ) -> list[dict]:
     movimentos = _movimentos_periodo(session, de, ate)
     saldo = 0.0
@@ -527,7 +676,7 @@ def livro_caixa(
 
 @router.get("/financeiro/fluxo-caixa")
 def fluxo_caixa(
-    de: date, ate: date, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    de: date, ate: date, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)
 ) -> list[dict]:
     """Agrupado por mês (entradas/saídas/saldo do mês/saldo acumulado) —
     distinto do livro-caixa (lançamento a lançamento)."""
@@ -554,7 +703,7 @@ def fluxo_caixa(
 
 
 @router.get("/financeiro/dre")
-def dre(ano: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+def dre(ano: int, _: Usuario = Depends(exigir_area_painel_cowdata("financeiro")), session: Session = Depends(get_session)) -> dict:
     """DRE simplificado do ano: receita total, despesas por categoria e
     resultado — mesma base de dados do livro-caixa/fluxo-caixa, só reagrupada."""
     de, ate = date(ano, 1, 1), date(ano, 12, 31)
