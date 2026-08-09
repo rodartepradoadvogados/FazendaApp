@@ -1404,6 +1404,11 @@ export async function atualizarPessoa(id: number, dados: PessoaDados) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar pessoa"); }
   return res.json();
 }
+export async function excluirPessoa(id: number) {
+  const res = await authFetch(`${API}/cadastro/pessoas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pessoa"); }
+  return res.json();
+}
 export async function fetchInseminadores(): Promise<string[]> {
   const res = await authFetch(`${API}/cadastro/pessoas/inseminadores`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Inseminadores error: ${res.status}`);

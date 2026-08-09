@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Users, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
-import { fetchPessoas, criarPessoa, atualizarPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
+import { Users, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "lucide-react";
+import { fetchPessoas, criarPessoa, atualizarPessoa, excluirPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -59,6 +59,7 @@ export default function CadastroPessoas() {
   const [itens, setItens] = useState<Pessoa[] | null>(null);
   const [tipos, setTipos] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
@@ -83,6 +84,21 @@ export default function CadastroPessoas() {
     setEditando(p.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
+
+  // Exclusão de fato (não só desativar) — bloqueada pelo backend com 409
+  // quando há folha/férias/13º/rescisão/vale/empreitada/contrato/diária ou
+  // login de usuário vinculado (ver excluir_pessoa em cadastro/pessoas.py),
+  // orientando a desativar em vez de excluir nesse caso.
+  const excluir = async (p: Pessoa) => {
+    if (!window.confirm(`Excluir "${p.nome}"? Isso não pode ser desfeito.`)) return;
+    setErroExclusao(null);
+    try {
+      await excluirPessoa(p.id);
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir");
+    }
+  };
 
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
@@ -132,6 +148,7 @@ export default function CadastroPessoas() {
       </p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {erroExclusao && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erroExclusao}</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
@@ -165,9 +182,14 @@ export default function CadastroPessoas() {
                     <td style={{ fontSize: "0.78rem" }}>{p.telefones.length ? p.telefones.join(", ") : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.emails.length ? p.emails.join(", ") : "—"}</td>
                     <td style={{ textAlign: "right" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                        <Pencil size={13} /> Editar
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem", color: "var(--red)" }} onClick={() => excluir(p)}>
+                          <Trash2 size={13} /> Excluir
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {editando === p.id && (

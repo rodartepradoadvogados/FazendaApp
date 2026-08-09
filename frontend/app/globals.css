@@ -741,6 +741,27 @@ html, body { max-width: 100%; overflow-x: hidden; }
   }
 }
 
+/* Espaçador usado só quando a página não tem SubNavTabs (nenhuma árvore de
+   sub-navegação registrada — ex.: Agenda, ver SubNavTabs.tsx). Sem ele, o
+   próprio cabeçalho da página (título + botão de ação à direita, tipo
+   "Adicionar") nasce colado no topo do conteúdo e fica por baixo da faixa
+   fixa .site-top-actions (News/Tema/Sino) — quando existe SubNavTabs, a
+   faixa de abas já reserva esse espaço (paddingRight) e nunca cola no topo
+   sem padding, mas sem ela não sobra nada empurrando o cabeçalho da página
+   para baixo. Mesma técnica do espaçador da barra mobile (ver Sidebar.tsx).
+   No mobile a Sidebar já reserva a altura do seu próprio cabeçalho fixo
+   (3.25rem) por conta própria; aqui só cobre o restante até a faixa de
+   News/Tema/Sino, que no mobile fica mais abaixo ainda (ver media query
+   acima). */
+.subnav-espacador-topo {
+  height: calc(env(safe-area-inset-top, 0px) + 4rem);
+}
+@media (max-width: 767px) {
+  .subnav-espacador-topo {
+    height: 3.5rem;
+  }
+}
+
 /* Painel do sino (NotificationBell) — mesma lógica de segurança de topo do
    .site-top-actions, mas com offset maior (abre ABAIXO da faixa de botões). */
 .notification-panel {
