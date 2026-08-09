@@ -11,6 +11,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna, Pill, UserCog,
+  SlidersHorizontal,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -80,6 +81,10 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
       // uma vez" — login é sempre de uma fazenda só, escolhida explicitamente
       // (ver app/painel-cowdata/usuarios/page.tsx).
       { href: "/painel-cowdata/usuarios", label: "Usuários", icon: UserCog, area: "cadastros" },
+      // Metas/configurações de manejo, agenda, RH e financeiro
+      // (ParametroFazenda) — mesma mecânica de Cadastros globais (aplicar em
+      // todas ou só nas selecionadas). Ver painel-cowdata/parametros/page.tsx.
+      { href: "/painel-cowdata/parametros", label: "Parâmetros", icon: SlidersHorizontal, area: "cadastros" },
     ],
   },
 ];

@@ -59,6 +59,7 @@ from fazenda.api.routers import (
     onboarding,
     painel_cowdata,
     painel_cowdata_cadastros,
+    painel_cowdata_parametros,
     painel_cowdata_usuarios,
     parametros,
     pedidos,
@@ -561,6 +562,9 @@ app.include_router(painel_cowdata.router)
 # aplicáveis a todas as fazendas ou às selecionadas) — mesmo padrão
 # exigir_area_painel_cowdata("cadastros"), nunca a trava de módulo contratado.
 app.include_router(painel_cowdata_cadastros.router)
+# Parâmetros gerais/financeiros (ParametroFazenda) aplicáveis a todas as
+# fazendas ou às selecionadas — mesmo padrão de painel_cowdata_cadastros.
+app.include_router(painel_cowdata_parametros.router)
 # Usuários de UMA fazenda-cliente por vez, sem entrar via modo suporte —
 # mesmo padrão exigir_area_painel_cowdata("cadastros").
 app.include_router(painel_cowdata_usuarios.router)

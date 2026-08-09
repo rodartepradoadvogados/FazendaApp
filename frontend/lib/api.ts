@@ -622,6 +622,26 @@ export const criarUsuarioDaFazendaCowData = (fazendaId: number, dados: NovoUsuar
 export const editarUsuarioDaFazendaCowData = (fazendaId: number, usuarioId: number, dados: EditarUsuarioCowData): Promise<UsuarioCowData> =>
   _pcSend(`/usuarios/${fazendaId}/${usuarioId}`, "PUT", dados);
 
+// Parâmetros (Painel CowData > Parâmetros): mesma mecânica de Cadastros
+// globais (aplicar em todas as fazendas-cliente ou só nas selecionadas),
+// mas em cima de ParametroFazenda — ver backend/fazenda/api/routers/
+// painel_cowdata_parametros.py. Só os 36 parâmetros de manejo/metas/agenda/
+// RH/financeiro dessa tabela — não inclui a aba "Parâmetros financeiros" da
+// fazenda (contas correntes, plano de contas, centro de custo), que guarda
+// dado de identidade por fazenda e não faz sentido replicar.
+export type ItemParametroCowData = {
+  chave: string; label: string; grupo: string; tipo: "int" | "float" | "bool" | "date";
+  unidade: string | null; valor_global: number | boolean | string | null;
+  personalizado_em: number[]; total_personalizados: number;
+};
+export const fetchFazendasParametroCowData = (): Promise<FazendaCadastroCowData[]> => _pcGet(`/parametros/fazendas`);
+export const fetchParametrosCowData = (): Promise<{ grupos: Record<string, { titulo: string; itens: ItemParametroCowData[] }> }> =>
+  _pcGet(`/parametros/`);
+export const aplicarParametroCowData = (
+  chave: string, dados: { valor: number | boolean | string; fazenda_ids?: number[] | null },
+): Promise<{ atualizados: number; total_fazendas: number; global_atualizado: boolean }> =>
+  _pcSend(`/parametros/${chave}`, "PUT", dados);
+
 export const fetchFolhaMembroCowData = (pessoaId: number): Promise<FolhaCowData[]> => _pcGet(`/equipe/pessoas/${pessoaId}/folha`);
 export const lancarFolhaMembroCowData = (pessoaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> =>
   _pcSend(`/equipe/pessoas/${pessoaId}/folha`, "POST", d);
