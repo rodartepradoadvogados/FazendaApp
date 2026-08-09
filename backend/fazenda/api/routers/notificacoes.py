@@ -15,7 +15,7 @@ from fazenda.api.routers.agenda import calcular_agenda
 from fazenda.api.routers.alertas_indicador import condicao_atendida, descricao_alerta, valor_indicador
 from fazenda.api.routers.indicadores import calcular_indicadores_fazenda
 from fazenda.api.routers.push import notificar_push_para_itens
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import AlertaIndicador, PortalMensagem, SolicitacaoExclusao, Usuario
 
@@ -24,18 +24,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/notificacoes", tags=["notificacoes"])
 
 
-def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
+def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int | None = None) -> list[dict]:
     """A lógica de "quando avisar" do sininho — inalterada. Extraída para
     função própria só para ser reaproveitada também pela varredura periódica
     de push (fazenda/api/routers/push.py:despachar_push_pendentes), sem
     duplicar nada: o endpoint /notificacoes/ abaixo chama exatamente esta
-    mesma função."""
+    mesma função.
+
+    `fazenda_id` PRECISA vir explícito do chamador: como esta função nunca é
+    invocada como rota HTTP (é chamada como função Python comum, direto ou
+    via despachar_push_pendentes), o `Depends(get_fazenda_atual_id)" de
+    calcular_agenda nunca é resolvido pelo FastAPI aqui — sem passar o valor
+    de propósito, ele fica com o próprio marcador Depends(...) como "valor",
+    que fazenda_id_seguro() trata como None (sem filtro), misturando dados de
+    TODAS as fazendas no sino/push (bug real encontrado em produção)."""
     hoje = date.today()
     itens: list[dict] = []
 
     # calcular_agenda já filtra os eventos pela permissão do usuário (ver
     # MODULO_POR_CATEGORIA em agenda.py) — não precisa repetir o filtro aqui.
-    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=user)
+    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=user, fazenda_id=fazenda_id)
     for e in agenda["eventos"]:
         if e["data"] != hoje.isoformat():
             continue
@@ -60,9 +68,10 @@ def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
         })
 
     if user.papel == "admin":
-        pendentes = session.exec(
-            select(SolicitacaoExclusao).where(SolicitacaoExclusao.status == "pendente")
-        ).all()
+        query_pendentes = select(SolicitacaoExclusao).where(SolicitacaoExclusao.status == "pendente")
+        if fazenda_id is not None:
+            query_pendentes = query_pendentes.where(SolicitacaoExclusao.fazenda_id == fazenda_id)
+        pendentes = session.exec(query_pendentes).all()
         for p in pendentes:
             itens.append({
                 "tipo": "exclusao_pendente",
@@ -136,9 +145,10 @@ def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
 @router.get("/")
 def notificacoes_hoje(
     user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
-    itens = montar_itens_notificacoes(user, session)
+    itens = montar_itens_notificacoes(user, session, fazenda_id)
 
     # Rewire do push (#web-push): MESMOS itens que o sino já decidiu mostrar
     # — só adiciona o canal de entrega novo (notificação nativa do

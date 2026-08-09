@@ -36,7 +36,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import EMAIL_DONO, get_current_user
 from fazenda.database import engine, get_session
-from fazenda.models import PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
+from fazenda.models import Pessoa, PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
 from fazenda.rules import fcm
 
 logger = logging.getLogger(__name__)
@@ -412,6 +412,20 @@ def notificar_push_para_itens(usuario_id: int, itens: list[dict], session: Sessi
 _CHAVE_AGENDA_DO_DIA = "agenda_do_dia"
 
 
+def _fazenda_do_usuario(session: Session, usuario: Usuario) -> int | None:
+    """Fazenda a que este login pertence (mesmo caminho Usuario.pessoa_id →
+    Pessoa.fazenda_id usado em todo o resto do cadastro/RH) — necessário
+    aqui porque estas varreduras rodam fora de uma requisição HTTP (sem
+    Authorization/token), então não há como Depends(get_fazenda_atual_id)
+    resolver nada; sem isto, calcular_agenda/montar_itens_notificacoes
+    recebiam fazenda_id não resolvido e misturavam agenda e alertas de TODAS
+    as fazendas no push de qualquer usuário (bug real encontrado em produção)."""
+    if not usuario.pessoa_id:
+        return None
+    pessoa = session.get(Pessoa, usuario.pessoa_id)
+    return pessoa.fazenda_id if pessoa else None
+
+
 def despachar_agenda_do_dia(session: Session) -> None:
     """Varredura diária (mesmo loop de despachar_push_pendentes; a dedup por
     usuário+dia abaixo evita reenviar a cada checagem): manda, para cada
@@ -439,7 +453,8 @@ def despachar_agenda_do_dia(session: Session) -> None:
         if ja_enviado:
             continue
         try:
-            agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario)
+            fazenda_id = _fazenda_do_usuario(session, usuario)
+            agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario, fazenda_id=fazenda_id)
             total = sum(1 for e in agenda["eventos"] if e["data"] == hoje.isoformat())
         except Exception:
             logger.exception("Falha ao calcular agenda do dia para usuário %s", usuario_id)
@@ -474,7 +489,8 @@ def despachar_push_pendentes(session: Session) -> None:
         if not usuario or not usuario.ativo:
             continue
         try:
-            itens = montar_itens_notificacoes(usuario, session)
+            fazenda_id = _fazenda_do_usuario(session, usuario)
+            itens = montar_itens_notificacoes(usuario, session, fazenda_id)
             notificar_push_para_itens(usuario_id, itens, session)
         except Exception:
             logger.exception("Falha ao despachar push periódico para usuário %s", usuario_id)

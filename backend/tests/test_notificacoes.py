@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import AgendaManual, PortalMensagem, SolicitacaoExclusao, Usuario
+from fazenda.models import AgendaManual, ContratoFazenda, Fazenda, PortalMensagem, SolicitacaoExclusao, Usuario
 
 
 class _FakeAdmin:
@@ -115,3 +115,48 @@ class TestNotificacoes:
         c.post(f"/portal/mensagens/{item['portal_mensagem_id']}/marcar-lida")
         r2 = c.get("/notificacoes/")
         assert not any(i["tipo"] == "portal_mensagem" for i in r2.json()["itens"])
+
+
+class TestIsolamentoEntreFazendas:
+    """Regressão: um token com fazenda selecionada (ex.: sessão de suporte
+    CowData impersonando uma fazenda-cliente) NUNCA pode ver agenda/exclusão
+    pendente de OUTRA fazenda — bug real encontrado em produção: como
+    montar_itens_notificacoes chama calcular_agenda() como função Python
+    comum (não como rota HTTP), o Depends(get_fazenda_atual_id) nunca era
+    resolvido e a agenda vinha sem filtro nenhum, misturando fazendas."""
+
+    @pytest.fixture
+    def setup_duas_fazendas(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+
+        with Session(engine) as s:
+            s.add(Fazenda(id=1, nome="Fazenda A"))
+            s.add(Fazenda(id=2, nome="Fazenda B"))
+            s.add(ContratoFazenda(fazenda_id=1, plano="diamond", status="ativo"))
+            s.add(ContratoFazenda(fazenda_id=2, plano="diamond", status="ativo"))
+            s.add(AgendaManual(id=1, fazenda_id=1, data_evento=date.today(), descricao="Evento da Fazenda A", categoria="Atividades"))
+            s.add(AgendaManual(id=2, fazenda_id=2, data_evento=date.today(), descricao="Evento da Fazenda B", categoria="Atividades"))
+            s.add(SolicitacaoExclusao(tipo="animal", id_alvo="1", titulo="Exclusão da Fazenda A", solicitado_por="fulano", fazenda_id=1))
+            s.add(SolicitacaoExclusao(tipo="animal", id_alvo="2", titulo="Exclusão da Fazenda B", solicitado_por="fulano", fazenda_id=2))
+            s.add(Usuario(id=1, username="admin_teste", senha_hash="x", papel="admin", ativo=True))
+            s.commit()
+
+        yield main.app
+        main.app.dependency_overrides.clear()
+
+    def test_notificacoes_da_fazenda_b_nao_vazam_para_quem_esta_na_fazenda_a(self, setup_duas_fazendas):
+        from fazenda.auth import get_fazenda_atual_id
+        setup_duas_fazendas.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        c = _client_as(setup_duas_fazendas, _FakeAdmin())
+        r = c.get("/notificacoes/")
+        descricoes = {i["descricao"] for i in r.json()["itens"]}
+        assert any("Fazenda A" in d for d in descricoes)
+        assert not any("Fazenda B" in d for d in descricoes)

@@ -21,7 +21,7 @@ from fazenda.auth import (
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
+from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -145,7 +145,7 @@ def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
     return [f for f in fazendas if f and f.ativa]
 
 
-def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
+def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session: Session | None = None) -> dict:
     # `vinculo_contador` diz ao frontend se deve mandar direto pro Painel do
     # Contador (/contador, casca própria) em vez da navegação normal da
     # fazenda — ver components/AuthShell.tsx e fazenda/models/multitenant.py.
@@ -157,11 +157,29 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
     # `vinculo_contratante` diz ao frontend que este usuário é o usuário
     # mestre DESTA fazenda — usado por podeFormularDietas() (Formulação de
     # Dietas), espelhando fazenda.auth.exigir_admin_ou_consultor_fazenda.
+    # `modulos_contratados`: os módulos comerciais que a FAZENDA (não o
+    # usuário) contratou e estão ativos — mesma trava do backend
+    # (fazenda.auth.exigir_modulo_contratado), espelhada aqui para a Sidebar
+    # poder ESCONDER de cara o que a fazenda não comprou, em vez de mostrar o
+    # item e só 403ar ao clicar ("acesso integral" mesmo em plano restrito —
+    # bug real encontrado em produção). `session=None` (ex.: contexto sem
+    # banco à mão) devolve lista vazia — o frontend trata ausência do campo
+    # como "sem restrição conhecida", nunca escondendo por engano.
+    modulos: list[str] = []
+    if session is not None:
+        modulos = sorted(
+            m.modulo for m in session.exec(
+                select(ContratoFazendaModulo).where(
+                    ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True,  # noqa: E712
+                )
+            ).all()
+        )
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
         "vinculo_contador": bool(vinculo and vinculo.contador),
         "vinculo_consultor": bool(vinculo and vinculo.consultor),
         "vinculo_contratante": bool(vinculo and vinculo.contratante),
+        "modulos_contratados": modulos,
     }
 
 
@@ -210,10 +228,10 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
         "usuario": _publico(user, session),
     }
     if fazenda_auto:
-        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id))
+        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id), session)
     if len(fazendas) > 1 or mostrar_opcao_cowdata:
         resposta["selecao_fazenda_necessaria"] = True
-        opcoes = [_fazenda_publica(f) for f in fazendas]
+        opcoes = [_fazenda_publica(f, session=session) for f in fazendas]
         if mostrar_opcao_cowdata:
             # Sentinela id=0 (fazendas de verdade começam em 1) — o frontend
             # reconhece pelo campo "cowdata" e, ao escolher, só navega pro
@@ -264,7 +282,7 @@ def selecionar_fazenda(
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
     return {
         "token": criar_token(user.username, fazenda_id=fazenda.id, manter_conectado=manter_conectado),
-        "fazenda_atual": _fazenda_publica(fazenda, vinculo),
+        "fazenda_atual": _fazenda_publica(fazenda, vinculo, session),
     }
 
 
@@ -343,7 +361,7 @@ def me(
     if fazenda_id:
         fazenda = session.get(Fazenda, fazenda_id)
         if fazenda:
-            dados["fazenda_atual"] = _fazenda_publica(fazenda, _vinculo(session, user.id, fazenda_id))
+            dados["fazenda_atual"] = _fazenda_publica(fazenda, _vinculo(session, user.id, fazenda_id), session)
     # Sessão aberta a partir do Painel CowData (ver cofre_acesso.py) — o
     # frontend usa isso pra mostrar o aviso "modo suporte" com o botão de
     # encerrar (POST /painel-cowdata/cofre/sessoes/{id}/encerrar).
@@ -353,8 +371,24 @@ def me(
 
 
 @router.get("/usuarios")
-def listar_usuarios(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    return [_publico(u, session) for u in session.exec(select(Usuario)).all()]
+def listar_usuarios(
+    _: Usuario = Depends(exigir_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Controle de Acesso (Insights e Administração > Controle de Acesso):
+    lista os usuários da fazenda ATUAL (a mesma que o resto da tela mostra,
+    inclusive em sessão de suporte — ver get_fazenda_atual_id), não de todo o
+    banco. Sem o filtro, essa tela — que já pede "cadastre a pessoa NESTA
+    fazenda primeiro" para criar um login novo — misturava usuários de
+    QUALQUER cliente da plataforma na lista da direita (bug real encontrado
+    em produção). Token sem fazenda selecionada (legado) mantém o
+    comportamento antigo, sem filtro — mesmo "sem retroatividade" do resto
+    do piloto de multi-fazenda."""
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    return [_publico(u, session) for u in session.exec(query).all()]
 
 
 @router.get("/usuarios/acessos")

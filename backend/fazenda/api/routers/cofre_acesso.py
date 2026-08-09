@@ -87,9 +87,24 @@ class PedidoAcessoIn(BaseModel):
     observacao: Optional[str] = None
 
 
+def _modulos_contratados(session: Session, fazenda_id: int) -> list[str]:
+    return sorted(
+        m.modulo for m in session.exec(
+            select(ContratoFazendaModulo).where(
+                ContratoFazendaModulo.fazenda_id == fazenda_id, ContratoFazendaModulo.ativo == True,  # noqa: E712
+            )
+        ).all()
+    )
+
+
 def _publico_pedido(session: Session, p: PedidoAcessoSuporte) -> dict:
     return {
         "id": p.id, "protocolo": _protocolo(p.id), "fazenda_id": p.fazenda_id, "fazenda_nome": _nome_fazenda(session, p.fazenda_id),
+        # Mesma lista que o frontend guarda em fazenda_atual.modulos_contratados
+        # no login normal (ver _fazenda_publica em auth.py) — para a Sidebar
+        # continuar escondendo módulos não contratados também durante uma
+        # sessão de suporte, que entra por este endpoint em vez de /auth/login.
+        "modulos_contratados": _modulos_contratados(session, p.fazenda_id),
         "usuario_id": p.usuario_id, "solicitante_nome": _nome_usuario(session, p.usuario_id),
         "motivo": p.motivo, "assunto_chamado": p.assunto_chamado, "observacao": p.observacao, "status": p.status,
         "aprovador_nome": _nome_usuario(session, p.aprovado_por_usuario_id),
