@@ -22,8 +22,12 @@ import {
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
   marcarItemComoVale, desmarcarItemComoVale,
   estornarPagamentoLancamento, type EstornoLancamentoOut,
+  fetchEstoque, fetchServicosCadastro, FINALIDADES_ESTOQUE,
 } from "@/lib/api";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
+import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import NovoItemEstoque from "@/components/NovoItemEstoque";
+import NovoServicoRapido from "@/components/NovoServicoRapido";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
@@ -2427,6 +2431,38 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const itensDoLanc = lanc.itens || [];
   const podeEditarProduto = itensDoLanc.length <= 1;
   const [produto, setProduto] = useState(itensDoLanc[0]?.produto || "");
+  // Mesmo padrão de seleção de produto/serviço do lançamento novo
+  // (FormFinanceiro): toggle produto×serviço, EstoquePicker em janela
+  // suspensa (não mais <input list> com <datalist> nativo) e botão para
+  // cadastrar produto/serviço novo sem sair da edição — antes a edição usava
+  // uma implementação própria, mais simples, que nunca ganhou esse picker.
+  const [tipoItem, setTipoItem] = useState<"produto" | "servico">("produto");
+  const [modoProduto, setModoProduto] = useState<"estoque" | "livre">("estoque");
+  const [produtosEstoqueEdicao, setProdutosEstoqueEdicao] = useState<EstoqueItemPicker[]>([]);
+  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
+    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+  })))).catch(() => {});
+  useEffect(() => { carregarEstoqueEdicao(); }, []);
+  const [servicosEdicao, setServicosEdicao] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
+  const carregarServicosEdicao = () => fetchServicosCadastro().then(setServicosEdicao).catch(() => {});
+  useEffect(() => { carregarServicosEdicao(); }, []);
+  const sugestoesServicoEdicao = useMemo(
+    () => servicosEdicao.filter((s) => s.ativo).map((s) => s.nome).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [servicosEdicao]
+  );
+  // Chute do tipo (produto × serviço) a partir do nome já salvo — só uma vez,
+  // assim que o cadastro de serviços carrega; depois disso quem manda é o
+  // toggle clicado pelo usuário (evita "brigar" com a escolha dele).
+  const tipoInicializado = useRef(false);
+  useEffect(() => {
+    if (!tipoInicializado.current && servicosEdicao.length) {
+      tipoInicializado.current = true;
+      if (produto && sugestoesServicoEdicao.includes(produto)) setTipoItem("servico");
+    }
+  }, [servicosEdicao, sugestoesServicoEdicao, produto]);
+  const [adicionarNovoAberto, setAdicionarNovoAberto] = useState(false);
+  const [modoAdicionarEdicao, setModoAdicionarEdicao] = useState<"produto" | "servico">("produto");
   const [centroCusto, setCentroCusto] = useState(lanc.centro_custo || "");
   const [codigoConta, setCodigoConta] = useState(lanc.codigo_conta || "");
   const [nomeConta, setNomeConta] = useState(lanc.conta_completa || "");
@@ -2558,17 +2594,61 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             </button>
           </div>
         </div>
-        <div><label style={labelStyleLote}>Produto / serviço</label>
+        <div style={{ gridColumn: "1 / -1" }}><label style={labelStyleLote}>Produto / serviço</label>
           {podeEditarProduto ? (
-            <input style={selStyleLote} list="produtos-editar-lancamento" value={produto} onChange={(e) => setProduto(e.target.value)}
-              placeholder={itensDoLanc.length ? undefined : "Sem vínculo — escolha ou digite um produto/serviço"} />
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                {(["produto", "servico"] as const).map((t) => (
+                  <button key={t} type="button" title={t === "produto" ? "Este item é um produto de estoque" : "Este item é um serviço"}
+                    onClick={() => { setTipoItem(t); setProduto(""); }}
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
+                      border: "1px solid " + (tipoItem === t ? "var(--dourado)" : "var(--border)"),
+                      background: tipoItem === t ? "var(--dourado)" : "transparent",
+                      color: tipoItem === t ? "#1a1a1a" : "var(--text-muted)", fontWeight: tipoItem === t ? 700 : 400 }}>
+                    {t === "produto" ? "Produto" : "Serviço"}
+                  </button>
+                ))}
+              </div>
+              {tipoItem === "servico" ? (
+                <select style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {produto && !sugestoesServicoEdicao.includes(produto) && <option value={produto}>{produto}</option>}
+                  {sugestoesServicoEdicao.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
+                    <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                      value={modoProduto} onChange={(e) => setModoProduto(e.target.value as "estoque" | "livre")}
+                      title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro.">
+                      <option value="estoque">do estoque</option>
+                      <option value="livre">texto livre</option>
+                    </select>
+                  </div>
+                  {modoProduto === "estoque" ? (
+                    <EstoquePicker itens={produtosEstoqueEdicao} value={produto} finalidades={FINALIDADES_ESTOQUE} incluirNaoEstocaveis onChange={setProduto} />
+                  ) : (
+                    <>
+                      <input list="produtos-editar-lancamento" style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}
+                        placeholder="ex.: Supermercado, Material de escritório…" />
+                      <datalist id="produtos-editar-lancamento">{produtos.map((p) => <option key={p} value={p} />)}</datalist>
+                    </>
+                  )}
+                </div>
+              )}
+              {itensDoLanc.length === 0 && (
+                <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>Sem vínculo — escolha ou cadastre um produto/serviço.</p>
+              )}
+              <button type="button" className="btn-ghost" title="Cadastrar um novo produto ou serviço"
+                style={{ fontSize: "0.72rem", marginTop: "0.4rem" }}
+                onClick={() => { setModoAdicionarEdicao(tipoItem === "servico" ? "servico" : "produto"); setAdicionarNovoAberto(true); }}>
+                <Plus size={13} /> Adicionar {tipoItem === "servico" ? "serviço" : "produto"} novo(a)
+              </button>
+            </>
           ) : (
             <p style={{ ...selStyleLote, background: "transparent", border: "none", padding: "0.45rem 0", color: "var(--text-muted)", fontSize: "0.75rem" }}>
               Nota com {itensDoLanc.length} produtos/serviços — edite pelo lançamento original.
             </p>
-          )}
-          {podeEditarProduto && (
-            <datalist id="produtos-editar-lancamento">{produtos.map((p) => <option key={p} value={p} />)}</datalist>
           )}
         </div>
         {itensDoLanc.length > 0 && (
@@ -2677,12 +2757,56 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar alterações"}</button>
       </div>
       {abrirNovoFornecedor && (
-        <Modal title={`Novo ${tipoConta === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px">
+        // zIndex explícito acima do Modal "Editar lançamento" que já envolve
+        // este formulário (ambos nascem com o mesmo zIndex=90 padrão do
+        // Modal.tsx, então sem isso a ordem de empilhamento dependia da
+        // ordem de montagem no DOM e podia abrir "por baixo").
+        <Modal title={`Novo ${tipoConta === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px" zIndex={100}>
           <NovoFornecedorRapido
             tipoSugerido={tipoConta}
             onCriado={(f) => { if (f?.nome) setFornecedor(f.nome); setAbrirNovoFornecedor(false); }}
             onCancelar={() => setAbrirNovoFornecedor(false)}
           />
+        </Modal>
+      )}
+
+      {adicionarNovoAberto && (
+        <Modal title={`Adicionar ${modoAdicionarEdicao === "servico" ? "serviço" : "produto"} novo(a)`} onClose={() => setAdicionarNovoAberto(false)} width="700px" zIndex={100}>
+          <div className="flex items-center gap-2 mb-3">
+            <button type="button" onClick={() => setModoAdicionarEdicao("produto")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionarEdicao === "produto" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionarEdicao === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionarEdicao === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionarEdicao === "produto" ? 700 : 500 }}>
+              Novo produto (estoque)
+            </button>
+            <button type="button" onClick={() => setModoAdicionarEdicao("servico")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionarEdicao === "servico" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionarEdicao === "servico" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionarEdicao === "servico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionarEdicao === "servico" ? 700 : 500 }}>
+              Novo serviço
+            </button>
+          </div>
+          {modoAdicionarEdicao === "produto" ? (
+            <NovoItemEstoque
+              onCriado={(item) => {
+                if (item?.nome) { setTipoItem("produto"); setModoProduto("estoque"); setProduto(item.nome); }
+                carregarEstoqueEdicao();
+                setAdicionarNovoAberto(false);
+              }}
+              onCancelar={() => setAdicionarNovoAberto(false)}
+            />
+          ) : (
+            <NovoServicoRapido
+              onCriado={(servico) => {
+                if (servico?.nome) { setTipoItem("servico"); setProduto(servico.nome); }
+                carregarServicosEdicao();
+                setAdicionarNovoAberto(false);
+              }}
+              onCancelar={() => setAdicionarNovoAberto(false)}
+            />
+          )}
         </Modal>
       )}
 
