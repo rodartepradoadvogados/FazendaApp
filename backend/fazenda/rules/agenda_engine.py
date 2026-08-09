@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
+from fazenda.api.routers.animais import _del_dias_ao_vivo
 from fazenda.rules.bst import ResultadoBST, avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
@@ -127,6 +128,7 @@ class AgendaEngine:
         dias_contas_a_pagar: int | None = None,
         proxima_visita_bst_real: date | None = None,
         lotes: list[dict] | None = None,
+        secagens: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -145,6 +147,9 @@ class AgendaEngine:
                 informada, substitui a estimativa por analogia ao serviço
                 reprodutivo — o motor usa essa data para projetar o DEL de
                 cada animal na próxima aplicação (bst_elegiveis/nunca aplicadas).
+            secagens: Lista de dicts com campos do modelo Secagem — usada para
+                calcular o DEL de cada animal AO VIVO (ver `_del_dias_ao_vivo`),
+                em vez do `Animal.del_dias` congelado no último GERAL.csv.
 
         Returns:
             AgendaResult com todos os blocos da agenda calculados.
@@ -176,6 +181,16 @@ class AgendaEngine:
             if n not in parto_por_animal:
                 parto_por_animal[n] = p
             partos_por_animal.setdefault(n, []).append(p)
+
+        # Secagem mais recente por animal — junto com o parto mais recente
+        # acima, alimenta o DEL AO VIVO (ver _del_dias_ao_vivo, importado do
+        # topo do arquivo) usado logo abaixo no loop por animal.
+        ult_secagem_por_animal: dict[str, date] = {}
+        for s in secagens or []:
+            n = s.get("numero_matriz")
+            d = s.get("data_secagem")
+            if n and d and (n not in ult_secagem_por_animal or d > ult_secagem_por_animal[n]):
+                ult_secagem_por_animal[n] = d
 
         # 1. CANDIDATAS IATF
         iatf_input = [
@@ -293,7 +308,6 @@ class AgendaEngine:
             numero = animal["numero"]
             raca = animal.get("raca")
             sit_rep = animal.get("sit_rep") or ""
-            del_dias = animal.get("del_dias")
             grupo = animal.get("grupo_primario") or ""
 
             servico = servico_por_animal.get(numero, {})
@@ -303,6 +317,20 @@ class AgendaEngine:
             data_servico = servico.get("data_servico")
             diagnostico = (servico.get("diagnostico") or "").upper()
             ordem_parto = parto.get("ordem_parto") or servico.get("ordem_parto") or 0
+
+            # DEL (dias em lactação) AO VIVO — `Animal.del_dias` é zerado no
+            # instante do parto lançado no app (ver registrar_parto) mas fica
+            # congelado dali em diante, só voltando a bater com a realidade
+            # no próximo GERAL.csv (Ideagri); nunca reflete uma Secagem
+            # lançada no app depois. Sem isso, tanto a decisão "está em
+            # lactação, deve secar" (logo abaixo) quanto o DEL usado no BST
+            # (atual e projetado, mais abaixo no loop) ficavam presos ao
+            # valor congelado — um animal recém-parido pelo app nunca entrava
+            # para secar, e um animal recém-seco pelo app nunca saía da lista
+            # (ver auditoria ago/2026).
+            del_dias = _del_dias_ao_vivo(
+                animal.get("del_dias"), data_parto_real, ult_secagem_por_animal.get(numero), data_referencia,
+            )
 
             # ── PARTO PROVÁVEL (só para prenhes com serviço positivo)
             # Se já houve um parto após este serviço, a prenhez já se resolveu
@@ -328,8 +356,12 @@ class AgendaEngine:
                 # movimentação de manejo, não depende de lactação nenhuma).
                 # Vem DEPOIS da Secagem (ver abaixo) — pre_parto_max é sempre
                 # menor que periodo_seco_dias, então esta data cai depois.
+                # Sem piso de data: um pré-parto vencido precisa continuar
+                # aparecendo (e cair em "Atrasados" no front) até o animal
+                # ser realmente movido — antes, a data passar simplesmente
+                # apagava o alerta da Agenda, como se tivesse sido resolvido.
                 data_pre_parto = data_parto_provavel - timedelta(days=pre_parto_max())
-                if data_pre_parto >= data_referencia and grupo not in grupos_ja_pre_parto:
+                if grupo not in grupos_ja_pre_parto:
                     eventos.append(AgendaItem(
                         data=data_pre_parto,
                         categoria="Reprodutivo",
@@ -342,7 +374,9 @@ class AgendaEngine:
                 # quem não está em lactação não tem o que secar; ver dry_off.py).
                 em_lactacao = bool(del_dias and del_dias > 0)
                 res_sec = calcular_secagem(numero, data_parto_provavel, ordem_parto, em_lactacao)
-                if res_sec.deve_secar and res_sec.data_secagem >= data_referencia:
+                # Sem piso de data (mesmo racional do Pré-parto acima) — uma
+                # secagem vencida precisa continuar aparecendo até ser feita.
+                if res_sec.deve_secar:
                     eventos.append(AgendaItem(
                         data=res_sec.data_secagem,
                         categoria="Produção",

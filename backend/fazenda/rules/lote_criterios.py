@@ -32,7 +32,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fazenda.api.routers.recria import _contexto_categoria, _situacao_reprodutiva_3, classificar_categoria
-from fazenda.rules.parametros import gestacao_dias_referencia, pre_parto_max
+from fazenda.rules.gestation import dias_gestacao
+from fazenda.rules.parametros import pre_parto_max
 
 EM_TRATAMENTO_DIAS = 15
 
@@ -56,12 +57,22 @@ def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[di
     return max(positivos, key=lambda s: s["data_servico"])
 
 
-def dias_para_parto(numero: str, servicos_por_animal: dict[str, list[dict]], hoje: date) -> int | None:
+def dias_para_parto(
+    numero: str, servicos_por_animal: dict[str, list[dict]], hoje: date, raca: str | None = None,
+) -> int | None:
+    """`raca` (opcional, retrocompatível) usa a gestação ESPECÍFICA da raça
+    do animal (280/287/295 dias — ver fazenda.rules.gestation), a mesma
+    conta usada pelo cartão "Pré-parto" da própria Agenda (agenda_engine.py)
+    — sem ela, esta função (usada pela sugestão de mudança de lote e pelo
+    critério `lote.pre_parto`) caía sempre no ponto médio fixo da faixa
+    editável, divergindo em até 15 dias da Agenda para raças não-Holandês
+    (mesma classe de bug já corrigida uma vez para a Secagem, ver
+    relatorios_gerenciais.GESTACAO_DIAS)."""
     servico = _ultimo_servico_positivo(numero, servicos_por_animal)
     if not servico:
         return None
-    dias_gestacao = (hoje - servico["data_servico"]).days
-    return round(gestacao_dias_referencia() - dias_gestacao)
+    dias_decorridos = (hoje - servico["data_servico"]).days
+    return round(dias_gestacao(raca) - dias_decorridos)
 
 
 def esta_em_tratamento(numero: str, sanidades_por_animal: dict[str, list[dict]], hoje: date) -> bool:
@@ -141,7 +152,7 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
         if categoria not in alvo:
             return False
 
-    dpp = dias_para_parto(numero, servicos_por_animal, hoje)
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"))
 
     if lote.pre_parto:
         if dpp is None or dpp > pre_parto_max() or dpp < 0:
@@ -263,7 +274,7 @@ def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[st
     servicos_por_animal = dados["servicos_por_animal"]
     peso_por_animal = dados["peso_por_animal"]
     ctx = _contexto_animal(animal, hoje, dados)
-    dpp = dias_para_parto(numero, servicos_por_animal, hoje)
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"))
     motivos = []
 
     if lote.status_lactacao:

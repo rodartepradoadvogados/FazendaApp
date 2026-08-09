@@ -606,12 +606,23 @@ def ficha_animal(
         })
     linha_tempo_sanitaria.sort(key=lambda e: e["data"] or date.min)
 
+    # DEL AO VIVO (ver _del_dias_ao_vivo no topo do arquivo) — precisa ser
+    # calculado ANTES da previsão de secagem logo abaixo, que decide se o
+    # animal "está em lactação" a partir dele. `Animal.del_dias` fica
+    # congelado no valor do último GERAL.csv (zerado no instante do parto
+    # lançado no app, mas nunca atualizado por uma Secagem lançada depois) —
+    # usar o valor cru aqui fazia um animal recém-parido pelo app nunca
+    # ganhar previsão de secagem, e um animal recém-secado pelo app nunca
+    # perder a previsão (ver auditoria ago/2026).
+    ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
+    ultima_secagem_data = secagens[-1].data_secagem if secagens else None
+    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_data, ultima_secagem_data, date.today())
+
     # Previsão de parto / secagem: gestação em curso = último serviço positivo
     # (sem perda registrada) posterior ao último parto — mesma regra usada nas
     # Listas de manejo (relatorios_gerenciais), aqui aplicada a um único animal.
     previsao_parto = None
     previsao_secagem = None
-    ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
     servicos_positivos = [
         s for s in servicos
         if (s.diagnostico or "").strip().upper() == "POSITIVO" and not s.data_perda_prenhez
@@ -620,7 +631,7 @@ def ficha_animal(
     if servicos_positivos:
         concepcao = servicos_positivos[-1].data_servico
         previsao_parto = concepcao + timedelta(days=GESTACAO_DIAS)
-        if (animal.del_dias or 0) > 0:
+        if (del_dias_vivo or 0) > 0:
             seco = int(get_param("periodo_seco_dias", 60) or 60)
             previsao_secagem = concepcao + timedelta(days=GESTACAO_DIAS - seco)
             # Atraso implausível (parto/secagem que não foi lançado a tempo,
@@ -645,12 +656,10 @@ def ficha_animal(
             "dias_para_parto": (previsao_parto - date.today()).days,
         }
 
-    # DEL e categoria AO VIVO (ver funções no topo do arquivo) — corrige o
-    # texto/número congelados do GERAL.csv quando há parto (e secagem) já
-    # lançados no app mais recentes do que o último import.
-    ultima_secagem_data = secagens[-1].data_secagem if secagens else None
+    # Categoria AO VIVO (ver _categoria_ao_vivo no topo do arquivo) — mesma
+    # ideia do del_dias_vivo calculado acima, para o texto de categoria.
     animal_dump = animal.model_dump()
-    animal_dump["del_dias"] = _del_dias_ao_vivo(animal_dump["del_dias"], ultimo_parto_data, ultima_secagem_data, date.today())
+    animal_dump["del_dias"] = del_dias_vivo
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
         animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
     )

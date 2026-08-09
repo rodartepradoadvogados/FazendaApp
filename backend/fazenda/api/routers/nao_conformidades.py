@@ -161,9 +161,9 @@ def relatorio_nao_conformidades(
     # PEV, prenhes e previsão de partos ficam de fora: seu "vermelho" é uma
     # marcação informativa de estágio, não um problema a corrigir. ----
     if tem_modulo(user, "reproducao"):
-        animais, servicos, partos = _dados_manejo(session, fazenda_id)
+        animais, servicos, partos, secagens = _dados_manejo(session, fazenda_id)
         semen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]
-        manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje)
+        manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens)
         for chave_lista, label in (
             ("a_inseminar", "Vacas atrasadas para inseminar"),
             ("inseminados", "Inseminadas sem diagnóstico há muito tempo"),
