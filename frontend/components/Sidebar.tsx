@@ -213,6 +213,7 @@ export function Sidebar() {
           escondido atrás dela. */}
       <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
         style={{
+          top: "var(--suporte-banner-h, 0px)",
           height: "calc(3.25rem + env(safe-area-inset-top, 0px))",
           paddingTop: "env(safe-area-inset-top, 0px)",
           background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)",

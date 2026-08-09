@@ -442,13 +442,20 @@ def exigir_admin_ou_consultor_fazenda():
     Token sem fazenda selecionada (sem "fid") é sempre 403 aqui — ao
     contrário do resto do sistema, este módulo não tem nenhum dado legado
     para acomodar (nasceu depois do piloto de multi-fazenda), então não há
-    caso legítimo de operar sem fazenda selecionada."""
+    caso legítimo de operar sem fazenda selecionada.
+
+    Sessão de suporte CowData (token com claim "suporte") também passa
+    direto, igual ao dono-equivalente — sem vínculo de admin/consultor
+    NESTA fazenda-cliente, o membro de suporte cairia sempre no 403 final
+    apesar de precisar ver a tela para ajudar o cliente (mesmo raciocínio
+    de exigir_modulo_contratado, logo abaixo)."""
     def _dep(
         user: Usuario = Depends(get_current_user),
         fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        suporte: dict = Depends(get_suporte_do_token),
         session: Session = Depends(get_session),
     ) -> Usuario:
-        if eh_email_dono_equivalente(user.email):
+        if eh_email_dono_equivalente(user.email) or suporte.get("ativo"):
             return user
         if fazenda_id is None:
             raise HTTPException(status_code=403, detail="Selecione a fazenda antes de usar a Formulação de Dietas")
@@ -503,9 +510,24 @@ def exigir_modulo_contratado(modulo: str):
     """Dependência: exige que A FAZENDA (não o usuário) tenha este módulo
     comercial contratado e ativo, dentro de um contrato aprovado. Some junto
     com exigir_modulo/exigir_modulo_qualquer nos include_router (main.py) —
-    não substitui a permissão do funcionário, só adiciona a trava do tenant."""
-    def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
-        if fazenda_id is None:
+    não substitui a permissão do funcionário, só adiciona a trava do tenant.
+
+    Sessão de suporte CowData (token com claim "suporte", ver
+    get_suporte_do_token/entrarComoSuporte) pula esta trava: o time de
+    suporte precisa poder ABRIR qualquer módulo — inclusive um à-la-carte
+    como Formulação de Dietas, que não vem em nenhum pacote do catálogo
+    (ver fazenda/models/planos.py) — para ajudar/configurar em nome do
+    cliente mesmo antes de uma contratação formal, sem depender de a
+    fazenda-teste já ter o módulo cadastrado. Isto só libera LEITURA/uso;
+    escrita nas áreas sensíveis continua bloqueada pelo middleware
+    _bloquear_modo_suporte (main.py), e a permissão do FUNCIONÁRIO
+    (exigir_modulo, checada em paralelo) não é afetada por isto."""
+    def _dep(
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        suporte: dict = Depends(get_suporte_do_token),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is None or suporte.get("ativo"):
             return
         if not _contrato_ativo(session, fazenda_id):
             raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
