@@ -10,7 +10,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
-  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna,
+  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks, Dna, Pill,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -72,6 +72,10 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
       // qualquer fazenda (Touro não tem fazenda_id: é global por natureza,
       // não precisa de mecânica de "aplicar em fazendas" nenhuma).
       { href: "/painel-cowdata/touros", label: "Touros Naab", icon: Dna, area: "cadastros" },
+      // Catálogo global de indicações/princípios/marcas da Farmácia — mesmo
+      // componente da sub-aba Farmácia dos Cadastros da fazenda, chamado sem
+      // fazenda selecionada (ver app/painel-cowdata/farmacia/page.tsx).
+      { href: "/painel-cowdata/farmacia", label: "Farmácia", icon: Pill, area: "cadastros" },
     ],
   },
 ];

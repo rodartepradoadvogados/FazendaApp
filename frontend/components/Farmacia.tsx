@@ -63,7 +63,14 @@ function statusEstoque(p: PrincipioIndicacaoCatalogo): { cor: string; label: str
   return { cor: "var(--text-muted)", label: "Sem estoque cadastrado" };
 }
 
-export default function Farmacia() {
+// `contextoGlobal`: true quando renderizado dentro do Painel CowData (ver
+// app/painel-cowdata/farmacia/page.tsx) — ali o token de quem chama não tem
+// fazenda_id (fid=null), então o backend (ver atualizar_marca/atualizar_
+// principio em farmacia.py) nunca entra no ramo de "clonar pra minha
+// fazenda": edita direto a linha global (fazenda_id=None), que é o
+// catálogo-padrão visto por TODAS as fazendas. Só muda textos/afordances
+// que assumiriam uma fazenda específica — nenhuma chamada de API muda.
+export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
   const [catalogo, setCatalogo] = useState<IndicacaoCatalogo[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -105,10 +112,9 @@ export default function Farmacia() {
     <div>
       <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", flex: "1 1 320px", margin: 0 }}>
-          Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de
-          prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as
-          fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada
-          automaticamente só para a sua fazenda, sem afetar as demais.
+          {contextoGlobal
+            ? "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. Este é o catálogo-padrão CowData: qualquer edição feita aqui vale imediatamente para todas as fazendas que ainda não personalizaram esta indicação."
+            : "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada automaticamente só para a sua fazenda, sem afetar as demais."}
         </p>
         <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
           onClick={restaurar} disabled={restaurando}
@@ -133,14 +139,16 @@ export default function Farmacia() {
             {label}
           </button>
         ))}
-        <button onClick={() => setSoPersonalizadas((v) => !v)}
-          style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
-            display: "inline-flex", alignItems: "center", gap: "0.3rem",
-            border: "1px solid " + (soPersonalizadas ? "var(--dourado)" : "var(--border)"),
-            background: soPersonalizadas ? "rgba(94,26,46,0.4)" : "transparent",
-            color: soPersonalizadas ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: soPersonalizadas ? 700 : 500 }}>
-          <Pencil size={12} /> Só personalizadas
-        </button>
+        {!contextoGlobal && (
+          <button onClick={() => setSoPersonalizadas((v) => !v)}
+            style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: "0.3rem",
+              border: "1px solid " + (soPersonalizadas ? "var(--dourado)" : "var(--border)"),
+              background: soPersonalizadas ? "rgba(94,26,46,0.4)" : "transparent",
+              color: soPersonalizadas ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: soPersonalizadas ? 700 : 500 }}>
+            <Pencil size={12} /> Só personalizadas
+          </button>
+        )}
       </div>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
@@ -150,14 +158,14 @@ export default function Farmacia() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indicação encontrada.</p>
       ) : (
         <div className="space-y-2">
-          {lista.map((ind) => <CardIndicacao key={ind.id} ind={ind} onMudou={carregar} />)}
+          {lista.map((ind) => <CardIndicacao key={ind.id} ind={ind} onMudou={carregar} contextoGlobal={contextoGlobal} />)}
         </div>
       )}
     </div>
   );
 }
 
-function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () => void }) {
+function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean }) {
   const [aberto, setAberto] = useState(false);
   const [processando, setProcessando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -216,6 +224,10 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
                 {processando ? "Aguarde…" : "Voltar ao padrão"}
               </button>
             </>
+          ) : contextoGlobal ? (
+            <span title="Catálogo-padrão CowData — edições aqui valem para todas as fazendas que não personalizaram esta indicação." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
+              <Lock size={14} />
+            </span>
           ) : (
             <>
               <span title="Este é o padrão CowData. Ao editar qualquer campo, uma cópia passa a valer só para a sua fazenda." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
@@ -250,7 +262,7 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
           ) : (
             <div className="space-y-3">
               {ind.principios.map((p) => (
-                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} />
+                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} />
               ))}
             </div>
           )}
@@ -260,8 +272,8 @@ function CardIndicacao({ ind, onMudou }: { ind: IndicacaoCatalogo; onMudou: () =
   );
 }
 
-function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
-  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void;
+function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: {
+  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void; contextoGlobal?: boolean;
 }) {
   const [editandoVinculo, setEditandoVinculo] = useState(false);
   const [prioridade, setPrioridade] = useState(String(p.prioridade));
@@ -299,12 +311,12 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
         </span>
         <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>{status.label}</span>
         {!indicacaoPersonalizada && (
-          <span title="Este é o padrão CowData. Ao editar, uma cópia passa a valer só para a sua fazenda." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
+          <span title={contextoGlobal ? "Catálogo-padrão CowData — vale para todas as fazendas." : "Este é o padrão CowData. Ao editar, uma cópia passa a valer só para a sua fazenda."} style={{ display: "inline-flex", color: "var(--text-muted)" }}>
             <Lock size={11} />
           </span>
         )}
         <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)}
-          title={indicacaoPersonalizada ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
+          title={indicacaoPersonalizada || contextoGlobal ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
           <Pencil size={11} />
         </button>
       </div>
@@ -328,15 +340,15 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou }: {
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Nenhuma marca comercial cadastrada para este princípio.</p>
       ) : (
         <div className="space-y-2" style={{ marginTop: "0.55rem" }}>
-          {p.marcas.map((m) => <MarcaLinha key={m.id} m={m} principioId={p.id} onMudou={onMudou} />)}
+          {p.marcas.map((m) => <MarcaLinha key={m.id} m={m} principioId={p.id} onMudou={onMudou} contextoGlobal={contextoGlobal} />)}
         </div>
       )}
     </div>
   );
 }
 
-function MarcaLinha({ m, principioId, onMudou }: {
-  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void;
+function MarcaLinha({ m, principioId, onMudou, contextoGlobal }: {
+  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void; contextoGlobal?: boolean;
 }) {
   const [editando, setEditando] = useState(false);
   const semInfo = carenciaNaoInformada(m.carencia);
@@ -349,7 +361,7 @@ function MarcaLinha({ m, principioId, onMudou }: {
             {m.nome_comercial}
             {m.laboratorio && <span style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)" }}>— {m.laboratorio}</span>}
             {!m.editavel && (
-              <span title="Este é o padrão CowData. Ao editar, uma cópia passa a valer só para a sua fazenda." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
+              <span title={contextoGlobal ? "Catálogo-padrão CowData — vale para todas as fazendas." : "Este é o padrão CowData. Ao editar, uma cópia passa a valer só para a sua fazenda."} style={{ display: "inline-flex", color: "var(--text-muted)" }}>
                 <Lock size={12} />
               </span>
             )}
@@ -368,7 +380,7 @@ function MarcaLinha({ m, principioId, onMudou }: {
         </div>
 
         <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}
-          title={m.editavel ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
+          title={m.editavel || contextoGlobal ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
           <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
         </button>
       </div>
