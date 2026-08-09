@@ -63,6 +63,12 @@ export type FazendaAtual = {
   // EMAILS_DONO_EQUIVALENTE) — id=0 sentinela, nunca uma fazenda de verdade.
   // Ver fazenda/api/routers/auth.py::login.
   cowdata?: boolean;
+  // Módulos comerciais ativos do CONTRATO desta fazenda (ver
+  // fazenda.auth.exigir_modulo_contratado) — usado por
+  // moduloContratadoPelaFazenda()/podeFormularDietas() para a Sidebar
+  // esconder o que a fazenda não comprou. `undefined` (resposta antiga em
+  // cache) não filtra nada; lista vazia É uma restrição de verdade.
+  modulos_contratados?: string[];
 };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
@@ -95,10 +101,41 @@ export const ROTA_MODULO: Record<string, string> = {
   "/analise-relatorios": "indicadores",
 };
 
-// Permissão de módulo para o usuário logado (admin tem tudo).
+// Mapa módulo do FRONTEND (ROTA_MODULO acima) -> módulo COMERCIAL do
+// backend (fazenda.auth.exigir_modulo_contratado, wireup em main.py) — os
+// nomes são diferentes dos dois lados por motivos históricos (a rota nasceu
+// antes do piloto de planos/módulos). Só entram aqui os módulos com
+// correspondência 1:1 clara e conferida contra main.py; os transversais
+// (agenda, indicadores, parametros, upload, lancamentos, analise) não têm
+// nenhum exigir_modulo_contratado no backend — ficam de fora de propósito.
+const MODULO_CONTRATO: Record<string, string> = {
+  rebanho: "rebanho", producao: "produtivo", recria: "produtivo", alimentacao: "alimentacao",
+  sanidade: "sanitario", financeiro: "financeiro", estoque: "estoque", pedidos: "pedidos", reproducao: "reprodutivo",
+};
+// A FAZENDA (não o usuário) contratou este módulo? Espelha a trava de plano
+// do backend — sem isso, um admin via qualquer plano enxergava "acesso
+// integral" na Sidebar mesmo em fazenda Standard, só descobrindo a
+// restrição ao clicar e levar 403 (bug real encontrado em produção).
+// Ausência de `modulos_contratados` (token sem fazenda selecionada, ou
+// resposta de login antiga em cache antes deste campo existir) não
+// restringe nada — só passa a filtrar quando o backend manda a lista de
+// verdade, igual ao "sem retroatividade" de get_fazenda_atual_id. Sessão de
+// suporte sempre libera (getModoSuporte), espelhando o bypass adicionado em
+// exigir_modulo_contratado para o mesmo caso.
+export function moduloContratadoPelaFazenda(mod: string): boolean {
+  if (getModoSuporte()) return true;
+  const chaveComercial = MODULO_CONTRATO[mod];
+  if (!chaveComercial) return true;
+  const lista = getFazendaAtual()?.modulos_contratados;
+  if (lista == null) return true;
+  return lista.includes(chaveComercial);
+}
+// Permissão de módulo para o usuário logado (admin tem tudo) — E a fazenda
+// precisa ter contratado esse módulo (ver moduloContratadoPelaFazenda acima).
 export function podeModulo(mod: string): boolean {
   const u = getUsuario();
   if (!u) return false;
+  if (!moduloContratadoPelaFazenda(mod)) return false;
   if (u.papel === "admin") return true;
   return Array.isArray(u.permissoes) && u.permissoes.includes(mod);
 }
@@ -156,9 +193,25 @@ export function ehConsultor(): boolean {
 // acesso à parte, deliberadamente FORA de ROTA_MODULO/podeModulo (ver
 // comentário no backend sobre por que isso não empilha com permissão comum).
 export function podeFormularDietas(): boolean {
-  return ehDono() || ehAdmin()
+  const acessoDeUsuario = ehDono() || ehAdmin()
     || getFazendaAtual()?.vinculo_contratante === true
     || getFazendaAtual()?.vinculo_consultor === true;
+  if (!acessoDeUsuario) return false;
+  // Módulo à-la-carte, fora de todo pacote do catálogo (ver planos.py) — a
+  // FAZENDA precisa ter contratado à parte, mesmo sendo admin/dono/consultor
+  // (nenhum bypass por papel no backend, ver exigir_modulo_contratado
+  // aplicado junto com exigir_admin_ou_consultor_fazenda em main.py). Sessão
+  // de suporte sempre libera, espelhando o mesmo bypass do backend.
+  return moduloContratadoDireto("formulacao_dietas");
+}
+// Variante de moduloContratadoPelaFazenda() para módulos à-la-carte que não
+// têm uma chave em ROTA_MODULO/MODULO_CONTRATO (não aparecem na Sidebar
+// comum) — mesma regra de bypass por suporte e de "sem dado não bloqueia".
+function moduloContratadoDireto(chaveComercial: string): boolean {
+  if (getModoSuporte()) return true;
+  const lista = getFazendaAtual()?.modulos_contratados;
+  if (lista == null) return true;
+  return lista.includes(chaveComercial);
 }
 // "Contratante-administrador": quem pode ver Configurações > Auditoria
 // CowData (auditoria de acessos de suporte + Confiança e LGPD) — dono
@@ -549,6 +602,7 @@ export type FazendaCofre = {
 };
 export type PedidoAcessoSuporte = {
   id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string; usuario_id: number; solicitante_nome: string | null;
+  modulos_contratados: string[];
   motivo: string; assunto_chamado: string | null; observacao: string | null; status: "aguardando_aprovacao" | "aprovado" | "negado";
   aprovador_nome: string | null; pedido_em: string; decidido_em: string | null;
   // Presentes só quando status vira "aprovado" na hora (fazenda sem
@@ -625,7 +679,7 @@ export async function entrarComoSuporte(
     throw new Error("Pedido enviado, mas aguardando aprovação — essa fazenda exige aprovação prévia de acesso de suporte.");
   }
   localStorage.setItem("token", pedido.token);
-  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome };
+  const fazendaAtual: FazendaAtual = { id: pedido.fazenda_id, nome: pedido.fazenda_nome, modulos_contratados: pedido.modulos_contratados };
   localStorage.setItem("fazenda_atual", JSON.stringify(fazendaAtual));
   const membroNome = getUsuario()?.nome || getUsuario()?.username || "Equipe CowData";
   localStorage.setItem("modo_suporte", JSON.stringify({
