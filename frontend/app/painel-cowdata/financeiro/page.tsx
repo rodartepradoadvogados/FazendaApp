@@ -8,12 +8,8 @@ import {
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { usePainelCowDataCor, usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
-const inputStyle: React.CSSProperties = {
-  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
-};
-const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
 const ABAS = ["lancamentos", "dre", "fluxo", "livro"] as const;
 type Aba = typeof ABAS[number];
 const LABEL_ABA: Record<Aba, string> = { lancamentos: "Lançamentos", dre: "DRE", fluxo: "Fluxo de Caixa", livro: "Livro Caixa" };
@@ -28,6 +24,7 @@ function ultimoDiaMes(ano: number, mes: number): string {
 }
 
 export default function FinanceiroCowData() {
+  const { cor: COR } = usePainelCowDataEstilos();
   const hoje = new Date();
   const [ano, setAno] = useState(hoje.getFullYear());
   const [mes, setMes] = useState(hoje.getMonth());
@@ -94,6 +91,7 @@ export default function FinanceiroCowData() {
 }
 
 function Kpi({ icone, label, valor, cor }: { icone: React.ReactNode; label: string; valor: string; cor: string }) {
+  const COR = usePainelCowDataCor();
   return (
     <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, marginBottom: "0.5rem" }}>
@@ -105,6 +103,7 @@ function Kpi({ icone, label, valor, cor }: { icone: React.ReactNode; label: stri
 }
 
 function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou: () => void }) {
+  const { cor: COR, inputStyle, labelStyle } = usePainelCowDataEstilos();
   const [lancamentos, setLancamentos] = useState<LancamentoCowData[] | null>(null);
   const [categorias, setCategorias] = useState<{ receita: string[]; despesa: string[] }>({ receita: [], despesa: [] });
   const [erro, setErro] = useState<string | null>(null);
@@ -191,7 +190,7 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
           </div>
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvar}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: "#1A2028", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
               Lançar
             </button>
             <button onClick={() => setMostrarForm(false)}
@@ -239,6 +238,7 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
 }
 
 function AbaDre({ ano }: { ano: number }) {
+  const COR = usePainelCowDataCor();
   const [dre, setDre] = useState<DreCowData | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => { fetchDreCowData(ano).then(setDre).catch((e) => setErro(e.message)); }, [ano]);
@@ -268,6 +268,7 @@ function AbaDre({ ano }: { ano: number }) {
 }
 
 function AbaFluxoCaixa({ de, ate }: { de: string; ate: string }) {
+  const COR = usePainelCowDataCor();
   const [linhas, setLinhas] = useState<FluxoCaixaCowDataMes[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => {
@@ -307,6 +308,7 @@ function AbaFluxoCaixa({ de, ate }: { de: string; ate: string }) {
 }
 
 function AbaLivroCaixa({ de, ate }: { de: string; ate: string }) {
+  const COR = usePainelCowDataCor();
   const [linhas, setLinhas] = useState<MovimentoCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => { fetchLivroCaixaCowData(de, ate).then(setLinhas).catch((e) => setErro(e.message)); }, [de, ate]);

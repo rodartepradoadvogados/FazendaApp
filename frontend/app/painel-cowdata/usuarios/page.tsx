@@ -12,21 +12,7 @@ import {
   criarUsuarioDaFazendaCowData, editarUsuarioDaFazendaCowData,
   type FazendaCadastroCowData, type PessoaUsuarioCowData, type UsuarioCowData,
 } from "@/lib/api";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a", texto: "#F1F3F5" };
-const inputStyle: React.CSSProperties = {
-  background: "#1A2028", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
-  color: COR.texto, fontSize: "0.82rem",
-};
-const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
-const btnPrimario: React.CSSProperties = {
-  background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.5rem 1rem",
-  fontSize: "0.82rem", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "0.4rem",
-};
-const btnGhost: React.CSSProperties = {
-  background: "transparent", color: COR.mudo, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)",
-  padding: "0.35rem 0.6rem", fontSize: "0.75rem", cursor: "pointer",
-};
+import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
 // Mesma lista de módulos da tela da fazenda (Configurações > Cadastro >
 // Pessoas > Controle de Acesso, ver app/usuarios/page.tsx) — precisa ficar
@@ -43,6 +29,7 @@ const MODULOS = [
 const TODOS = MODULOS.map((m) => m.key);
 
 export default function UsuariosPorFazendaCowData() {
+  const { cor: COR, inputStyle, labelStyle, btnPrimario, btnGhost } = usePainelCowDataEstilos();
   const [fazendas, setFazendas] = useState<FazendaCadastroCowData[]>([]);
   const [fazendaId, setFazendaId] = useState<number | "">("");
   const [pessoas, setPessoas] = useState<PessoaUsuarioCowData[]>([]);
@@ -203,6 +190,7 @@ export default function UsuariosPorFazendaCowData() {
 function LinhaUsuario({ u, fazendaId, aberto, onAbrir, onSalvo }: {
   u: UsuarioCowData; fazendaId: number; aberto: boolean; onAbrir: () => void; onSalvo: () => void;
 }) {
+  const { cor: COR, inputStyle, labelStyle, btnPrimario } = usePainelCowDataEstilos();
   const [papel, setPapel] = useState<"admin" | "operador">(u.papel);
   const [perms, setPerms] = useState<Set<string>>(new Set(u.papel === "admin" ? TODOS : u.permissoes));
   const [ativo, setAtivo] = useState(u.ativo);

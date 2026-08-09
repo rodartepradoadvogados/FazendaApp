@@ -3,21 +3,22 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CreditCard, Building2, Clock, TrendingUp } from "lucide-react";
 import { fetchResumoCowData, type ResumoCowData } from "@/lib/api";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b" };
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 function Cartao({ titulo, valor, icon: Icon, cor }: { titulo: string; valor: string; icon: any; cor?: string }) {
+  const COR = usePainelCowDataCor();
   return (
     <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, marginBottom: "0.5rem" }}>
         <Icon size={13} /> {titulo}
       </div>
-      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: cor || "#F1F3F5", fontVariantNumeric: "tabular-nums" }}>{valor}</div>
+      <div style={{ fontSize: "1.6rem", fontWeight: 700, color: cor || COR.texto, fontVariantNumeric: "tabular-nums" }}>{valor}</div>
     </div>
   );
 }
 
 export default function CockpitCowData() {
+  const COR = usePainelCowDataCor();
   const [resumo, setResumo] = useState<ResumoCowData | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -30,7 +31,7 @@ export default function CockpitCowData() {
         Visão geral do negócio CowData — separado dos dados operacionais da Fazenda Jairo Nasser.
       </p>
 
-      {erro && <p style={{ color: "#b5544a", fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
+      {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginBottom: "1.8rem" }}>
         <Cartao titulo="MRR (receita mensal recorrente)" valor={resumo ? `R$ ${resumo.mrr.toFixed(2)}` : "—"} icon={TrendingUp} cor={COR.verde} />

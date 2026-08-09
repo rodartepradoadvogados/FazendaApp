@@ -1,19 +1,20 @@
 "use client";
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", texto: "#F1F3F5" };
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 function Bloco({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  const COR = usePainelCowDataCor();
   return (
     <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.2rem 1.4rem" }}>
       <h2 style={{ fontSize: "0.92rem", fontWeight: 700, marginBottom: "0.5rem" }}>{titulo}</h2>
-      <div style={{ fontSize: "0.82rem", color: "#c3cbde", lineHeight: 1.55 }}>{children}</div>
+      <div style={{ fontSize: "0.82rem", color: COR.texto, lineHeight: 1.55 }}>{children}</div>
     </div>
   );
 }
 
 export default function ConfiancaLgpdCowData() {
+  const COR = usePainelCowDataCor();
   return (
     <div className="animate-in">
       <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: "0.2rem" }}>Confiança e LGPD</h1>
@@ -24,7 +25,7 @@ export default function ConfiancaLgpdCowData() {
       <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem", maxWidth: "48rem" }}>
         <Bloco titulo="Isolamento por fazenda">
           Cada fazenda-cliente cadastrada só enxerga os próprios dados. Todo modelo de negócio do sistema (animais,
-          reprodutivo, sanitário, produção, financeiro, estoque, pessoal) carrega um <code style={{ background: "#1A2028", padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>fazenda_id</code> obrigatório,
+          reprodutivo, sanitário, produção, financeiro, estoque, pessoal) carrega um <code style={{ background: COR.bg, padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>fazenda_id</code> obrigatório,
           denormalizado propositalmente para tornar "toda consulta filtra por fazenda_id" uma regra mecânica e
           auditável — desde a fundação multi-fazenda do sistema.
         </Bloco>
@@ -40,7 +41,7 @@ export default function ConfiancaLgpdCowData() {
 
         <Bloco titulo="Próximo passo: nível de sigilo por conta">
           O modelo de dados para um controle de sigilo mais fino — por conta da Equipe CowData — já existe
-          (<code style={{ background: "#1A2028", padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>Usuario.nivel_sigilo_maximo</code>),
+          (<code style={{ background: COR.bg, padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>Usuario.nivel_sigilo_maximo</code>),
           mas ainda não está ativo em nenhuma tela.
           <br /><br />
           É aditivo e dormente: hoje ninguém alcança nível de sigilo diferenciado por causa dele, e nenhum
@@ -65,7 +66,7 @@ export default function ConfiancaLgpdCowData() {
             <ShieldCheck size={15} style={{ color: COR.dourado, flexShrink: 0, marginTop: "0.15rem" }} />
             <div>
               <b style={{ fontSize: "0.85rem" }}>{titulo}.</b>{" "}
-              <span style={{ fontSize: "0.82rem", color: "#c3cbde" }}>{texto}</span>
+              <span style={{ fontSize: "0.82rem", color: COR.texto }}>{texto}</span>
             </div>
           </div>
         ))}

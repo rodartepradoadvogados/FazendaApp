@@ -15,11 +15,7 @@ import {
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { AcessoCowDataModal } from "@/components/AcessoCowDataModal";
-
-const COR = {
-  cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", texto: "#F1F3F5",
-  verde: "#8faa7b", vermelho: "#b5544a",
-};
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 function formatarData(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -32,10 +28,10 @@ function expiraLabel(sessao: SessaoAcessoSuporte): string {
   const min = Math.round(sessao.segundos_restantes / 60);
   return `em ${min} min`;
 }
-const CORES_STATUS: Record<string, string> = { aprovado: COR.verde, aguardando_aprovacao: COR.dourado, negado: COR.vermelho };
 const LABEL_STATUS: Record<string, string> = { aprovado: "Aprovado", aguardando_aprovacao: "Aguardando aprovação", negado: "Negado" };
 
 function Cartao({ titulo, subtitulo, acao, children }: { titulo: string; subtitulo: string; acao?: React.ReactNode; children: React.ReactNode }) {
+  const COR = usePainelCowDataCor();
   return (
     <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", marginBottom: "1.2rem", overflow: "hidden" }}>
       <div style={{ padding: "1rem 1.2rem 0.7rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.8rem" }}>
@@ -50,18 +46,23 @@ function Cartao({ titulo, subtitulo, acao, children }: { titulo: string; subtitu
   );
 }
 function Th({ children }: { children?: React.ReactNode }) {
+  const COR = usePainelCowDataCor();
   return <th style={{ textAlign: "left", padding: "0.5rem 1.2rem", fontSize: "0.68rem", color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.04em", borderTop: `1px solid ${COR.borda}` }}>{children}</th>;
 }
 function Td({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  const COR = usePainelCowDataCor();
   return <td style={{ padding: "0.55rem 1.2rem", fontSize: "0.8rem", borderTop: `1px solid ${COR.borda}`, ...style }}>{children}</td>;
 }
 function Vazio({ colSpan, texto }: { colSpan: number; texto: string }) {
+  const COR = usePainelCowDataCor();
   return <tr><td colSpan={colSpan} style={{ padding: "1.2rem", textAlign: "center", color: COR.mudo, fontSize: "0.8rem", borderTop: `1px solid ${COR.borda}` }}>{texto}</td></tr>;
 }
 
 type Aba = "acesso" | "auditoria";
 
 export default function SuporteCowData() {
+  const COR = usePainelCowDataCor();
+  const CORES_STATUS: Record<string, string> = { aprovado: COR.verde, aguardando_aprovacao: COR.dourado, negado: COR.vermelho };
   const router = useRouter();
   const [aba, setAba] = useState<Aba>("acesso");
   const [fazendas, setFazendas] = useState<FazendaCofre[]>([]);
@@ -113,7 +114,7 @@ export default function SuporteCowData() {
         </div>
         {aba === "acesso" && (
           <button onClick={() => setModalAberto(true)} style={{
-            background: COR.dourado, color: "#1A2028", border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 1rem",
+            background: COR.dourado, color: COR.bg, border: "none", borderRadius: "var(--r-sm)", padding: "0.55rem 1rem",
             fontSize: "0.82rem", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.4rem",
           }}>
             <LogIn size={15} /> Acessar fazenda

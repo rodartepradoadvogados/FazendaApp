@@ -6,16 +6,15 @@ import {
   type Fazenda, type ContratoFazenda,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-
-const COR = { cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", verde: "#8faa7b", vermelho: "#b5544a" };
-
-const STATUS_LABEL: Record<string, { label: string; cor: string }> = {
-  ativo: { label: "Ativo", cor: COR.verde },
-  aguardando_aprovacao: { label: "Aguardando aprovação", cor: COR.dourado },
-  suspenso: { label: "Suspenso", cor: COR.vermelho },
-};
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 export default function AssinaturasCowData() {
+  const COR = usePainelCowDataCor();
+  const STATUS_LABEL: Record<string, { label: string; cor: string }> = {
+    ativo: { label: "Ativo", cor: COR.verde },
+    aguardando_aprovacao: { label: "Aguardando aprovação", cor: COR.dourado },
+    suspenso: { label: "Suspenso", cor: COR.vermelho },
+  };
   const [linhas, setLinhas] = useState<{ fazenda: Fazenda; contrato: ContratoFazenda }[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [processando, setProcessando] = useState<number | null>(null);
