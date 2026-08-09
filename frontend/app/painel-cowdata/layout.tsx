@@ -10,7 +10,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
-  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X,
+  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X, ListChecks,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -23,7 +23,7 @@ import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api"
 // — as demais ficam fora do menu de quem não é dono, mesmo que a área
 // esteja marcada no cadastro dele, pra nunca mostrar um item que ainda
 // devolve 403 nas rotas de verdade.
-const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre"];
+const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", "cadastros"];
 
 const COR = {
   bg: CORES_CONTADOR.bg, texto: CORES_CONTADOR.texto,
@@ -64,6 +64,10 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
       // Auditoria de Acessos CowData — ver painel-cowdata/cofre/page.tsx).
       { href: "/painel-cowdata/cofre", label: "Suporte", icon: Lock, area: "cofre" },
       { href: "/painel-cowdata/confianca", label: "Confiança e LGPD", icon: ShieldCheck, area: "confianca" },
+      // Motivos/raças/unidades de estoque/tipos-métodos aplicáveis a todas as
+      // fazendas-cliente de uma vez, ou só às selecionadas — ver
+      // painel-cowdata/cadastros/page.tsx.
+      { href: "/painel-cowdata/cadastros", label: "Cadastros globais", icon: ListChecks, area: "cadastros" },
     ],
   },
 ];

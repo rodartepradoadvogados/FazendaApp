@@ -22,7 +22,13 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
-AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca"]
+AREAS_PAINEL_COWDATA = [
+    "cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca",
+    # Cadastros globais (motivos, raças, unidades de estoque, tipos/métodos
+    # reprodutivos) aplicáveis a todas as fazendas-cliente de uma vez ou só
+    # às selecionadas — ver fazenda.api.routers.painel_cowdata_cadastros.
+    "cadastros",
+]
 
 
 class PermissaoEquipeCowData(SQLModel, table=True):
