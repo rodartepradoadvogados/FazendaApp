@@ -91,6 +91,32 @@ def sugerir_animal(session: Session, calendario: CalendarioSanitario, numero_mat
     return linha
 
 
+def sugerir_animais_em_lote(session: Session, calendario: CalendarioSanitario, numeros_matriz: list[str], hoje: date) -> None:
+    """Versão em lote de `sugerir_animal` — evita 1 SELECT (+ eventual
+    INSERT/COMMIT) por animal a cada carregamento da Agenda (relatado: até
+    centenas de idas ao banco num rebanho grande, toda vez que a tela abre).
+    Mesmo resultado final: garante 1 linha "sugerido" por animal no
+    cronograma aberto da regra, idempotente por (cronograma_id, numero_matriz)
+    — só que checando os já-existentes de uma vez e inserindo o resto junto."""
+    if not numeros_matriz:
+        return
+    cron = cronograma_aberto(session, calendario)
+    existentes = set(session.exec(
+        select(CronogramaSanitarioAnimal.numero_matriz)
+        .where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+        .where(CronogramaSanitarioAnimal.numero_matriz.in_(numeros_matriz))
+    ).all())
+    novos = [
+        CronogramaSanitarioAnimal(cronograma_id=cron.id, numero_matriz=n, data_sugestao=hoje, fazenda_id=calendario.fazenda_id)
+        for n in dict.fromkeys(numeros_matriz)  # preserva ordem e remove duplicata, por segurança
+        if n not in existentes
+    ]
+    if not novos:
+        return
+    session.add_all(novos)
+    session.commit()
+
+
 def decidir_animal(session: Session, cronograma_animal_id: int, incluir: bool, hoje: date) -> CronogramaSanitarioAnimal:
     linha = session.get(CronogramaSanitarioAnimal, cronograma_animal_id)
     if not linha:

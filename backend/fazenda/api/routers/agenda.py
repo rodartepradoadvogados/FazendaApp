@@ -16,7 +16,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, DietaLancamento, Diaria,
-    DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, ParametroSugestaoMovimentacao, Parto,
+    DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
     Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
@@ -284,7 +284,21 @@ def calcular_agenda(
     # presos ao `Animal.del_dias` congelado no último GERAL.csv.
     secagens = [_model_to_dict(s) for s in session.exec(_da_fazenda(select(Secagem), Secagem)).all()]
     estoque = [_model_to_dict(e) for e in session.exec(_da_fazenda(select(Estoque), Estoque)).all()]
-    contas = [_model_to_dict(c) for c in session.exec(_da_fazenda(select(ContaGerencial), ContaGerencial)).all()]
+    # Só a janela que agenda_engine.calcular() de fato usa (contas_a_pagar
+    # filtra por data_referencia <= data_vencimento <= data_referencia+dias) —
+    # antes lia a tabela inteira (todo o histórico de contas da fazenda) e
+    # descartava o resto em Python a cada chamada da Agenda.
+    contas = [
+        _model_to_dict(c) for c in session.exec(
+            _da_fazenda(
+                select(ContaGerencial).where(
+                    ContaGerencial.data_vencimento >= data,
+                    ContaGerencial.data_vencimento <= data + timedelta(days=dias),
+                ),
+                ContaGerencial,
+            )
+        ).all()
+    ]
     # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
     # ver AgendaEngine.calcular, param `lotes`) para não repetir o alerta
     # "Pré-parto" de quem já foi movido para esse lote.
@@ -388,10 +402,10 @@ def calcular_agenda(
     # Dietas ativas com encerramento previsto: evento de análise (chave própria,
     # fora do AgendaEngine para não mexer no cálculo delicado já testado dele).
     dietas_para_analise = session.exec(
-        select(DietaLancamento).where(
+        _da_fazenda(select(DietaLancamento).where(
             DietaLancamento.data_efetivo_encerramento == None,  # noqa: E711
             DietaLancamento.data_prevista_encerramento != None,  # noqa: E711
-        )
+        ), DietaLancamento)
     ).all()
     eventos_dieta = [
         {
@@ -408,11 +422,11 @@ def calcular_agenda(
     # evento na Agenda; a baixa de estoque só acontece quando o usuário marca
     # "realizado" (ver POST /agenda/realizados).
     aplicacoes_pendentes = session.exec(
-        select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.realizada == False)  # noqa: E712
+        _da_fazenda(select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.realizada == False), ProtocoloSanitarioAplicacao)  # noqa: E712
     ).all()
-    etapas_por_id = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
-    lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloSanitarioLancamento)).all()}
-    protocolos_por_id = {p.id: p for p in session.exec(select(ProtocoloSanitario)).all()}
+    etapas_por_id = {e.id: e for e in session.exec(_da_fazenda(select(ProtocoloSanitarioEtapa), ProtocoloSanitarioEtapa)).all()}
+    lancamentos_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento)).all()}
+    protocolos_por_id = {p.id: p for p in session.exec(_da_fazenda(select(ProtocoloSanitario), ProtocoloSanitario)).all()}
     eventos_protocolo = []
     for ap in aplicacoes_pendentes:
         chave = f"protocolo_sanitario_{ap.id}"
@@ -457,10 +471,10 @@ def calcular_agenda(
     # vencidas dele são justamente o que se quer ver. Passada a janela, a
     # baixa continua possível pela Central de Protocolos.
     limite_atraso = data - timedelta(days=JANELA_ATRASO_PROTOCOLO_DIAS)
-    lancamentos_iatf_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
+    lancamentos_iatf_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloIatfLancamento), ProtocoloIatfLancamento)).all()}
     aplicacoes_iatf = [
         a for a in session.exec(
-            select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == False)  # noqa: E712
+            _da_fazenda(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == False), ProtocoloIatfAplicacao)  # noqa: E712
         ).all()
         if not getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "encerrado_em", None)
         and (a.data_prevista >= limite_atraso
@@ -484,15 +498,23 @@ def calcular_agenda(
     if fazenda_id is not None:
         _query_pa_agenda = _query_pa_agenda.where(PrincipioAtivo.fazenda_id == fazenda_id)
     _pa_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(_query_pa_agenda).all()}
+    # MedicamentoComercial é catálogo global (sem fazenda_id) — carregado uma
+    # vez só aqui e reusado por chamada de _opcoes_medicamento em vez de uma
+    # consulta nova por hormônio/medicamento (antes eram dezenas de consultas
+    # idênticas por carregamento da Agenda).
+    _marcas_por_pa: dict[int, list] = {}
+    for _mc in session.exec(select(MedicamentoComercial)).all():
+        _marcas_por_pa.setdefault(_mc.principio_ativo_id, []).append(_mc)
 
     def _opcoes_medicamento(produto: str) -> tuple[int | None, list[dict]]:
         return estoque_baixa.opcoes_medicamento(
             session, fazenda_id=fazenda_id, produto=produto,
             todos_estoque=_todos_estoque, principios_por_nome=_pa_por_nome,
+            marcas_por_principio_id=_marcas_por_pa,
         )
 
     hormonios_por_grupo: dict[tuple[int, int], list[dict]] = {}
-    for h in session.exec(select(ProtocoloIatfHormonio)).all():
+    for h in session.exec(_da_fazenda(select(ProtocoloIatfHormonio), ProtocoloIatfHormonio)).all():
         pa_id, opcoes = _opcoes_medicamento(h.produto)
         hormonios_por_grupo.setdefault((h.lancamento_id, h.dia), []).append({
             "produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via,
@@ -549,10 +571,10 @@ def calcular_agenda(
     # passo, com a observação de manejo (implante, adaptação na ordenha,
     # iniciar a ordenha) bem visível para o funcionário.
     # Mesma janela de atraso do IATF/customizado — ver o comentário lá em cima.
-    lancamentos_inducao_por_id = {l.id: l for l in session.exec(select(ProtocoloInducaoLancamento)).all()}
+    lancamentos_inducao_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloInducaoLancamento), ProtocoloInducaoLancamento)).all()}
     aplicacoes_inducao = [
         a for a in session.exec(
-            select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False)  # noqa: E712
+            _da_fazenda(select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False), ProtocoloInducaoAplicacao)  # noqa: E712
         ).all()
         if a.data_prevista >= limite_atraso
         and not getattr(lancamentos_inducao_por_id.get(a.lancamento_id), "encerrado_em", None)
@@ -566,7 +588,7 @@ def calcular_agenda(
     # (_opcoes_medicamento), pra dar o campo clicável "qual frasco?" na hora
     # de confirmar, em vez de resolver por nome sozinho.
     medicamentos_por_grupo_inducao: dict[tuple[int, int], list[dict]] = {}
-    for m in session.exec(select(ProtocoloInducaoMedicamento)).all():
+    for m in session.exec(_da_fazenda(select(ProtocoloInducaoMedicamento), ProtocoloInducaoMedicamento)).all():
         pa_id, opcoes = _opcoes_medicamento(m.produto)
         medicamentos_por_grupo_inducao.setdefault((m.lancamento_id, m.dia), []).append({
             "produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via,
@@ -628,9 +650,9 @@ def calcular_agenda(
     # aparecendo pra vacina). Exclui só quem está CONFIRMADAMENTE baixado —
     # um numero_matriz sem cadastro em Animal (ex.: lançamento avulso/animal
     # ainda não importado) continua aparecendo normalmente, como sempre.
-    animais_baixados = set(session.exec(select(Animal.numero).where(Animal.ativo == False)))  # noqa: E712
+    animais_baixados = set(session.exec(_da_fazenda(select(Animal.numero).where(Animal.ativo == False), Animal)))  # noqa: E712
     aplic_agendadas = [
-        a for a in session.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False))  # noqa: E712
+        a for a in session.exec(_da_fazenda(select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False), AplicacaoAgendada))  # noqa: E712
         if a.numero_matriz not in animais_baixados
     ]
     # Vacina(s) pré-parto (vindas da Secagem) formam um cartão só por animal —
@@ -674,13 +696,13 @@ def calcular_agenda(
     eventos_colostro = []
     limite_parto = data - timedelta(days=30)
     partos_recentes = session.exec(
-        select(Parto).where(Parto.data_parto >= limite_parto, Parto.data_parto <= data)
+        _da_fazenda(select(Parto).where(Parto.data_parto >= limite_parto, Parto.data_parto <= data), Parto)
     ).all()
     if partos_recentes:
-        colostro_por_animal = {c.numero_animal: c for c in session.exec(select(ColostragemBezerra)).all()}
+        colostro_por_animal = {c.numero_animal: c for c in session.exec(_da_fazenda(select(ColostragemBezerra), ColostragemBezerra)).all()}
         # Bezerras (crias) por (mãe, data de nascimento) para casar com o parto.
         crias_por_chave: dict[tuple[str, object], list[Animal]] = {}
-        for a in session.exec(select(Animal).where(Animal.ativo == True, Animal.mae_numero != None)).all():  # noqa: E711,E712
+        for a in session.exec(_da_fazenda(select(Animal).where(Animal.ativo == True, Animal.mae_numero != None), Animal)).all():  # noqa: E711,E712
             crias_por_chave.setdefault((a.mae_numero, a.data_nasc), []).append(a)
         for parto in partos_recentes:
             dia_seguinte = (parto.data_parto + timedelta(days=1)).isoformat()
@@ -722,11 +744,11 @@ def calcular_agenda(
     eventos_cura = []
     limite_cura = data - timedelta(days=60)
     lancamentos_protocolo_abertos = session.exec(
-        select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.curada == None)  # noqa: E711
+        _da_fazenda(select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.curada == None), ProtocoloSanitarioLancamento)  # noqa: E711
     ).all()
     if lancamentos_protocolo_abertos:
         aplicacoes_por_lancamento: dict[int, list] = {}
-        for a in session.exec(select(ProtocoloSanitarioAplicacao)).all():
+        for a in session.exec(_da_fazenda(select(ProtocoloSanitarioAplicacao), ProtocoloSanitarioAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(a.lancamento_id, []).append(a)
         for lanc in lancamentos_protocolo_abertos:
             terminou, ultimo_dia = protocolo_terminado(aplicacoes_por_lancamento.get(lanc.id, []))
@@ -751,7 +773,7 @@ def calcular_agenda(
     # de véspera e o do dia são eventos distintos (marcar um não some o outro).
     eventos_nova_dieta = []
     for d in session.exec(
-        select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)  # noqa: E711
+        _da_fazenda(select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None), DietaLancamento)  # noqa: E711
     ).all():
         if d.data_abertura in (data, data + timedelta(days=1)):
             hoje_alerta = d.data_abertura == data
@@ -846,7 +868,7 @@ def calcular_agenda(
     # repor). Mínimos editáveis em Configurações > Cadastro > Central de
     # Sêmen > Estoque mínimo (ver parametros.minimos_semen_por_tipo).
     totais_semen = {"convencional": 0, "sexado": 0}
-    for s in session.exec(select(EstoqueSemen)).all():
+    for s in session.exec(_da_fazenda(select(EstoqueSemen), EstoqueSemen)).all():
         if s.ativo and s.tipo in totais_semen:
             totais_semen[s.tipo] += s.doses or 0
     eventos_semen = []
@@ -872,7 +894,7 @@ def calcular_agenda(
     # bloqueio em marcar_realizado, mesmo padrão de colostragem/IgG).
     eventos_patrimonio = []
     itens_patrimonio = session.exec(
-        select(Patrimonio).where(Patrimonio.data_proxima_manutencao != None)  # noqa: E711
+        _da_fazenda(select(Patrimonio).where(Patrimonio.data_proxima_manutencao != None), Patrimonio)  # noqa: E711
     ).all()
     for item in itens_patrimonio:
         if item.data_baixa:
@@ -900,7 +922,7 @@ def calcular_agenda(
     # padrão da manutenção preventiva acima).
     frequencia_padrao_valor_mercado = patrimonio_atualizacao_valor_mercado_meses()
     itens_nao_depreciaveis = session.exec(
-        select(Patrimonio).where(Patrimonio.depreciavel == False)  # noqa: E712
+        _da_fazenda(select(Patrimonio).where(Patrimonio.depreciavel == False), Patrimonio)  # noqa: E712
     ).all()
     for item in itens_nao_depreciaveis:
         if item.data_baixa:
@@ -932,7 +954,7 @@ def calcular_agenda(
         q_diaria_trabalho = q_diaria_trabalho.where(Diaria.fazenda_id == fazenda_id)
     folgas_hoje = {
         r.diaria_id for r in session.exec(
-            select(DiariaDia).where(DiariaDia.data == data, DiariaDia.trabalhado == False)  # noqa: E712
+            _da_fazenda(select(DiariaDia).where(DiariaDia.data == data, DiariaDia.trabalhado == False), DiariaDia)  # noqa: E712
         ).all()
     }
     for diaria, pessoa in session.exec(q_diaria_trabalho).all():

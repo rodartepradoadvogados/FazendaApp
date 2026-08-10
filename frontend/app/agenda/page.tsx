@@ -411,27 +411,42 @@ export default function AgendaPage() {
   // ficam fixos enquanto vigoram (hoje/amanhã), não têm ação de excluir/dar
   // baixa, e somem sozinhos no dia seguinte — por isso vivem numa seção
   // própria, sempre visível, sem passar pelos filtros da agenda cronológica.
-  const comunicados = (agenda?.eventos || []).filter((e: any) => e.comunicado);
+  const comunicados = useMemo(
+    () => (agenda?.eventos || []).filter((e: any) => e.comunicado),
+    [agenda],
+  );
   // Estoque negativo/abaixo do mínimo — informação sempre visível (não é uma
   // pendência que se "resolve", é um alerta que só some quando o saldo normalizar.
   const estoqueNegativo: any[] = agenda?.estoque_negativo || [];
   const estoqueAbaixoMinimo: any[] = agenda?.estoque_abaixo_minimo || [];
-  const eventosBase = (agenda?.eventos || []).filter((e: any) => {
-    if (e.comunicado) return false;
-    if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
-    if (de && e.data < de) return false;
-    if (ate && e.data > ate) return false;
-    if (filtro && !(e.descricao + e.numero_animal + e.categoria).toLowerCase().includes(filtro.toLowerCase())) return false;
-    return true;
-  });
+  const eventosBase = useMemo(
+    () => (agenda?.eventos || []).filter((e: any) => {
+      if (e.comunicado) return false;
+      if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
+      if (de && e.data < de) return false;
+      if (ate && e.data > ate) return false;
+      if (filtro && !(e.descricao + e.numero_animal + e.categoria).toLowerCase().includes(filtro.toLowerCase())) return false;
+      return true;
+    }),
+    [agenda, fCat, de, ate, filtro],
+  );
   // Próximos eventos: por padrão só os próximos 10 dias; se o usuário definir
   // "Até" explicitamente, respeita o período escolhido (pode ser maior ou menor).
   const limiteFuturo = ate || addDias(hoje, DIAS_PADRAO_FUTURO);
-  const eventosFuturos = eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo);
-  const eventosPendentes = eventosBase.filter((e: any) => e.data < hoje);
+  const eventosFuturos = useMemo(
+    () => eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo),
+    [eventosBase, hoje, limiteFuturo],
+  );
+  const eventosPendentes = useMemo(
+    () => eventosBase.filter((e: any) => e.data < hoje),
+    [eventosBase, hoje],
+  );
   // Localiza um evento pelo id independente da seção (pendentes/futuros) em
   // que ele está renderizado — usado pela confirmação em lote por dia.
-  const eventoPorId = new Map<string, any>((agenda?.eventos || []).map((e: any) => [e.id, e]));
+  const eventoPorId = useMemo(
+    () => new Map<string, any>((agenda?.eventos || []).map((e: any) => [e.id, e])),
+    [agenda],
+  );
 
   // ── Dar baixa em sanidade (evento_sanitario / calendario_sanitario) sem sair
   // da Agenda — individual (1º clique confirma os dados, 2º confirma a baixa)
