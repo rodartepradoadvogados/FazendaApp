@@ -126,6 +126,7 @@ def opcoes_medicamento(
     session: Session, *, fazenda_id: int | None, produto: str | None,
     todos_estoque: list[Estoque] | None = None,
     principios_por_nome: dict[str, PrincipioAtivo] | None = None,
+    marcas_por_principio_id: dict[int, list[MedicamentoComercial]] | None = None,
     incluir_sem_estoque: bool = False,
 ) -> tuple[int | None, list[dict]]:
     """Dado o produto/princípio ativo de um hormônio/medicamento de protocolo,
@@ -133,9 +134,10 @@ def opcoes_medicamento(
     o usuário escolher qual está usando — o "qual medicamento/frasco?" da
     Agenda e da Central de Protocolos.
 
-    `todos_estoque`/`principios_por_nome` são pré-carregados opcionalmente
-    pelo chamador (Agenda e Central chamam isto uma vez por hormônio/dia — sem
-    isso cada chamada faria duas consultas extras ao banco).
+    `todos_estoque`/`principios_por_nome`/`marcas_por_principio_id` são
+    pré-carregados opcionalmente pelo chamador (Agenda e Central chamam isto
+    uma vez por hormônio/dia — sem isso cada chamada faria consultas extras
+    ao banco, uma delas — MedicamentoComercial — repetida a cada hormônio).
 
     `incluir_sem_estoque`: além dos frascos já em Estoque, acrescenta toda
     marca comercial cadastrada (`MedicamentoComercial`) do mesmo princípio
@@ -168,9 +170,12 @@ def opcoes_medicamento(
     # para as opções "sem estoque" abaixo.
     marcas_do_pa: list[MedicamentoComercial] = []
     if pa_id is not None:
-        marcas_do_pa = session.exec(
-            select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa_id)
-        ).all()
+        if marcas_por_principio_id is not None:
+            marcas_do_pa = marcas_por_principio_id.get(pa_id, [])
+        else:
+            marcas_do_pa = session.exec(
+                select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa_id)
+            ).all()
 
     def _opcao_de_estoque(e: Estoque) -> dict:
         marca = resolver_marca_comercial(session, item=e, principio_ativo_id=pa_id, candidatos=marcas_do_pa)
