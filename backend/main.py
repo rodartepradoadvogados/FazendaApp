@@ -69,6 +69,7 @@ from fazenda.api.routers import (
     push,
     recria,
     relatorio_acasalamento,
+    relatorio_compra_semen,
     relatorio_compra_venda_animal,
     relatorio_custo_hectare,
     relatorio_custo_producao,
@@ -99,7 +100,7 @@ from fazenda.api.routers.cadastro import (
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
     seed_cadastros_estoque,
 )
-from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
+from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico, backfill_estoque_semen_fazenda_id
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
@@ -294,6 +295,10 @@ async def lifespan(app: FastAPI):
         # cada touro do Estoque de Sêmen (compras antigas nunca criavam esse
         # item — só apareciam em Rebanho > Touros > Sêmen).
         backfill_estoque_semen_generico(session)
+        # Corrige o histórico: o item de Estoque espelhado de sêmen (acima)
+        # nascia sem fazenda_id (bug em sincronizar_item_estoque_semen) —
+        # preenche a partir do EstoqueSemen vinculado nos itens legados.
+        backfill_estoque_semen_fazenda_id(session)
     # Cria (se ainda não existir) os buckets do Supabase Storage usados pelo
     # sistema — sem isso, um bucket novo (ex.: "fotos-campo") só existiria
     # depois de alguém criar manualmente pelo painel do Supabase.
@@ -670,6 +675,7 @@ app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("re
 app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
 app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
 app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(relatorio_compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).

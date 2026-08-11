@@ -98,6 +98,14 @@ def sincronizar_item_estoque_semen(estoque_semen: EstoqueSemen, session: Session
         item.tipo_semen = estoque_semen.tipo
         item.ativo = estoque_semen.ativo
         item.atualizado_em = datetime.utcnow()
+        # Autocura: item espelhado criado antes da correção do bug acima
+        # (fazenda_id NULL) — toda vez que a sincronização toca nele de novo
+        # (nova compra, baixa vinculada), aproveita para consertar, sem
+        # esperar o backfill único rodar. Só assume o fazenda_id do touro
+        # quando o item ainda está sem fazenda (nunca sobrescreve um valor
+        # já preenchido).
+        if item.fazenda_id is None and estoque_semen.fazenda_id is not None:
+            item.fazenda_id = estoque_semen.fazenda_id
         session.add(item)
     else:
         session.add(Estoque(
@@ -105,6 +113,15 @@ def sincronizar_item_estoque_semen(estoque_semen: EstoqueSemen, session: Session
             quantidade=estoque_semen.doses, valor_unitario=estoque_semen.valor_unitario, valor_total=valor_total,
             estocavel=True, ativo=estoque_semen.ativo,
             estoque_semen_id=estoque_semen.id, tipo_semen=estoque_semen.tipo,
+            # BUG corrigido: este item nascia sem fazenda_id (ficava NULL),
+            # então `listar_estoque`/`criar_item_estoque` (que filtram por
+            # `Estoque.fazenda_id == fazenda_id`) ou vazavam o item de sêmen
+            # de uma fazenda para todas as outras (quando `fazenda_id is None`,
+            # o filtro nem entra) ou faziam o item sumir de qualquer listagem
+            # filtrada por fazenda (quando o filtro entra e não bate com NULL).
+            # `EstoqueSemen.fazenda_id` é a fonte da verdade aqui — o item
+            # espelhado tem que pertencer à mesma fazenda do touro que ele espelha.
+            fazenda_id=estoque_semen.fazenda_id,
         ))
 
 
@@ -119,6 +136,28 @@ def backfill_estoque_semen_generico(session: Session) -> None:
         return
     for touro in session.exec(select(EstoqueSemen)).all():
         sincronizar_item_estoque_semen(touro, session)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def backfill_estoque_semen_fazenda_id(session: Session) -> None:
+    """Roda uma única vez: corrige o `fazenda_id` (NULL) dos itens de
+    `Estoque` espelhados de sêmen criados antes da correção do bug em
+    `sincronizar_item_estoque_semen` — a criação nunca gravava `fazenda_id`,
+    então esses itens vazavam para todas as fazendas nas listagens sem filtro
+    de fazenda, ou simplesmente sumiam das listagens que já filtram por
+    `Estoque.fazenda_id` (ex.: `listar_estoque`). Preenche a partir do
+    `EstoqueSemen.fazenda_id` do touro vinculado (fonte da verdade) — nunca
+    sobrescreve um `fazenda_id` já preenchido, mesmo que divirja do touro."""
+    chave = "estoque_semen_backfill_fazenda_id_202608"
+    if session.get(SeedFlag, chave):
+        return
+    query = select(Estoque).where(Estoque.fazenda_id.is_(None), Estoque.estoque_semen_id.is_not(None))  # type: ignore[union-attr]
+    for item in session.exec(query).all():
+        touro = session.get(EstoqueSemen, item.estoque_semen_id)
+        if touro and touro.fazenda_id is not None:
+            item.fazenda_id = touro.fazenda_id
+            session.add(item)
     session.add(SeedFlag(chave=chave))
     session.commit()
 
