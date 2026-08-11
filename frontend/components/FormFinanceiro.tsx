@@ -17,6 +17,7 @@ import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { ServicoPicker } from "@/components/ServicoPicker";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { onPedidoLancamentoFinanceiroDeEvento, type OrigemVinculoSanitarioReprodutivo } from "@/lib/vinculoSanitarioFinanceiroBridge";
@@ -895,10 +896,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {it.tipo_item === "servico" ? (
                 <Campo label="Serviço">
-                  <select style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })}>
-                    <option value="">Selecione…</option>
-                    {sugestoesServico.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
+                    value={it.produto} onChange={(v) => atualizarItem(idx, { produto: v })} />
                 </Campo>
               ) : (
                 <div>

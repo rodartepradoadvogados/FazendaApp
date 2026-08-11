@@ -496,6 +496,13 @@ def listar_lancamentos(
     contas = session.exec(query_contas).all()
     nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
 
+    # Quais lançamentos têm comprovante/anexo — UMA query, não uma por linha
+    # (o relatório de Contas pagas mostra a coluna para a lista inteira).
+    query_anexos = select(LancamentoAnexo.numero_lancamento)
+    if fazenda_id is not None:
+        query_anexos = query_anexos.where(LancamentoAnexo.fazenda_id == fazenda_id)
+    numeros_com_anexo = set(session.exec(query_anexos).all())
+
     registros = []
     for c in contas:
         dc = c.data_competencia
@@ -521,6 +528,10 @@ def listar_lancamentos(
             "numero_os_orcamento": c.numero_os_orcamento,
             "numero_boleto": c.numero_boleto,
             "numero_documento_pagamento": c.numero_documento_pagamento,
+            # Serve à coluna "Comprovante" do relatório de Contas pagas — o
+            # comprovante do pagamento em lote é o mesmo arquivo para todas as
+            # notas da remessa (ver anexar_comprovante_em_lote).
+            "tem_comprovante": bool(c.numero_lancamento) and c.numero_lancamento in numeros_com_anexo,
             "conta_bancaria": c.conta_bancaria,
             "forma_pagamento": c.forma_pagamento,
             "data_vencimento_cartao": c.data_vencimento_cartao.isoformat() if c.data_vencimento_cartao else None,
@@ -2532,6 +2543,81 @@ async def anexar_arquivo_lancamento_por_id(
     )
 
 
+@router.post("/lancamentos/anexos-lote", status_code=201)
+async def anexar_comprovante_em_lote(
+    file: UploadFile,
+    # Default "" em vez de obrigatório: uma lista vazia chega aqui como campo
+    # ausente no multipart, e o 422 genérico do FastAPI não diria o que fazer.
+    lancamento_ids: str = Form(""),
+    categoria: str | None = Form(None),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Um comprovante ÚNICO para vários lançamentos pagos de uma vez (ver a
+    aba "Pagamento em lote" em app/financeiro/page.tsx): o banco emite um
+    comprovante só para a remessa inteira, e cada nota daquela remessa precisa
+    exibi-lo no relatório de Contas pagas.
+
+    O arquivo sobe UMA vez para o Storage e as N linhas de LancamentoAnexo
+    apontam para o MESMO `caminho_storage` — anexar por lançamento, um a um,
+    duplicaria o mesmo PDF N vezes no bucket. Quem paga o preço dessa escolha
+    é `excluir_anexo`, que por isso só apaga o objeto do Storage quando a
+    linha excluída é a última que o referencia.
+
+    `lancamento_ids` vem como CSV porque a requisição é multipart (o mesmo
+    motivo de `categoria` ser Form): não dá para mandar JSON junto do arquivo.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    try:
+        ids = [int(p) for p in lancamento_ids.split(",") if p.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="lancamento_ids inválido — esperado uma lista de ids separados por vírgula")
+    if not ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento para anexar o comprovante")
+
+    conteudo = await file.read()
+    if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    nome_arquivo = file.filename or "comprovante"
+    mime = file.content_type or "application/octet-stream"
+
+    # Emite a numeração de todos ANTES de subir o arquivo: se algum id for de
+    # outra fazenda (404), nada foi enviado ao Storage ainda.
+    contas = [_garantir_numero_lancamento(session, fazenda_id, lid) for lid in ids]
+
+    # O caminho fica ancorado no primeiro lançamento da remessa, seguindo a
+    # convenção de _caminho_anexo_lancamento; os demais só referenciam.
+    caminho = _caminho_anexo_lancamento(session, fazenda_id, contas[0].numero_lancamento, nome_arquivo)
+    try:
+        enviar_arquivo(caminho, conteudo, mime, bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    criados = []
+    for conta in contas:
+        anexo = LancamentoAnexo(
+            numero_lancamento=conta.numero_lancamento,
+            nome_arquivo=nome_arquivo,
+            mime_type=mime,
+            tamanho_bytes=len(conteudo),
+            categoria=categoria or conta.tipo_documento,
+            caminho_storage=caminho,
+            usuario_id=user.id if isinstance(user, Usuario) else None,
+            fazenda_id=fazenda_id,
+        )
+        session.add(anexo)
+        criados.append(anexo)
+    session.commit()
+    for anexo in criados:
+        session.refresh(anexo)
+    return {
+        "anexados": len(criados),
+        "nome_arquivo": nome_arquivo,
+        "anexo_ids": [a.id for a in criados],
+        "numeros_lancamento": [c.numero_lancamento for c in contas],
+    }
+
+
 @router.get("/lancamentos/por-id/{lancamento_id}/anexos")
 def listar_anexos_lancamento_por_id(
     lancamento_id: int, session: Session = Depends(get_session),
@@ -2599,10 +2685,23 @@ def excluir_anexo(
     if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     if anexo.caminho_storage:
-        try:
-            excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        # Um comprovante de pagamento em lote é UM arquivo no Storage
+        # referenciado por várias linhas (ver anexar_comprovante_em_lote), uma
+        # por lançamento da remessa. Apagar o objeto ao excluir a primeira
+        # linha deixaria as outras apontando para o vazio — o download delas
+        # passaria a falhar. Só remove do Storage quando esta é a última
+        # referência; caso contrário, some apenas o vínculo deste lançamento.
+        outras = session.exec(
+            select(LancamentoAnexo).where(
+                LancamentoAnexo.caminho_storage == anexo.caminho_storage,
+                LancamentoAnexo.id != anexo.id,
+            )
+        ).first()
+        if not outras:
+            try:
+                excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
     session.delete(anexo)
     session.commit()
     return {"excluido": True}

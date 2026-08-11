@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
@@ -619,6 +619,73 @@ class TestBaixaLote:
         corpo = r.json()
         assert corpo["baixados"] == 1
         assert corpo["nao_encontrados"] == [999999]
+
+    # --- Comprovante único da remessa (Financeiro > Pagamento em lote) ---
+    # O banco emite UM comprovante para o lote inteiro; ele precisa ficar
+    # vinculado a todas as notas, sem duplicar o arquivo no Storage.
+    def test_comprovante_em_lote_vincula_a_todos_os_lancamentos(self, client):
+        c, _ = client
+        id1 = self._criar_lancamento(c, 500.0)
+        id2 = self._criar_lancamento(c, 700.0)
+
+        r = c.post("/financeiro/lancamentos/anexos-lote",
+                   files={"file": ("comprovante.pdf", b"%PDF-1.4 comprovante", "application/pdf")},
+                   data={"lancamento_ids": f"{id1},{id2}"})
+        assert r.status_code == 201, r.text
+        assert r.json()["anexados"] == 2
+
+        # Cada lançamento enxerga o comprovante como anexo seu.
+        for lid in (id1, id2):
+            anexos = c.get(f"/financeiro/lancamentos/por-id/{lid}/anexos").json()
+            assert [a["nome_arquivo"] for a in anexos] == ["comprovante.pdf"]
+
+    def test_comprovante_em_lote_sobe_o_arquivo_uma_vez_so(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 100.0)
+        id2 = self._criar_lancamento(c, 200.0)
+        c.post("/financeiro/lancamentos/anexos-lote",
+               files={"file": ("comp.pdf", b"conteudo", "application/pdf")},
+               data={"lancamento_ids": f"{id1},{id2}"})
+
+        from fazenda.models.financeiro import LancamentoAnexo
+        with Session(engine) as s:
+            caminhos = {a.caminho_storage for a in s.exec(select(LancamentoAnexo)).all()}
+        assert len(caminhos) == 1  # duas linhas, um arquivo só
+
+    def test_excluir_um_anexo_do_lote_nao_derruba_o_do_outro(self, client):
+        c, _ = client
+        id1 = self._criar_lancamento(c, 100.0)
+        id2 = self._criar_lancamento(c, 200.0)
+        ids_anexo = c.post("/financeiro/lancamentos/anexos-lote",
+                           files={"file": ("comp.pdf", b"conteudo", "application/pdf")},
+                           data={"lancamento_ids": f"{id1},{id2}"}).json()["anexo_ids"]
+
+        assert c.delete(f"/financeiro/anexos/{ids_anexo[0]}").status_code == 200
+        # O arquivo continua no Storage porque a segunda linha ainda o referencia.
+        r = c.get(f"/financeiro/anexos/{ids_anexo[1]}")
+        assert r.status_code == 200
+        assert r.content == b"conteudo"
+
+        # Excluída a última referência, aí sim o objeto some.
+        assert c.delete(f"/financeiro/anexos/{ids_anexo[1]}").status_code == 200
+        assert c.get(f"/financeiro/anexos/{ids_anexo[1]}").status_code == 404
+
+    def test_comprovante_em_lote_sem_ids_da_erro(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos/anexos-lote",
+                   files={"file": ("comp.pdf", b"x", "application/pdf")}, data={"lancamento_ids": ""})
+        assert r.status_code == 400
+
+    def test_lancamento_com_comprovante_marcado_na_listagem(self, client):
+        c, _ = client
+        id1 = self._criar_lancamento(c, 100.0)
+        id2 = self._criar_lancamento(c, 200.0)
+        c.post("/financeiro/lancamentos/anexos-lote",
+               files={"file": ("comp.pdf", b"x", "application/pdf")}, data={"lancamento_ids": str(id1)})
+
+        por_id = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert por_id[id1]["tem_comprovante"] is True
+        assert por_id[id2]["tem_comprovante"] is False
 
     def test_baixa_individual_aceita_forma_pagamento(self, client):
         c, engine = client

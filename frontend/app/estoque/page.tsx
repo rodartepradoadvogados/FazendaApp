@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes } from "lucide-react";
+import { AlertTriangle, Filter, Search, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes, X } from "lucide-react";
 import {
   fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, atualizarMovimentoEstoque, confirmarExclusao,
   ehAdmin, formatDate, type MovimentoEstoqueRow,
@@ -11,6 +11,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
+import { EstoquePicker } from "@/components/EstoquePicker";
 import { Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
@@ -148,10 +149,22 @@ function EstoqueInventario() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
                 <select title="Filtrar itens por categoria" style={selStyle} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">Todas</option>{categorias.map((c) => <option key={c}>{c}</option>)}</select></div>
+              {/* Janela suspensa em vez de texto livre: a lista completa já
+                  está carregada aqui (fetchEstoque), e digitar o nome à mão
+                  errava acento/abreviação sem dizer por que nada aparecia.
+                  `todasFinalidades` é obrigatório — o default do picker é só
+                  "Medicamento" e esconderia quase todo o inventário. */}
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input title="Buscar item pelo nome" style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
+                <div className="flex items-center gap-1">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <EstoquePicker itens={itens ?? []} value={busca} onChange={setBusca}
+                      placeholder="Todos os produtos" todasFinalidades incluirNaoEstocaveis />
+                  </div>
+                  {busca && (
+                    <button type="button" onClick={() => setBusca("")} className="btn-ghost" title="Limpar filtro de produto" aria-label="Limpar filtro de produto">
+                      <X size={14} />
+                    </button>
+                  )}
                 </div></div>
               <label title="Mostrar apenas itens com quantidade abaixo do estoque mínimo" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", cursor: "pointer", paddingBottom: "0.35rem" }}>
                 <input type="checkbox" checked={soAbaixo} onChange={(e) => setSoAbaixo(e.target.checked)} /> Só abaixo do mínimo
