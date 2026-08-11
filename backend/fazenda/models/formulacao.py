@@ -166,6 +166,11 @@ class DietaSimulacao(SQLModel, table=True):
     eq_cms: int = 8
     cms_informado_kg_dia: Optional[float] = None  # usado quando eq_cms=0
     usa_monensina: bool = False
+    # Como descontar o efeito da monensina sobre o CMS (ago/2026): "kg" =
+    # -0,30 kg MS/dia (Duffield et al., 2008) | "pct" = -2% do CMS |
+    # "manual" = monensina_reducao_manual. Só vale com usa_monensina=True.
+    monensina_modo: str = "kg"
+    monensina_reducao_manual: Optional[float] = None
     eq_microbiana: int = 1  # só 1 (NASEM 2021) na Fase 1
     usa_dndf48: int = 0  # travado em 0 na Fase 1 (ajuste de digestibilidade por DNDF48; Fase 3)
 

@@ -47,14 +47,46 @@ export function PainelExigencias({ resultado }: { resultado: Resultado | null })
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(18rem, 1fr))", gap: "0.9rem" }}>
+        {/* As duas estimativas lado a lado: a fibra é ou não fator limitante?
+            Ver consumo.py — o valor que vale para o balanço é o COM fibra,
+            porque é o limite físico; o sem fibra é o potencial do animal. */}
         <div className="card" style={{ padding: 0 }}>
           <div className="card-header">Consumo de matéria seca</div>
           <table style={{ width: "100%" }}><tbody>
-            <Linha rotulo="CMS calculado" valor={`${fmt(consumo.cms_kg_dia, 2)} kg/d`} />
-            <Linha rotulo="Equação usada" valor={String(consumo.equacao_usada)} />
+            <Linha rotulo="Potencial do animal (sem olhar a fibra)" valor={`${fmt(consumo.cms_sem_fibra_kg_dia, 2)} kg/d`} />
+            <Linha rotulo="Limite com a fibra desta dieta" valor={`${fmt(consumo.cms_com_fibra_kg_dia, 2)} kg/d`} />
+            <Linha rotulo="CMS usado no balanço" valor={`${fmt(consumo.cms_kg_dia, 2)} kg/d`} />
+            {consumo.monensina_reducao_kg_dia > 0 && (
+              <Linha rotulo="Já descontado pela monensina" valor={`−${fmt(consumo.monensina_reducao_kg_dia, 2)} kg/d`} />
+            )}
             <Linha rotulo="% do peso vivo" valor={`${fmt(consumo.cms_pct_pv, 2)}%`} />
             <Linha rotulo="g/kg PV^0,75" valor={fmt(consumo.cms_g_kg_pv075, 1)} />
           </tbody></table>
+          <div style={{ padding: "0.6rem 0.7rem", borderTop: "1px solid var(--border)" }}>
+            {consumo.equacao_usada === 0 ? (
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                O balanço está usando o <strong>CMS informado manualmente</strong>. As duas estimativas acima ficam só
+                como comparação.
+              </p>
+            ) : consumo.fibra_e_limitante ? (
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "var(--text)" }}>
+                <strong style={{ color: "var(--amber)" }}>A fibra está limitando o consumo.</strong>{" "}
+                Esta vaca teria potencial para comer {fmt(consumo.cms_sem_fibra_kg_dia, 2)} kg, mas o volumoso desta
+                dieta só permite {fmt(consumo.cms_com_fibra_kg_dia, 2)} kg — <strong>{fmt(consumo.fibra_limita_kg_dia, 2)} kg/d
+                a menos</strong>. Reduzir FDN de volumoso ou melhorar a digestibilidade da fibra liberaria esse consumo.
+              </p>
+            ) : (
+              <p style={{ margin: 0, fontSize: "0.76rem", color: "var(--text)" }}>
+                <strong style={{ color: "var(--green-light)" }}>A fibra não está limitando.</strong>{" "}
+                O volumoso desta dieta permite pelo menos o que o animal comeria pelo próprio potencial — quem manda
+                aqui é o animal, não a dieta.
+              </p>
+            )}
+            <p style={{ margin: "0.4rem 0 0", fontSize: "0.68rem", color: "var(--text-muted)" }}>
+              Equações NASEM (2021), Cap. 2: nº {consumo.equacao_sem_fibra} (só fatores do animal) e
+              nº {consumo.equacao_com_fibra} (fatores do animal + fibra da dieta).
+            </p>
+          </div>
         </div>
 
         <div className="card" style={{ padding: 0 }}>
