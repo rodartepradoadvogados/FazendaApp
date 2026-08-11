@@ -20,6 +20,7 @@ import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Indicador } from "@/components/ui";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_AGENDA = [
   { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
@@ -427,7 +428,7 @@ export default function AgendaPage() {
       if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
       if (de && e.data < de) return false;
       if (ate && e.data > ate) return false;
-      if (filtro && !(e.descricao + e.numero_animal + e.categoria).toLowerCase().includes(filtro.toLowerCase())) return false;
+      if (!casaBusca(`${e.descricao} ${e.numero_animal} ${e.categoria}`, filtro)) return false;
       return true;
     }),
     [agenda, fCat, de, ate, filtro],

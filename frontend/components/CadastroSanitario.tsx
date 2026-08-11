@@ -18,6 +18,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 const CRITERIOS: [string, string][] = [
   ["medicamento", "Medicamento"],
@@ -55,9 +56,6 @@ export const ABAS_CADASTRO_SANITARIO = ABAS;
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-// Normaliza texto para busca insensível a maiúsculas e acentos.
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 // Aceita controle externo (Cadastro precisa da aba ativa para compor a
 // árvore de sub-navegação Configurações › Cadastro › Sanitário) — sem props,

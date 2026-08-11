@@ -18,6 +18,7 @@ import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -303,7 +304,7 @@ function RebanhoVisaoGeral() {
       const rotulo = rotuloEstadoDoAnimal(a.numero, estadosPorNumero);
       return (fGrupo.length === 0 || (a.grupo_primario ? fGrupo.includes(a.grupo_primario) : false)) &&
         (fSit.length === 0 || (rotulo ? fSit.includes(rotulo) : false)) &&
-        (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
+        casaBusca(a.numero, busca) &&
         (!somenteFemeas || a.sexo !== "M");
     });
   }, [regs, estadosPorNumero, fGrupo, fSit, busca, somenteFemeas]);

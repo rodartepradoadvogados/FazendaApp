@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 /**
  * Seletor de grupo/lote em tela cheia, no mesmo estilo visual do AnimalPicker
@@ -34,11 +35,10 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
     setRascunho(Array.from(n));
   };
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return opcoes;
-    return opcoes.filter((o) => o.toLowerCase().includes(q));
-  }, [opcoes, busca]);
+  const filtrados = useMemo(
+    () => opcoes.filter((o) => casaBusca(o, busca)),
+    [opcoes, busca]
+  );
   // `useOrdenacao` exige objetos (linhas com chaves) — como `opcoes` é uma
   // lista de strings soltas, embrulha cada uma em { valor } só pra reaproveitar
   // o mesmo padrão de ordenação por clique no cabeçalho.

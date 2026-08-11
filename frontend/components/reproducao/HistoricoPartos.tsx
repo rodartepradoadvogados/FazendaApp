@@ -8,6 +8,7 @@ import { fetchPartosHistorico, atualizarParto, ehAdmin, confirmarExclusao } from
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { casaBusca } from "@/lib/busca";
 
 type PartoReg = {
   id: number;
@@ -132,7 +133,7 @@ export default function HistoricoPartos() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((s) =>
-      (!animal || s.numero.toLowerCase().includes(animal.toLowerCase())) &&
+      casaBusca(s.numero, animal) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&

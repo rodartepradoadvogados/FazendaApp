@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
+import { casaBusca } from "@/lib/busca";
 
 export type TouroPickerItem = {
   naab?: string | null;
@@ -33,9 +34,8 @@ export function TouroPicker({ itens, value, onChangeTexto, onSelecionar, placeho
   const blurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const filtrados = useMemo(() => {
-    const q = value.trim().toLowerCase();
-    const base = !q ? itens : itens.filter((t) =>
-      `${t.nome} ${t.naab || ""} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q));
+    const base = itens.filter((t) =>
+      casaBusca(`${t.nome} ${t.naab || ""} ${t.central || ""} ${t.raca || ""}`, value));
     return base.slice(0, LIMITE_LISTA);
   }, [itens, value]);
 

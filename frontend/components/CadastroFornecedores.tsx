@@ -4,6 +4,7 @@ import { Truck, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-rea
 import { fetchFornecedores, criarFornecedor, atualizarFornecedor } from "@/lib/api";
 import { maskTelefone, maskCpfCnpj } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 type Fornecedor = {
   id: number; nome: string; tipo: string; categoria: string | null; cnpj_cpf: string | null; telefone: string | null;
@@ -35,9 +36,6 @@ const CATEGORIAS_FORNECEDOR = [
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-// Normaliza texto para busca insensível a maiúsculas e acentos.
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());

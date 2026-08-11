@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Wrench, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchServicosCadastro, criarServicoCadastro, atualizarServicoCadastro } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 type Servico = { id: number; nome: string; ativo: boolean };
 type Form = { nome: string; ativo: boolean };
@@ -11,9 +12,6 @@ const formVazio: Form = { nome: "", ativo: true };
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-// Normaliza texto para busca insensível a maiúsculas e acentos.
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 export default function CadastroServicos() {
   const [itens, setItens] = useState<Servico[] | null>(null);

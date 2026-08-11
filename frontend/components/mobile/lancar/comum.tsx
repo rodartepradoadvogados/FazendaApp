@@ -6,6 +6,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { normalizarBusca } from "@/lib/busca";
 
 // ── Tipos das listas usadas nos formulários ──────────────────────────────────
 export type Animal = {
@@ -32,9 +33,10 @@ export function hoje(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Sem acento, sem caixa — para a busca ser tolerante ("joão" acha "JOAO"). */
+/** Sem acento, sem caixa, sem hífen/underscore/espaço — para a busca ser
+ * tolerante ("joão" acha "JOAO") — delega ao helper único (lib/busca.ts). */
 export function normalizar(s: string): string {
-  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  return normalizarBusca(s);
 }
 
 // `estadoDe` é opcional: quando informado (rotuloDe do hook useEstadosReprodutivos),

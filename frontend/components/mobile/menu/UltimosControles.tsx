@@ -8,6 +8,7 @@ import { fetchControles, formatDate, firstDayOfMonth, today } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, FiltroPeriodo } from "@/components/mobile/menu/comum";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+import { casaBusca } from "@/lib/busca";
 
 const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
   { chave: "data", rotulo: "Data" },
@@ -34,10 +35,9 @@ export default function UltimosControles({ onVoltar }: { onVoltar: () => void })
 
   const regs = dados?.controles || [];
   const filtrados = useMemo(() => {
-    const termo = busca.trim().toLowerCase();
     return regs
       .filter((r) => !r.data || (r.data >= inicio && r.data <= fim))
-      .filter((r) => !termo || r.numero.toLowerCase().includes(termo))
+      .filter((r) => casaBusca(r.numero, busca))
       .sort((a, b) => (a.data || "") < (b.data || "") ? 1 : -1);
   }, [regs, inicio, fim, busca]);
   // useOrdenacao assume o controle só depois que o usuário escolhe um campo em

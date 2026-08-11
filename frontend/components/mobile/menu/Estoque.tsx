@@ -10,6 +10,7 @@ import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { LinhaPills, MobPill, GradeAcoes } from "@/components/mobile/lancar/comum";
 import { fetchEstoque, fetchEstoqueSemen, fetchTouros, excluirEstoqueSemen, type Touro } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, brl, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
+import { casaBusca } from "@/lib/busca";
 
 type ItemEstoque = {
   nome: string; categoria: string | null; finalidade: string | null; quantidade: number | null;
@@ -53,9 +54,8 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
     } else {
       base = [];
     }
-    const q = busca.trim().toLowerCase();
     return base
-      .filter((i) => !q || i.nome.toLowerCase().includes(q))
+      .filter((i) => casaBusca(i.nome, busca))
       .filter((i) => filtroSaldo === "todos" || (filtroSaldo === "positivo" ? (i.quantidade ?? 0) > 0 : (i.quantidade ?? 0) <= 0))
       .filter((i) => !soAbaixo || i.abaixo_minimo === true);
   }, [itens, aba, busca, filtroSaldo, soAbaixo]);
@@ -142,15 +142,14 @@ function SemenView() {
     () => (estoqueReq.dados || []).filter((e) => e.tipo !== "fazenda"),
     [estoqueReq.dados],
   );
-  const q = busca.trim().toLowerCase();
   const estoqueFiltrado = useMemo(
-    () => q ? emEstoque.filter((e) => `${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`.toLowerCase().includes(q)) : emEstoque,
-    [emEstoque, q],
+    () => emEstoque.filter((e) => casaBusca(`${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`, busca)),
+    [emEstoque, busca],
   );
   const naabFiltrado = useMemo(() => {
     const base = naabReq.dados || [];
-    return q ? base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q)) : base;
-  }, [naabReq.dados, q]);
+    return base.filter((t) => casaBusca(`${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`, busca));
+  }, [naabReq.dados, busca]);
   const pagNaab = usePaginacao(naabFiltrado);
 
   async function excluir(e: ItemSemen) {

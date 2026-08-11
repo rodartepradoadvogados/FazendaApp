@@ -12,6 +12,7 @@ import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabelasStatusBst } from "@/components/PainelLancarBst";
 import { CaixaProximaAplicacaoBst, PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
+import { casaBusca } from "@/lib/busca";
 import { Modal } from "@/components/Modal";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
@@ -1017,7 +1018,7 @@ export function RelatoriosBstView() {
 
   const filtrado = useMemo(() => (historico ?? []).filter((r) => {
     if (fLote.length && !(r.lote && fLote.includes(r.lote))) return false;
-    if (fAnimal && !r.numero_matriz.toLowerCase().includes(fAnimal.toLowerCase())) return false;
+    if (!casaBusca(r.numero_matriz, fAnimal)) return false;
     if (fDe && (!r.data_aplicacao || r.data_aplicacao < fDe)) return false;
     if (fAte && (!r.data_aplicacao || r.data_aplicacao > fAte)) return false;
     return true;
