@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
 import {
-  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
+  fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
   fetchNotaCapa, type NotaCapa,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
@@ -50,14 +50,17 @@ export default function Home() {
     setRecarregando(true);
     fetchNotaCapa().then(setNota).catch(() => {});
     Promise.allSettled([
-      fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchLancamentos(), fetchEstoque(),
-    ]).then(([ind, ag, prod, lanc, est]) => {
-      setErroCarga([ind, ag, prod, lanc, est].some((r) => r.status === "rejected"));
+      fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchResultadoMesRecente(), fetchEstoque(),
+    ]).then(([ind, ag, prod, resMes, est]) => {
+      setErroCarga([ind, ag, prod, resMes, est].some((r) => r.status === "rejected"));
       setD({
         ind: ind.status === "fulfilled" ? ind.value : null,
         ag: ag.status === "fulfilled" ? ag.value : null,
         prod: prod.status === "fulfilled" ? prod.value : null,
-        lanc: lanc.status === "fulfilled" ? lanc.value.lancamentos : null,
+        // Só {mes, resultado} — antes vinha o extrato financeiro completo
+        // (fetchLancamentos) e a Capa recalculava isso no cliente; ver
+        // GET /financeiro/resultado-mes-recente.
+        resMes: resMes.status === "fulfilled" ? resMes.value : null,
         est: est.status === "fulfilled" ? est.value.itens : null,
       });
     }).finally(() => setRecarregando(false));
@@ -80,19 +83,11 @@ export default function Home() {
   const bm = (k: string) => bench.find((b) => b.chave === k) || {};
   const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
-  // Resultado do mês mais recente (competência)
-  let resultadoMes: number | null = null, mesLabel = "";
-  if (d.lanc?.length) {
-    const meses = Array.from(new Set(d.lanc.map((l: any) => l.mes_competencia).filter(Boolean))).sort() as string[];
-    const ultimo = meses[meses.length - 1];
-    if (ultimo) {
-      mesLabel = ultimo;
-      const doMes = d.lanc.filter((l: any) => l.mes_competencia === ultimo);
-      const r = doMes.filter((l: any) => l.tipo === "receita").reduce((a: number, l: any) => a + l.valor, 0);
-      const de = doMes.filter((l: any) => l.tipo === "despesa").reduce((a: number, l: any) => a + l.valor, 0);
-      resultadoMes = r - de;
-    }
-  }
+  // Resultado do mês mais recente (competência) — já vem pronto do backend
+  // (GET /financeiro/resultado-mes-recente), sem precisar do extrato
+  // financeiro completo no cliente.
+  const resultadoMes: number | null = d.resMes?.resultado ?? null;
+  const mesLabel: string = d.resMes?.mes ?? "";
 
   const abaixoMin = d.est ? d.est.filter((i: any) => i.abaixo_minimo === true).length : null;
   const implante = d.ag?.hormonios_check?.find((h: any) => h.nome?.toLowerCase().includes("implante") || h.nome?.toLowerCase().includes("sincrogest"));

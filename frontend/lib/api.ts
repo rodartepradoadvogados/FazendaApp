@@ -4269,6 +4269,17 @@ export async function fetchLancamentos() {
   return res.json();
 }
 
+// Só o resultado (receita − despesa) do mês de competência mais recente —
+// usado pelo card "Resultado do mês" da Capa. Evita puxar fetchLancamentos()
+// (extrato financeiro completo, todo o histórico) só para esse número; ver
+// GET /financeiro/resultado-mes-recente.
+export type ResultadoMesRecente = { mes: string | null; resultado: number | null };
+export async function fetchResultadoMesRecente(): Promise<ResultadoMesRecente> {
+  const res = await authFetch(`${API}/financeiro/resultado-mes-recente`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Resultado do mês error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchPatrimonioListaSimples(): Promise<{ id: number; nome: string; tipo: string | null }[]> {
   const res = await authFetch(`${API}/financeiro/patrimonio/lista-simples`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Patrimônio error: ${res.status}`);
