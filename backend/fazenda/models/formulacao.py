@@ -2,12 +2,21 @@
 Formulação de Dietas — biblioteca nutricional por fazenda e simulações de
 dieta (motor NASEM/NRC Dairy 2021, ver fazenda/rules/nutricao/).
 
-Três tabelas novas, todas com `fazenda_id` OBRIGATÓRIO (int, não Optional):
-diferente do resto do repo (que aceita fazenda_id nulo por retrocompatibilidade
-com token legado anterior ao piloto de multi-fazenda), este módulo nasceu
-depois do piloto — não existe dado legado para acomodar, então cada router
-exige fazenda_id resolvido antes de gravar (ver
+`DietaSimulacao` e `DietaSimulacaoItem` têm `fazenda_id` OBRIGATÓRIO (int,
+não Optional): diferente do resto do repo (que aceita fazenda_id nulo por
+retrocompatibilidade com token legado anterior ao piloto de multi-fazenda),
+este módulo nasceu depois do piloto — não existe dado legado para acomodar,
+então cada router exige fazenda_id resolvido antes de gravar (ver
 fazenda/api/routers/formulacao_dietas.py).
+
+`AlimentoNutricional.fazenda_id` é a ÚNICA exceção nesta tabela nova: é
+Optional de propósito (não por retrocompatibilidade) — `fazenda_id=None`
+marca as linhas da BIBLIOTECA MESTRE CowData (semeada uma vez, global,
+igual para todas as fazendas — ver `fazenda.rules.biblioteca_alimentos`).
+Por isso toda consulta a esta tabela que filtra por fazenda precisa ser
+TOLERANTE a nulo (`fazenda_id == X OR fazenda_id IS NULL`), nunca um
+`== fazenda_id` seco — do contrário a biblioteca mestre some da fazenda
+inteira (== NULL nunca casa em SQL).
 
 `AlimentoNutricional` (cadastro editável, colunas tipadas) e
 `DietaSimulacaoItem` (snapshot imutável da grade no momento do cálculo, em
@@ -24,12 +33,26 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 class AlimentoNutricional(SQLModel, table=True):
-    """Biblioteca nutricional por fazenda — um perfil de composição (NASEM)
-    por `Alimento` cadastrado, ou uma entrada só-biblioteca sem cadastro
+    """Biblioteca nutricional — um perfil de composição (NASEM) por
+    `Alimento` cadastrado, ou uma entrada só-biblioteca sem cadastro
     correspondente (`alimento_id=None`). Alimenta a Etapa 1 do wizard de
     Formulação de Dietas: ao importar um alimento já cadastrado, o backend
     resolve em cascata biblioteca → análise bromatológica mais recente →
     template por `categoria_nasem` (ver GET /formulacao/alimentos/{id}/resolver).
+
+    Biblioteca MESTRE CowData + cópia por fazenda (copy-on-write), ver
+    `fazenda.rules.biblioteca_alimentos`: `fazenda_id=None` marca uma linha
+    da biblioteca mestre (global, semeada uma vez, igual para todas as
+    fazendas). Quando uma fazenda edita/exclui um item da mestre, o backend
+    NUNCA grava na linha mestre — cria uma cópia com `fazenda_id` da fazenda
+    e `origem_mestre_id` apontando pra linha mestre original. A tela de
+    biblioteca de cada fazenda enxerga: suas próprias linhas (`fazenda_id`
+    dela, `origem_mestre_id` nulo = item 100% próprio, ou preenchido = cópia
+    editada de um item mestre) + as linhas mestre que ela NÃO tem cópia
+    (`ativo=True`) e que não foram ocultadas (cópia com `ativo=False` =
+    "removi este item padrão da minha biblioteca", sem apagar a mestre nem
+    afetar as outras fazendas). "Restaurar ao padrão CowData" é simplesmente
+    apagar a cópia da fazenda — a linha mestre, nunca tocada, volta a aparecer.
 
     Os ~38 campos numéricos abaixo cobrem só o que a Fase 1 usa; aminoácidos,
     microminerais, vitaminas e perfil de ácidos graxos (Fase 2) ficam em
@@ -40,8 +63,14 @@ class AlimentoNutricional(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("alimento_id", "fazenda_id", name="uq_alimento_nutricional_alimento_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    # Optional DE PROPÓSITO (não retrocompatibilidade) — None = biblioteca
+    # mestre CowData, global. Ver docstring da classe.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id", index=True)
+    # Preenchido só quando esta linha é a cópia-por-fazenda de um item da
+    # biblioteca mestre (edição ou ocultação) — nulo tanto na própria linha
+    # mestre quanto num item 100% próprio da fazenda (nunca existiu na mestre).
+    origem_mestre_id: Optional[int] = Field(default=None, foreign_key="alimento_nutricional.id", index=True)
     nome: str = Field(index=True)
     # Vocabulário fechado — ver fazenda.rules.nutricao.tipos.CATEGORIAS_NASEM.
     # Controla as exceções de energia digestível base por categoria.
@@ -52,10 +81,20 @@ class AlimentoNutricional(SQLModel, table=True):
     conc_pct: float = 0.0
     fonte: Optional[str] = None
     observacao: Optional[str] = None
+    # Numa linha mestre: sempre True (a mestre nunca é "excluída"). Numa
+    # cópia-por-fazenda: True = cópia editada normal; False = "tombstone" —
+    # a fazenda ocultou o item mestre correspondente (origem_mestre_id) sem
+    # nunca ter editado seus valores. Ver fazenda.rules.biblioteca_alimentos.
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Faixa típica de inclusão na dieta, % da matéria seca TOTAL da dieta
+    # (não da MS do próprio ingrediente) — referência de bom senso zootécnico
+    # para o nutricionista, puxada automaticamente na Etapa 1 da grade junto
+    # com o teor de MS; não entra no motor de cálculo (só orientação visual).
+    inclusao_min_pct: Optional[float] = None
+    inclusao_max_pct: Optional[float] = None
 
     # ---- Base (% da MS, salvo indicado) --------------------------------
     ms_pct: Optional[float] = None  # % da matéria NATURAL (não da MS)
@@ -179,6 +218,14 @@ class DietaSimulacao(SQLModel, table=True):
     calculado_em: Optional[datetime] = None
     resultado_json: Optional[str] = None
     avisos_json: Optional[str] = None
+    # Overrides manuais da coluna "Exigência" da Etapa 4 (balanço ao vivo),
+    # {nutriente: valor} — o motor sempre recalcula a exigência a partir do
+    # animal (Etapa 3), mas o nutricionista pode sobrepor um valor pontual
+    # (ex.: exigência de uma tabela própria da fazenda); o balanço/situação
+    # daquela linha passa a usar o valor sobreposto (ver `_calcular` em
+    # formulacao_dietas.py). Convenção de cor cinza/preto igual à de
+    # `campos_editados_json` em DietaSimulacaoItem — ver PainelBalanco.tsx.
+    exigencias_editadas_json: Optional[str] = None
 
     # ---- Aplicação na dieta real -------------------------------------------
     dieta_lancamento_id: Optional[int] = Field(default=None, foreign_key="dieta_lancamento.id")

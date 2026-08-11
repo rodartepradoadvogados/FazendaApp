@@ -4,7 +4,7 @@
 // qualquer divergência de nome de campo é bug aqui, não lá (backend já
 // testado, 79 testes). Segue o mesmo padrão de fetch do resto do site
 // (authFetch/mensagemErroApi de lib/api.ts), sem cliente HTTP novo.
-import { API, authFetch, mensagemErroApi } from "@/lib/api";
+import { API, authFetch, baixarArquivoAutenticado, mensagemErroApi } from "@/lib/api";
 
 // ── Vocabulário fechado (espelha fazenda/rules/nutricao/tipos.py) ──
 export const CATEGORIAS_NASEM = [
@@ -152,6 +152,12 @@ export type ItemGrade = {
   alimento_nutricional_id?: number | null;
   analise_bromatologica_id?: number | null;
   campos_editados?: string[] | null;
+  // Faixa típica de inclusão na dieta (% da MS TOTAL da dieta), puxada da
+  // biblioteca junto com o teor de MS — só orientação visual pro
+  // nutricionista na Etapa 1 (grade), o backend ignora estes dois campos no
+  // cálculo (não fazem parte de CampoNutricional/IngredienteIn).
+  inclusao_min_pct?: number | null;
+  inclusao_max_pct?: number | null;
 } & { [K in CampoNutricional]?: number | null };
 
 export function itemGradeVazio(categoria: CategoriaNasem = "Outros"): ItemGrade {
@@ -237,6 +243,9 @@ export type SimulacaoCabecalho = AnimalPayload & {
   motor_versao: string | null; calculado_em: string | null;
   dieta_lancamento_id: number | null; aplicada_em: string | null; aplicada_por_usuario_id: number | null;
   criado_em: string; atualizado_em: string; usuario_id: number | null;
+  // Overrides manuais da coluna "Exigência" da Etapa 4, {nutriente: valor} —
+  // ver PainelBalanco.tsx e docstring de DietaSimulacao.exigencias_editadas_json.
+  exigencias_editadas: Record<string, number>;
 };
 
 export type SimulacaoDetalhe = {
@@ -276,7 +285,10 @@ export class SimulacaoConflitoError extends Error {}
 
 export async function salvarSimulacao(
   id: number,
-  dados: { animal: AnimalPayload; itens: ItemGrade[]; etapa_atual: number; atualizado_em?: string | null },
+  dados: {
+    animal: AnimalPayload; itens: ItemGrade[]; etapa_atual: number; atualizado_em?: string | null;
+    exigencias_editadas?: Record<string, number> | null;
+  },
 ): Promise<{ cabecalho: SimulacaoCabecalho; itens: ItemGrade[]; resultado: Resultado }> {
   const res = await authFetch(`${API}/formulacao/simulacoes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -328,18 +340,27 @@ export async function aplicarSimulacao(
 // Cálculo ao vivo (stateless) — Etapa 4 chama com debounce + AbortController;
 // um abort deliberado chega aqui como DOMException("AbortError"), o chamador
 // deve ignorá-lo (não é falha de cálculo, é substituição pela chamada seguinte).
-export async function calcularDieta(animal: AnimalPayload, itens: ItemGrade[], signal?: AbortSignal): Promise<Resultado> {
+export async function calcularDieta(
+  animal: AnimalPayload, itens: ItemGrade[], signal?: AbortSignal, exigenciasEditadas?: Record<string, number> | null,
+): Promise<Resultado> {
   const res = await authFetch(`${API}/formulacao/calcular`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ animal, itens }), signal,
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ animal, itens, exigencias_editadas: exigenciasEditadas || undefined }), signal,
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular a dieta"); }
   return res.json();
 }
 
-// ── Biblioteca de alimentos (Etapa 1) ──
+// ── Biblioteca de alimentos (Etapa 1 + aba "Biblioteca de referência") ──
 export type EntradaBiblioteca = {
   id: number; alimento_id: number | null; nome: string; categoria_nasem: string; conc_pct: number;
   fonte: string | null; observacao: string | null; ativo: boolean;
+  inclusao_min_pct: number | null; inclusao_max_pct: number | null;
+  // eh_mestre: item da biblioteca padrão CowData, ainda não copiado por esta
+  // fazenda. eh_copia_editada: já é cópia desta fazenda de um item mestre
+  // (editado ou ocultado) — controla o rótulo do botão excluir ("Restaurar
+  // padrão CowData" em vez de "Excluir") na aba de biblioteca.
+  eh_mestre: boolean; eh_copia_editada: boolean;
   valores: { [K in CampoNutricional]?: number | null } & Record<string, number | null | undefined>;
 };
 
@@ -357,12 +378,50 @@ export async function listarAlimentos(busca?: string): Promise<ListarAlimentosRe
 export type ResolverAlimentoResponse = {
   nome: string; categoria_nasem: string; conc_pct: number; origem: "biblioteca" | "bromatologica" | "template";
   alimento_nutricional_id: number | null; analise_bromatologica_id: number | null;
+  inclusao_min_pct: number | null; inclusao_max_pct: number | null;
   valores: { [K in CampoNutricional]?: number | null };
 };
 
 export async function resolverAlimento(alimentoId: number): Promise<ResolverAlimentoResponse> {
   const res = await authFetch(`${API}/formulacao/alimentos/${alimentoId}/resolver`);
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao resolver o alimento"); }
+  return res.json();
+}
+
+export type AlimentoNutricionalPayload = {
+  alimento_id?: number | null; nome: string; categoria_nasem: CategoriaNasem; conc_pct: number;
+  fonte?: string | null; observacao?: string | null;
+  inclusao_min_pct?: number | null; inclusao_max_pct?: number | null;
+  valores: Record<string, number | null | undefined>;
+};
+
+export async function atualizarAlimentoNaBiblioteca(id: number, dados: AlimentoNutricionalPayload): Promise<EntradaBiblioteca> {
+  const res = await authFetch(`${API}/formulacao/alimentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o alimento"); }
+  return res.json();
+}
+
+export type ExcluirAlimentoResposta = { acao: "excluido" | "restaurado" | "oculto" | "ja_oculto"; mensagem: string };
+
+export async function excluirAlimentoDaBiblioteca(id: number): Promise<ExcluirAlimentoResposta> {
+  const res = await authFetch(`${API}/formulacao/alimentos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir o alimento"); }
+  return res.json();
+}
+
+export function baixarModeloBibliotecaAlimentos() {
+  return baixarArquivoAutenticado("/formulacao/alimentos/modelo", "biblioteca_alimentos_modelo.xlsx");
+}
+
+export type ImportarBibliotecaResposta = { criados: number; atualizados: number; avisos: string[]; erros: string[] };
+
+export async function importarBibliotecaAlimentos(file: File): Promise<ImportarBibliotecaResposta> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/formulacao/alimentos/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar a planilha"); }
   return res.json();
 }
 
@@ -379,10 +438,7 @@ export async function listarTemplates(): Promise<TemplatesResponse> {
   return res.json();
 }
 
-export async function salvarAlimentoNaBiblioteca(dados: {
-  alimento_id?: number | null; nome: string; categoria_nasem: CategoriaNasem; conc_pct: number;
-  fonte?: string | null; observacao?: string | null; valores: Record<string, number | null | undefined>;
-}): Promise<EntradaBiblioteca> {
+export async function salvarAlimentoNaBiblioteca(dados: AlimentoNutricionalPayload): Promise<EntradaBiblioteca> {
   const res = await authFetch(`${API}/formulacao/alimentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -413,7 +469,26 @@ export function itemGradeDeResolucao(alimentoId: number, r: ResolverAlimentoResp
   item.alimento_id = alimentoId;
   item.alimento_nutricional_id = r.alimento_nutricional_id;
   item.analise_bromatologica_id = r.analise_bromatologica_id;
+  item.inclusao_min_pct = r.inclusao_min_pct;
+  item.inclusao_max_pct = r.inclusao_max_pct;
   for (const campo of CAMPOS_NUTRICIONAIS) item[campo] = r.valores[campo] ?? null;
+  return item;
+}
+
+// Adiciona direto na grade um item da biblioteca (mestre CowData ou próprio
+// da fazenda) sem passar pelo cadastro de Alimento — mesmo espírito de
+// itemGradeDaSemente, mas lendo da biblioteca de verdade (mestre + fazenda,
+// ver aba "Biblioteca de referência") em vez da lista estática de 12 itens.
+export function itemGradeDaBiblioteca(e: EntradaBiblioteca): ItemGrade {
+  const item = itemGradeVazio(e.categoria_nasem as CategoriaNasem);
+  item.nome = e.nome;
+  item.conc_pct = e.conc_pct;
+  item.origem = "biblioteca";
+  item.alimento_id = e.alimento_id;
+  item.alimento_nutricional_id = e.id;
+  item.inclusao_min_pct = e.inclusao_min_pct;
+  item.inclusao_max_pct = e.inclusao_max_pct;
+  for (const campo of CAMPOS_NUTRICIONAIS) item[campo] = e.valores[campo] ?? null;
   return item;
 }
 

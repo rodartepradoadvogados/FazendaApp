@@ -34,6 +34,14 @@ def _situacao(balanco: float, exigencia: float) -> Situacao:
     return "adequado"
 
 
+def situacao_da_linha(balanco: float, exigencia: float) -> Situacao:
+    """Wrapper público de `_situacao` — usado pelo router (formulacao_dietas.py)
+    para recalcular balanço/situação quando o nutricionista sobrepõe manualmente
+    a exigência de uma linha na Etapa 4 (ver `exigencias_editadas` de
+    `DietaSimulacao`), sem duplicar a regra de tolerância de excesso aqui."""
+    return _situacao(balanco, exigencia)
+
+
 def _linha(
     nutriente: str, unidade: str, exigencia: float, fornecido: float
 ) -> LinhaBalanco:
@@ -82,4 +90,4 @@ def montar_balanco(
     return linhas
 
 
-__all__ = ["montar_balanco"]
+__all__ = ["montar_balanco", "situacao_da_linha"]
