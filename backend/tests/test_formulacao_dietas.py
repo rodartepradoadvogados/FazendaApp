@@ -1,9 +1,10 @@
 """
-Formulação de Dietas — endpoints HTTP: controle de acesso (admin/contratante/
-consultor passam; operador comum e contador não passam), isolamento entre
-fazendas, CRUD de simulações, `/calcular` stateless, e `aplicar` gerando um
-DietaLancamento real (com `dieta_simulacao_id` de volta) a partir do
-resultado do motor.
+Formulação de Dietas — endpoints HTTP: controle de acesso (só dono-equivalente
+e Consultor CowData vinculado a esta fazenda passam — ver backlog #127;
+admin comum, contratante da fazenda, consultor EXTERNO, operador comum e
+contador não passam), isolamento entre fazendas, CRUD de simulações,
+`/calcular` stateless, e `aplicar` gerando um DietaLancamento real (com
+`dieta_simulacao_id` de volta) a partir do resultado do motor.
 """
 from __future__ import annotations
 
@@ -19,7 +20,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Alimento, Animal, ContratoFazenda, ContratoFazendaModulo, DietaLancamento, Fazenda, Lote, Usuario, UsuarioFazenda,
+    Alimento, Animal, ContratoFazenda, ContratoFazendaModulo, DietaLancamento, Fazenda, Lote, Pessoa, Usuario,
+    UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -55,16 +57,33 @@ def client(monkeypatch):
         s.add(Alimento(nome="Silagem de milho", fazenda_id=1))
         s.add(Alimento(nome="Farelo de soja", fazenda_id=1))
 
+        # Fazenda lógica da CowData + o membro da Equipe com cargo Consultor
+        # — é isso que faz o usuário 13 ser um CONSULTOR COWDATA (e não um
+        # consultor externo convidado pelo cliente, que é o usuário 16).
+        s.add(Fazenda(id=99, nome="CowData (empresa)", eh_empresa_cowdata=True))
+        s.commit()
+        s.add(Pessoa(id=990, nome="Consultor CowData", tipo="Consultor", fazenda_id=99, ativo=True))
+        # Segundo Consultor CowData, de propósito SEM vínculo com a fazenda 1 —
+        # prova que ser da Equipe não basta, precisa do vínculo na fazenda.
+        s.add(Pessoa(id=991, nome="Consultor CowData 2", tipo="Consultor", fazenda_id=99, ativo=True))
+        s.commit()
+
         s.add(Usuario(id=10, username="dono", nome="Dono", senha_hash="x", papel="admin", email="jairodarte@gmail.com"))
         s.add(Usuario(id=11, username="admin1", nome="Admin", senha_hash="x", papel="admin", email="admin1@example.com"))
         s.add(Usuario(id=12, username="contratante1", nome="Contratante", senha_hash="x", papel="operador", email="contratante@example.com"))
-        s.add(Usuario(id=13, username="consultor1", nome="Consultor", senha_hash="x", papel="operador", email="consultor@example.com"))
+        s.add(Usuario(id=13, username="consultor1", nome="Consultor CowData", senha_hash="x", papel="operador", email="consultor@example.com", pessoa_id=990))
         s.add(Usuario(id=14, username="operador1", nome="Operador", senha_hash="x", papel="operador", email="operador@example.com", permissoes="alimentacao"))
         s.add(Usuario(id=15, username="contador1", nome="Contador", senha_hash="x", papel="operador", email="contador@example.com"))
+        s.add(Usuario(id=16, username="vet_externo", nome="Vet externo", senha_hash="x", papel="operador", email="vet@example.com"))
+        s.add(Usuario(id=17, username="consultor2", nome="Consultor CowData 2", senha_hash="x", papel="operador", email="consultor2@example.com", pessoa_id=991))
         s.commit()
         s.add(UsuarioFazenda(usuario_id=12, fazenda_id=1, contratante=True))
+        # O mesmo Consultor CowData atende as duas fazendas — é assim que o
+        # teste de isolamento prova separação de DADOS (e não de acesso).
         s.add(UsuarioFazenda(usuario_id=13, fazenda_id=1, consultor=True))
+        s.add(UsuarioFazenda(usuario_id=13, fazenda_id=2, consultor=True))
         s.add(UsuarioFazenda(usuario_id=15, fazenda_id=1, contador=True))
+        s.add(UsuarioFazenda(usuario_id=16, fazenda_id=1, consultor=True))
         s.commit()
 
     def _get_session_override():
@@ -104,12 +123,39 @@ def _como_fazenda(fazenda_id: int | None):
 
 
 class TestControleDeAcesso:
-    @pytest.mark.parametrize("usuario_id", [10, 11, 12, 13])
+    # 10 = dono-equivalente; 13 = Consultor CowData vinculado a esta fazenda.
+    @pytest.mark.parametrize("usuario_id", [10, 13])
     def test_passam(self, client, usuario_id):
         c, _ = client
         _como(usuario_id)
         r = c.get("/formulacao/simulacoes")
         assert r.status_code == 200
+
+    # Backlog #127: quem passava antes e não passa mais — a Formulação de
+    # Dietas é serviço prestado pela CowData, não autoatendimento do cliente.
+    def test_admin_comum_nao_passa_mais(self, client):
+        c, _ = client
+        _como(11)
+        assert c.get("/formulacao/simulacoes").status_code == 403
+
+    def test_contratante_da_fazenda_nao_passa_mais(self, client):
+        c, _ = client
+        _como(12)
+        assert c.get("/formulacao/simulacoes").status_code == 403
+
+    def test_consultor_externo_do_cliente_nao_passa(self, client):
+        """Vínculo `consultor` sozinho não basta: o veterinário convidado pelo
+        próprio cliente não é Consultor CowData (não é Pessoa da Equipe)."""
+        c, _ = client
+        _como(16)
+        assert c.get("/formulacao/simulacoes").status_code == 403
+
+    def test_consultor_cowdata_sem_vinculo_nesta_fazenda_nao_passa(self, client):
+        """Ser Consultor CowData não dá acesso a qualquer fazenda — só àquelas
+        em que ele está vinculado (o 17 não está vinculado a nenhuma)."""
+        c, _ = client
+        _como(17)
+        assert c.get("/formulacao/simulacoes").status_code == 403
 
     def test_operador_comum_nao_passa(self, client):
         c, _ = client
@@ -131,7 +177,7 @@ class TestControleDeAcesso:
 
     def test_sem_fazenda_selecionada_403(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         _como_fazenda(None)
         r = c.get("/formulacao/simulacoes")
         assert r.status_code == 403
@@ -140,7 +186,7 @@ class TestControleDeAcesso:
 class TestCalcularStateless:
     def test_calcular_nao_grava_nada(self, client):
         c, engine = client
-        _como(11)
+        _como(13)
         r = c.post("/formulacao/calcular", json=DIETA_MINIMA)
         assert r.status_code == 200, r.text
         corpo = r.json()
@@ -154,7 +200,7 @@ class TestCalcularStateless:
 class TestCrudSimulacao:
     def test_criar_listar_obter_salvar(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         r = c.post("/formulacao/simulacoes", json={"nome": "Lote 01 - agosto", "lote": 1})
         assert r.status_code == 201, r.text
         sim_id = r.json()["id"]
@@ -175,7 +221,7 @@ class TestCrudSimulacao:
 
     def test_duplicar(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         sim_id = c.post("/formulacao/simulacoes", json={"nome": "Original", "lote": 1}).json()["id"]
         c.put(f"/formulacao/simulacoes/{sim_id}", json=DIETA_MINIMA)
         r = c.post(f"/formulacao/simulacoes/{sim_id}/duplicar", json={"nome": "Cópia"})
@@ -185,7 +231,7 @@ class TestCrudSimulacao:
 
     def test_excluir(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         sim_id = c.post("/formulacao/simulacoes", json={"nome": "Descartável"}).json()["id"]
         r = c.delete(f"/formulacao/simulacoes/{sim_id}")
         assert r.status_code == 200
@@ -195,7 +241,7 @@ class TestCrudSimulacao:
 class TestIsolamentoEntreFazendas:
     def test_simulacao_da_fazenda_1_invisivel_na_2(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         sim_id = c.post("/formulacao/simulacoes", json={"nome": "Só da 1"}).json()["id"]
 
         _como_fazenda(2)
@@ -208,7 +254,7 @@ class TestIsolamentoEntreFazendas:
 class TestAplicarNaDieta:
     def test_aplicar_cria_lancamento_com_vinculo(self, client):
         c, engine = client
-        _como(11)
+        _como(13)
         sim_id = c.post("/formulacao/simulacoes", json={"nome": "Para aplicar", "lote": 1}).json()["id"]
         c.put(f"/formulacao/simulacoes/{sim_id}", json=DIETA_MINIMA)
 
@@ -231,7 +277,7 @@ class TestAplicarNaDieta:
 
     def test_aplicar_com_dieta_ativa_sem_encerrar_409(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         sim1 = c.post("/formulacao/simulacoes", json={"nome": "Primeira", "lote": 1}).json()["id"]
         c.put(f"/formulacao/simulacoes/{sim1}", json=DIETA_MINIMA)
         c.post(f"/formulacao/simulacoes/{sim1}/aplicar", json={"lote": 1, "data_abertura": "2026-08-01"})
@@ -248,7 +294,7 @@ class TestAplicarNaDieta:
 
     def test_excluir_simulacao_aplicada_409(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         sim_id = c.post("/formulacao/simulacoes", json={"nome": "Aplicada", "lote": 1}).json()["id"]
         c.put(f"/formulacao/simulacoes/{sim_id}", json=DIETA_MINIMA)
         c.post(f"/formulacao/simulacoes/{sim_id}/aplicar", json={"lote": 1, "data_abertura": "2026-08-08"})
@@ -259,7 +305,7 @@ class TestAplicarNaDieta:
 class TestBibliotecaDeAlimentos:
     def test_listar_alimentos_marca_sem_composicao(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         r = c.get("/formulacao/alimentos")
         assert r.status_code == 200
         nomes = {a["nome"]: a["sem_composicao"] for a in r.json()["cadastrados"]}
@@ -267,7 +313,7 @@ class TestBibliotecaDeAlimentos:
 
     def test_resolver_sem_biblioteca_nem_laudo_cai_no_template(self, client):
         c, engine = client
-        _como(11)
+        _como(13)
         with Session(engine) as s:
             alimento_id = s.exec(select(Alimento).where(Alimento.nome == "Silagem de milho")).first().id
         r = c.get(f"/formulacao/alimentos/{alimento_id}/resolver")
@@ -277,7 +323,7 @@ class TestBibliotecaDeAlimentos:
 
     def test_templates_e_biblioteca_semente(self, client):
         c, _ = client
-        _como(11)
+        _como(13)
         r = c.get("/formulacao/templates")
         assert r.status_code == 200
         assert len(r.json()["categorias"]) == 11

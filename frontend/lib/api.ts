@@ -187,15 +187,24 @@ export function ehConsultor(): boolean {
   return getFazendaAtual()?.vinculo_consultor === true;
 }
 // Formulação de Dietas (/dietas — portal próprio, ver components/dietas/
-// DietasLayout.tsx): administrador desta fazenda (papel admin ou vínculo
-// contratante) OU consultor desta fazenda. Espelha
+// DietasLayout.tsx): dono-equivalente (Alexandre Rodarte e Alexandre Scarpa)
+// OU Consultor CowData vinculado a ESTA fazenda. Espelha
 // backend/fazenda/auth.py::exigir_admin_ou_consultor_fazenda — eixo de
 // acesso à parte, deliberadamente FORA de ROTA_MODULO/podeModulo (ver
 // comentário no backend sobre por que isso não empilha com permissão comum).
+//
+// Mudou em ago/2026 (backlog #127): admin comum e o contratante da própria
+// fazenda-cliente NÃO entram mais — é serviço prestado pela CowData, não
+// autoatendimento. Consultor externo convidado pelo cliente também não: o
+// vínculo `consultor` sozinho não basta, tem que ser Equipe CowData com
+// cargo Consultor (eh_consultor_cowdata, calculado no backend).
 export function podeFormularDietas(): boolean {
-  const acessoDeUsuario = ehDono() || ehAdmin()
-    || getFazendaAtual()?.vinculo_contratante === true
-    || getFazendaAtual()?.vinculo_consultor === true;
+  const consultorCowDataNestaFazenda = getUsuario()?.eh_consultor_cowdata === true
+    && getFazendaAtual()?.vinculo_consultor === true;
+  // Sessão de suporte CowData passa, igual ao dono — é o mesmo bypass que o
+  // backend já faz nessa dependência (sem vínculo NESTA fazenda-cliente, o
+  // membro de suporte cairia no 403 apesar de precisar da tela pra ajudar).
+  const acessoDeUsuario = ehDono() || getModoSuporte() != null || consultorCowDataNestaFazenda;
   if (!acessoDeUsuario) return false;
   // Módulo à-la-carte, fora de todo pacote do catálogo (ver planos.py) — a
   // FAZENDA precisa ter contratado à parte, mesmo sendo admin/dono/consultor
@@ -541,6 +550,12 @@ export const criarMembroEquipeCowData = (d: PessoaCowDataIn): Promise<PessoaCowD
 export const editarMembroEquipeCowData = (id: number, d: PessoaCowDataIn): Promise<PessoaCowData> => _pcSend(`/equipe/pessoas/${id}`, "PUT", d);
 export const excluirMembroEquipeCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/equipe/pessoas/${id}`, "DELETE");
 
+// Consultores CowData disponíveis para vincular a uma fazenda-cliente —
+// membros ATIVOS da Equipe CowData com cargo Consultor que já têm login
+// ATIVO. Alimenta o seletor do plano Diamond/sob medida em FazendasAdmin.tsx.
+export type ConsultorCowData = { pessoa_id: number; usuario_id: number; nome: string; username: string; email: string | null };
+export const fetchConsultoresCowData = (): Promise<ConsultorCowData[]> => _pcGet(`/equipe/consultores`);
+
 // Login + permissões de um membro no próprio Painel CowData (ago/2026) —
 // ver AREAS_PAINEL_COWDATA no backend. Restrito ao dono (não ao membro logado).
 export const AREAS_PAINEL_COWDATA = ["cockpit", "assinaturas", "fazendas", "financeiro", "equipe", "produto", "cofre", "confianca", "cadastros"] as const;
@@ -838,8 +853,12 @@ export async function fetchUsuariosVinculados(fazendaId: number): Promise<Usuari
   if (!res.ok) throw new Error(`Usuários vinculados error: ${res.status}`);
   return res.json();
 }
+// `usuario_id` OU `username` — o backend aceita os dois (ver
+// fazendas.py::VincularUsuarioIn). O seletor de Consultor CowData usa o id,
+// que ele já conhece; a caixa de vínculo manual usa o username digitado.
 export async function vincularUsuarioFazenda(
-  fazendaId: number, dados: { username: string; contratante?: boolean; consultor?: boolean; contador?: boolean },
+  fazendaId: number,
+  dados: { username?: string; usuario_id?: number; contratante?: boolean; consultor?: boolean; contador?: boolean },
 ): Promise<{ vinculado: boolean; usuario_id: number; username: string }> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

@@ -14,9 +14,9 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from fazenda.auth import (
-    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_email_dono_equivalente,
-    eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id, get_suporte_do_token, hash_senha,
-    token_manter_conectado, verificar_senha,
+    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
+    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id,
+    get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
@@ -106,7 +106,12 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
             # Membro da Equipe CowData (não dono) com login próprio — ver
             # fazenda/models/equipe_cowdata_acesso.py. `areas_painel_cowdata`
             # alimenta o filtro do menu do Painel CowData no frontend.
-            "eh_equipe_cowdata": eh_equipe_cowdata, "areas_painel_cowdata": areas_cowdata}
+            "eh_equipe_cowdata": eh_equipe_cowdata, "areas_painel_cowdata": areas_cowdata,
+            # Membro da Equipe CowData com cargo Consultor — junto com o
+            # vínculo `consultor` NA FAZENDA SELECIONADA é o que libera a
+            # Formulação de Dietas (ver auth.py::exigir_admin_ou_consultor_fazenda
+            # e lib/api.ts::podeFormularDietas). Sozinho não libera nada.
+            "eh_consultor_cowdata": eh_consultor_cowdata(session, u) if session is not None else False}
 
 
 def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario_id: int | None = None) -> Pessoa:

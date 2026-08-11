@@ -426,11 +426,36 @@ def exigir_nao_consultor():
     return _dep
 
 
+def eh_consultor_cowdata(session: Session, usuario: Usuario) -> bool:
+    """True quando este login pertence a um membro da Equipe CowData com
+    cargo "Consultor" (ver painel_cowdata.py: cada membro é uma `Pessoa` da
+    fazenda lógica `eh_empresa_cowdata`, e o cargo mora em `Pessoa.tipo`).
+
+    É o que distingue o CONSULTOR COWDATA do consultor externo convidado
+    pelo próprio cliente — os dois usam `UsuarioFazenda.consultor` para o
+    vínculo com a fazenda, então o vínculo sozinho não diferencia."""
+    if not usuario.pessoa_id:
+        return False
+    pessoa = session.get(Pessoa, usuario.pessoa_id)
+    if not pessoa or (pessoa.tipo or "") != "Consultor":
+        return False
+    fazenda = session.get(Fazenda, pessoa.fazenda_id) if pessoa.fazenda_id else None
+    return bool(fazenda and fazenda.eh_empresa_cowdata)
+
+
 def exigir_admin_ou_consultor_fazenda():
-    """Formulação de Dietas: restrita ao ADMINISTRADOR desta fazenda (papel
-    admin ou vínculo `contratante`) OU ao CONSULTOR desta fazenda
-    (UsuarioFazenda.consultor — o veterinário/agrônomo convidado, ver
-    fazenda/models/multitenant.py).
+    """Formulação de Dietas: restrita ao dono-equivalente (Alexandre Rodarte
+    e Alexandre Scarpa, ver EMAILS_DONO_EQUIVALENTE) e aos CONSULTORES
+    COWDATA vinculados a ESTA fazenda — pedido explícito do usuário
+    (backlog #127).
+
+    Mudou em ago/2026: antes qualquer `papel == "admin"` e o `contratante`
+    da própria fazenda-cliente também entravam. Não entram mais — a
+    Formulação de Dietas é serviço prestado pela CowData, não ferramenta de
+    autoatendimento do cliente. Consultor EXTERNO convidado pelo cliente
+    (UsuarioFazenda.consultor sem ser da Equipe CowData) também não entra;
+    quem diferencia os dois é `eh_consultor_cowdata` (o vínculo sozinho não
+    diferencia — ver docstring dela).
 
     O contador é bloqueado explicitamente (o Painel do Contador não inclui
     Formulação de Dietas). Operador comum, mesmo com o módulo `alimentacao`
@@ -443,10 +468,10 @@ def exigir_admin_ou_consultor_fazenda():
     caso legítimo de operar sem fazenda selecionada.
 
     Sessão de suporte CowData (token com claim "suporte") também passa
-    direto, igual ao dono-equivalente — sem vínculo de admin/consultor
-    NESTA fazenda-cliente, o membro de suporte cairia sempre no 403 final
-    apesar de precisar ver a tela para ajudar o cliente (mesmo raciocínio
-    de exigir_modulo_contratado, logo abaixo)."""
+    direto, igual ao dono-equivalente — sem vínculo NESTA fazenda-cliente, o
+    membro de suporte cairia sempre no 403 final apesar de precisar ver a
+    tela para ajudar o cliente (mesmo raciocínio de
+    exigir_modulo_contratado, logo abaixo)."""
     def _dep(
         user: Usuario = Depends(get_current_user),
         fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -462,13 +487,11 @@ def exigir_admin_ou_consultor_fazenda():
         ).first()
         if vinculo and vinculo.contador:
             raise HTTPException(status_code=403, detail="O Painel do Contador não inclui Formulação de Dietas")
-        if vinculo and (vinculo.contratante or vinculo.consultor):
-            return user
-        if user.papel == "admin":
+        if vinculo and vinculo.consultor and eh_consultor_cowdata(session, user):
             return user
         raise HTTPException(
             status_code=403,
-            detail="Formulação de Dietas é restrita ao administrador da fazenda e ao consultor vinculado.",
+            detail="Formulação de Dietas é restrita à CowData e ao Consultor CowData vinculado a esta fazenda.",
         )
     return _dep
 

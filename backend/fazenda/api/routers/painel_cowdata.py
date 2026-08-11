@@ -166,6 +166,43 @@ def listar_equipe(_: Usuario = Depends(exigir_area_painel_cowdata("equipe")), se
     return [_pessoa_publica(p) for p in sorted(pessoas, key=lambda p: p.nome)]
 
 
+@router.get("/equipe/consultores")
+def listar_consultores_cowdata(
+    _: Usuario = Depends(exigir_area_painel_cowdata("fazendas")), session: Session = Depends(get_session)
+) -> list[dict]:
+    """Membros ATIVOS da Equipe CowData com cargo Consultor que já têm login
+    próprio ATIVO — é a lista do seletor "Consultor CowData" ao definir o
+    plano de uma fazenda-cliente (ver FazendasAdmin.tsx). Fica na área
+    `fazendas` (não `equipe`) de propósito: quem administra contrato de
+    cliente precisa desta lista, mesmo sem acesso ao cadastro da Equipe."""
+    fazenda_id = _fazenda_cowdata_id(session)
+    pessoas = session.exec(
+        select(Pessoa).where(
+            Pessoa.fazenda_id == fazenda_id, Pessoa.tipo == "Consultor", Pessoa.ativo == True,  # noqa: E712
+        )
+    ).all()
+    if not pessoas:
+        return []
+    por_pessoa_id = {p.id: p for p in pessoas}
+    usuarios = session.exec(
+        select(Usuario).where(
+            Usuario.pessoa_id.in_(list(por_pessoa_id)), Usuario.ativo == True,  # noqa: E712
+        )
+    ).all()
+    saida = [
+        {
+            "pessoa_id": u.pessoa_id,
+            "usuario_id": u.id,
+            "nome": por_pessoa_id[u.pessoa_id].nome,
+            "username": u.username,
+            "email": u.email,
+        }
+        for u in usuarios
+        if u.pessoa_id in por_pessoa_id
+    ]
+    return sorted(saida, key=lambda c: c["nome"])
+
+
 @router.post("/equipe/pessoas")
 def criar_membro_equipe(
     dados: PessoaCowDataIn, _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session)
