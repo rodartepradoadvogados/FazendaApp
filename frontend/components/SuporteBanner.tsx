@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
-import { getModoSuporte, encerrarModoSuporte, type ModoSuporte } from "@/lib/api";
+import { getModoSuporte, encerrarModoSuporte, LABEL_NIVEL_SIGILO_EQUIPE_COWDATA, type ModoSuporte } from "@/lib/api";
 
 const VERMELHO = "#7A1F1F";
 const VERMELHO_ESCURO = "#5C1717";
@@ -103,6 +103,10 @@ export function SuporteBanner() {
       </div>
       <p style={{ margin: 0, fontSize: "0.78rem", fontWeight: 600 }}>
         Você está atuando como {modo.fazendaNome}.
+        {/* Rótulo amigável, nunca "basico/tecnico/total" cru — mesmo texto
+            usado ao configurar o nível em Painel CowData > Equipe. Avisa
+            ANTES de um 403 de "não alcança X" surpreender o suporte. */}
+        {modo.nivelSigilo && <span style={{ fontWeight: 400, opacity: 0.85 }}> Nível de acesso: {LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[modo.nivelSigilo]}.</span>}
       </p>
     </div>
   );

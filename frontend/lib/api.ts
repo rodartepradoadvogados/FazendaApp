@@ -565,14 +565,33 @@ export const LABEL_AREA_PAINEL_COWDATA: Record<AreaPainelCowData, string> = {
   equipe: "Equipe", produto: "Produtos e robôs", cofre: "Cofre de acesso (Suporte)", confianca: "Confiança e LGPD",
   cadastros: "Cadastros globais",
 };
+// Nível de sigilo (#132) — quanto de uma fazenda-cliente este membro enxerga
+// numa sessão de suporte (Cofre de acesso), eixo à parte de "áreas" (o que
+// ele vê no Painel CowData). Rótulo/descrição aqui, não no componente, para
+// qualquer outra tela que venha a mostrar o nível reusar o mesmo texto —
+// pedido explícito: nunca expor "basico/tecnico/total" cru na interface.
+export const NIVEIS_SIGILO_EQUIPE_COWDATA = ["basico", "tecnico", "total"] as const;
+export type NivelSigiloEquipeCowData = typeof NIVEIS_SIGILO_EQUIPE_COWDATA[number];
+export const LABEL_NIVEL_SIGILO_EQUIPE_COWDATA: Record<NivelSigiloEquipeCowData, string> = {
+  basico: "Somente operação da fazenda",
+  tecnico: "Operação + financeiro e custos",
+  total: "Acesso completo",
+};
+export const DESCRICAO_NIVEL_SIGILO_EQUIPE_COWDATA: Record<NivelSigiloEquipeCowData, string> = {
+  basico: "Vê rebanho, reprodução, sanidade, produção e estoque. Não vê financeiro, folha de pagamento, contratos nem custos.",
+  tecnico: "Tudo do nível anterior, mais financeiro e custos (lançamentos, estoque valorado, indicadores de custo). Continua sem ver folha de pagamento, salários, rescisões, vales ou dados pessoais de funcionários.",
+  total: "Vê tudo, sem restrição — igual a entrar na fazenda como administrador (ações destrutivas continuam bloqueadas em modo suporte, isso não muda).",
+};
 export type UsuarioEquipeCowData = {
   usuario_id: number; username: string; email: string; ativo: boolean; areas: string[];
+  nivel_sigilo: NivelSigiloEquipeCowData;
   pode_suspender_assinatura: boolean; pode_acessar_fazendas: boolean; pode_alterar_cadastro: boolean;
   pode_modificar_suspender_plano: boolean; pode_emitir_auditar_contratos: boolean; pode_emitir_cobrancas: boolean;
   pode_vincular_usuarios: boolean; pode_cadastrar_usuarios: boolean;
 };
 export type UsuarioEquipeCowDataIn = {
   username: string; email: string; senha?: string | null; ativo?: boolean; areas: string[];
+  nivel_sigilo?: NivelSigiloEquipeCowData;
   pode_suspender_assinatura?: boolean; pode_acessar_fazendas?: boolean; pode_alterar_cadastro?: boolean;
   pode_modificar_suspender_plano?: boolean; pode_emitir_auditar_contratos?: boolean; pode_emitir_cobrancas?: boolean;
   pode_vincular_usuarios?: boolean; pode_cadastrar_usuarios?: boolean;
@@ -698,24 +717,29 @@ export type PedidoAcessoSuporte = {
   // Presentes só quando status vira "aprovado" na hora (fazenda sem
   // exige_aprovacao_suporte — ver POST /cofre/pedidos): token novo, já
   // com a claim "suporte", pronto pra substituir o token guardado e entrar
-  // na fazenda como suporte.
-  token?: string; sessao_id?: number; sessao_expira_em?: string;
+  // na fazenda como suporte. nivel_sigilo vem junto (#132) — o nível
+  // carimbado nesse token, calculado a partir de PermissaoEquipeCowData de
+  // quem pediu.
+  token?: string; sessao_id?: number; sessao_expira_em?: string; nivel_sigilo?: NivelSigiloEquipeCowData;
 };
 export type SessaoAcessoSuporte = {
   id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
-  motivo: string; assunto_chamado: string | null; iniciada_em: string; expira_em: string; encerrada_em: string | null;
+  motivo: string; assunto_chamado: string | null; nivel_sigilo: NivelSigiloEquipeCowData;
+  iniciada_em: string; expira_em: string; encerrada_em: string | null;
   ativa: boolean; segundos_restantes: number;
 };
 export type AuditoriaAcessoSuporte = {
   id: number; quando: string; fazenda_id: number; fazenda_nome: string; usuario_id: number;
-  membro_nome: string | null; acao: "entrada" | "saida";
+  membro_nome: string | null; acao: "entrada" | "saida"; nivel_sigilo: NivelSigiloEquipeCowData | null;
 };
 // Auditoria granular — uma linha por escrita (POST/PUT/PATCH/DELETE)
-// tentada durante uma sessão de suporte, permitida ou bloqueada.
+// tentada durante uma sessão de suporte (permitida ou bloqueada) e por
+// LEITURA (GET) bloqueada por nível de sigilo (#132; leitura permitida não
+// gera linha).
 export type AcaoAuditoriaSuporte = {
   id: number; sessao_id: number; protocolo: string | null; fazenda_id: number; fazenda_nome: string;
   usuario_id: number; membro_nome: string | null; metodo: string; caminho: string;
-  status_code: number | null; bloqueado: boolean; quando: string;
+  status_code: number | null; bloqueado: boolean; nivel_sigilo: NivelSigiloEquipeCowData | null; quando: string;
 };
 
 export const fetchMotivosAcessoSuporte = (): Promise<string[]> => _pcGet(`/cofre/motivos`);
@@ -747,6 +771,9 @@ export type ModoSuporte = {
   // entrou, hora exata da entrada e motivo escolhido — tudo isso já vem na
   // resposta do próprio pedido aprovado, sem chamada extra.
   membroNome: string; entradaEm: string; motivo: string;
+  // Nível de sigilo desta sessão (#132) — mostrado na faixa pra quem está em
+  // modo suporte não ser pego de surpresa por um 403 de "não alcança X".
+  nivelSigilo: NivelSigiloEquipeCowData;
 };
 export function getModoSuporte(): ModoSuporte | null {
   if (typeof window === "undefined") return null;
@@ -775,6 +802,7 @@ export async function entrarComoSuporte(
   localStorage.setItem("modo_suporte", JSON.stringify({
     sessaoId: pedido.sessao_id, protocolo: pedido.protocolo, fazendaNome: pedido.fazenda_nome,
     expiraEm: pedido.sessao_expira_em, membroNome, entradaEm: new Date().toISOString(), motivo,
+    nivelSigilo: pedido.nivel_sigilo || "basico",
   } satisfies ModoSuporte));
   return fazendaAtual;
 }

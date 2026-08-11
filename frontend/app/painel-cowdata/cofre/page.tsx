@@ -10,7 +10,7 @@ import { CheckCircle2, ClipboardList, Lock, LogIn, LogOut, ShieldAlert, XCircle 
 import {
   fetchFazendasCofre, fetchSessoesAtivasCofre, fetchPedidosRecentesCofre,
   fetchAuditoriaRecenteCofre, fetchAcoesSuporte, aprovarPedidoCofre, negarPedidoCofre, encerrarSessaoCofre,
-  atualizarFazenda,
+  atualizarFazenda, LABEL_NIVEL_SIGILO_EQUIPE_COWDATA,
   type FazendaCofre, type SessaoAcessoSuporte, type PedidoAcessoSuporte, type AuditoriaAcessoSuporte, type AcaoAuditoriaSuporte,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -145,6 +145,7 @@ export default function SuporteCowData() {
                   <ThOrdenavel label="Protocolo" campo="protocolo" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
                   <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
                   <ThOrdenavel label="Membro" campo="membro_nome" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
+                  <ThOrdenavel label="Nível" campo="nivel_sigilo" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
                   <ThOrdenavel label="Motivo" campo="motivo" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
                   <ThOrdenavel label="Iniciada" campo="iniciada_em" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
                   <ThOrdenavel label="Expira" campo="segundos_restantes" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
@@ -152,12 +153,13 @@ export default function SuporteCowData() {
                 </tr>
               </thead>
               <tbody>
-                {sessoes.length === 0 && <Vazio colSpan={7} texto="Nenhuma sessão ativa no momento." />}
+                {sessoes.length === 0 && <Vazio colSpan={8} texto="Nenhuma sessão ativa no momento." />}
                 {ordSessoes.linhasOrdenadas.map((s) => (
                   <tr key={s.id}>
                     <Td style={{ color: COR.mudo, fontVariantNumeric: "tabular-nums" }}>{s.protocolo || "—"}</Td>
                     <Td style={{ fontWeight: 600 }}>{s.fazenda_nome}</Td>
                     <Td>{s.membro_nome ?? "—"}</Td>
+                    <Td style={{ color: COR.mudo }}>{LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[s.nivel_sigilo]}</Td>
                     <Td style={{ color: COR.mudo }}>{s.motivo}</Td>
                     <Td>{formatarHora(s.iniciada_em)}</Td>
                     <Td style={{ color: s.segundos_restantes <= 300 ? COR.vermelho : COR.mudo }}>{expiraLabel(s)}</Td>
@@ -260,16 +262,18 @@ export default function SuporteCowData() {
                   <ThOrdenavel label="Quando" campo="quando" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
                   <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
                   <ThOrdenavel label="Membro" campo="membro_nome" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
+                  <ThOrdenavel label="Nível" campo="nivel_sigilo" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
                   <ThOrdenavel label="Ação" campo="acao" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
                 </tr>
               </thead>
               <tbody>
-                {auditoria.length === 0 && <Vazio colSpan={4} texto="Nenhuma entrada de auditoria ainda." />}
+                {auditoria.length === 0 && <Vazio colSpan={5} texto="Nenhuma entrada de auditoria ainda." />}
                 {ordAuditoria.linhasOrdenadas.map((a) => (
                   <tr key={a.id}>
                     <Td style={{ color: COR.mudo }}>{formatarData(a.quando)}</Td>
                     <Td style={{ fontWeight: 600 }}>{a.fazenda_nome}</Td>
                     <Td>{a.membro_nome ?? "—"}</Td>
+                    <Td style={{ color: COR.mudo }}>{a.nivel_sigilo ? LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[a.nivel_sigilo] : "—"}</Td>
                     <Td>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", color: a.acao === "entrada" ? COR.verde : COR.mudo }}>
                         {a.acao === "entrada" ? <LogIn size={13} /> : <LogOut size={13} />}
@@ -290,18 +294,20 @@ export default function SuporteCowData() {
                   <ThOrdenavel label="Protocolo" campo="protocolo" coluna={ordAcoes.coluna} dir={ordAcoes.dir} ordenar={ordAcoes.ordenar} />
                   <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ordAcoes.coluna} dir={ordAcoes.dir} ordenar={ordAcoes.ordenar} />
                   <ThOrdenavel label="Membro" campo="membro_nome" coluna={ordAcoes.coluna} dir={ordAcoes.dir} ordenar={ordAcoes.ordenar} />
+                  <ThOrdenavel label="Nível" campo="nivel_sigilo" coluna={ordAcoes.coluna} dir={ordAcoes.dir} ordenar={ordAcoes.ordenar} />
                   <ThOrdenavel label="Ação" campo="metodo" coluna={ordAcoes.coluna} dir={ordAcoes.dir} ordenar={ordAcoes.ordenar} />
                   <Th>Resultado</Th>
                 </tr>
               </thead>
               <tbody>
-                {acoes.length === 0 && <Vazio colSpan={6} texto="Nenhuma ação registrada ainda." />}
+                {acoes.length === 0 && <Vazio colSpan={7} texto="Nenhuma ação registrada ainda." />}
                 {ordAcoes.linhasOrdenadas.map((a) => (
                   <tr key={a.id}>
                     <Td style={{ color: COR.mudo }}>{formatarData(a.quando)}</Td>
                     <Td style={{ color: COR.mudo, fontVariantNumeric: "tabular-nums" }}>{a.protocolo || "—"}</Td>
                     <Td style={{ fontWeight: 600 }}>{a.fazenda_nome}</Td>
                     <Td>{a.membro_nome ?? "—"}</Td>
+                    <Td style={{ color: COR.mudo }}>{a.nivel_sigilo ? LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[a.nivel_sigilo] : "—"}</Td>
                     <Td style={{ fontFamily: "monospace", fontSize: "0.74rem" }}>{a.metodo} {a.caminho}</Td>
                     <Td>
                       {a.bloqueado
