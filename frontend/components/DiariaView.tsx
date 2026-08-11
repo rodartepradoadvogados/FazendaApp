@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock } from "lucide-react";
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
@@ -42,7 +42,12 @@ function fmtDataBR(iso: string | null): string {
   return iso.split("-").reverse().join("/");
 }
 
-export default function DiariaView() {
+export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
+  // Vem do card "diária de hoje" da Agenda, via FolhaPagamentoView — abre o
+  // calendário "Dias trabalhados" já na diarista certa, sem o usuário caçar
+  // a linha na tabela (ver comentário em FolhaPagamentoView.tsx).
+  deepLinkDiariaId?: number; deepLinkModo?: "ultimo_periodo" | "completo";
+} = {}) {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Diaria[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -293,6 +298,21 @@ export default function DiariaView() {
     setDiasNaoTrabalhados(new Set());
     setCalendarioErro(null);
   }
+
+  // Aplica o deep-link vindo da Agenda (ver props no topo) assim que as
+  // diárias terminam de carregar — precisa esperar `itens` porque
+  // `abrirCalendario` já dispara o fetch do calendário sozinho, sem depender
+  // da lista, mas só faz sentido abrir depois que a tela "assentou" (evita
+  // abrir o modal no meio de um layout ainda montando). `useRef` (não um
+  // booleano em estado) garante que dispara UMA vez só mesmo que `itens`
+  // seja recarregado depois (ex.: ao salvar o próprio calendário).
+  const deepLinkAplicado = useRef(false);
+  useEffect(() => {
+    if (deepLinkAplicado.current || !deepLinkDiariaId || !itens) return;
+    deepLinkAplicado.current = true;
+    abrirCalendario(deepLinkDiariaId, deepLinkModo || "ultimo_periodo");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, deepLinkDiariaId, deepLinkModo]);
 
   function toggleDiaCalendario(iso: string) {
     setDiasNaoTrabalhados((prev) => {

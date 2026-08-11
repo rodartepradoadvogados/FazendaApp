@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, tem_modulo
 from fazenda.database import get_session
@@ -267,6 +267,24 @@ def calcular_agenda(
         if fazenda_id is None:
             return query
         return query.where(modelo.fazenda_id == fazenda_id)
+
+    # Variante tolerante a `fazenda_id IS NULL` — mesma regra que a Central de
+    # Protocolos usa em `_filtro_fazenda` (central_protocolos.py). BUG que isto
+    # corrige: um `ProtocoloInducaoLancamento`/Aplicacao/Medicamento lançado
+    # ANTES da rota carimbar fazenda_id (ou por qualquer outro caminho que
+    # deixe a coluna NULL) ficava com `fazenda_id` nulo mas continuava
+    # aparecendo no Acompanhamento da Central (que já tolera NULL há tempos —
+    # ver `test_inducao_fazenda_id.py`); a Agenda, porém, usava o `_da_fazenda`
+    # estrito acima e o `== fazenda_id` nunca casa com NULL, então a etapa
+    # (ex.: D6 de uma indução de lactação) simplesmente sumia da Agenda sem
+    # sumir da Central — mesma família da regressão já documentada logo abaixo
+    # para `ProtocoloSanitarioEtapa` (que nem GRAVA fazenda_id), só que aqui a
+    # coluna existe e normalmente vem preenchida; o problema é não tolerar os
+    # casos em que não veio.
+    def _da_fazenda_tolerante(query, modelo):
+        if fazenda_id is None:
+            return query
+        return query.where(or_(modelo.fazenda_id == fazenda_id, modelo.fazenda_id.is_(None)))
 
     animais = [
         _model_to_dict(a)
@@ -576,10 +594,10 @@ def calcular_agenda(
     # passo, com a observação de manejo (implante, adaptação na ordenha,
     # iniciar a ordenha) bem visível para o funcionário.
     # Mesma janela de atraso do IATF/customizado — ver o comentário lá em cima.
-    lancamentos_inducao_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloInducaoLancamento), ProtocoloInducaoLancamento)).all()}
+    lancamentos_inducao_por_id = {l.id: l for l in session.exec(_da_fazenda_tolerante(select(ProtocoloInducaoLancamento), ProtocoloInducaoLancamento)).all()}
     aplicacoes_inducao = [
         a for a in session.exec(
-            _da_fazenda(select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False), ProtocoloInducaoAplicacao)  # noqa: E712
+            _da_fazenda_tolerante(select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False), ProtocoloInducaoAplicacao)  # noqa: E712
         ).all()
         if a.data_prevista >= limite_atraso
         and not getattr(lancamentos_inducao_por_id.get(a.lancamento_id), "encerrado_em", None)
@@ -593,7 +611,7 @@ def calcular_agenda(
     # (_opcoes_medicamento), pra dar o campo clicável "qual frasco?" na hora
     # de confirmar, em vez de resolver por nome sozinho.
     medicamentos_por_grupo_inducao: dict[tuple[int, int], list[dict]] = {}
-    for m in session.exec(_da_fazenda(select(ProtocoloInducaoMedicamento), ProtocoloInducaoMedicamento)).all():
+    for m in session.exec(_da_fazenda_tolerante(select(ProtocoloInducaoMedicamento), ProtocoloInducaoMedicamento)).all():
         pa_id, opcoes = _opcoes_medicamento(m.produto)
         medicamentos_por_grupo_inducao.setdefault((m.lancamento_id, m.dia), []).append({
             "produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via,
@@ -975,7 +993,15 @@ def calcular_agenda(
             "observacao": "Se não veio hoje, marque como folga no controle de diárias.",
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
             "tipo": "diaria_trabalho", "diaria_id": diaria.id,
-            "link": f"/financeiro?aba=folha&categoria=diarias&diaria={diaria.id}&calendario=ultimo_periodo",
+            # Deep-link pro Controle de diárias (Financeiro > Ações > Folha de
+            # pagamento > Diária) — mesmo mecanismo `?ir=` que a central de
+            # alertas já usa pra pular pra A pagar/A receber (ver
+            # app/financeiro/page.tsx). ANTES esta URL usava `?aba=folha`, uma
+            # chave que financeiro/page.tsx nunca leu — o clique caía na tela
+            # em branco de Financeiro, sem abrir aba nenhuma; corrigido junto
+            # com a troca dos botões "Importar agora"/"Realizado" por "Contar
+            # diária"/"Descartar diária" (ver app/agenda/page.tsx).
+            "link": f"/financeiro?ir=folha&categoria=diarias&diaria={diaria.id}&calendario=ultimo_periodo",
         })
 
     # Diária com data de fim prevista chegando hoje — avisa no próprio dia

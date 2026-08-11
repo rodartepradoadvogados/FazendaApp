@@ -329,6 +329,12 @@ export default function FinanceiroPage() {
     const ir = qs.get("ir");
     if (ir === "a_pagar") setRel("pagamento");
     else if (ir === "a_receber") setRel("recebimento");
+    // "folha" — vem do card de diária da Agenda ("Contar diária"/"Descartar
+    // diária" clicam no card, não nos botões, pra abrir direto em Financeiro
+    // > Ações > Folha de pagamento; a sub-aba/diária específica dentro dela é
+    // lida pelo próprio FolhaPagamentoView a partir de categoria/diaria/
+    // calendario, ver useEffect lá).
+    else if (ir === "folha") setRel("folha");
     else if (ir && ["pagas", "recebidas", "extrato"].includes(ir)) setRel(ir as Rel);
     const ref = qs.get("ref");
     if (ref) setNotaAlvoRef(ref);
