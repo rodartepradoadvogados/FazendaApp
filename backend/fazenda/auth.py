@@ -22,7 +22,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
-from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
+from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -96,7 +96,7 @@ def _unb64(s: str) -> bytes:
 
 def criar_token(
     username: str, fazenda_id: int | None = None, manter_conectado: bool = False,
-    suporte: bool = False, sessao_suporte_id: int | None = None,
+    suporte: bool = False, sessao_suporte_id: int | None = None, nivel_sigilo: str | None = None,
 ) -> str:
     """`fazenda_id` (piloto conservador de multi-fazenda, ver
     fazenda/models/multitenant.py) só é gravado quando já foi selecionado —
@@ -116,7 +116,14 @@ def criar_token(
     ações destrutivas, e a validade AQUI é sempre a da própria sessão de
     suporte (DURACAO_SESSAO_MINUTOS, ver models/cofre_acesso.py), nunca a
     longa de "manter conectado" — sessão de suporte é sempre curta, mesmo
-    que o dono tenha "manter conectado" marcado no login."""
+    que o dono tenha "manter conectado" marcado no login.
+
+    `nivel_sigilo`: carimbado JUNTO com "suporte" (#132) — quanto da fazenda
+    esta sessão enxerga (ver NIVEIS_SIGILO_EQUIPE_COWDATA em
+    models/equipe_cowdata_acesso.py). Vem no próprio token, não só no banco,
+    para _bloquear_modo_suporte (main.py) não precisar de uma consulta extra
+    a cada request só para saber o nível. Ignorado quando suporte=False —
+    só sessão de suporte tem nível de sigilo."""
     from fazenda.models.cofre_acesso import DURACAO_SESSAO_MINUTOS
 
     if suporte:
@@ -134,6 +141,11 @@ def criar_token(
         payload_dict["suporte"] = True
         if sessao_suporte_id is not None:
             payload_dict["ssid"] = sessao_suporte_id
+        # Nunca omitido: sem isto, um token de suporte sem a claim cairia no
+        # default mais restritivo em _bloquear_modo_suporte de qualquer
+        # jeito (nsig ausente == "basico"), mas gravar explícito evita
+        # qualquer ambiguidade de "esqueceram de setar" vs "é básico mesmo".
+        payload_dict["nsig"] = nivel_sigilo or NIVEL_SIGILO_PADRAO
     payload = _b64(json.dumps(payload_dict).encode())
     sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
@@ -210,15 +222,16 @@ def get_fazenda_atual_id(
 def get_suporte_do_token(
     authorization: str | None = Header(default=None),
 ) -> dict:
-    """Lê as claims "suporte"/"ssid" do token atual (ver criar_token) — usado
-    pelo middleware de bloqueio_modo_suporte (main.py) e por /auth/me, pra o
-    frontend saber se deve mostrar o aviso "modo suporte CowData"."""
+    """Lê as claims "suporte"/"ssid"/"nsig" do token atual (ver criar_token)
+    — usado pelo middleware de bloqueio_modo_suporte (main.py) e por
+    /auth/me, pra o frontend saber se deve mostrar o aviso "modo suporte
+    CowData" e com que nível de sigilo (#132)."""
     if not authorization or not authorization.lower().startswith("bearer "):
-        return {"ativo": False, "sessao_id": None}
+        return {"ativo": False, "sessao_id": None, "nivel_sigilo": None}
     dados = _validar_token_payload(authorization.split(" ", 1)[1])
     if not dados or not dados.get("suporte"):
-        return {"ativo": False, "sessao_id": None}
-    return {"ativo": True, "sessao_id": dados.get("ssid")}
+        return {"ativo": False, "sessao_id": None, "nivel_sigilo": None}
+    return {"ativo": True, "sessao_id": dados.get("ssid"), "nivel_sigilo": dados.get("nsig") or NIVEL_SIGILO_PADRAO}
 
 
 def token_manter_conectado(
@@ -282,6 +295,24 @@ def eh_membro_equipe_cowdata(session: Session, user: Usuario) -> bool:
 
 def _permissao_equipe_cowdata(session: Session, usuario_id: int) -> PermissaoEquipeCowData | None:
     return session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == usuario_id)).first()
+
+
+def nivel_sigilo_equipe_cowdata(session: Session, user: Usuario) -> str:
+    """Nível de sigilo (#132) que este usuário carrega para dentro de uma
+    fazenda-cliente ao abrir uma sessão de suporte — chamado UMA VEZ, na
+    abertura da sessão (ver cofre_acesso.py::_abrir_sessao), pra ser
+    carimbado no token (criar_token) e em SessaoAcessoSuporte.
+
+    Dono-equivalente sempre "total" (mesmo bypass de exigir_area_painel_
+    cowdata: o dono nunca teve PermissaoEquipeCowData nem precisa). Membro
+    da equipe sem nenhum PermissaoEquipeCowData gravado — não deveria
+    acontecer, já que abrir uma sessão exige a área "cofre" (que por sua vez
+    exige essa linha existir), mas por segurança cai no nível mais
+    restritivo em vez de estourar erro no meio do fluxo de suporte."""
+    if eh_email_dono_equivalente(user.email):
+        return "total"
+    perm = _permissao_equipe_cowdata(session, user.id)
+    return perm.nivel_sigilo if perm else NIVEL_SIGILO_PADRAO
 
 
 def exigir_area_painel_cowdata(area: str):

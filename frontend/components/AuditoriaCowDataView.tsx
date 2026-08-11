@@ -6,7 +6,7 @@
 // e "Confiança e LGPD" (compromissos institucionais, texto fixo).
 import { useEffect, useState } from "react";
 import { ClipboardList, ShieldCheck, CheckCircle2, XCircle } from "lucide-react";
-import { fetchAcoesSuporteDaMinhaFazenda, type AcaoAuditoriaSuporte } from "@/lib/api";
+import { fetchAcoesSuporteDaMinhaFazenda, LABEL_NIVEL_SIGILO_EQUIPE_COWDATA, type AcaoAuditoriaSuporte } from "@/lib/api";
 
 function formatarData(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -43,7 +43,7 @@ export function AuditoriaCowDataView() {
           <div style={{ overflowX: "auto" }}>
             <table className="fazenda-table">
               <thead>
-                <tr><th>Quando</th><th>Protocolo</th><th>Membro CowData</th><th>Ação</th><th>Resultado</th></tr>
+                <tr><th>Quando</th><th>Protocolo</th><th>Membro CowData</th><th>Nível de sigilo</th><th>Ação</th><th>Resultado</th></tr>
               </thead>
               <tbody>
                 {acoes.map((a) => (
@@ -51,6 +51,7 @@ export function AuditoriaCowDataView() {
                     <td style={{ color: "var(--text-muted)" }}>{formatarData(a.quando)}</td>
                     <td style={{ fontVariantNumeric: "tabular-nums" }}>{a.protocolo || "—"}</td>
                     <td>{a.membro_nome ?? "—"}</td>
+                    <td style={{ color: "var(--text-muted)" }}>{a.nivel_sigilo ? LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[a.nivel_sigilo] : "—"}</td>
                     <td style={{ fontFamily: "monospace", fontSize: "0.74rem" }}>{a.metodo} {a.caminho}</td>
                     <td>
                       {a.bloqueado

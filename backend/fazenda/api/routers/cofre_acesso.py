@@ -17,7 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import criar_token, exigir_area_painel_cowdata, exigir_contratante_ou_dono, get_fazenda_atual_id, token_manter_conectado
+from fazenda.auth import (
+    criar_token, exigir_area_painel_cowdata, exigir_contratante_ou_dono, get_fazenda_atual_id,
+    nivel_sigilo_equipe_cowdata, token_manter_conectado,
+)
 from fazenda.database import get_session
 from fazenda.models import Fazenda, Usuario
 from fazenda.models.cofre_acesso import (
@@ -28,6 +31,7 @@ from fazenda.models.cofre_acesso import (
     PedidoAcessoSuporte,
     SessaoAcessoSuporte,
 )
+from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO
 from fazenda.models.planos import PLANOS_CATALOGO, ContratoFazenda, ContratoFazendaModulo
 
 router = APIRouter(prefix="/painel-cowdata/cofre", tags=["cofre-acesso"])
@@ -120,6 +124,7 @@ def _publico_sessao(session: Session, s: SessaoAcessoSuporte) -> dict:
         "id": s.id, "protocolo": _protocolo(s.pedido_id), "fazenda_id": s.fazenda_id, "fazenda_nome": _nome_fazenda(session, s.fazenda_id),
         "usuario_id": s.usuario_id, "membro_nome": _nome_usuario(session, s.usuario_id),
         "motivo": s.motivo, "assunto_chamado": pedido.assunto_chamado if pedido else None,
+        "nivel_sigilo": s.nivel_sigilo,
         "iniciada_em": s.iniciada_em.isoformat(), "expira_em": s.expira_em.isoformat(),
         "encerrada_em": s.encerrada_em.isoformat() if s.encerrada_em else None,
         "ativa": s.encerrada_em is None and segundos_restantes > 0,
@@ -127,13 +132,22 @@ def _publico_sessao(session: Session, s: SessaoAcessoSuporte) -> dict:
     }
 
 
-def _abrir_sessao(session: Session, pedido: PedidoAcessoSuporte) -> SessaoAcessoSuporte:
+def _abrir_sessao(session: Session, pedido: PedidoAcessoSuporte, nivel_sigilo: str) -> SessaoAcessoSuporte:
+    """`nivel_sigilo` já vem calculado por quem chamou (nivel_sigilo_equipe_
+    cowdata, em fazenda.auth) — SEMPRE o de quem PEDIU o acesso (pedido.
+    usuario_id), nunca de quem aprova (ver docstring de aprovar_pedido: quem
+    aprova pode ser outra pessoa). Gravado tanto na sessão quanto no log
+    grosso de entrada/saída — nenhum dos dois relê PermissaoEquipeCowData
+    depois, então o histórico fica correto mesmo se o nível do membro mudar
+    no futuro (#132)."""
     sessao = SessaoAcessoSuporte(
         pedido_id=pedido.id, fazenda_id=pedido.fazenda_id, usuario_id=pedido.usuario_id, motivo=pedido.motivo,
-        expira_em=datetime.utcnow() + timedelta(minutes=DURACAO_SESSAO_MINUTOS),
+        nivel_sigilo=nivel_sigilo, expira_em=datetime.utcnow() + timedelta(minutes=DURACAO_SESSAO_MINUTOS),
     )
     session.add(sessao)
-    session.add(AuditoriaAcessoSuporte(fazenda_id=pedido.fazenda_id, usuario_id=pedido.usuario_id, acao="entrada"))
+    session.add(AuditoriaAcessoSuporte(
+        fazenda_id=pedido.fazenda_id, usuario_id=pedido.usuario_id, acao="entrada", nivel_sigilo=nivel_sigilo,
+    ))
     session.commit()
     session.refresh(sessao)
     return sessao
@@ -166,20 +180,26 @@ def solicitar_acesso(
 
     resultado = _publico_pedido(session, pedido)
     if pedido.status == "aprovado":
-        sessao = _abrir_sessao(session, pedido)
-        # Token novo, já com fid=fazenda + claim "suporte" — o frontend troca
-        # o token guardado por este e navega pra dentro da fazenda; daqui pra
-        # frente bloquear_em_modo_suporte (main.py) recusa ações destrutivas
-        # até a sessão expirar (DURACAO_SESSAO_MINUTOS) ou ser encerrada.
-        # Quando exige_aprovacao_suporte=True o pedido fica "aguardando" e
-        # nenhum token é emitido aqui — só quando /pedidos/{id}/aprovar rodar
-        # (ver limitação no docstring daquela rota).
+        # Nível de quem PEDIU (=user, aqui — solicitar_acesso só aprova na
+        # hora quando é o próprio pedinte que está livre pra entrar; ver
+        # aprovar_pedido para o caso em que pedinte e aprovador divergem).
+        nivel = nivel_sigilo_equipe_cowdata(session, user)
+        sessao = _abrir_sessao(session, pedido, nivel)
+        # Token novo, já com fid=fazenda + claims "suporte"/"nsig" — o
+        # frontend troca o token guardado por este e navega pra dentro da
+        # fazenda; daqui pra frente bloquear_em_modo_suporte (main.py) recusa
+        # ações destrutivas e dados acima do nível de sigilo até a sessão
+        # expirar (DURACAO_SESSAO_MINUTOS) ou ser encerrada. Quando
+        # exige_aprovacao_suporte=True o pedido fica "aguardando" e nenhum
+        # token é emitido aqui — só quando /pedidos/{id}/aprovar rodar (ver
+        # limitação no docstring daquela rota).
         resultado["token"] = criar_token(
             user.username, fazenda_id=pedido.fazenda_id, suporte=True,
-            sessao_suporte_id=sessao.id, manter_conectado=manter_conectado,
+            sessao_suporte_id=sessao.id, manter_conectado=manter_conectado, nivel_sigilo=nivel,
         )
         resultado["sessao_id"] = sessao.id
         resultado["sessao_expira_em"] = sessao.expira_em.isoformat()
+        resultado["nivel_sigilo"] = nivel
     return resultado
 
 
@@ -205,7 +225,12 @@ def aprovar_pedido(pedido_id: int, user: Usuario = Depends(exigir_area_painel_co
     session.add(pedido)
     session.commit()
     session.refresh(pedido)
-    _abrir_sessao(session, pedido)
+    # Nível de quem PEDIU o acesso (pedido.usuario_id), não de quem aprova
+    # (`user`) — o mesmo motivo pelo qual o token, quando emitido depois,
+    # pertence a quem pediu (ver docstring desta rota, acima).
+    solicitante = session.get(Usuario, pedido.usuario_id)
+    nivel = nivel_sigilo_equipe_cowdata(session, solicitante) if solicitante else NIVEL_SIGILO_PADRAO
+    _abrir_sessao(session, pedido, nivel)
     return _publico_pedido(session, pedido)
 
 
@@ -233,7 +258,9 @@ def encerrar_sessao(sessao_id: int, _: Usuario = Depends(exigir_area_painel_cowd
     if sessao.encerrada_em is None:
         sessao.encerrada_em = datetime.utcnow()
         session.add(sessao)
-        session.add(AuditoriaAcessoSuporte(fazenda_id=sessao.fazenda_id, usuario_id=sessao.usuario_id, acao="saida"))
+        session.add(AuditoriaAcessoSuporte(
+            fazenda_id=sessao.fazenda_id, usuario_id=sessao.usuario_id, acao="saida", nivel_sigilo=sessao.nivel_sigilo,
+        ))
         session.commit()
         session.refresh(sessao)
     return _publico_sessao(session, sessao)
@@ -272,6 +299,7 @@ def listar_auditoria_recente(
             "id": a.id, "quando": a.quando.isoformat(), "fazenda_id": a.fazenda_id,
             "fazenda_nome": _nome_fazenda(session, a.fazenda_id), "usuario_id": a.usuario_id,
             "membro_nome": _nome_usuario(session, a.usuario_id), "acao": a.acao,
+            "nivel_sigilo": a.nivel_sigilo,
         }
         for a in entradas
     ]
@@ -284,6 +312,9 @@ def _publico_acao(session: Session, a: AcaoAuditoriaSuporte) -> dict:
         "fazenda_id": a.fazenda_id, "fazenda_nome": _nome_fazenda(session, a.fazenda_id),
         "usuario_id": a.usuario_id, "membro_nome": _nome_usuario(session, a.usuario_id),
         "metodo": a.metodo, "caminho": a.caminho, "status_code": a.status_code, "bloqueado": a.bloqueado,
+        # Nível de sigilo vigente na sessão que tentou esta ação — via join
+        # (não duplicado por linha, ver SessaoAcessoSuporte.nivel_sigilo).
+        "nivel_sigilo": sessao.nivel_sigilo if sessao else None,
         "quando": a.quando.isoformat(),
     }
 
