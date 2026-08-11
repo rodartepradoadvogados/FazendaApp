@@ -12,9 +12,10 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import CompraAnimal, ContaGerencial, VendaAnimal
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 
 router = APIRouter(prefix="/relatorio-compra-venda-animais", tags=["relatorio-compra-venda-animais"])
 
@@ -27,9 +28,17 @@ def relatorio(
     numero_documento: str | None = None,
     gta: str | None = None,
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
+    # As três leituras aqui rodavam sem NENHUM filtro de fazenda: o relatório
+    # de uma fazenda listava compras/vendas de todas as outras, e o mapa de
+    # contas casava `numero_lancamento` entre fazendas diferentes.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_contas = select(ContaGerencial)
+    if fazenda_id is not None:
+        query_contas = query_contas.where(ContaGerencial.fazenda_id == fazenda_id)
     contas_por_lancamento = {
-        c.numero_lancamento: c for c in session.exec(select(ContaGerencial)).all()
+        c.numero_lancamento: c for c in session.exec(query_contas).all()
     }
 
     def _enriquecer(registros, tipo: str, campo_data: str, campo_contraparte: str) -> list[dict]:
@@ -68,6 +77,9 @@ def relatorio(
 
     compras_q = select(CompraAnimal)
     vendas_q = select(VendaAnimal)
+    if fazenda_id is not None:
+        compras_q = compras_q.where(CompraAnimal.fazenda_id == fazenda_id)
+        vendas_q = vendas_q.where(VendaAnimal.fazenda_id == fazenda_id)
     if numero:
         compras_q = compras_q.where(CompraAnimal.numero_animal == numero)
         vendas_q = vendas_q.where(VendaAnimal.numero_animal == numero)

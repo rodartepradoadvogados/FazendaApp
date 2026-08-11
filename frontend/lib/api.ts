@@ -4933,6 +4933,22 @@ export async function anexarArquivoLancamentoPorId(lancamentoId: number, file: F
   return res.json();
 }
 
+// Um comprovante ÚNICO para vários lançamentos pagos na mesma remessa
+// (Financeiro > Pagamento em lote). O arquivo sobe uma vez só e o backend
+// cria o vínculo com cada lançamento, para que todos exibam o comprovante no
+// relatório de Contas pagas — ver anexar_comprovante_em_lote no backend.
+export async function anexarComprovanteEmLote(
+  lancamentoIds: number[], file: File, categoria?: string | null,
+): Promise<{ anexados: number; nome_arquivo: string; anexo_ids: number[]; numeros_lancamento: string[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("lancamento_ids", lancamentoIds.join(","));
+  if (categoria) form.append("categoria", categoria);
+  const res = await authFetch(`${API}/financeiro/lancamentos/anexos-lote`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o comprovante do lote"); }
+  return res.json();
+}
+
 export async function listarAnexosLancamentoPorId(lancamentoId: number): Promise<AnexoLancamento[]> {
   const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`);
   if (!res.ok) throw new Error("Erro ao listar anexos");

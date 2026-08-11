@@ -16,7 +16,7 @@ import {
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
   fetchItensCenario, criarItemCenario, atualizarItemCenario, excluirItemCenario, fetchProjecaoCenario,
   importarParaPedido, type OrcamentoItemPayload, type CenarioPayload, type PlanejamentoItemPayload,
-  anexarArquivoLancamentoPorId, listarAnexosLancamentoPorId, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
+  anexarArquivoLancamentoPorId, anexarComprovanteEmLote, listarAnexosLancamentoPorId, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
   fetchCartoesCredito, fetchCartaoCredito, criarCartaoCredito, atualizarCartaoCredito, fetchExtratoCartao, fetchFaturasCartao,
   criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
   type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
@@ -26,6 +26,7 @@ import {
 } from "@/lib/api";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { ServicoPicker } from "@/components/ServicoPicker";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
 import {
@@ -57,6 +58,10 @@ const COLUNAS_LANCAMENTOS = [
   { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
   { header: "Centro custo", key: "centro_custo" }, { header: "Documento", key: "documento" },
   { header: "Valor", key: "valor" }, { header: "Pago", key: "valor_pago" }, { header: "Conta bancária", key: "conta_bancaria" },
+  // Comprovante em arquivo (inclusive o comprovante único de um pagamento em
+  // lote, compartilhado por todas as notas da remessa) — ver
+  // `tem_comprovante` em listar_lancamentos no backend.
+  { header: "Comprovante", key: "comprovante_txt" },
 ];
 const COLUNAS_LIVRO = [
   { header: "Data", key: "dataFmt" }, { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
@@ -69,6 +74,9 @@ type Lanc = {
   centro_custo: string; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
   tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
+  // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
+  // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
+  tem_comprovante?: boolean;
   conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
@@ -443,10 +451,19 @@ export default function FinanceiroPage() {
         return dentroPeriodo && (!centro || r.centro_custo === centro) && (!contaBanco || r.conta_bancaria === contaBanco);
       });
     }
-    if (!regs || !inicio || !fim) return [];
+    if (!regs) return [];
+    // Busca por documento é GLOBAL: quem digita um número de nota quer achar
+    // aquela nota, não "aquela nota dentro deste período e deste centro de
+    // custo". Antes, procurar uma NF exigia acertar antes o período — e a
+    // data comparada aqui é a de PAGAMENTO, então uma compra a prazo (nota de
+    // sêmen parcelada, por exemplo) era descartada antes de o filtro de
+    // documento sequer rodar: a nota existia e simplesmente não aparecia.
+    const buscaPorDocumento = !!relDocumento.trim();
+    if (!buscaPorDocumento && (!inicio || !fim)) return [];
     return regs.filter((r) => {
       const d = campoData(r);
-      if (!(d && d >= inicio && d <= fim && (!centro || r.centro_custo === centro))) return false;
+      if (!buscaPorDocumento && !(d && d >= inicio && d <= fim)) return false;
+      if (!buscaPorDocumento && centro && r.centro_custo !== centro) return false;
       if (relTipo && r.tipo !== relTipo) return false;
       if (relFornecedor && r.fornecedor !== relFornecedor) return false;
       if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
@@ -1029,6 +1046,12 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
   const patchLinha = (id: number, patch: Partial<LinhaPag>) => setPorLinha((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  // Comprovante em ARQUIVO da remessa — o banco emite um só para o lote
+  // inteiro, e ele precisa aparecer em todas as notas daquele pagamento no
+  // relatório de Contas pagas. Diferente de `numeroComprovante`, que é apenas
+  // o número digitado. Sobe DEPOIS da baixa confirmada: sem baixa não há o
+  // que comprovar, e assim uma falha no upload nunca desfaz o pagamento.
+  const [comprovanteArquivo, setComprovanteArquivo] = useState<File | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
@@ -1124,8 +1147,23 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           numero_documento_pagamento: numeroComprovante || undefined,
         });
       }
-      setMsg({ tipo: "sucesso", texto: `${r.baixados} lançamento(s) baixado(s) com sucesso.` });
-      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({});
+      // Comprovante do lote: sobe DEPOIS da baixa, sobre os ids que acabaram
+      // de ser baixados. Se o upload falhar, a baixa continua valendo — o
+      // aviso diferencia os dois casos para o usuário saber o que refazer.
+      let aviso = `${r.baixados} lançamento(s) baixado(s) com sucesso.`;
+      if (comprovanteArquivo) {
+        try {
+          const a = await anexarComprovanteEmLote(Array.from(selecionados), comprovanteArquivo);
+          aviso += ` Comprovante "${a.nome_arquivo}" anexado a ${a.anexados} lançamento(s).`;
+        } catch (e: any) {
+          setMsg({ tipo: "erro", texto: `Baixa concluída, mas o comprovante não foi anexado: ${e.message}. Anexe pela tela de pagamento.` });
+          setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
+          carregar(); onFeito?.();
+          return;
+        }
+      }
+      setMsg({ tipo: "sucesso", texto: aviso });
+      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
       carregar();
       onFeito?.();
     } catch (e: any) {
@@ -1322,6 +1360,29 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+          {/* Comprovante único da remessa — vale para os dois modos (pagamento
+              igual para todas ou linha a linha): o que define o lote é a
+              seleção, não o modo. Fica fora do card de "pagamento único" por
+              isso. */}
+          {selecionados.size > 0 && (
+            <div className="card mb-4">
+              <div className="card-header mb-2">Comprovante do lote <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.75rem" }}>(opcional)</span></div>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>
+                Um arquivo só — o mesmo comprovante fica vinculado às {selecionados.size} nota(s) selecionada(s) e aparece
+                no relatório de Contas pagas de cada uma.
+              </p>
+              {comprovanteArquivo ? (
+                <div className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+                  <FileText size={14} style={{ color: "var(--dourado-light)" }} />
+                  <span>{comprovanteArquivo.name}</span>
+                  <button type="button" onClick={() => setComprovanteArquivo(null)} className="btn-ghost" title="Remover comprovante" aria-label="Remover comprovante"><X size={14} /></button>
+                </div>
+              ) : (
+                <Dropzone compact label="Arraste o comprovante do pagamento" hint="PDF ou imagem, até 15 MB"
+                  onFiles={(fs) => setComprovanteArquivo(fs[0] || null)} />
+              )}
             </div>
           )}
           {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
@@ -2610,11 +2671,8 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
                 ))}
               </div>
               {tipoItem === "servico" ? (
-                <select style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}>
-                  <option value="">Selecione…</option>
-                  {produto && !sugestoesServicoEdicao.includes(produto) && <option value={produto}>{produto}</option>}
-                  {sugestoesServicoEdicao.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <ServicoPicker servicos={sugestoesServicoEdicao.map((nome) => ({ nome }))}
+                  value={produto} onChange={setProduto} />
               ) : (
                 <div>
                   <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
@@ -2969,7 +3027,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
           <span>Lançamentos</span>
           <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
-            linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
+            linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}`, comprovante_txt: r.tem_comprovante ? "Sim" : "" }))} />
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
