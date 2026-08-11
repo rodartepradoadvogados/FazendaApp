@@ -1,13 +1,21 @@
 """
-Regressão: um lançamento LEGADO (fazenda_id IS NULL, criado antes de a rota
-de lançar carimbar fazenda_id) aparecia em Central de Protocolos >
-Acompanhamento — a listagem (_linhas_*) já tolerava NULL — mas dava 404
-("Lançamento de protocolo não encontrado") ao clicar na linha, porque
-_lancamento_ou_404 (usado pelo detalhe e por TODAS as ações: baixa, desfazer
-aplicação, encerrar, reabrir, renomear, cancelar) exigia igualdade estrita de
-fazenda_id. Cobre as 5 origens (iatf, inducao, customizado, lida, sanitario —
-sanitário só na listagem, ele não tem detalhe/ações pela Central) e o mesmo
-buraco no estorno de MovimentoEstoque legado dentro de cancelar().
+Isolamento por fazenda na Central de Protocolos, incluindo o caso de um
+lançamento LEGADO (fazenda_id IS NULL — dado residual que nem a migração
+029227481e9e conseguiu resolver: 2+ fazendas reais e sem pai pra derivar).
+
+Até o PR claude/fazenda-id-raiz, um lançamento assim tinha um comportamento
+ASSIMÉTRICO: a listagem (`_filtro_fazenda`) tolerava NULL e mostrava a linha,
+mas `_lancamento_ou_404` (usado pelo detalhe e por TODAS as ações — baixa,
+desfazer aplicação, encerrar, reabrir, renomear, cancelar) exigia igualdade
+estrita e dava 404 — a linha aparecia na lista e sumia ao clicar. O PR
+reverteu a tolerância (decisão do dono do produto: registro sem fazenda_id
+não pode existir; a escrita agora recusa gravar NULL — fazenda.auth::
+get_fazenda_id_escrita — e o backfill da migração resolve o histórico), então
+agora o comportamento é UNIFORME: um lançamento com fazenda_id NULL fica
+invisível em TODO lugar — não aparece na lista, dá 404 no detalhe e em toda
+ação. Este arquivo prova essa uniformidade (sem asimetria) e, à parte, que o
+isolamento entre fazendas de verdade (não-NULL, mas de OUTRA fazenda) nunca
+mudou.
 
 Segue o padrão de fixture de tests/test_central_protocolos.py e
 tests/test_lida.py: StaticPool (OBRIGATÓRIO — SQLite em memória precisa da
@@ -73,7 +81,7 @@ def client():
 
 
 # ─────────────────────────── Criação direta na sessão ───────────────────────
-# Simula lançamentos gravados antes do carimbo de fazenda_id (fazenda_id=None)
+# Simula lançamentos com fazenda_id NULL (residual — ver docstring do módulo)
 # ou pertencentes a outra fazenda (fazenda_id=2), sem passar pelas rotas de
 # lançamento — o que importa aqui é só o comportamento da Central.
 
@@ -184,18 +192,19 @@ CRIADORES_COM_ACAO = {
 CRIADORES_TODOS = {**CRIADORES_COM_ACAO, "sanitario": _criar_sanitario}
 
 
-# ───────────────────────────── Listagem tolera NULL ─────────────────────────
+# ────────────────── Listagem — filtro estrito, NULL incluído ────────────────
 
-class TestListagemAcompanhamentoToleraLegado:
+class TestListagemAcompanhamentoNaoMostraNulo:
     @pytest.mark.parametrize("origem", sorted(CRIADORES_TODOS))
-    def test_lancamento_legado_aparece_no_acompanhamento(self, client, origem):
+    def test_lancamento_com_fazenda_id_nulo_nao_aparece(self, client, origem):
         c, engine = client
         criar = CRIADORES_TODOS[origem]
-        lancamento_id = criar(engine, None)  # fazenda_id NULL — legado
+        lancamento_id = criar(engine, None)  # fazenda_id NULL
 
         linhas = c.get("/central-protocolos/acompanhamento").json()
-        assert any(l["origem"] == origem and l["origem_id"] == lancamento_id for l in linhas), (
-            f"lançamento legado de {origem} deveria aparecer no Acompanhamento"
+        assert not any(l["origem"] == origem and l["origem_id"] == lancamento_id for l in linhas), (
+            f"lançamento com fazenda_id nulo ({origem}) não deveria mais aparecer no Acompanhamento "
+            f"(filtro voltou a ser estrito — ver PR claude/fazenda-id-raiz)"
         )
 
     @pytest.mark.parametrize("origem", sorted(CRIADORES_TODOS))
@@ -210,25 +219,28 @@ class TestListagemAcompanhamentoToleraLegado:
         )
 
 
-# ─────────────────────────── Detalhe abre para legado ───────────────────────
-# Este é o teste que reproduz o print do usuário: a linha aparecia na lista
-# mas o clique caía em 404.
+# ─────────────────── Detalhe — 404 uniforme, sem assimetria ─────────────────
 
-class TestDetalheAbreParaLegado:
+class TestDetalheNuncaAssimetricoComALista:
+    """Antes do PR, um lançamento com fazenda_id nulo APARECIA na lista mas
+    dava 404 no detalhe — a assimetria era o próprio bug do relato original
+    (linha visível, clique quebrado). Agora não aparece em nenhum dos dois:
+    a garantia deixou de ser "tolera na leitura" e passou a ser "não existe
+    NULO pra tolerar" (Passo 1 + Passo 2 do PR)."""
+
     @pytest.mark.parametrize("origem", sorted(CRIADORES_COM_ACAO))
-    def test_detalhe_de_lancamento_legado_nao_da_404(self, client, origem):
+    def test_detalhe_de_lancamento_com_fazenda_id_nulo_continua_404(self, client, origem):
         c, engine = client
         criar = CRIADORES_COM_ACAO[origem]
         lancamento_id = criar(engine, None)
 
         r = c.get(f"/central-protocolos/{origem}/{lancamento_id}")
-        assert r.status_code == 200, r.text
-        assert r.json()["origem_id"] == lancamento_id
+        assert r.status_code == 404, r.text
 
     @pytest.mark.parametrize("origem", sorted(CRIADORES_COM_ACAO))
     def test_detalhe_de_outra_fazenda_continua_404(self, client, origem):
-        # Isolamento não pode afrouxar: só NULL é tolerado, um fazenda_id de
-        # OUTRA fazenda tem que continuar 404 para quem está na fazenda #1.
+        # Isolamento nunca mudou: fazenda_id de OUTRA fazenda é 404 para
+        # quem está na fazenda #1, com ou sem tolerância a NULL.
         c, engine = client
         criar = CRIADORES_COM_ACAO[origem]
         lancamento_id = criar(engine, 2)
@@ -237,52 +249,66 @@ class TestDetalheAbreParaLegado:
         assert r.status_code == 404, r.text
 
 
-# ─────────────────────── Todas as ações funcionam em legado ─────────────────
+# ───────────────── Ações recusam lançamento com fazenda_id nulo ─────────────
 
-class TestAcoesFuncionamEmLegado:
-    """Todo o ciclo de ações (baixa, desfazer aplicação, encerrar, reabrir,
-    renomear, cancelar) tinha o mesmo 404 do detalhe — cada uma passa por
-    _lancamento_ou_404. Roda o ciclo inteiro num único lançamento legado."""
+class TestAcoesRecusamLancamentoComFazendaIdNulo:
+    """Cada ação (baixa, desfazer aplicação, encerrar, reabrir, renomear,
+    cancelar) passa por `_lancamento_ou_404`, que agora rejeita fazenda_id
+    nulo do mesmo jeito que rejeita fazenda de outro cliente — nenhuma ação
+    consegue mais operar um lançamento sem fazenda."""
 
     @pytest.mark.parametrize("origem", sorted(CRIADORES_COM_ACAO))
-    def test_ciclo_completo_de_acoes_em_lancamento_legado(self, client, origem):
+    def test_toda_acao_da_404_em_lancamento_com_fazenda_id_nulo(self, client, origem):
         c, engine = client
         criar = CRIADORES_COM_ACAO[origem]
         lancamento_id = criar(engine, None)
         base = f"/central-protocolos/{origem}/{lancamento_id}"
 
-        # baixa
+        assert c.post(f"{base}/baixa", json={"dia": 0}).status_code == 404
+        assert c.request("DELETE", f"{base}/baixa", json={"dia": 0, "numero_matriz": "700"}).status_code == 404
+        assert c.post(f"{base}/encerrar", json={"motivo": "Teste"}).status_code == 404
+        assert c.request("DELETE", f"{base}/encerrar").status_code == 404
+        assert c.patch(f"{base}/renomear", json={"nome": "Nome renomeado"}).status_code == 404
+        assert c.post(f"{base}/cancelar", json={"motivo": "Cancelado no teste"}).status_code == 404
+
+    @pytest.mark.parametrize("origem", sorted(CRIADORES_COM_ACAO))
+    def test_ciclo_completo_de_acoes_funciona_com_fazenda_id_preenchido(self, client, origem):
+        """Sanity check: o caminho feliz (fazenda_id carimbado, igual ao da
+        sessão) continua funcionando ponta a ponta — não é só o caminho nulo
+        que virou 404, o normal continua 200."""
+        c, engine = client
+        criar = CRIADORES_COM_ACAO[origem]
+        lancamento_id = criar(engine, 1)
+        base = f"/central-protocolos/{origem}/{lancamento_id}"
+
         r = c.post(f"{base}/baixa", json={"dia": 0})
         assert r.status_code == 200, f"baixa ({origem}): {r.text}"
 
-        # desfazer aplicação (a baixa acima marcou "700"/dia 0 como realizada)
         r = c.request("DELETE", f"{base}/baixa", json={"dia": 0, "numero_matriz": "700"})
         assert r.status_code == 200, f"desfazer aplicação ({origem}): {r.text}"
 
-        # encerrar
         r = c.post(f"{base}/encerrar", json={"motivo": "Teste"})
         assert r.status_code == 200, f"encerrar ({origem}): {r.text}"
 
-        # reabrir
         r = c.request("DELETE", f"{base}/encerrar")
         assert r.status_code == 200, f"reabrir ({origem}): {r.text}"
 
-        # renomear
         r = c.patch(f"{base}/renomear", json={"nome": "Nome renomeado"})
         assert r.status_code == 200, f"renomear ({origem}): {r.text}"
         assert r.json()["nome"] == "Nome renomeado"
 
-        # cancelar
         r = c.post(f"{base}/cancelar", json={"motivo": "Cancelado no teste"})
         assert r.status_code == 200, f"cancelar ({origem}): {r.text}"
 
 
-# ─────────────── Cancelar estorna MovimentoEstoque legado também ────────────
+# ──────────── Cancelar não mexe em MovimentoEstoque de fazenda_id nulo ──────
 
-class TestCancelarEstornaMovimentoEstoqueLegado:
-    """query_mov do cancelar() filtrava fazenda_id estrito — um movimento de
-    estoque legado (fazenda_id NULL), gerado por um protocolo legado, não
-    seria estornado no cancelamento."""
+class TestCancelarNaoAlcancaLancamentoComFazendaIdNulo:
+    """Como `cancelar()` também passa por `_lancamento_ou_404`, um
+    lançamento com fazenda_id nulo dá 404 ANTES de chegar no estorno do
+    MovimentoEstoque — o saldo simplesmente não é tocado (nem deveria: sem
+    saber de qual fazenda é o lançamento, não tem como saber se é seguro
+    mexer no estoque dela)."""
 
     def _preparar_estoque_e_movimento(self, engine, origem, lancamento_id):
         with Session(engine) as s:
@@ -291,8 +317,7 @@ class TestCancelarEstornaMovimentoEstoqueLegado:
             s.commit()
             s.refresh(item)
             # Simula uma baixa de 10ml já ocorrida (saldo 50 -> 40), com o
-            # MovimentoEstoque gravado sem fazenda_id — exatamente o rastro
-            # que um protocolo legado deixaria.
+            # MovimentoEstoque gravado sem fazenda_id.
             s.add(MovimentoEstoque(
                 fazenda_id=None, nome_item=item.nome, movimento="Aplicação", quantidade=10,
                 unidade="ml", data_movimento=date.today(), estoque_id=item.id,
@@ -302,18 +327,15 @@ class TestCancelarEstornaMovimentoEstoqueLegado:
             return item.id
 
     @pytest.mark.parametrize("origem", sorted(CRIADORES_COM_ACAO))
-    def test_cancelar_devolve_estoque_do_movimento_legado(self, client, origem):
+    def test_cancelar_da_404_e_nao_mexe_no_estoque(self, client, origem):
         c, engine = client
         criar = CRIADORES_COM_ACAO[origem]
         lancamento_id = criar(engine, None)
         item_id = self._preparar_estoque_e_movimento(engine, origem, lancamento_id)
 
         r = c.post(f"/central-protocolos/{origem}/{lancamento_id}/cancelar", json={})
-        assert r.status_code == 200, r.text
+        assert r.status_code == 404, r.text
 
         with Session(engine) as s:
             item = s.get(Estoque, item_id)
-            assert item.quantidade == 50, (
-                f"cancelar ({origem}) deveria ter devolvido as 10ml do MovimentoEstoque legado "
-                f"(fazenda_id NULL) — saldo ficou em {item.quantidade}"
-            )
+            assert item.quantidade == 40, "cancelar não deveria ter mexido no estoque de um lançamento 404"

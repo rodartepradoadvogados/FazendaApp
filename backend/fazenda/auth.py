@@ -219,6 +219,77 @@ def get_fazenda_atual_id(
     return dados.get("fid") if dados else None
 
 
+def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_token: int | None) -> int | None:
+    """Resolve a fazenda de um lançamento novo — em qualquer ambiente onde o
+    multi-fazenda está de fato provisionado (tabela `fazenda` com pelo menos
+    uma linha — todo ambiente de produção, desde a migração
+    f1a2b3c4d5e6), NUNCA devolve None em silêncio (ao contrário de
+    `get_fazenda_atual_id`/`fazenda_id_seguro`, tolerantes de propósito para
+    leitura de dado legado). É a causa raiz do bug do D6 sumindo da Agenda
+    (ver PR claude/fazenda-id-raiz): toda rota de escrita gravava
+    `fazenda_id=fazenda_id` direto, e as 3 situações abaixo devolviam None
+    ali — o registro nascia órfão. Decisão do dono do produto: não pode
+    existir registro sem fazenda_id, então aqui não sobra caminho
+    silencioso, só resolve certo ou recusa.
+
+    1. Token já veio com "fid" (login normal, fazenda já escolhida) — usa.
+    2. Token legado (sem "fid" — emitido antes do multi-fazenda existir, ou
+       de uma sessão "manter conectado" de até 90 dias que nunca deslogou,
+       ver TOKEN_VALIDADE_LONGA_S) + usuário vinculado a EXATAMENTE uma
+       fazenda — resolve por ela, sem forçar reautenticação (é a imensa
+       maioria: hoje a instalação tem uma fazenda real de verdade).
+    3. Sem "fid" e usuário sem nenhuma fazenda vinculada, ou vinculado a mais
+       de uma (não dá pra saber qual sem o token dizer): se a tabela
+       `fazenda` está VAZIA, o multi-fazenda simplesmente não está em uso
+       neste ambiente — devolve None, exatamente o comportamento de sempre
+       (é o caso de toda a suíte de testes que não monta cenário de
+       multi-fazenda, e seria o de qualquer instalação anterior à migração
+       f1a2b3c4d5e6). Havendo QUALQUER fazenda cadastrada, recusa com 409 em
+       vez de adivinhar — o usuário precisa sair e entrar de novo para que o
+       login emita um token já com a fazenda escolhida.
+    """
+    if fazenda_id_do_token is not None:
+        return fazenda_id_do_token
+    fazendas = sorted({
+        fid for fid in session.exec(
+            select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
+        ).all()
+    })
+    if len(fazendas) == 1:
+        return fazendas[0]
+    if session.exec(select(Fazenda.id).limit(1)).first() is None:
+        return None
+    if not fazendas:
+        raise HTTPException(
+            status_code=409,
+            detail="Seu usuário não está vinculado a nenhuma fazenda. Peça a um administrador para "
+                   "vincular seu acesso a uma fazenda antes de lançar dados.",
+        )
+    raise HTTPException(
+        status_code=409,
+        detail="Sua sessão não tem uma fazenda selecionada e seu usuário tem acesso a mais de uma. "
+               "Saia e entre novamente para escolher a fazenda antes de lançar dados.",
+    )
+
+
+def get_fazenda_id_escrita(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> int | None:
+    """Dependência FastAPI para rotas de ESCRITA — troca o `fazenda_id: int |
+    None = Depends(get_fazenda_atual_id)` tolerante por uma resolução que só
+    devolve None quando o multi-fazenda não está provisionado neste ambiente
+    (tabela `fazenda` vazia — nunca o caso em produção, ver
+    `resolver_fazenda_id_escrita`); em qualquer ambiente com fazenda
+    cadastrada, o valor aqui nunca chega None ao
+    `session.add(Modelo(fazenda_id=fazenda_id))` do endpoint. Composta EM
+    CIMA de `get_fazenda_atual_id` (não reimplementa a leitura do token) de
+    propósito: assim um `dependency_overrides[get_fazenda_atual_id]` de
+    teste continua valendo aqui também, sem precisar sobrescrever as duas."""
+    return resolver_fazenda_id_escrita(session, user, fazenda_id)
+
+
 def get_suporte_do_token(
     authorization: str | None = Header(default=None),
 ) -> dict:

@@ -1,14 +1,13 @@
 """
 Lançamento de protocolo de indução de lactação (POST /producao/inducao-lactacao)
-não carimbava fazenda_id em nenhum dos 3 registros que cria (Lancamento,
-Medicamento, Aplicacao) nem filtrava por fazenda ao listar — por isso um
-lançamento existia e aparecia em /producao/inducao-lactacao/ativos (que não
-filtrava por fazenda), mas sumia da Central de Protocolos > Acompanhamento
-(GET /central-protocolos/acompanhamento, que sempre filtrou por fazenda_id).
-Cobre: fazenda_id carimbado ao lançar; aparece no Acompanhamento da MESMA
-fazenda; NÃO aparece no Acompanhamento de outra fazenda; um lançamento antigo
-com fazenda_id NULL (dado de antes desta correção) continua visível — não
-fica órfão.
+carimba fazenda_id nos 3 registros que cria (Lancamento, Medicamento,
+Aplicacao) e filtra por fazenda ao listar. Cobre: fazenda_id carimbado ao
+lançar; aparece no Acompanhamento da MESMA fazenda; NÃO aparece no
+Acompanhamento de outra fazenda; um lançamento com fazenda_id NULL (dado
+residual que a migração 029227481e9e não conseguiu resolver) NÃO aparece —
+ver PR claude/fazenda-id-raiz: a partir dele o filtro voltou a ser estrito
+(a garantia de "nunca fica órfão" passou a ser a escrita nunca deixar a
+coluna nula, não mais a leitura tolerando NULL).
 """
 from __future__ import annotations
 
@@ -111,11 +110,19 @@ class TestFazendaIdCarimbado:
         assert not any(l["origem"] == "inducao" for l in linhas)
 
 
-class TestCompatibilidadeComLancamentoAntigo:
-    def test_lancamento_com_fazenda_id_nulo_continua_visivel(self, client):
-        # Simula um lançamento feito ANTES desta correção (fazenda_id nunca
-        # foi carimbado) — não pode virar órfão depois que a listagem passa
-        # a filtrar por fazenda.
+class TestFiltroEstritoNaoMostraOrfao:
+    def test_lancamento_com_fazenda_id_nulo_nao_aparece_mais(self, client):
+        # Simula uma linha que porventura ainda tenha fazenda_id NULO (ex.:
+        # a migração 029227481e9e não conseguiu resolver — 2+ fazendas reais
+        # e sem pai pra derivar). Até o PR claude/fazenda-id-raiz, Central de
+        # Protocolos e /producao/inducao-lactacao/ativos toleravam
+        # `fazenda_id IS NULL` de propósito, pra um lançamento legado não
+        # virar órfão. A tolerância saiu: agora a garantia de "nunca fica
+        # órfão" é a ESCRITA nunca deixar a coluna nula (fazenda.auth::
+        # get_fazenda_id_escrita) + o backfill da migração — não mais a
+        # leitura escondendo o problema. Uma linha nula (residual, não
+        # resolvida pelo backfill) some da listagem — comportamento
+        # esperado, não uma regressão.
         c, engine, estado = client
         with Session(engine) as s:
             lanc = ProtocoloInducaoLancamento(
@@ -132,7 +139,7 @@ class TestCompatibilidadeComLancamentoAntigo:
             s.commit()
 
         linhas = c.get("/central-protocolos/acompanhamento").json()
-        assert any(l["nome"] == "INDUÇÃO ANTIGA — 01/01/26 A 10/01/26" for l in linhas)
+        assert not any(l["nome"] == "INDUÇÃO ANTIGA — 01/01/26 A 10/01/26" for l in linhas)
 
         ativos = c.get("/producao/inducao-lactacao/ativos").json()
-        assert any(a["nome_protocolo"] == "INDUÇÃO ANTIGA — 01/01/26 A 10/01/26" for a in ativos)
+        assert not any(a["nome_protocolo"] == "INDUÇÃO ANTIGA — 01/01/26 A 10/01/26" for a in ativos)

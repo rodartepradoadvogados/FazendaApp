@@ -262,9 +262,19 @@ _NAO_LOCALIZADO = {
 
 
 # ── Materialização (chamada quando a conta principal APROVA) ───────────────
-def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
+def criar_registro(tipo: str, dados: dict, session: Session, *, user, fazenda_id: int) -> dict:
     """Monta o input do endpoint real e cria o registro. Levanta exceção em
     caso de erro (o chamador guarda a mensagem no LancamentoPendente).
+
+    `user`/`fazenda_id` são repassados EXPLICITAMENTE a cada função de
+    endpoint chamada abaixo — sem isso, `user: Usuario = Depends(...)` e
+    `fazenda_id: int | None = Depends(...)` ficam com o valor padrão não
+    resolvido (o próprio objeto `Depends`, já que esta chamada acontece fora
+    do ciclo de requisição do FastAPI) e `usuario_id_seguro`/
+    `fazenda_id_seguro` (rules/auditoria.py) caem para None — era exatamente
+    assim que todo lançamento aprovado pelo Telegram (inclusive protocolo
+    IATF, ver ramo "protocolo_iatf") nascia órfão. `fazenda_id` chega aqui já
+    resolvido e nunca None (ver aprovacoes.aprovar / get_fazenda_id_escrita).
 
     G17 (Configurações > Aprovações > Desfazer): além do que cada endpoint já
     devolvia, cada ramo abaixo acrescenta uma chave `"registros"` ao
@@ -289,7 +299,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
         from fazenda.api.routers.producao import ControlesIn, OrdenhaIn, criar_controles
         data_controle = _d(dados["data_controle"])
         entrada = OrdenhaIn(numero_matriz=dados["numero_matriz"], ordenhas=[float(x) for x in dados["ordenhas"]])
-        resultado = criar_controles(ControlesIn(data_controle=data_controle, entradas=[entrada]), session)
+        resultado = criar_controles(ControlesIn(data_controle=data_controle, entradas=[entrada]), session=session, user=user, fazenda_id=fazenda_id)
         criado = session.exec(
             select(ControleLeiteiro)
             .where(ControleLeiteiro.numero_matriz == dados["numero_matriz"])
@@ -304,7 +314,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
         crias = []
         if dados.get("cria_numero") and str(dados["cria_numero"]).strip().lower() not in ("pular", "-"):
             crias.append(CriaIn(numero=str(dados["cria_numero"]).strip(), sexo=dados.get("cria_sexo") or "F"))
-        resultado = registrar_parto(PartoIn(numero_matriz=dados["numero_matriz"], data_parto=_d(dados["data_parto"]), crias=crias), session)
+        resultado = registrar_parto(PartoIn(numero_matriz=dados["numero_matriz"], data_parto=_d(dados["data_parto"]), crias=crias), session=session, user=user, fazenda_id=fazenda_id)
         criado = session.exec(
             select(Parto)
             .where(Parto.numero_matriz == dados["numero_matriz"])
@@ -317,7 +327,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
     if tipo == "secagem":
         from fazenda.api.routers.producao import SecagemIn, registrar_secagem
         data_secagem = _d(dados["data_secagem"])
-        resultado = registrar_secagem(SecagemIn(numero_matriz=dados["numero_matriz"], data_secagem=data_secagem, motivo=dados["motivo"]), session)
+        resultado = registrar_secagem(SecagemIn(numero_matriz=dados["numero_matriz"], data_secagem=data_secagem, motivo=dados["motivo"]), session=session, user=user, fazenda_id=fazenda_id)
         criado = session.exec(
             select(Secagem)
             .where(Secagem.numero_matriz == dados["numero_matriz"])
@@ -343,16 +353,23 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
             numero_matriz=dados["numero_matriz"], data_servico=_d(dados["data_servico"]),
             tipo_servico=tipo_servico, protocolo=protocolo,
             reprodutor=(touro if str(touro or "").strip().lower() not in ("pular", "-", "") else None),
-        ), session)
+        ), session=session, user=user, fazenda_id=fazenda_id)
         resultado["registros"] = [{"tipo": "servico", "id": resultado["id"]}] if resultado.get("id") else _NAO_LOCALIZADO
         return resultado
 
     if tipo == "protocolo_iatf":
+        from fastapi import Response as _Response
         from fazenda.api.routers.reproducao import ProtocoloIatfIn, lancar_protocolo_iatf, _nome_auto_iatf
         d0 = _d(dados["data_d0"])
-        resultado = lancar_protocolo_iatf(ProtocoloIatfIn(
-            animais=_lista(dados["animais"]), data_d0=d0, protocolo=_nome_auto_iatf(d0),
-        ), session)
+        # Tudo por keyword de propósito: `lancar_protocolo_iatf` tem um
+        # `response: Response` entre `dados` e `session` — chamar por
+        # posição (como este ramo fazia antes) empurrava `session` para o
+        # parâmetro `response` e deixava o próprio `session` do endpoint sem
+        # resolver, quebrando a materialização silenciosamente.
+        resultado = lancar_protocolo_iatf(
+            ProtocoloIatfIn(animais=_lista(dados["animais"]), data_d0=d0, protocolo=_nome_auto_iatf(d0)),
+            response=_Response(), session=session, user=user, fazenda_id=fazenda_id,
+        )
         if resultado.get("criado") and resultado.get("lancamento_id"):
             resultado["registros"] = [{"tipo": "protocolo_iatf_lancamento", "id": resultado["lancamento_id"]}]
         else:
@@ -375,7 +392,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
             data_movimento=data_movimento, lote_destino_codigo=dados["lote_destino_codigo"],
             animais=animais_lista,
             motivo=(dados.get("motivo") if str(dados.get("motivo") or "").strip().lower() not in ("pular", "-", "") else None),
-        ), session)
+        ), session=session, user=user, fazenda_id=fazenda_id)
         # Sem id direto no retorno — busca de volta os MovimentoLote recém-
         # criados por (numero_matriz, data_movimento), um por animal movido.
         # tipo "movimento_lote" é o G4 — mesma tolerância de dependência
@@ -401,7 +418,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
         resultado = registrar_diagnostico(DiagnosticoIn(
             numero_matriz=dados["numero_matriz"], data_diagnostico=_d(dados["data_diagnostico"]),
             resultado=dados["resultado"], metodo=dados.get("metodo") or None,
-        ), session)
+        ), session=session, fazenda_id=fazenda_id)
         # Só ATUALIZA o Servico em aberto (resultado/data) — não cria
         # entidade nova, não há o que apagar para desfazer.
         resultado["registros"] = {
@@ -415,7 +432,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
         resultado = registrar_reconfirmacao(ReconfirmacaoIn(
             numero_matriz=dados["numero_matriz"], data_reconfirmacao=_d(dados["data_reconfirmacao"]),
             resultado=dados["resultado"],
-        ), session)
+        ), session=session, fazenda_id=fazenda_id)
         resultado["registros"] = {
             "reversivel": False,
             "motivo": "Reconfirmação só atualiza um serviço já existente — não há registro novo para desfazer.",
@@ -425,7 +442,10 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
     if tipo == "sanidade":
         from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
         item = ItemAplicacaoIn(produto=dados["produto"], quantidade=float(dados["quantidade"]), unidade=dados["unidade"])
-        resultado = registrar_aplicacao(AplicacaoIn(data_aplicacao=_d(dados["data_aplicacao"]), animais=_lista(dados["animais"]), itens=[item]), session)
+        resultado = registrar_aplicacao(
+            AplicacaoIn(data_aplicacao=_d(dados["data_aplicacao"]), animais=_lista(dados["animais"]), itens=[item]),
+            session=session, user=user, fazenda_id=fazenda_id,
+        )
         sanidade_ids = resultado.get("sanidade_ids") or []
         resultado["registros"] = (
             [{"tipo": "sanidade", "id": i} for i in sanidade_ids] if sanidade_ids else {
@@ -444,7 +464,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
             animais=_lista(dados["animais"]), tipo_baixa=dados["tipo_baixa"], motivo=dados["motivo"],
             data_baixa=_d(dados["data_baixa"]), valor=valor,
             tipo_valor=("total" if dados["motivo"] == "venda" and valor is not None else None),
-        ), session)
+        ), session=session, user=user, fazenda_id=fazenda_id)
         # Morte/descarte mexe em vários registros (Animal, possível
         # lançamento financeiro) sem um tipo único no motor de exclusões —
         # fora de escopo nesta fase (ver Parte 3, G17, do plano de
@@ -456,7 +476,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
         return resultado
 
     if tipo in ("despesa", "receita"):
-        resultado = _criar_lancamento_financeiro(tipo, dados, session)
+        resultado = _criar_lancamento_financeiro(tipo, dados, session, user=user, fazenda_id=fazenda_id)
         ids = resultado.get("ids") or []
         resultado["registros"] = [{"tipo": "financeiro", "id": i} for i in ids] if ids else _NAO_LOCALIZADO
         return resultado
@@ -473,7 +493,7 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
     raise ValueError(f"Tipo de lançamento desconhecido: {tipo}")
 
 
-def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> dict:
+def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session, *, user, fazenda_id: int) -> dict:
     """Materializa a despesa/receita lida do documento (foto/PDF/XML) enviado
     pelo Telegram — só chamada quando a conta principal APROVA. O
     fornecedor/cliente precisa já existir no cadastro (Configurações >
@@ -546,7 +566,7 @@ def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> di
         numero_documento_pagamento=dados.get("numero_documento_pagamento") if data_pagamento else None,
         forma_pagamento=dados.get("forma_pagamento") if data_pagamento else None,
     )
-    res = criar_lancamento(dados=lanc, session=session)
+    res = criar_lancamento(dados=lanc, session=session, user=user, fazenda_id=fazenda_id)
     # Marca a origem "telegram" (LancamentoIn não carrega esse campo) para
     # identificar os lançamentos que vieram pelo robô.
     for cid in res.get("ids", []):

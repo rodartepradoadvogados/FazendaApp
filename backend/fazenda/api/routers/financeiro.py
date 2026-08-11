@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
@@ -1606,7 +1606,7 @@ def criar_lancamento(
     dados: LancamentoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Cria um lançamento financeiro com um ou mais produtos/serviços (itens).
@@ -1614,7 +1614,6 @@ def criar_lancamento(
     que é o que efetivamente vira parcela(s). Sem data de pagamento, o
     lançamento nasce em aberto (contas a pagar/receber).
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("receita", "despesa"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
     if not dados.itens:
@@ -1914,9 +1913,8 @@ def listar_lancamentos_recorrentes(
 @router.post("/recorrentes", status_code=201)
 def criar_lancamento_recorrente(
     dados: LancamentoRecorrenteIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_lancamento_recorrente(dados)
     modelo = LancamentoRecorrente(
         **dados.model_dump(),
@@ -1983,13 +1981,12 @@ class GerarLancamentoRecorrenteIn(BaseModel):
 @router.post("/recorrentes/{modelo_id}/gerar", status_code=201)
 def gerar_lancamento_recorrente(
     modelo_id: int, dados: GerarLancamentoRecorrenteIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Gera um lançamento financeiro de verdade (ContaGerencial + LancamentoItem,
     igual a qualquer outro) a partir de um modelo recorrente + os dados
     variáveis deste período — reaproveita `criar_lancamento`, sem duplicar
     nenhuma regra de criação (numeração, estoque, etc.)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     modelo = session.get(LancamentoRecorrente, modelo_id)
     if not modelo or (fazenda_id is not None and modelo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento recorrente não encontrado")
