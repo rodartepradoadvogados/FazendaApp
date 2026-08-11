@@ -428,8 +428,17 @@ def calcular_agenda(
     # criado em cadastro/protocolos_sanitarios.py sem esse campo, escopado
     # indiretamente via protocolo_id -> ProtocoloSanitario, que esse sim tem
     # fazenda_id de verdade); filtrar aqui por _da_fazenda excluía TODAS as
-    # etapas, já que a coluna sempre está NULL.
-    etapas_por_id = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
+    # etapas, já que a coluna sempre está NULL (regressão do PR #467/#468 —
+    # não repetir). Em vez de ler a tabela inteira (todas as etapas de TODAS
+    # as fazendas-cliente), busca só os ids que `aplicacoes_pendentes` (essa
+    # sim corretamente escopada por fazenda) realmente referencia — mesmo
+    # resultado, sem depender de uma coluna que não existe na prática.
+    ids_etapa_necessarios = {ap.etapa_id for ap in aplicacoes_pendentes}
+    etapas_por_id = {
+        e.id: e for e in session.exec(
+            select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.id.in_(ids_etapa_necessarios))
+        ).all()
+    } if ids_etapa_necessarios else {}
     lancamentos_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento)).all()}
     protocolos_por_id = {p.id: p for p in session.exec(_da_fazenda(select(ProtocoloSanitario), ProtocoloSanitario)).all()}
     eventos_protocolo = []

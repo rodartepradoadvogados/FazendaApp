@@ -224,22 +224,56 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         return []
 
     from fazenda.models import EventoSanitario
-    eventos_por_id = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    # Mesmo padrão de fazenda.rules.eventos_sanitarios.eventos_agenda (já
+    # revisado) — sem o filtro, esta leitura de EventoSanitario crescia com o
+    # catálogo de TODAS as fazendas-cliente, não só a atual.
+    query_eventos = select(EventoSanitario)
+    if fazenda_id is not None:
+        query_eventos = query_eventos.where(EventoSanitario.fazenda_id == fazenda_id)
+    eventos_por_id = {e.id: e for e in session.exec(query_eventos).all()}
+    # Pessoa (veterinário) NÃO filtra por fazenda de propósito — ver o
+    # comentário em fazenda/models/pessoal.py:Pessoa.fazenda_id: só a
+    # listagem/cadastro principal (GET/POST /pessoas) considera esse campo
+    # por enquanto, os demais seletores (este incluso) continuam enxergando
+    # todas as pessoas, independente da fazenda.
     pessoas_por_id = {p.id: p for p in session.exec(select(Pessoa)).all()}
     dias_aviso = cronograma_sanitario_dias_aviso()
 
     # Garante que toda regra usa_cronograma=True já tem um cronograma aberto
     # esperando decisão — nasce no ato, mesmo antes do 1º animal ser sugerido
     # (é a leitura da Agenda, chamada o tempo todo, que faz esse papel de
-    # "criar" — não depende de nenhuma ação manual do usuário).
-    for calendario in regras.values():
-        cronograma_aberto(session, calendario)
-
+    # "criar" — não depende de nenhuma ação manual do usuário). Antes disso
+    # chamava cronograma_aberto() (1 SELECT, e às vezes INSERT+COMMIT) para
+    # CADA regra a cada carregamento da Agenda, mesmo quando ela já tinha um
+    # cronograma aberto (o caso comum) — a busca em lote abaixo resolve isso
+    # numa consulta só, e só entra na função (que cria) quem realmente está
+    # sem cronograma aberto.
     cronogramas = session.exec(
         select(CronogramaSanitario)
         .where(CronogramaSanitario.calendario_sanitario_id.in_(tuple(regras)))
         .where(CronogramaSanitario.status.in_(_ABERTOS))
     ).all()
+    regras_com_cronograma = {c.calendario_sanitario_id for c in cronogramas}
+    for calendario_id, calendario in regras.items():
+        if calendario_id not in regras_com_cronograma:
+            cronogramas.append(cronograma_aberto(session, calendario))
+
+    # Trilhas do animal (1) e de aplicação (3) abaixo, em lote para TODOS os
+    # cronogramas de uma vez — antes eram 2 SELECTs por cronograma aberto
+    # (um por "sugerido", outro por "incluído" quando o dia de aplicar
+    # chegava), virando dezenas de idas ao banco numa fazenda com várias
+    # regras de cronograma simultâneas.
+    cronograma_ids = [c.id for c in cronogramas]
+    animais_cronograma = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id.in_(cronograma_ids))
+    ).all() if cronograma_ids else []
+    sugeridos_por_cronograma: dict[int, list[CronogramaSanitarioAnimal]] = {}
+    incluidos_por_cronograma: dict[int, list[CronogramaSanitarioAnimal]] = {}
+    for linha in animais_cronograma:
+        if linha.status == "sugerido":
+            sugeridos_por_cronograma.setdefault(linha.cronograma_id, []).append(linha)
+        elif linha.status == "incluido":
+            incluidos_por_cronograma.setdefault(linha.cronograma_id, []).append(linha)
 
     saida: list[dict] = []
     for cron in cronogramas:
@@ -249,11 +283,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         alvo = calendario.categoria_alvo or "rebanho"
 
         # (1) Trilha do animal — um card por animal "sugerido" ainda sem decisão.
-        for linha in session.exec(
-            select(CronogramaSanitarioAnimal)
-            .where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
-            .where(CronogramaSanitarioAnimal.status == "sugerido")
-        ).all():
+        for linha in sugeridos_por_cronograma.get(cron.id, []):
             eid = f"{PREFIXO_CRONOGRAMA}animal_{linha.id}"
             if eid in realizados:
                 continue
@@ -295,7 +325,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
             eid = f"{PREFIXO_CRONOGRAMA}aplicar_{cron.id}"
             if eid in realizados:
                 continue
-            incluidos = animais_por_status(session, cron.id, "incluido")
+            incluidos = incluidos_por_cronograma.get(cron.id, [])
             vet = pessoas_por_id.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None
             quem = f"com {vet.nome}" if vet else "pela equipe própria"
             saida.append({
