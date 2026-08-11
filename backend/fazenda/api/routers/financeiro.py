@@ -557,6 +557,43 @@ def listar_lancamentos(
     return {"lancamentos": registros, "total": len(registros)}
 
 
+@router.get("/resultado-mes-recente")
+def resultado_mes_recente(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Resultado (receita − despesa) do mês de competência mais recente que tem
+    lançamento — sustenta só o card "Resultado do mês" da Capa.
+
+    Antes a Capa chamava GET /financeiro/lancamentos (o extrato COMPLETO: todo
+    o histórico de ContaGerencial da fazenda, com itens, vale, anexo e nome de
+    usuário resolvidos por lançamento) só para achar o mês mais recente e
+    somar duas colunas — a rota mais pesada do sistema virava trabalho pago a
+    cada abertura da Capa, crescendo sem limite junto com o histórico
+    financeiro. Aqui lemos só (data_competencia, tipo, valor_total), sem os
+    joins/enriquecimentos que o extrato completo existe para sustentar.
+
+    Mantém a mesma soma "crua" de valor_total (sem o ajuste de vale de
+    fazenda.rules.vale_item.valor_gerencial) que a Capa já fazia a partir do
+    extrato — não é o resultado gerencial do DRE (GET /financeiro/dre), que
+    deduz vale; comportamento inalterado de propósito.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial.data_competencia, ContaGerencial.tipo, ContaGerencial.valor_total).where(
+        ContaGerencial.data_competencia != None  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    linhas = [(d, tipo, valor) for d, tipo, valor in session.exec(query).all() if d is not None]
+    if not linhas:
+        return {"mes": None, "resultado": None}
+    mes_mais_recente = max(f"{d.year}-{d.month:02d}" for d, _tipo, _valor in linhas)
+    do_mes = [(tipo, valor) for d, tipo, valor in linhas if f"{d.year}-{d.month:02d}" == mes_mais_recente]
+    receitas = sum((valor or 0.0) for tipo, valor in do_mes if tipo == "receita")
+    despesas = sum((valor or 0.0) for tipo, valor in do_mes if tipo == "despesa")
+    return {"mes": mes_mais_recente, "resultado": round(receitas - despesas, 2)}
+
+
 @router.get("/possiveis-duplicados")
 def possiveis_duplicados(
     tipo: str, valor_total: float, fornecedor_cliente: str = "", data_emissao: date | None = None,

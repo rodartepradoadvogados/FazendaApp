@@ -78,9 +78,19 @@ def obter_producao(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Série temporal, curva de lactação e ranking por vaca do controle leiteiro."""
+    """Série temporal, curva de lactação e ranking por vaca do controle leiteiro.
+
+    Único consumidor é a Capa (fetchProducao em lib/api.ts), que só usa os
+    últimos 12 pontos de `serie_temporal` (ver `serieProd` em app/page.tsx).
+    Sem filtro de data essa query lia o histórico INTEIRO de controle
+    leiteiro da fazenda (anos de registros, potencialmente diários) só para
+    descartar quase tudo depois. A janela de 400 dias (~13 meses) cobre com
+    folga qualquer cadência de lançamento (mensal/DHI ou diária) e garante
+    os últimos 12 pontos exibidos, sem crescer sem limite com o histórico.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query = select(ControleLeiteiro)
+    janela_desde = date.today() - timedelta(days=400)
+    query = select(ControleLeiteiro).where(ControleLeiteiro.data_controle >= janela_desde)
     if fazenda_id is not None:
         query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
     controles = [c.model_dump() for c in session.exec(query).all()]
