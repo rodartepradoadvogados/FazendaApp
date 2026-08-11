@@ -462,3 +462,82 @@ def test_validacao_soma_proporcoes_zero():
     entrada = EntradaFormulacao(animal=animal_lactante(), ingredientes=ingredientes)
     with pytest.raises(ValorInvalidoError):
         avaliar_dieta(entrada)
+
+
+# ---------------------------------------------------------------------------
+# CMS nas DUAS equações (sem fibra × com fibra) e efeito da monensina — ago/2026
+# ---------------------------------------------------------------------------
+class TestConsumoDuploEMonensina:
+    def _consumo(self, **overrides):
+        entrada = EntradaFormulacao(animal=animal_lactante(**overrides), ingredientes=dieta_referencia())
+        return avaliar_dieta(entrada).consumo
+
+    def test_calcula_as_duas_equacoes_da_categoria_lactante(self):
+        c = self._consumo()
+        assert c.equacao_sem_fibra == 8
+        assert c.equacao_com_fibra == 9
+        assert c.cms_sem_fibra_kg_dia > 0
+        assert c.cms_com_fibra_kg_dia > 0
+
+    def test_novilha_usa_o_par_2_e_3(self):
+        c = self._consumo(
+            estado_fisiologico="novilha", eq_cms=2, paridade=0.0, del_dias=None,
+            producao_leite_kg_dia=None, gordura_leite_pct=None, proteina_leite_pct=None,
+            peso_vivo_kg=400.0, idade_dias=540,
+        )
+        assert (c.equacao_sem_fibra, c.equacao_com_fibra) == (2, 3)
+
+    def test_o_cms_que_vale_e_o_com_fibra(self):
+        # A fibra é o limite físico: não adianta potencial de consumo maior
+        # do que o volumoso permite.
+        c = self._consumo()
+        assert c.cms_kg_dia == pytest.approx(c.cms_com_fibra_kg_dia)
+        assert c.equacao_usada == c.equacao_com_fibra
+
+    def test_escolher_eq_9_nao_muda_mais_o_resultado(self):
+        # eq_cms agora só define a CATEGORIA, não qual número aparece.
+        assert self._consumo(eq_cms=8).cms_kg_dia == pytest.approx(self._consumo(eq_cms=9).cms_kg_dia)
+
+    def test_fibra_limitante_e_a_diferenca_entre_as_duas(self):
+        c = self._consumo()
+        assert c.fibra_limita_kg_dia == pytest.approx(c.cms_sem_fibra_kg_dia - c.cms_com_fibra_kg_dia)
+        assert c.fibra_e_limitante is (c.fibra_limita_kg_dia > 0.1)
+
+    def test_cms_informado_vence_as_duas_estimativas(self):
+        c = self._consumo(eq_cms=0, cms_informado_kg_dia=22.0)
+        assert c.cms_kg_dia == pytest.approx(22.0)
+        assert c.equacao_usada == 0
+        # As estimativas continuam disponíveis para comparação.
+        assert c.cms_sem_fibra_kg_dia > 0 and c.cms_com_fibra_kg_dia > 0
+
+    def test_monensina_kg_desconta_030_dos_dois_cms(self):
+        sem = self._consumo(usa_monensina=False)
+        com = self._consumo(usa_monensina=True, monensina_modo="kg")
+        assert com.cms_sem_fibra_kg_dia == pytest.approx(sem.cms_sem_fibra_kg_dia - 0.30)
+        assert com.cms_com_fibra_kg_dia == pytest.approx(sem.cms_com_fibra_kg_dia - 0.30)
+        assert com.monensina_reducao_kg_dia == pytest.approx(0.30)
+
+    def test_monensina_pct_desconta_2_por_cento(self):
+        sem = self._consumo(usa_monensina=False)
+        com = self._consumo(usa_monensina=True, monensina_modo="pct")
+        assert com.cms_com_fibra_kg_dia == pytest.approx(sem.cms_com_fibra_kg_dia * 0.98)
+
+    def test_monensina_manual_usa_o_valor_digitado(self):
+        sem = self._consumo(usa_monensina=False)
+        com = self._consumo(usa_monensina=True, monensina_modo="manual", monensina_reducao_manual=0.8)
+        assert com.cms_com_fibra_kg_dia == pytest.approx(sem.cms_com_fibra_kg_dia - 0.8)
+
+    def test_monensina_nunca_zera_ou_inverte_o_cms(self):
+        c = self._consumo(usa_monensina=True, monensina_modo="manual", monensina_reducao_manual=999.0)
+        assert c.cms_kg_dia > 0
+
+    def test_monensina_desligada_nao_desconta_nada(self):
+        assert self._consumo(usa_monensina=False).monensina_reducao_kg_dia == 0.0
+
+    def test_modo_invalido_e_recusado(self):
+        with pytest.raises(ValorInvalidoError):
+            self._consumo(usa_monensina=True, monensina_modo="inventado")
+
+    def test_modo_manual_sem_valor_e_recusado(self):
+        with pytest.raises(ValorInvalidoError):
+            self._consumo(usa_monensina=True, monensina_modo="manual", monensina_reducao_manual=None)
