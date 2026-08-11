@@ -1,0 +1,203 @@
+{% extends "contrato_equipe_base.html" %}
+
+{% block titulo_aba %}Contrato de Prestação de Serviços (PJ) — CowData{% endblock %}
+{% block titulo %}CONTRATO DE PRESTAÇÃO DE SERVIÇOS{% endblock %}
+{% block subtitulo %}Instrumento particular firmado entre pessoas jurídicas — arts. 593 a 609 do Código Civil{% endblock %}
+
+{% block partes %}
+<p class="qualificacao">Pelo presente instrumento particular, de um lado:</p>
+
+<p class="qualificacao">
+<b>{{ empresa_nome }}</b>, pessoa jurídica de direito privado, inscrita no CNPJ sob o nº
+<span class="preencher">{{ empresa_cnpj or "[PREENCHER — CNPJ da CowData]" }}</span>,
+com sede em <span class="preencher">{{ empresa_endereco or "[PREENCHER — endereço da sede]" }}</span>,
+neste ato representada na forma de seus atos constitutivos, doravante denominada simplesmente
+<b>CONTRATANTE</b>;
+</p>
+
+<p class="qualificacao">e de outro lado:</p>
+
+<p class="qualificacao">
+<b>{{ pessoa_nome }}</b>, {{ descricao_porte }}, inscrita no {{ documento_rotulo }} sob o nº
+<span class="preencher">{{ cpf or "[PREENCHER — CNPJ da contratada]" }}</span>,
+com sede em <span class="preencher">{{ endereco_completo or "[PREENCHER — endereço da sede]" }}</span>,
+neste ato representada por seu titular/sócio administrador
+<span class="preencher">{{ representante_nome or "[PREENCHER — nome do representante legal]" }}</span>,
+portador do CPF nº <span class="preencher">{{ representante_cpf or "[PREENCHER — CPF do representante]" }}</span>,
+doravante denominada simplesmente <b>CONTRATADA</b>;
+</p>
+
+<p class="qualificacao">
+têm entre si justo e contratado o presente <b>Contrato de Prestação de Serviços</b>, regido pelos arts. 593
+a 609 do Código Civil e pelas cláusulas e condições seguintes.
+</p>
+
+<p class="nota">[NOTA DO ADVOGADO] Conferir, antes da assinatura, se o objeto social da CONTRATADA no cartão
+CNPJ abrange efetivamente a atividade contratada na Cláusula 1. Contratar como PJ uma empresa cujo CNAE não
+comporta o serviço é o primeiro indício levantado em fiscalização e em reclamatória.
+{% if subtipo_pj == "MEI" %}
+Atenção adicional ao enquadramento MEI: a contratação de MEI para prestar serviço de forma contínua e
+pessoal à mesma tomadora é hipótese de desenquadramento e de reconhecimento de vínculo — avaliar se o
+caso concreto comporta MEI ou se o correto é ME/EPP com equipe própria.
+{% endif %}
+</p>
+{% endblock %}
+
+{% block clausulas %}
+<h2>1. OBJETO</h2>
+<p class="clausula"><b>1.1.</b> A CONTRATADA prestará à CONTRATANTE serviços de <b>{{ objeto_servico }}</b>,
+executados com autonomia técnica, mediante organização própria de meios, pessoal e método de trabalho.</p>
+<p class="clausula"><b>1.2.</b> Os serviços serão executados no local e nas condições que a CONTRATADA reputar
+adequados ao cumprimento do resultado ajustado, ressalvadas as hipóteses em que a natureza da atividade
+exigir presença em fazenda-cliente, feira, evento ou sede da CONTRATANTE, previamente combinadas entre as
+partes.</p>
+<p class="clausula"><b>1.3.</b> A CONTRATANTE poderá indicar prioridades, prazos de entrega e padrões técnicos
+de qualidade — o que não caracteriza subordinação jurídica, por se tratar da fiscalização do resultado
+inerente a todo contrato de prestação de serviços.</p>
+
+<h2>2. NATUREZA DA RELAÇÃO E AUSÊNCIA DE VÍNCULO EMPREGATÍCIO</h2>
+<p class="clausula"><b>2.1.</b> O presente contrato é de natureza estritamente civil, não gerando vínculo
+empregatício, societário ou de representação entre a CONTRATANTE e a CONTRATADA, seus sócios, prepostos ou
+empregados, ausentes os elementos do art. 3º da Consolidação das Leis do Trabalho.</p>
+<p class="clausula"><b>2.2.</b> As partes reconhecem que a contratação de autônomo, com ou sem exclusividade,
+de forma contínua ou não, com observância dos requisitos legais, afasta a qualidade de empregado prevista
+nos arts. 2º e 3º da CLT, nos termos do art. 442-B da CLT, incluído pela Lei nº 13.467/2017.</p>
+<p class="clausula"><b>2.3.</b> A CONTRATADA responde exclusivamente pelos encargos trabalhistas,
+previdenciários, fiscais e securitários relativos a si própria e a seus empregados e prepostos, obrigando-se
+a manter a CONTRATANTE integralmente indene de qualquer cobrança a esse título.</p>
+<p class="clausula"><b>2.4.</b> Não há, entre as partes, subordinação hierárquica, controle de jornada,
+exigência de cumprimento de horário, poder disciplinar ou dever de pessoalidade na execução — podendo a
+CONTRATADA fazer-se substituir por profissional de sua equipe, desde que atendidos os requisitos técnicos
+do serviço e observada a Cláusula 6 (sigilo).</p>
+<p class="nota">[NOTA DO ADVOGADO] Cláusula 2 é declaratória e <b>não blinda por si só</b>: se, na prática,
+houver pessoalidade, habitualidade, onerosidade e subordinação (art. 3º da CLT), o vínculo é reconhecido
+pelo princípio da primazia da realidade, e o contrato passa a ser prova contra a empresa. A blindagem real
+é operacional, não redacional — não exigir horário nem exclusividade de fato, não submeter a poder
+disciplinar, não incluir em escala de plantão, permitir substituição, e pagar sempre contra nota fiscal.
+Sobre a licitude da terceirização de atividade-fim e sobre o alcance do art. 442-B da CLT existe
+jurisprudência do STF diretamente aplicável: <b>revalidar os precedentes no sítio oficial do tribunal antes
+de usá-los em defesa ou parecer</b>, pois a matéria segue em ajuste nas instâncias trabalhistas.</p>
+
+<h2>3. PREÇO, FATURAMENTO E PAGAMENTO</h2>
+<p class="clausula"><b>3.1.</b> Pela prestação dos serviços, a CONTRATANTE pagará à CONTRATADA o valor mensal de
+<b>R$ {{ pagamento_mensal }}</b>.</p>
+<p class="clausula"><b>3.2.</b> O pagamento será efetuado até o dia <b>{{ dia_pagamento }}</b> do mês subsequente
+ao da prestação, <b>mediante apresentação da respectiva nota fiscal de serviços</b>, por transferência
+bancária ou Pix em conta de titularidade da CONTRATADA.</p>
+<p class="clausula"><b>3.3.</b> A emissão de nota fiscal é condição para o pagamento; sua ausência autoriza a
+retenção do valor até a regularização, sem incidência de mora contra a CONTRATANTE.</p>
+<p class="clausula"><b>3.4.</b> Do valor bruto serão retidos os tributos cuja retenção na fonte seja obrigatória
+por lei ou por legislação municipal (ISSQN), conforme o enquadramento fiscal da CONTRATADA.</p>
+<p class="clausula"><b>3.5.</b> O valor será reajustado anualmente pela variação acumulada do IPCA, ou por
+índice que venha a substituí-lo, a contar da data de assinatura deste instrumento.</p>
+<p class="clausula"><b>3.6.</b> O atraso no pagamento sujeita a CONTRATANTE a multa de 2% (dois por cento) sobre
+o valor em atraso, juros de mora de 1% (um por cento) ao mês e correção monetária pelo mesmo índice do
+item 3.5.</p>
+
+<h2>4. OBRIGAÇÕES DA CONTRATADA</h2>
+<p class="clausula"><b>4.1.</b> Executar os serviços com zelo, diligência e observância da técnica aplicável,
+cumprindo os prazos ajustados.</p>
+<p class="clausula"><b>4.2.</b> Manter regulares sua inscrição no CNPJ, seu enquadramento fiscal e suas
+obrigações tributárias, previdenciárias e trabalhistas, exibindo comprovação sempre que solicitada.</p>
+<p class="clausula"><b>4.3.</b> Arcar com seus próprios equipamentos, softwares, deslocamentos e demais custos
+de execução, salvo os expressamente assumidos pela CONTRATANTE em documento escrito.</p>
+<p class="clausula"><b>4.4.</b> Comunicar de imediato qualquer fato que possa comprometer a execução dos
+serviços ou a segurança das informações a que tiver acesso.</p>
+<p class="clausula"><b>4.5.</b> Responder pelos danos que causar à CONTRATANTE ou a terceiros, por dolo ou
+culpa, na execução dos serviços.</p>
+
+<h2>5. OBRIGAÇÕES DA CONTRATANTE</h2>
+<p class="clausula"><b>5.1.</b> Efetuar os pagamentos na forma da Cláusula 3.</p>
+<p class="clausula"><b>5.2.</b> Fornecer as informações, acessos e materiais necessários à execução dos serviços.</p>
+<p class="clausula"><b>5.3.</b> Comunicar por escrito eventual inconformidade na entrega, concedendo prazo
+razoável para correção antes de qualquer medida sancionatória.</p>
+
+<h2>6. SIGILO, CONFIDENCIALIDADE E DADOS DOS PRODUTORES</h2>
+<p class="clausula"><b>6.1.</b> A CONTRATADA reconhece que poderá ter acesso a informações confidenciais da
+CONTRATANTE e a <b>dados operacionais, zootécnicos, genéticos, produtivos, sanitários e financeiros de
+fazendas-clientes</b>, os quais constituem segredo de empresa protegido pelo art. 195, incisos XI e XII, da
+Lei nº 9.279/1996.</p>
+<p class="clausula"><b>6.2.</b> É vedado à CONTRATADA divulgar, copiar, exportar, agregar, comercializar ou
+utilizar, em proveito próprio ou de terceiros, dados de fazendas-clientes ou informações da CONTRATANTE,
+durante a vigência do contrato e após a sua extinção, por prazo indeterminado, enquanto a informação
+mantiver caráter confidencial.</p>
+<p class="clausula"><b>6.3. Proteção de dados pessoais.</b> No tratamento de dados pessoais decorrente deste
+contrato, a CONTRATADA atua na qualidade de <b>suboperadora</b>, tratando os dados exclusivamente conforme as
+instruções documentadas da CONTRATANTE e nos limites da finalidade contratada, observada a Lei nº
+13.709/2018 (LGPD), obrigando-se a adotar medidas técnicas e administrativas de segurança e a comunicar
+qualquer incidente em até 24 (vinte e quatro) horas do conhecimento do fato.</p>
+<p class="clausula"><b>6.4.</b> A CONTRATADA estenderá as obrigações desta cláusula a seus sócios, empregados e
+prepostos, respondendo solidariamente por eventual violação praticada por eles.</p>
+<p class="clausula"><b>6.5.</b> O descumprimento desta cláusula sujeita a CONTRATADA à multa não compensatória
+de <b>2 (duas) vezes o valor mensal ajustado na Cláusula 3.1</b>, sem prejuízo da
+indenização pelos danos que excederem esse montante, da rescisão imediata por justa causa e das sanções
+cíveis e penais cabíveis.</p>
+
+<h2>7. PROPRIEDADE INTELECTUAL</h2>
+<p class="clausula"><b>7.1.</b> Os direitos relativos a programa de computador desenvolvido pela CONTRATADA em
+razão deste contrato pertencem <b>exclusivamente à CONTRATANTE</b>, nos termos do art. 4º da Lei nº
+9.609/1998, que abrange expressamente os contratos de prestação de serviços.</p>
+<p class="clausula"><b>7.2.</b> Todo material, código, documentação, relatório, marca, layout ou base de dados
+produzido em razão deste contrato é cedido à CONTRATANTE de forma integral, definitiva e irrevogável, para
+todas as modalidades de utilização, sem limitação de tempo ou território, estando a cessão remunerada pelo
+preço da Cláusula 3.</p>
+<p class="clausula"><b>7.3.</b> A CONTRATADA não poderá utilizar, reproduzir ou apresentar a terceiros, a título
+de portfólio ou de qualquer outro, os produtos desenvolvidos para a CONTRATANTE, salvo autorização prévia
+e escrita.</p>
+
+<h2>8. VIGÊNCIA E RESCISÃO</h2>
+<p class="clausula"><b>8.1.</b> O contrato vigora a partir da data de sua assinatura, por <b>{{ vigencia }}</b>,
+renovando-se automaticamente por iguais períodos, salvo manifestação escrita em contrário.</p>
+<p class="clausula"><b>8.2.</b> Qualquer das partes poderá resilir o contrato imotivadamente, mediante aviso
+prévio escrito de <b>30 (trinta) dias</b>, sem multa, ressalvados os valores devidos pelos serviços já
+prestados, na forma dos arts. 599 e 603 do Código Civil.</p>
+<p class="clausula"><b>8.3.</b> O contrato poderá ser rescindido de imediato, independentemente de aviso prévio
+ou de indenização, em caso de descumprimento de obrigação essencial — notadamente as Cláusulas 6 e 7 —,
+de decretação de falência ou recuperação judicial, ou de baixa/suspensão da inscrição no CNPJ da CONTRATADA.</p>
+<p class="clausula"><b>8.4.</b> Extinto o contrato, a CONTRATADA devolverá ou destruirá, conforme instrução da
+CONTRATANTE, todo material, dado e credencial de acesso em seu poder, certificando o cumprimento por
+escrito em até 10 (dez) dias.</p>
+
+<h2>9. DISPOSIÇÕES GERAIS</h2>
+<p class="clausula"><b>9.1.</b> Este contrato não poderá ser cedido ou transferido, no todo ou em parte, sem
+anuência prévia e escrita da outra parte.</p>
+<p class="clausula"><b>9.2.</b> A subcontratação total ou parcial dos serviços depende de autorização prévia e
+escrita da CONTRATANTE, permanecendo a CONTRATADA integralmente responsável perante ela.</p>
+<p class="clausula"><b>9.3.</b> A tolerância quanto ao descumprimento de qualquer cláusula não implica novação
+ou renúncia de direitos.</p>
+<p class="clausula"><b>9.4.</b> A eventual nulidade de uma cláusula não contamina as demais.</p>
+<p class="clausula"><b>9.5.</b> As comunicações serão válidas quando realizadas por escrito, inclusive por meio
+eletrônico, aos endereços informados neste instrumento.</p>
+<p class="clausula"><b>9.6.</b> As partes reconhecem a validade jurídica da assinatura eletrônica deste
+instrumento, nos termos do art. 10, § 2º, da Medida Provisória nº 2.200-2/2001.</p>
+
+<h2>10. FORO</h2>
+<p class="clausula"><b>10.1.</b> Fica eleito o foro da comarca de
+<span class="preencher">{{ cidade_foro or "[PREENCHER — comarca]" }}</span>, Estado de
+<span class="preencher">{{ estado_foro or "[PREENCHER]" }}</span>, para dirimir as questões oriundas deste
+contrato, com renúncia a qualquer outro, por mais privilegiado que seja.</p>
+
+<p class="clausula" style="margin-top: 1.4rem;">E por estarem assim justas e contratadas, as partes firmam o
+presente instrumento em 2 (duas) vias de igual teor e forma, ou eletronicamente, na presença das
+testemunhas abaixo.</p>
+{% endblock %}
+
+{% block assinaturas %}
+<div class="assinaturas">
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">{{ empresa_nome }} — CONTRATANTE</div>
+  </div>
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">{{ pessoa_nome }} — CONTRATADA</div>
+  </div>
+</div>
+
+<div class="testemunhas">
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">Testemunha 1 — Nome e CPF</div>
+  </div>
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">Testemunha 2 — Nome e CPF</div>
+  </div>
+</div>
+{% endblock %}

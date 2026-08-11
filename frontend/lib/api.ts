@@ -810,6 +810,31 @@ export async function baixarModeloContrato(fazendaId: number, dados?: {
   a.click();
   URL.revokeObjectURL(url);
 }
+// Contrato do membro da Equipe CowData — CLT ou prestação de serviços PJ,
+// escolhido pelo `tipo_vinculo` do cadastro (ver
+// fazenda/rules/contrato_equipe_render.py). Mesmo fluxo de download do
+// contrato de fazenda-cliente acima: baixa o HTML e salva como arquivo.
+export async function baixarContratoMembroEquipe(pessoaId: number, dados?: {
+  funcao?: string; local_prestacao?: string; jornada_semanal?: string; experiencia_dias?: string;
+  objeto_servico?: string; dia_pagamento?: string; vigencia?: string;
+  representante_nome?: string; representante_cpf?: string;
+  cidade_foro?: string; estado_foro?: string;
+}): Promise<void> {
+  const params = new URLSearchParams(Object.entries(dados || {}).filter(([, v]) => v) as [string, string][]);
+  const res = await authFetch(`${API}/painel-cowdata/equipe/pessoas/${pessoaId}/contrato${params.toString() ? `?${params}` : ""}`);
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar o contrato"); }
+  const blob = await res.blob();
+  // O backend já devolve o nome certo (contrato-clt-<nome>.html /
+  // contrato-pj-<nome>.html) no Content-Disposition — reaproveita em vez de
+  // remontar o nome aqui e arriscar divergir do arquivo servido.
+  const nome = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] || `contrato-${pessoaId}.html`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nome;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 export async function assinarContratoZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/assinar-zapsign`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar assinatura no ZapSign"); }

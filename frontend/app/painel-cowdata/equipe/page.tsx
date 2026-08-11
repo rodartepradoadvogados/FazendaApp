@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2, UserPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Plus, Trash2, UserPlus } from "lucide-react";
 import {
   fetchCargosCowData, fetchEquipeCowData, criarMembroEquipeCowData, editarMembroEquipeCowData, excluirMembroEquipeCowData,
   fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData, fetchTiposVinculoCowData,
+  baixarContratoMembroEquipe,
   fetchUsuarioEquipeCowData, criarUsuarioEquipeCowData, editarUsuarioEquipeCowData,
   AREAS_PAINEL_COWDATA, LABEL_AREA_PAINEL_COWDATA,
   type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData,
@@ -216,7 +217,8 @@ export default function EquipeCowData() {
             )}
           </div>
           <p style={{ fontSize: "0.7rem", color: COR.mudo, marginTop: "0.6rem" }}>
-            Contrato ({novo.tipo_vinculo === "pj" ? "prestação de serviços PJ" : "funcionário"}) para baixar: em preparação — ainda não disponível nesta tela.
+            Depois de cadastrar, o contrato ({novo.tipo_vinculo === "pj" ? "prestação de serviços PJ" : "CLT"}) fica disponível
+            em <b>Baixar contrato</b>, na ficha do membro. O que faltar no cadastro sai marcado como [PREENCHER] na minuta.
           </p>
 
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
@@ -286,6 +288,11 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
     try { await excluirFolhaCowData(id); setFolhas(await fetchFolhaMembroCowData(pessoa.id)); } catch (e: any) { setErro(e.message); }
   }
 
+  async function baixarContrato() {
+    setErro(null);
+    try { await baixarContratoMembroEquipe(pessoa.id); } catch (e: any) { setErro(e.message); }
+  }
+
   const ordFolhas = useOrdenacao(folhas ?? []);
 
   return (
@@ -314,6 +321,28 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
             {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.6rem" }}>{erro}</p>}
             <div style={{ fontSize: "0.75rem", color: COR.mudo, marginBottom: "0.6rem" }}>
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
+            </div>
+
+            {/* Contrato — CLT ou prestação de serviços PJ, escolhido pelo
+                tipo de vínculo do cadastro. Sem vínculo definido, o backend
+                recusa (400) em vez de gerar o contrato errado; por isso o
+                botão já avisa aqui, antes do clique. */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.8rem" }}>
+              <button onClick={baixarContrato} disabled={!pessoa.tipo_vinculo}
+                title={pessoa.tipo_vinculo ? "Abre a minuta pronta para revisar, imprimir e assinar" : "Defina o tipo de vínculo (funcionário ou PJ) para gerar o contrato"}
+                style={{
+                  display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.75rem",
+                  padding: "0.35rem 0.8rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`,
+                  background: "transparent", color: pessoa.tipo_vinculo ? COR.dourado : COR.mudo,
+                  fontWeight: 600, cursor: pessoa.tipo_vinculo ? "pointer" : "not-allowed",
+                }}>
+                <FileText size={13} /> Baixar contrato
+              </button>
+              <span style={{ fontSize: "0.7rem", color: COR.mudo }}>
+                {pessoa.tipo_vinculo === "funcionario" ? "Contrato individual de trabalho (CLT)"
+                  : pessoa.tipo_vinculo === "pj" ? `Prestação de serviços${pessoa.subtipo_pj ? ` — ${pessoa.subtipo_pj}` : ""}`
+                  : "Defina o tipo de vínculo para gerar o contrato"}
+              </span>
             </div>
 
             <LoginEquipe pessoa={pessoa} />
