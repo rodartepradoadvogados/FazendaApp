@@ -328,3 +328,212 @@ class TestBibliotecaDeAlimentos:
         assert r.status_code == 200
         assert len(r.json()["categorias"]) == 11
         assert len(r.json()["biblioteca_semente"]) == 12
+
+
+class TestBibliotecaMestreCowData:
+    """Biblioteca mestre CowData (fazenda_id=None) + cópia por fazenda
+    (copy-on-write) — ver fazenda.rules.biblioteca_alimentos e docstring de
+    AlimentoNutricional em fazenda/models/formulacao.py."""
+
+    def _por_nome(self, c, nome: str) -> dict | None:
+        r = c.get("/formulacao/alimentos")
+        assert r.status_code == 200
+        return next((a for a in r.json()["biblioteca"] if a["nome"] == nome), None)
+
+    def test_mestre_aparece_para_qualquer_fazenda_recem_semeada(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        item1 = self._por_nome(c, "Milho moído")
+        _como_fazenda(2)
+        item2 = self._por_nome(c, "Milho moído")
+        assert item1 is not None and item2 is not None
+        assert item1["eh_mestre"] is True and item2["eh_mestre"] is True
+        assert item1["valores"]["pb_pct"] == item2["valores"]["pb_pct"] == 9.5
+
+    def test_editar_item_mestre_nao_afeta_outra_fazenda(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        mestre = self._por_nome(c, "Milho moído")
+        payload = {
+            "alimento_id": None, "nome": mestre["nome"], "categoria_nasem": mestre["categoria_nasem"],
+            "conc_pct": mestre["conc_pct"], "fonte": mestre["fonte"], "observacao": None,
+            "inclusao_min_pct": None, "inclusao_max_pct": None, "valores": {**mestre["valores"], "pb_pct": 99.0},
+        }
+        r = c.put(f"/formulacao/alimentos/{mestre['id']}", json=payload)
+        assert r.status_code == 200
+        copia = r.json()
+        assert copia["id"] != mestre["id"]
+        assert copia["eh_mestre"] is False and copia["eh_copia_editada"] is True
+        assert copia["valores"]["pb_pct"] == 99.0
+
+        # A fazenda 1 agora enxerga a CÓPIA (editada); a mestre original some
+        # da listagem dela (foi sobrescrita).
+        item1 = self._por_nome(c, "Milho moído")
+        assert item1["id"] == copia["id"]
+        assert item1["valores"]["pb_pct"] == 99.0
+
+        # A fazenda 2 nunca editou nada — continua vendo a mestre intocada.
+        _como_fazenda(2)
+        item2 = self._por_nome(c, "Milho moído")
+        assert item2["eh_mestre"] is True
+        assert item2["valores"]["pb_pct"] == 9.5
+
+    def test_excluir_copia_editada_restaura_padrao_cowdata(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        mestre = self._por_nome(c, "Farelo de soja")
+        payload = {
+            "alimento_id": None, "nome": mestre["nome"], "categoria_nasem": mestre["categoria_nasem"],
+            "conc_pct": mestre["conc_pct"], "fonte": mestre["fonte"], "observacao": None,
+            "inclusao_min_pct": None, "inclusao_max_pct": None, "valores": {**mestre["valores"], "pb_pct": 50.0},
+        }
+        copia = c.put(f"/formulacao/alimentos/{mestre['id']}", json=payload).json()
+        assert self._por_nome(c, "Farelo de soja")["valores"]["pb_pct"] == 50.0
+
+        r = c.delete(f"/formulacao/alimentos/{copia['id']}")
+        assert r.status_code == 200
+        assert r.json()["acao"] == "restaurado"
+
+        restaurado = self._por_nome(c, "Farelo de soja")
+        assert restaurado["eh_mestre"] is True
+        assert restaurado["valores"]["pb_pct"] == 48.0  # valor original da mestre, nunca alterado
+
+    def test_excluir_item_mestre_nunca_editado_oculta_so_para_esta_fazenda(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        mestre = self._por_nome(c, "Ureia pecuária")
+        r = c.delete(f"/formulacao/alimentos/{mestre['id']}")
+        assert r.status_code == 200
+        assert r.json()["acao"] == "oculto"
+        assert self._por_nome(c, "Ureia pecuária") is None  # sumiu só da fazenda 1
+
+        _como_fazenda(2)
+        assert self._por_nome(c, "Ureia pecuária") is not None  # continua na fazenda 2
+
+    def test_excluir_item_proprio_da_fazenda_remove_de_vez(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        criado = c.post("/formulacao/alimentos", json={
+            "alimento_id": None, "nome": "Alimento exclusivo da fazenda 1", "categoria_nasem": "Outros",
+            "conc_pct": 0.0, "fonte": None, "observacao": None, "valores": {},
+        }).json()
+        assert criado["eh_mestre"] is False and criado["eh_copia_editada"] is False
+
+        r = c.delete(f"/formulacao/alimentos/{criado['id']}")
+        assert r.status_code == 200
+        assert r.json()["acao"] == "excluido"
+        assert self._por_nome(c, "Alimento exclusivo da fazenda 1") is None
+
+    def test_item_proprio_de_uma_fazenda_invisivel_na_outra(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        c.post("/formulacao/alimentos", json={
+            "alimento_id": None, "nome": "Só da fazenda 1", "categoria_nasem": "Outros",
+            "conc_pct": 0.0, "fonte": None, "observacao": None, "valores": {},
+        })
+        _como_fazenda(2)
+        assert self._por_nome(c, "Só da fazenda 1") is None
+
+    def test_baixar_modelo_planilha(self, client):
+        c, _ = client
+        _como(13)
+        r = c.get("/formulacao/alimentos/modelo")
+        assert r.status_code == 200
+        assert "spreadsheetml" in r.headers["content-type"]
+        assert "biblioteca_alimentos_modelo" in r.headers["content-disposition"]
+
+    def test_importar_planilha_csv(self, client):
+        c, _ = client
+        _como(13)
+        _como_fazenda(1)
+        csv_conteudo = (
+            "Nome do alimento,Categoria NASEM,MS - matéria seca (% da matéria NATURAL),PB - proteína bruta (% da MS)\n"
+            "Silagem de capivara,Forragem,30,10\n"
+            "Milho moído,Concentrado energetico,90,999\n"  # PB fora de faixa (>300) -> ignorado, vira aviso
+            ",Outros,50,10\n"  # sem nome -> erro
+        ).encode("utf-8")
+        r = c.post(
+            "/formulacao/alimentos/importar",
+            files={"file": ("alimentos.csv", csv_conteudo, "text/csv")},
+        )
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["criados"] == 1  # Silagem de capivara
+        assert corpo["atualizados"] == 1  # Milho moído -> copy-on-write da mestre
+        assert len(corpo["erros"]) == 1
+        assert any("fora da faixa" in a for a in corpo["avisos"])
+
+        nova = self._por_nome(c, "Silagem de capivara")
+        assert nova is not None and nova["valores"]["ms_pct"] == 30.0
+
+        milho = self._por_nome(c, "Milho moído")
+        assert milho["eh_copia_editada"] is True
+        assert milho["valores"]["pb_pct"] == 9.5  # valor fora de faixa foi ignorado, manteve o da mestre
+
+
+class TestExigenciaEditadaEtapa4:
+    """Coluna "Exigência" do balanço ao vivo (Etapa 4) — puxa da Etapa 3 e é
+    editável, mesma convenção cinza/preto do resto do wizard (ver
+    PainelBalanco.tsx e docstring de DietaSimulacao.exigencias_editadas_json)."""
+
+    _NUTRIENTE = "ELl (energia líquida de lactação)"
+
+    def test_calcular_sem_override_usa_exigencia_do_motor(self, client):
+        c, _ = client
+        _como(13)
+        r = c.post("/formulacao/calcular", json=DIETA_MINIMA)
+        assert r.status_code == 200
+        linha = next(l for l in r.json()["balanco"] if l["nutriente"] == self._NUTRIENTE)
+        assert linha["exigencia"] > 0
+
+    def test_calcular_com_override_recalcula_balanco_e_situacao(self, client):
+        c, _ = client
+        _como(13)
+        base = c.post("/formulacao/calcular", json=DIETA_MINIMA).json()
+        linha_base = next(l for l in base["balanco"] if l["nutriente"] == self._NUTRIENTE)
+        fornecido = linha_base["fornecido"]
+        exigencia_absurda = fornecido + 1000.0  # força déficit visível
+
+        payload = {**DIETA_MINIMA, "exigencias_editadas": {self._NUTRIENTE: exigencia_absurda}}
+        r = c.post("/formulacao/calcular", json=payload)
+        assert r.status_code == 200
+        linha = next(l for l in r.json()["balanco"] if l["nutriente"] == self._NUTRIENTE)
+        assert linha["exigencia"] == exigencia_absurda
+        assert linha["balanco"] == pytest.approx(fornecido - exigencia_absurda)
+        assert linha["situacao"] == "deficit"
+
+    def test_override_persiste_no_salvar_e_volta_no_get(self, client):
+        c, _ = client
+        _como(13)
+        sim_id = c.post("/formulacao/simulacoes", json={"nome": "Com override"}).json()["id"]
+        base = c.post("/formulacao/calcular", json=DIETA_MINIMA).json()
+        fornecido = next(l for l in base["balanco"] if l["nutriente"] == self._NUTRIENTE)["fornecido"]
+        override = {self._NUTRIENTE: fornecido - 1.0}  # excesso pequeno e proposital
+
+        r = c.put(f"/formulacao/simulacoes/{sim_id}", json={**DIETA_MINIMA, "etapa_atual": 4, "exigencias_editadas": override})
+        assert r.status_code == 200
+        linha_salva = next(l for l in r.json()["resultado"]["balanco"] if l["nutriente"] == self._NUTRIENTE)
+        assert linha_salva["exigencia"] == override[self._NUTRIENTE]
+
+        g = c.get(f"/formulacao/simulacoes/{sim_id}")
+        assert g.status_code == 200
+        assert g.json()["cabecalho"]["exigencias_editadas"] == override
+        linha = next(l for l in g.json()["resultado"]["balanco"] if l["nutriente"] == self._NUTRIENTE)
+        assert linha["exigencia"] == override[self._NUTRIENTE]
+
+    def test_duplicar_carrega_override_junto(self, client):
+        c, _ = client
+        _como(13)
+        sim_id = c.post("/formulacao/simulacoes", json={"nome": "Original"}).json()["id"]
+        override = {self._NUTRIENTE: 12.3}
+        c.put(f"/formulacao/simulacoes/{sim_id}", json={**DIETA_MINIMA, "etapa_atual": 4, "exigencias_editadas": override})
+
+        r = c.post(f"/formulacao/simulacoes/{sim_id}/duplicar", json={"nome": "Cópia"})
+        assert r.status_code == 201
+        assert r.json()["cabecalho"]["exigencias_editadas"] == override

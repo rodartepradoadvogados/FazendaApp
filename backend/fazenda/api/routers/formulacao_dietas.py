@@ -12,7 +12,8 @@ import json
 import math
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -23,9 +24,13 @@ from fazenda.models import (
     PesagemCorporal, Secagem, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.biblioteca_alimentos import (
+    excluir_ou_restaurar, gerar_modelo_planilha, importar_planilha, listar_biblioteca, obter_para_editar,
+)
 from fazenda.rules.busca import casa_busca
 from fazenda.rules.dieta_lancamento import contexto_lote, criar_lancamento_programado
 from fazenda.rules.nutricao import VERSAO_MOTOR, avaliar_dieta, resultado_para_dict
+from fazenda.rules.nutricao.balanco import situacao_da_linha
 from fazenda.rules.nutricao.biblioteca import biblioteca_semente, template_por_categoria
 from fazenda.rules.nutricao.tipos import (
     CAMPOS_NUTRICIONAIS, CATEGORIAS_NASEM, AnimalEntrada, EntradaFormulacao, IngredienteEntrada, ValorInvalidoError,
@@ -136,11 +141,15 @@ class SimulacaoSalvarIn(BaseModel):
     # último GET/PUT; se a simulação foi alterada em outra aba nesse meio
     # tempo, o valor não bate e a gravação é recusada (ver RA2 da auditoria).
     atualizado_em: datetime | None = None
+    # Overrides manuais da coluna "Exigência" da Etapa 4, {nutriente: valor}
+    # — ver docstring de DietaSimulacao.exigencias_editadas_json.
+    exigencias_editadas: dict[str, float] | None = None
 
 
 class CalcularIn(BaseModel):
     animal: AnimalIn
     itens: list[IngredienteIn]
+    exigencias_editadas: dict[str, float] | None = None
 
 
 class DuplicarIn(BaseModel):
@@ -163,6 +172,10 @@ class AlimentoNutricionalIn(BaseModel):
     conc_pct: float = 0.0
     fonte: str | None = None
     observacao: str | None = None
+    # Faixa típica de inclusão na dieta, % da MS TOTAL da dieta — ver
+    # docstring de AlimentoNutricional.inclusao_min_pct/inclusao_max_pct.
+    inclusao_min_pct: float | None = None
+    inclusao_max_pct: float | None = None
     valores: dict[str, float | None] = {}
 
 
@@ -196,7 +209,27 @@ def _validar_ranges(dados: AnimalIn | CalcularIn, itens: list[IngredienteIn]) ->
             raise HTTPException(status_code=422, detail=f'categoria_nasem inválida em "{it.nome}": {it.categoria_nasem!r}.')
 
 
-def _calcular(animal_in: AnimalIn, itens_in: list[IngredienteIn]) -> dict:
+def _aplicar_exigencias_editadas(resultado_dict: dict, exigencias_editadas: dict[str, float] | None) -> dict:
+    """Sobrepõe manualmente a "Exigência" de uma ou mais linhas do balanço
+    (Etapa 4) com o valor que o nutricionista digitou, recalculando
+    balanço/situação daquela linha a partir do MESMO "fornecido" que o motor
+    já calculou — o resto da dieta (CMS, energia, proteína, minerais) não
+    muda, só a leitura daquela exigência específica. Sem overrides, devolve
+    `resultado_dict` intacto (é o caminho comum — Etapa 4 sem edição manual)."""
+    if not exigencias_editadas:
+        return resultado_dict
+    for linha in resultado_dict.get("balanco") or []:
+        if linha["nutriente"] not in exigencias_editadas:
+            continue
+        exigencia = exigencias_editadas[linha["nutriente"]]
+        balanco = linha["fornecido"] - exigencia
+        linha["exigencia"] = exigencia
+        linha["balanco"] = balanco
+        linha["situacao"] = situacao_da_linha(balanco, exigencia)
+    return resultado_dict
+
+
+def _calcular(animal_in: AnimalIn, itens_in: list[IngredienteIn], exigencias_editadas: dict[str, float] | None = None) -> dict:
     if not (0 < animal_in.peso_vivo_kg <= 1500):
         raise HTTPException(status_code=422, detail="peso_vivo_kg deve ser maior que 0 e no máximo 1500.")
     if animal_in.cms_informado_kg_dia is not None and not (0 < animal_in.cms_informado_kg_dia <= 100):
@@ -210,7 +243,8 @@ def _calcular(animal_in: AnimalIn, itens_in: list[IngredienteIn]) -> dict:
         resultado = avaliar_dieta(entrada)
     except ValorInvalidoError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return resultado_para_dict(resultado)
+    resultado_dict = resultado_para_dict(resultado)
+    return _aplicar_exigencias_editadas(resultado_dict, exigencias_editadas)
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +252,7 @@ def _calcular(animal_in: AnimalIn, itens_in: list[IngredienteIn]) -> dict:
 # ---------------------------------------------------------------------------
 @router.post("/calcular")
 def calcular(dados: CalcularIn) -> dict:
-    return _calcular(dados.animal, dados.itens)
+    return _calcular(dados.animal, dados.itens, dados.exigencias_editadas)
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +350,7 @@ def _cabecalho_publico(sim: DietaSimulacao) -> dict:
     dados["atualizado_em"] = sim.atualizado_em.isoformat()
     dados["calculado_em"] = sim.calculado_em.isoformat() if sim.calculado_em else None
     dados["aplicada_em"] = sim.aplicada_em.isoformat() if sim.aplicada_em else None
+    dados["exigencias_editadas"] = json.loads(sim.exigencias_editadas_json) if sim.exigencias_editadas_json else {}
     return dados
 
 
@@ -343,7 +378,7 @@ def salvar_simulacao(
     if dados.atualizado_em is not None and sim.atualizado_em.replace(microsecond=0) != dados.atualizado_em.replace(microsecond=0):
         raise HTTPException(status_code=409, detail="Esta simulação foi alterada em outra guia — recarregue antes de salvar.")
 
-    resultado_dict = _calcular(dados.animal, dados.itens)
+    resultado_dict = _calcular(dados.animal, dados.itens, dados.exigencias_editadas)
 
     # Substitui a grade inteira numa única transação (delete + insert +
     # atualização do cabeçalho) — nunca fica com um commit intermediário sem
@@ -361,6 +396,7 @@ def salvar_simulacao(
     sim.calculado_em = datetime.utcnow()
     sim.resultado_json = json.dumps(resultado_dict)
     sim.avisos_json = json.dumps(resultado_dict.get("avisos") or [])
+    sim.exigencias_editadas_json = json.dumps(dados.exigencias_editadas) if dados.exigencias_editadas else None
     sim.atualizado_em = datetime.utcnow()
     if sim.status == "rascunho" and resultado_dict.get("consumo", {}).get("cms_kg_dia"):
         sim.status = "concluida"
@@ -413,6 +449,7 @@ def duplicar_simulacao(
         **{f: getattr(original, f) for f in AnimalIn.model_fields},
         resultado_json=original.resultado_json, avisos_json=original.avisos_json,
         motor_versao=original.motor_versao, calculado_em=original.calculado_em,
+        exigencias_editadas_json=original.exigencias_editadas_json,
     )
     session.add(nova)
     session.commit()
@@ -446,7 +483,8 @@ def aplicar_simulacao(
 
     animal_in = AnimalIn(**{f: getattr(sim, f) for f in AnimalIn.model_fields})
     itens_in = [IngredienteIn(**_item_publico(i)) for i in itens]
-    resultado_dict = _calcular(animal_in, itens_in)  # sempre recalcula fresco antes de aplicar (RA5)
+    exigencias_editadas = json.loads(sim.exigencias_editadas_json) if sim.exigencias_editadas_json else None
+    resultado_dict = _calcular(animal_in, itens_in, exigencias_editadas)  # sempre recalcula fresco antes de aplicar (RA5)
 
     cms = (resultado_dict.get("consumo") or {}).get("cms_kg_dia")
     if not cms or cms <= 0 or (isinstance(cms, float) and math.isnan(cms)):
@@ -488,16 +526,26 @@ def aplicar_simulacao(
 
 
 # ---------------------------------------------------------------------------
-# Biblioteca de alimentos (Etapa 1)
+# Biblioteca de alimentos — Etapa 1 (grade) + aba "Biblioteca de referência"
 # ---------------------------------------------------------------------------
 def _nutricional_publico(a: AlimentoNutricional) -> dict:
     valores = {campo: getattr(a, campo) for campo in CAMPOS_NUTRICIONAIS if campo != "custo_kg_mn"}
     valores["custo_kg_mn"] = a.custo_kg_mn
     if a.extras_json:
         valores.update(json.loads(a.extras_json))
+    eh_mestre = a.fazenda_id is None
     return {
         "id": a.id, "alimento_id": a.alimento_id, "nome": a.nome, "categoria_nasem": a.categoria_nasem,
-        "conc_pct": a.conc_pct, "fonte": a.fonte, "observacao": a.observacao, "ativo": a.ativo, "valores": valores,
+        "conc_pct": a.conc_pct, "fonte": a.fonte, "observacao": a.observacao, "ativo": a.ativo,
+        "inclusao_min_pct": a.inclusao_min_pct, "inclusao_max_pct": a.inclusao_max_pct,
+        # eh_mestre: item da biblioteca padrão CowData, ainda não copiado por
+        # esta fazenda — só pode ser editado/excluído via copy-on-write (o
+        # PUT/DELETE fazem isso sozinhos, a tela só precisa saber pra rotular
+        # "CowData"/"Restaurar padrão" em vez de "Excluir"). eh_copia_editada:
+        # já é uma cópia desta fazenda de um item mestre (editou ou ocultou).
+        "eh_mestre": eh_mestre,
+        "eh_copia_editada": (not eh_mestre) and a.origem_mestre_id is not None,
+        "valores": valores,
     }
 
 
@@ -506,10 +554,11 @@ def listar_alimentos_nutricionais(
     busca: str | None = None, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query_nutri = select(AlimentoNutricional).where(AlimentoNutricional.ativo == True)  # noqa: E712
-    if fazenda_id is not None:
-        query_nutri = query_nutri.where(AlimentoNutricional.fazenda_id == fazenda_id)
-    biblioteca = session.exec(query_nutri).all()
+    biblioteca = listar_biblioteca(session, fazenda_id)
+    if busca:
+        # casa_busca ignora caixa/acento/hífen/underscore/espaço — mesmo
+        # critério de qualquer outra busca textual do sistema (rules/busca.py).
+        biblioteca = [a for a in biblioteca if casa_busca(busca, a.nome)]
     com_composicao = {a.alimento_id for a in biblioteca if a.alimento_id}
 
     query_alimento = select(Alimento).where(Alimento.ativo == True)  # noqa: E712
@@ -517,12 +566,10 @@ def listar_alimentos_nutricionais(
         query_alimento = query_alimento.where(Alimento.fazenda_id == fazenda_id)
     cadastrados = session.exec(query_alimento).all()
     if busca:
-        # casa_busca ignora caixa/acento/hífen/underscore/espaço — mesmo
-        # critério de qualquer outra busca textual do sistema (rules/busca.py).
         cadastrados = [a for a in cadastrados if casa_busca(busca, a.nome)]
 
     return {
-        "biblioteca": [_nutricional_publico(a) for a in biblioteca],
+        "biblioteca": [_nutricional_publico(a) for a in sorted(biblioteca, key=lambda a: a.nome)],
         "cadastrados": [
             {"id": a.id, "nome": a.nome, "sem_composicao": a.id not in com_composicao}
             for a in sorted(cadastrados, key=lambda a: a.nome)
@@ -538,13 +585,16 @@ def criar_alimento_nutricional(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if fazenda_id is None:
         raise HTTPException(status_code=400, detail="Selecione a fazenda antes de cadastrar")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Informe um nome para o alimento")
     if dados.categoria_nasem not in CATEGORIAS_NASEM:
         raise HTTPException(status_code=400, detail=f"categoria_nasem inválida: {dados.categoria_nasem!r}")
     campos = {c: dados.valores.get(c) for c in CAMPOS_NUTRICIONAIS}
     extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS}
     item = AlimentoNutricional(
-        alimento_id=dados.alimento_id, nome=dados.nome, categoria_nasem=dados.categoria_nasem, conc_pct=dados.conc_pct,
+        alimento_id=dados.alimento_id, nome=dados.nome.strip(), categoria_nasem=dados.categoria_nasem, conc_pct=dados.conc_pct,
         fonte=dados.fonte, observacao=dados.observacao, fazenda_id=fazenda_id, usuario_id=user.id,
+        inclusao_min_pct=dados.inclusao_min_pct, inclusao_max_pct=dados.inclusao_max_pct,
         extras_json=json.dumps(extras) if extras else None, **campos,
     )
     session.add(item)
@@ -556,23 +606,30 @@ def criar_alimento_nutricional(
 @router.put("/alimentos/{item_id}")
 def atualizar_alimento_nutricional(
     item_id: int, dados: AlimentoNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
+    """Editar um item da biblioteca MESTRE nunca grava na linha mestre — cria
+    (ou reaproveita) a cópia-por-fazenda via `obter_para_editar` (copy-on-write,
+    ver fazenda.rules.biblioteca_alimentos). As outras fazendas continuam
+    vendo a mestre original, intocada."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    item = session.get(AlimentoNutricional, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
-        raise HTTPException(status_code=404, detail="Não encontrado")
     if dados.categoria_nasem not in CATEGORIAS_NASEM:
         raise HTTPException(status_code=400, detail=f"categoria_nasem inválida: {dados.categoria_nasem!r}")
-    item.nome, item.categoria_nasem, item.conc_pct = dados.nome, dados.categoria_nasem, dados.conc_pct
+    item = obter_para_editar(session, fazenda_id, item_id)
+    item.nome, item.categoria_nasem, item.conc_pct = dados.nome.strip() or item.nome, dados.categoria_nasem, dados.conc_pct
     item.fonte, item.observacao = dados.fonte, dados.observacao
+    item.alimento_id = dados.alimento_id
+    item.inclusao_min_pct, item.inclusao_max_pct = dados.inclusao_min_pct, dados.inclusao_max_pct
     for campo in CAMPOS_NUTRICIONAIS:
         setattr(item, campo, dados.valores.get(campo))
     extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS}
     item.extras_json = json.dumps(extras) if extras else None
     item.atualizado_em = datetime.utcnow()
+    if item.usuario_id is None:
+        item.usuario_id = user.id
     session.add(item)
     session.commit()
+    session.refresh(item)
     return _nutricional_publico(item)
 
 
@@ -580,13 +637,37 @@ def atualizar_alimento_nutricional(
 def excluir_alimento_nutricional(
     item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> dict:
+    """Um único botão de excluir cobre os 3 casos do CRUD (ver
+    `excluir_ou_restaurar`): item próprio some de vez; cópia editada de um
+    item mestre "volta ao padrão CowData"; item mestre nunca editado é
+    ocultado só para esta fazenda, sem afetar as outras."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    item = session.get(AlimentoNutricional, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
-        raise HTTPException(status_code=404, detail="Não encontrado")
-    session.delete(item)
-    session.commit()
-    return {"ok": True}
+    return excluir_ou_restaurar(session, fazenda_id, item_id)
+
+
+@router.get("/alimentos/modelo")
+def baixar_modelo_biblioteca() -> Response:
+    """Planilha-modelo (.xlsx) para carregar alimentos em lote — cabeçalho já
+    com os nomes de coluna reconhecidos + uma linha de exemplo preenchida
+    (ver POST /formulacao/alimentos/importar e o mini manual da aba)."""
+    conteudo = gerar_modelo_planilha()
+    return Response(
+        content=conteudo, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="biblioteca_alimentos_modelo.xlsx"'},
+    )
+
+
+@router.post("/alimentos/importar")
+async def importar_biblioteca(
+    file: UploadFile, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Importa alimentos em lote de um .xlsx ou .csv — cria/atualiza sempre
+    na biblioteca DESTA fazenda (copy-on-write se o nome bater com um item
+    mestre ainda não sobrescrito). Ver mini manual da aba "Biblioteca de
+    referência" pras regras de coluna obrigatória/reconhecida/faixa válida."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    conteudo = await file.read()
+    return importar_planilha(session, fazenda_id, file.filename or "", conteudo)
 
 
 @router.get("/alimentos/{alimento_id}/resolver")
@@ -609,6 +690,7 @@ def resolver_alimento(
         return {
             "nome": alimento.nome, "categoria_nasem": entrada_biblioteca.categoria_nasem, "conc_pct": entrada_biblioteca.conc_pct,
             "origem": "biblioteca", "alimento_nutricional_id": entrada_biblioteca.id, "analise_bromatologica_id": None,
+            "inclusao_min_pct": entrada_biblioteca.inclusao_min_pct, "inclusao_max_pct": entrada_biblioteca.inclusao_max_pct,
             "valores": pub["valores"],
         }
 
@@ -632,12 +714,14 @@ def resolver_alimento(
                 valores[campo] = valor_laudo
         return {
             "nome": alimento.nome, "categoria_nasem": "Outros", "conc_pct": 0.0, "origem": "bromatologica",
-            "alimento_nutricional_id": None, "analise_bromatologica_id": laudo.id, "valores": valores,
+            "alimento_nutricional_id": None, "analise_bromatologica_id": laudo.id,
+            "inclusao_min_pct": None, "inclusao_max_pct": None, "valores": valores,
         }
 
     return {
         "nome": alimento.nome, "categoria_nasem": "Outros", "conc_pct": 0.0, "origem": "template",
-        "alimento_nutricional_id": None, "analise_bromatologica_id": None, "valores": template_por_categoria("Outros"),
+        "alimento_nutricional_id": None, "analise_bromatologica_id": None,
+        "inclusao_min_pct": None, "inclusao_max_pct": None, "valores": template_por_categoria("Outros"),
     }
 
 

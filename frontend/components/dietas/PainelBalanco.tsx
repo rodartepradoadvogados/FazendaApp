@@ -19,12 +19,19 @@ const ROTULO_SITUACAO: Record<string, string> = { adequado: "Adequado", deficit:
 
 export function PainelBalanco({
   itens, onChangeItens, resultado, calculando, onAbrirAplicar, cmsTotal, onChangeCmsTotal,
+  exigenciasEditadas, onChangeExigenciasEditadas,
 }: {
   itens: ItemGrade[]; onChangeItens: (itens: ItemGrade[]) => void; resultado: Resultado | null; calculando: boolean;
   onAbrirAplicar: () => void;
   // "Consumo total" — o mesmo campo da Etapa 2, espelhado aqui porque é ele
   // que define o kg de MS de cada linha da grade ao lado.
   cmsTotal: number | null | undefined; onChangeCmsTotal: (v: number | null) => void;
+  // Overrides manuais da coluna "Exigência", {nutriente: valor} — o motor já
+  // devolve `resultado.balanco` com o override aplicado (balanço/situação
+  // recalculados a partir dele, ver backend `_aplicar_exigencias_editadas`);
+  // aqui só decide a COR (mesma convenção cinza/preto de `ms_pct` abaixo) e
+  // dispara o recálculo ao editar.
+  exigenciasEditadas: Record<string, number>; onChangeExigenciasEditadas: (m: Record<string, number>) => void;
 }) {
   function atualizar(idx: number, patch: Partial<ItemGrade>) {
     onChangeItens(itens.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -49,6 +56,21 @@ export function PainelBalanco({
   // Cinza = veio do banco de alimentos; preto = editado nesta formulação.
   function corDoValor(editado: boolean): React.CSSProperties {
     return { color: editado ? "var(--text)" : "var(--text-muted)", fontWeight: editado ? 700 : 400 };
+  }
+
+  // Mesma convenção da coluna "Teor MS %" acima, aplicada à "Exigência" do
+  // painel de balanço: cinza = calculada automaticamente a partir do animal
+  // (Etapa 3); preto = o nutricionista sobrepôs manualmente. Limpar o campo
+  // remove o override e volta a puxar o valor do motor.
+  function atualizarExigencia(nutriente: string, valorTexto: string) {
+    const novo = { ...exigenciasEditadas };
+    if (valorTexto === "") delete novo[nutriente];
+    else novo[nutriente] = Number(valorTexto);
+    onChangeExigenciasEditadas(novo);
+  }
+
+  function foiExigenciaEditada(nutriente: string): boolean {
+    return Object.prototype.hasOwnProperty.call(exigenciasEditadas, nutriente);
   }
 
   const porNome = new Map((resultado?.ingredientes || []).map((r) => [r.nome, r]));
@@ -135,7 +157,22 @@ export function PainelBalanco({
               {resultado?.balanco.map((linha) => (
                 <tr key={linha.nutriente}>
                   <td style={{ fontWeight: 600 }}>{linha.nutriente}</td>
-                  <td>{fmt(linha.exigencia)} {linha.unidade}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                      <input
+                        type="number" step="0.01" value={linha.exigencia}
+                        onChange={(e) => atualizarExigencia(linha.nutriente, e.target.value)}
+                        title={foiExigenciaEditada(linha.nutriente) ? "Editado nesta formulação — apague pra voltar ao valor calculado da Etapa 3" : "Calculado a partir do animal (Etapa 3)"}
+                        style={{
+                          width: "5.2rem", padding: "0.25rem 0.35rem", borderRadius: "var(--r-sm)",
+                          border: "1px solid var(--border)", background: "var(--surface)", fontSize: "0.78rem",
+                          borderStyle: foiExigenciaEditada(linha.nutriente) ? "solid" : "dashed",
+                          ...corDoValor(foiExigenciaEditada(linha.nutriente)),
+                        }}
+                      />
+                      <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{linha.unidade}</span>
+                    </div>
+                  </td>
                   <td>{fmt(linha.fornecido)} {linha.unidade}</td>
                   <td style={{ color: COR_SITUACAO[linha.situacao], fontWeight: 700 }}>{fmt(linha.balanco)}</td>
                   <td>

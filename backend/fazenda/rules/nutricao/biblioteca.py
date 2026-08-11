@@ -378,6 +378,28 @@ def preencher_com_template(ingrediente: IngredienteEntrada) -> IngredienteEntrad
 
 _FONTE_GENERICA = "Referência genérica — ajuste com o laudo da sua fazenda"
 
+# Faixa típica de inclusão na dieta, % da MS TOTAL da dieta (não da MS do
+# próprio ingrediente) — bom senso zootécnico de mercado, não uma restrição
+# do motor; vira `inclusao_min_pct`/`inclusao_max_pct` na biblioteca mestre
+# semeada em AlimentoNutricional (ver fazenda.rules.biblioteca_alimentos) e
+# alimenta a sugestão automática da Etapa 1 (grade de alimentos).
+_INCLUSAO_SUGERIDA_POR_NOME: dict[str, tuple[float, float]] = {
+    "Silagem de milho": (15.0, 40.0),
+    "Silagem de sorgo": (10.0, 35.0),
+    "Silagem/pré-secado de capim": (10.0, 30.0),
+    "Feno de tifton": (5.0, 20.0),
+    "Cana-de-açúcar": (5.0, 25.0),
+    "Milho moído": (10.0, 35.0),
+    "Farelo de soja": (5.0, 20.0),
+    "Farelo de algodão 38": (3.0, 12.0),
+    "Caroço de algodão": (3.0, 10.0),
+    "Polpa cítrica": (5.0, 20.0),
+    "Farelo de trigo": (3.0, 15.0),
+    # NNP puro — dose baixa por risco de intoxicação amoniacal, nunca a base
+    # da fração proteica da dieta.
+    "Ureia pecuária": (0.0, 1.5),
+}
+
 _CAMPOS_SEMENTE: tuple[str, ...] = (
     "ms_pct",
     "pb_pct",
@@ -578,11 +600,15 @@ _BIBLIOTECA_SEMENTE_BRUTA: list[dict] = [
 def biblioteca_semente() -> list[dict]:
     """Devolve os 12 ingredientes brasileiros de uso corrente da biblioteca
     semente, cada um com `nome`, `categoria_nasem`, `conc_pct`, os 10 campos
-    bromatológicos de `_CAMPOS_SEMENTE` e `fonte`."""
+    bromatológicos de `_CAMPOS_SEMENTE`, `fonte` e a faixa sugerida de
+    inclusão (`inclusao_min_pct`/`inclusao_max_pct`)."""
     itens = []
     for bruto in _BIBLIOTECA_SEMENTE_BRUTA:
         item = dict(bruto)
         item["fonte"] = _FONTE_GENERICA
+        minimo, maximo = _INCLUSAO_SUGERIDA_POR_NOME.get(item["nome"], (None, None))
+        item["inclusao_min_pct"] = minimo
+        item["inclusao_max_pct"] = maximo
         itens.append(item)
     return itens
 

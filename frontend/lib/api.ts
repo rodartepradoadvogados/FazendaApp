@@ -3895,7 +3895,12 @@ export async function criarControlesLeiteiros(dados: {
 
 // Baixa um arquivo binário autenticado (o backend exige Bearer token, então não
 // dá pra usar um <a href> direto) — dispara o download no navegador via blob.
-async function baixarArquivoAutenticado(path: string, nomeArquivoFallback: string) {
+// Exportada (só pra este único uso fora do arquivo até agora) porque
+// lib/dietas.ts precisa dela pro download do modelo da biblioteca de
+// alimentos — mesmo padrão de baixarModeloTabelaNutricional/baixarModeloCocho
+// aqui embaixo, só que noutro arquivo por Formulação de Dietas ter seu
+// próprio módulo de tipos/chamadas (ver cabeçalho de lib/dietas.ts).
+export async function baixarArquivoAutenticado(path: string, nomeArquivoFallback: string) {
   const res = await authFetch(`${API}${path}`);
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar arquivo"); }
   const blob = await res.blob();

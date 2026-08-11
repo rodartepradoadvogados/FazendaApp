@@ -45,6 +45,8 @@ export default function SimulacaoWizardPage({ params }: { params: Promise<{ id: 
   const [resultado, setResultado] = useState<Resultado | null>(null);
   const [calculando, setCalculando] = useState(false);
   const [erroCalculo, setErroCalculo] = useState<string | null>(null);
+  // Overrides manuais da coluna "Exigência" da Etapa 4 — ver PainelBalanco.tsx.
+  const [exigenciasEditadas, setExigenciasEditadas] = useState<Record<string, number>>({});
 
   const [salvando, setSalvando] = useState(false);
   const [salvoEm, setSalvoEm] = useState<Date | null>(null);
@@ -62,6 +64,7 @@ export default function SimulacaoWizardPage({ params }: { params: Promise<{ id: 
         setItens(d.itens);
         setLote(d.cabecalho.lote);
         setResultado(d.resultado);
+        setExigenciasEditadas(d.cabecalho.exigencias_editadas || {});
         setCarregado(true);
       })
       .catch((e) => setErroCarga(e.message));
@@ -80,14 +83,14 @@ export default function SimulacaoWizardPage({ params }: { params: Promise<{ id: 
       abortRef.current?.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      calcularDieta(animal, itens, ctrl.signal)
+      calcularDieta(animal, itens, ctrl.signal, exigenciasEditadas)
         .then((r) => { setResultado(r); setErroCalculo(null); })
         .catch((e) => { if (e?.name !== "AbortError") { setResultado(null); setErroCalculo(e.message || "Não foi possível calcular a dieta."); } })
         .finally(() => { if (abortRef.current === ctrl) setCalculando(false); });
     }, 400);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animal, itens, carregado]);
+  }, [animal, itens, carregado, exigenciasEditadas]);
 
   const irParaEtapa = useCallback((n: number) => {
     router.replace(`/dietas/${id}?etapa=${n}`, { scroll: false });
@@ -99,10 +102,11 @@ export default function SimulacaoWizardPage({ params }: { params: Promise<{ id: 
     setConflitoAplicada(false);
     setConflitoConcorrente(false);
     try {
-      const r = await salvarSimulacao(id, { animal, itens, etapa_atual: etapa, atualizado_em: cabecalho?.atualizado_em });
+      const r = await salvarSimulacao(id, { animal, itens, etapa_atual: etapa, atualizado_em: cabecalho?.atualizado_em, exigencias_editadas: exigenciasEditadas });
       setCabecalho(r.cabecalho);
       setItens(r.itens);
       setResultado(r.resultado);
+      setExigenciasEditadas(r.cabecalho.exigencias_editadas || {});
       setSalvoEm(new Date());
     } catch (e) {
       if (e instanceof SimulacaoAplicadaError) setConflitoAplicada(true);
@@ -173,7 +177,8 @@ export default function SimulacaoWizardPage({ params }: { params: Promise<{ id: 
           <PainelBalanco itens={itens} onChangeItens={setItens} resultado={resultado} calculando={calculando}
             onAbrirAplicar={() => setAplicarAberto(true)}
             cmsTotal={animal.cms_informado_kg_dia}
-            onChangeCmsTotal={(v) => setAnimal({ ...animal, cms_informado_kg_dia: v })} />
+            onChangeCmsTotal={(v) => setAnimal({ ...animal, cms_informado_kg_dia: v })}
+            exigenciasEditadas={exigenciasEditadas} onChangeExigenciasEditadas={setExigenciasEditadas} />
         )}
         {etapa === 5 && <PainelDominio dominio="energia" resultado={resultado} />}
         {etapa === 6 && <PainelDominio dominio="proteina" resultado={resultado} />}

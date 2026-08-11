@@ -14,7 +14,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
-import { ArrowLeft, FlaskConical } from "lucide-react";
+import { ArrowLeft, FlaskConical, Library } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { getFazendaAtual } from "@/lib/api";
@@ -98,6 +98,14 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
             borderBottom: path === "/dietas/nova" ? `2px solid ${PETROLEO}` : "2px solid transparent",
           }}>
             Nova simulação
+          </Link>
+          <Link href="/dietas/biblioteca" style={{
+            padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
+            display: "flex", alignItems: "center", gap: "0.35rem",
+            color: path === "/dietas/biblioteca" ? "var(--cream)" : "rgba(243,231,211,0.62)",
+            borderBottom: path === "/dietas/biblioteca" ? `2px solid ${PETROLEO}` : "2px solid transparent",
+          }}>
+            <Library size={13} /> Biblioteca de referência
           </Link>
           {emSimulacao && (
             <span style={{

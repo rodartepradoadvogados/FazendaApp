@@ -2,12 +2,13 @@
 // Etapa 1 do wizard — grade de ingredientes da dieta. Cabeçalho e 1ª coluna
 // (nome) ficam fixos ao rolar (ver .sticky-* abaixo) porque a grade tem ~15
 // colunas visíveis e pode chegar a 60 ingredientes (limite do backend).
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Info, Library, Plus, Save, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Info, Library, Plus, Save, Trash2, Upload } from "lucide-react";
 import {
-  CAMPOS_GRADE_PRINCIPAL, CATEGORIAS_NASEM, CategoriaNasem, EntradaSemente, GRUPOS_CAMPOS_NUTRICIONAIS,
-  ItemGrade, ROTULOS_CAMPOS_NUTRICIONAIS, TemplatesResponse, itemGradeDaSemente, itemGradeVazio,
-  listarTemplates, salvarAlimentoNaBiblioteca,
+  CAMPOS_GRADE_PRINCIPAL, CATEGORIAS_NASEM, CategoriaNasem, EntradaBiblioteca, GRUPOS_CAMPOS_NUTRICIONAIS,
+  ItemGrade, ROTULOS_CAMPOS_NUTRICIONAIS, TemplatesResponse, itemGradeDaBiblioteca, itemGradeVazio,
+  listarAlimentos, listarTemplates, salvarAlimentoNaBiblioteca,
 } from "@/lib/dietas";
 import { ImportarAlimentoModal } from "@/components/dietas/ImportarAlimentoModal";
 
@@ -24,11 +25,13 @@ const td: React.CSSProperties = { padding: "0.35rem 0.6rem", borderBottom: "1px 
 
 export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChange: (itens: ItemGrade[]) => void }) {
   const [templates, setTemplates] = useState<TemplatesResponse | null>(null);
+  const [biblioteca, setBiblioteca] = useState<EntradaBiblioteca[] | null>(null);
   const [importarAberto, setImportarAberto] = useState(false);
   const [bibliotecaAberta, setBibliotecaAberta] = useState(false);
   const [drawerIdx, setDrawerIdx] = useState<number | null>(null);
 
   useEffect(() => { listarTemplates().then(setTemplates).catch(() => {}); }, []);
+  useEffect(() => { if (bibliotecaAberta && !biblioteca) listarAlimentos().then((r) => setBiblioteca(r.biblioteca)).catch(() => {}); }, [bibliotecaAberta, biblioteca]);
 
   function atualizarItem(idx: number, patch: Partial<ItemGrade>) {
     onChange(itens.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -61,8 +64,8 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
     onChange([...itens, item]);
   }
 
-  function adicionarDaSemente(s: EntradaSemente) {
-    onChange([...itens, itemGradeDaSemente(s)]);
+  function adicionarDaBiblioteca(e: EntradaBiblioteca) {
+    onChange([...itens, itemGradeDaBiblioteca(e)]);
   }
 
   function removerLinha(idx: number) {
@@ -110,20 +113,35 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
 
       {bibliotecaAberta && (
         <div className="card" style={{ marginBottom: "0.8rem" }}>
-          <p style={{ margin: "0 0 0.6rem", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-            12 ingredientes de referência — clique em "+" para adicionar direto na grade, sem cadastro nenhum.
-          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", marginBottom: "0.6rem" }}>
+            <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-muted)" }}>
+              Biblioteca padrão CowData + os alimentos próprios da fazenda — clique em "+" para adicionar direto na grade, sem cadastro nenhum.
+            </p>
+            <Link href="/dietas/biblioteca" style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", color: "var(--gold-deep)", whiteSpace: "nowrap" }}>
+              Gerenciar biblioteca <ExternalLink size={12} />
+            </Link>
+          </div>
+          {biblioteca === null && <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Carregando…</p>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(13rem, 1fr))", gap: "0.5rem" }}>
-            {(templates?.biblioteca_semente || []).map((s, i) => (
+            {(biblioteca || []).map((e) => (
               <button
-                key={i} type="button" onClick={() => adicionarDaSemente(s)}
+                key={e.id} type="button" onClick={() => adicionarDaBiblioteca(e)}
+                title={e.inclusao_min_pct != null || e.inclusao_max_pct != null
+                  ? `Inclusão sugerida na dieta: ${e.inclusao_min_pct ?? "?"}–${e.inclusao_max_pct ?? "?"}% da MS`
+                  : undefined}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
                   padding: "0.5rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)",
                   background: "var(--surface-2)", color: "var(--text)", fontSize: "0.78rem", cursor: "pointer", textAlign: "left",
                 }}
               >
-                <span>{s.nome}<br /><span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>{s.categoria_nasem}</span></span>
+                <span>
+                  {e.nome} {e.eh_mestre && <span style={{ color: "var(--gold-deep)", fontSize: "0.65rem", fontWeight: 700 }}>CowData</span>}
+                  <br /><span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>
+                    {e.categoria_nasem}
+                    {(e.inclusao_min_pct != null || e.inclusao_max_pct != null) && ` · inclusão ${e.inclusao_min_pct ?? "?"}–${e.inclusao_max_pct ?? "?"}%`}
+                  </span>
+                </span>
                 <Plus size={14} />
               </button>
             ))}
@@ -168,7 +186,19 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
                   <input type="number" step="1" min={0} max={100} value={it.conc_pct} onChange={(e) => atualizarItem(idx, { conc_pct: Number(e.target.value) })} style={inputCel} />
                 </td>
                 <td style={td}>
-                  <input type="number" step="0.1" min={0} max={100} value={it.proporcao_ms_pct} onChange={(e) => atualizarItem(idx, { proporcao_ms_pct: Number(e.target.value) })} style={inputCel} />
+                  <input
+                    type="number" step="0.1" min={0} max={100} value={it.proporcao_ms_pct}
+                    onChange={(e) => atualizarItem(idx, { proporcao_ms_pct: Number(e.target.value) })}
+                    title={it.inclusao_min_pct != null || it.inclusao_max_pct != null
+                      ? `Inclusão sugerida da biblioteca: ${it.inclusao_min_pct ?? "?"}–${it.inclusao_max_pct ?? "?"}% da MS da dieta`
+                      : undefined}
+                    style={inputCel}
+                  />
+                  {(it.inclusao_min_pct != null || it.inclusao_max_pct != null) && (
+                    <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", marginTop: "0.1rem", whiteSpace: "nowrap" }}>
+                      sugerido {it.inclusao_min_pct ?? "?"}–{it.inclusao_max_pct ?? "?"}%
+                    </div>
+                  )}
                 </td>
                 {CAMPOS_GRADE_PRINCIPAL.map((campo) => (
                   <td key={campo} style={td}>
