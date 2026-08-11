@@ -2851,6 +2851,42 @@ export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
   return res.json();
 }
 
+// Relatório de compra de sêmen (Financeiro > Relatórios > Compra de sêmen) —
+// espelho de fetchRelatorioCompraVendaAnimais, mesma ideia de filtros
+// (período, documento) trocando animal/GTA por touro/vendedor.
+export type LinhaRelatorioCompraSemen = {
+  touro_nome: string;
+  naab: string | null;
+  origem: "estoque" | "naab";
+  tipo: string;
+  doses: number;
+  valor_unitario: number;
+  valor_total: number;
+  vendedor: string;
+  data_compra: string;
+  responsavel: string | null;
+  observacao: string | null;
+  numero_lancamento: string | null;
+  numero_documento: string | null;
+  centro_custo: string | null;
+  codigo_conta: string | null;
+  usuario_nome?: string | null;
+};
+export async function fetchRelatorioCompraSemen(filtros: {
+  touro?: string; naab?: string; vendedor?: string; dataDe?: string; dataAte?: string; numeroDocumento?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filtros.touro) params.set("touro", filtros.touro);
+  if (filtros.naab) params.set("naab", filtros.naab);
+  if (filtros.vendedor) params.set("vendedor", filtros.vendedor);
+  if (filtros.dataDe) params.set("data_de", filtros.dataDe);
+  if (filtros.dataAte) params.set("data_ate", filtros.dataAte);
+  if (filtros.numeroDocumento) params.set("numero_documento", filtros.numeroDocumento);
+  const res = await authFetch(`${API}/relatorio-compra-semen/?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de compra de sêmen error: ${res.status}`);
+  return res.json() as Promise<LinhaRelatorioCompraSemen[]>;
+}
+
 export async function fetchSanidade() {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);

@@ -10,6 +10,7 @@ import {
   criarPatrimonio, atualizarPatrimonio, atualizarValorMercadoPatrimonio, vincularLancamentoPatrimonio, fetchPatrimonioListaSimples, type PatrimonioPayload,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, ehConsultor, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
   fetchSupabaseDashboardUrl,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
@@ -88,7 +89,7 @@ type Lanc = {
   patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -100,6 +101,7 @@ const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "custo_vaca_lote", label: "Custo por vaca/lote", icon: BarChart3, desc: "Despesas do período divididas pelo nº de vacas em lactação, por lote" },
   { id: "custo_safra", label: "Custo por safra", icon: BarChart3, desc: "Despesas do centro de custo e período da safra divididas por hectare/tonelada" },
   { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
+  { id: "compra_semen", label: "Compra de sêmen", icon: ShoppingCart, desc: "Consulta por touro, período, documento ou vendedor" },
 ];
 const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_pagar", label: "Contas a pagar", icon: Clock, desc: "Despesas em aberto (sem data de pagamento)" },
@@ -643,6 +645,7 @@ export default function FinanceiroPage() {
           : rel === "custo_vaca_lote" ? <CustoVacaLoteView />
           : rel === "custo_safra" ? <CustoSafraView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
+          : rel === "compra_semen" ? <RelatorioCompraSemenView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
         {/* Filtros */}
@@ -2465,6 +2468,131 @@ function RelatorioCompraVendaAnimaisView() {
                     </tr>
                   ))}
                   {!linhas.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhuma compra ou venda de animal encontrada para o filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+const COLUNAS_REL_COMPRA_SEMEN = [
+  { header: "Touro", key: "touro_nome" }, { header: "NAAB", key: "naab" }, { header: "Tipo", key: "tipo" },
+  { header: "Doses", key: "doses" }, { header: "Valor/dose", key: "valor_unitario" }, { header: "Valor total", key: "valor_total" },
+  { header: "Data", key: "data_compra" }, { header: "Vendedor", key: "vendedor" }, { header: "Documento", key: "numero_documento" },
+  { header: "Lançamento", key: "numero_lancamento" }, { header: "Centro de custo", key: "centro_custo" },
+];
+
+/**
+ * Relatório financeiro de compra de sêmen — espelho de
+ * RelatorioCompraVendaAnimaisView, consultando CompraSemen (em vez de
+ * CompraAnimal/VendaAnimal), filtrável por touro, NAAB, vendedor, período ou
+ * número do documento.
+ */
+function RelatorioCompraSemenView() {
+  const [touro, setTouro] = useState("");
+  const [vendedor, setVendedor] = useState("");
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
+  const [numeroDocumento, setNumeroDocumento] = useState("");
+  const [linhas, setLinhas] = useState<LinhaRelatorioCompraSemen[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(false);
+
+  const buscar = () => {
+    setCarregando(true); setErro(null);
+    fetchRelatorioCompraSemen({ touro, vendedor, dataDe, dataAte, numeroDocumento })
+      .then(setLinhas)
+      .catch((e) => setErro(e.message))
+      .finally(() => setCarregando(false));
+  };
+  useEffect(buscar, []);
+
+  const totalDoses = useMemo(() => (linhas ?? []).reduce((a, l) => a + l.doses, 0), [linhas]);
+  const totalGasto = useMemo(() => (linhas ?? []).reduce((a, l) => a + l.valor_total, 0), [linhas]);
+  const { ordenados: linhasOrdenadas, sortKey: sortKeySemen, sortDir: sortDirSemen, ordenar: ordenarSemen } = useOrdenacao(linhas ?? [], {
+    touro_nome: (l) => l.touro_nome || "",
+    naab: (l) => l.naab || "",
+    tipo: (l) => l.tipo || "",
+    doses: (l) => l.doses,
+    valor_unitario: (l) => l.valor_unitario,
+    valor_total: (l) => l.valor_total,
+    data_compra: (l) => l.data_compra || "",
+    vendedor: (l) => (l.vendedor || "").toLowerCase(),
+    numero_documento: (l) => l.numero_documento || "",
+    numero_lancamento: (l) => l.numero_lancamento || "",
+    centro_custo: (l) => l.centro_custo || "",
+  });
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Touro</label>
+            <input style={inputStyleRelCompraVenda} value={touro} onChange={(e) => setTouro(e.target.value)} placeholder="ex.: Coors" /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Vendedor</label>
+            <input style={inputStyleRelCompraVenda} value={vendedor} onChange={(e) => setVendedor(e.target.value)} placeholder="ex.: ABS" /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>De</label>
+            <input type="date" style={inputStyleRelCompraVenda} value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Até</label>
+            <input type="date" style={inputStyleRelCompraVenda} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
+            <input style={inputStyleRelCompraVenda} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></div>
+          <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={buscar} disabled={carregando}>
+            <Search size={13} /> {carregando ? "Buscando…" : "Buscar"}
+          </button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-4"><span>{erro}</span></div>}
+
+      {linhas && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+            <KPI v={String(linhas.length)} l="Compras" />
+            <KPI v={String(totalDoses)} l="Doses compradas" />
+            <KPI v={formatBRL(totalGasto)} l="Total gasto" c="var(--red)" />
+          </div>
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0 }}>Compras de sêmen</div>
+              <ExportarBotoes titulo="Compra de sêmen" colunas={COLUNAS_REL_COMPRA_SEMEN} linhas={linhas} nomeArquivoBase="compra_semen" disabled={!linhas.length} />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrd rotulo="Touro" chave="touro_nome" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="NAAB" chave="naab" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Doses" chave="doses" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Valor/dose" chave="valor_unitario" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Valor total" chave="valor_total" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Data" chave="data_compra" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Vendedor" chave="vendedor" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Documento" chave="numero_documento" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Lançamento" chave="numero_lancamento" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                </tr></thead>
+                <tbody>
+                  {linhasOrdenadas.map((l, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{l.touro_nome}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.naab || "—"}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.tipo === "sexado" ? "Sexado" : "Convencional"}</td>
+                      <td style={{ textAlign: "right" }}>{l.doses}</td>
+                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor_unitario)}</td>
+                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor_total)}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.data_compra}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.vendedor}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_documento || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_lancamento || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.centro_custo || "—"}</td>
+                    </tr>
+                  ))}
+                  {!linhas.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhuma compra de sêmen encontrada para o filtro.</td></tr>}
                 </tbody>
               </table>
             </div>
