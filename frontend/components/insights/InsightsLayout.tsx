@@ -32,10 +32,9 @@ const ABAS: Aba[] = [
   { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
   { href: "/contador", label: "Painel do Contador", donoOnly: true },
   { href: "/portal", label: "Portal" },
-  // Consultor (assinatura independente) saiu da navegação — o consultor
-  // passa a existir só dentro da própria fazenda (vínculo UsuarioFazenda.
-  // consultor) e como Consultor CowData (Equipe CowData); a remoção
-  // completa do produto/rota /consultor é escopo à parte (backlog #122).
+  // A assinatura independente de consultor foi removida (backlog #122) — o
+  // consultor passa a existir só dentro da própria fazenda (vínculo
+  // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).
   { href: "/configuracoes", label: "Configurações", requerConfig: true },
 ];
 
@@ -119,7 +118,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
     if (a.requerConfig) return temConfiguracoes;
     const mod = ROTA_MODULO[a.href];
     if (mod) return podeModulo(mod);
-    return true; // /portal, /consultor — liberados para todo logado
+    return true; // /portal — liberado para todo logado
   });
 
   return (

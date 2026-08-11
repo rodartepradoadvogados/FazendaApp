@@ -103,7 +103,6 @@ const links = [
 const EXTRAS_TITULO_SIDEBAR: Record<string, string> = {
   "/configuracoes": "Configurações",
   "/portal": "Portal",
-  "/consultor": "Consultor",
   "/usuarios": "Controle de Acesso",
   "/indicadores": "Indicadores",
   "/relatorios": "Listas",

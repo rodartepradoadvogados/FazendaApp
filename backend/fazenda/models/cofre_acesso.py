@@ -6,9 +6,9 @@ fazenda/api/routers/cofre_acesso.py). Hoje o único ator possível é o dono
 registra esse acesso desde já, e vira o controle real assim que a Equipe
 CowData (ver painel_cowdata.py) ganhar contas de login próprias.
 
-Não confundir com UsuarioFazenda/ContratoConsultor: aqueles são vínculos de
-QUEM TRABALHA na fazenda (funcionário, consultor). Este é o registro de
-QUANDO A PRÓPRIA COWDATA entrou nos dados de um cliente e por quê.
+Não confundir com UsuarioFazenda: aquele é o vínculo de QUEM TRABALHA na
+fazenda (funcionário, consultor). Este é o registro de QUANDO A PRÓPRIA
+COWDATA entrou nos dados de um cliente e por quê.
 """
 from __future__ import annotations
 
