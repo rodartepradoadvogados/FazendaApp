@@ -7,7 +7,7 @@ import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
-  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria,
+  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
 } from "@/lib/api";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -693,6 +693,30 @@ export default function AgendaPage() {
     }
   };
 
+  // Pendência "Cadastrar motivo da perda de prenhez" (ver
+  // eventos_perda_prenhez_pendente em agenda.py) — perda já registrada
+  // (manual ou automática por reinseminação), só falta o motivo. "Aborto"/
+  // "Natimorto"/"Outros" gravam o motivo escolhido; "Descartar" grava o
+  // sentinela `nao_informado` — a perda CONTINUA registrada, só o motivo que
+  // o usuário optou por não informar (não é a mesma coisa que excluir a
+  // perda). Os dois casos usam o mesmo PUT de sempre (atualizarServico):
+  // assim que `motivo_perda_prenhez` deixa de ser nulo, o card some sozinho
+  // da Agenda no próximo carregamento — sem precisar de EventoRealizado.
+  const [salvandoMotivoPerda, setSalvandoMotivoPerda] = useState<Set<string>>(new Set());
+  const cadastrarMotivoPerda = async (e: any, motivo: string) => {
+    setSalvandoMotivoPerda((p) => new Set(p).add(e.id));
+    try {
+      await atualizarServico(e.servico_id, { motivo_perda_prenhez: motivo });
+      await carregar();
+      mostrarFeedback(
+        motivo === "nao_informado"
+          ? "Pendência descartada — a perda de prenhez continua registrada."
+          : "Motivo da perda de prenhez registrado."
+      );
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setSalvandoMotivoPerda((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Botão "Realizado" com confirmação inline ("Deseja cumprir essa atividade?
   // Sim/Não") em vez de agir direto no primeiro clique.
   const BotaoRealizado = ({ chave, onConfirmar, compacto }: { chave: string; onConfirmar: () => void; compacto?: boolean }) => {
@@ -1083,6 +1107,19 @@ export default function AgendaPage() {
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirListasBst()}>
                                   <Layers size={12} /> Ver listas
                                 </button>
+                              ) : (e as any).tipo === "perda_prenhez_motivo" ? (
+                                <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                  <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                                    <button className="btn-ghost" style={{ fontSize: "0.66rem" }} disabled={salvandoMotivoPerda.has(e.id)} title="Cadastrar motivo: aborto" onClick={() => cadastrarMotivoPerda(e, "aborto")}>Aborto</button>
+                                    <button className="btn-ghost" style={{ fontSize: "0.66rem" }} disabled={salvandoMotivoPerda.has(e.id)} title="Cadastrar motivo: natimorto" onClick={() => cadastrarMotivoPerda(e, "natimorto")}>Natimorto</button>
+                                    <button className="btn-ghost" style={{ fontSize: "0.66rem" }} disabled={salvandoMotivoPerda.has(e.id)} title="Cadastrar motivo: outros" onClick={() => cadastrarMotivoPerda(e, "outros")}>Outros</button>
+                                  </div>
+                                  <button className="btn-ghost" style={{ fontSize: "0.66rem", color: "var(--text-muted)" }} disabled={salvandoMotivoPerda.has(e.id)}
+                                    title="A perda de prenhez continua registrada — só o motivo fica sem informar"
+                                    onClick={() => cadastrarMotivoPerda(e, "nao_informado")}>
+                                    <X size={11} /> Descartar
+                                  </button>
+                                </div>
                               ) : (
                                 <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                               )}

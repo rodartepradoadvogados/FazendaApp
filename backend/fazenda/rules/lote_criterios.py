@@ -50,11 +50,23 @@ def _categoria_normalizada(animal: dict) -> str:
 
 
 def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
-    servicos = servicos_por_animal.get(numero, [])
-    positivos = [s for s in servicos if (s.get("diagnostico") or "").strip().upper() == "POSITIVO" and s.get("data_servico")]
-    if not positivos:
+    """Serviço VIGENTE da matriz (o mais recente), SE ele estiver positivo e
+    sem perda de prenhez registrada — não é "o último serviço positivo do
+    histórico": um serviço mais novo (mesmo sem diagnóstico ainda) já
+    substitui aquele positivo, e uma perda registrada (manual ou automática
+    por reinseminação, ver fazenda.rules.perda_prenhez) encerra a gestação
+    mesmo sem um serviço novo. Sem este critério, "dias para o parto" e o
+    critério "Pré-parto" do lote continuavam contando uma gestação que já
+    tinha acabado."""
+    servicos = sorted(
+        (s for s in servicos_por_animal.get(numero, []) if s.get("data_servico")), key=lambda s: s["data_servico"],
+    )
+    if not servicos:
         return None
-    return max(positivos, key=lambda s: s["data_servico"])
+    ultimo = servicos[-1]
+    if (ultimo.get("diagnostico") or "").strip().upper() == "POSITIVO" and not ultimo.get("data_perda_prenhez"):
+        return ultimo
+    return None
 
 
 def dias_para_parto(
@@ -200,7 +212,16 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     if lote.idade_dias_max is not None and (idade_dias is None or idade_dias > lote.idade_dias_max):
         return False
 
-    gestante = (animal.get("sit_rep") or "") == "Ges." or (animal.get("diagnostico") or "").strip().upper() == "POSITIVO"
+    # AO VIVO: prenha = tem concepção vigente (ctx["situacao_reprodutiva_viva"]
+    # já cruza serviço/parto — ver _contexto_categoria em recria.py). Cai para
+    # o texto congelado (sit_rep) só quando o animal não tem NENHUM
+    # serviço/parto lançado ainda — mesmo fallback usado por
+    # `_situacao_produtiva` acima. Antes usava `Animal.diagnostico` (campo
+    # congelado do CSV) OU sit_rep == "Ges." direto: uma vaca reinseminada sem
+    # diagnóstico ainda, ou com a prenhez já perdida, continuava contando como
+    # gestante para os critérios "novilhas inseminadas"/"novilhas gestantes".
+    situacao_viva = ctx.get("situacao_reprodutiva_viva")
+    gestante = situacao_viva == "prenha" if situacao_viva is not None else (animal.get("sit_rep") or "") == "Ges."
 
     if lote.novilhas_inseminadas:
         if categoria != "novilha" or not foi_inseminada(numero, servicos_por_animal) or gestante:

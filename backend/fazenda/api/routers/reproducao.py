@@ -24,6 +24,11 @@ from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.perda_prenhez import (
+    MOTIVOS_PERDA_PRENHEZ,
+    MOTIVOS_PERDA_PRENHEZ_VALIDOS,
+    detectar_e_registrar_perda_por_reinseminacao,
+)
 from fazenda.rules.protocolo_iatf import (
     PASSOS_PROTOCOLO_IATF_PADRAO as PASSOS_PROTOCOLO_IATF,
     DIA_INSEMINACAO_PADRAO,
@@ -405,7 +410,15 @@ def atualizar_servico(
     servico = session.get(Servico, servico_id)
     if not servico or (fazenda_id is not None and servico.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Serviço não encontrado")
-    for campo, valor in dados.model_dump(exclude_unset=True).items():
+    campos = dados.model_dump(exclude_unset=True)
+    # "nao_informado" só entra aqui (não em MOTIVOS_PERDA_PRENHEZ, a lista de
+    # escolha) — é o sentinela gravado pelo botão "Descartar" da pendência da
+    # Agenda (ver fazenda.rules.perda_prenhez): a perda continua registrada,
+    # só o motivo que o usuário optou por não informar.
+    if "motivo_perda_prenhez" in campos and campos["motivo_perda_prenhez"] is not None \
+            and campos["motivo_perda_prenhez"] not in MOTIVOS_PERDA_PRENHEZ_VALIDOS:
+        raise HTTPException(status_code=400, detail="Motivo de perda de prenhez inválido")
+    for campo, valor in campos.items():
         setattr(servico, campo, valor)
     session.add(servico)
     session.commit()
@@ -609,9 +622,6 @@ def registrar_reconfirmacao(
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
-
-
-MOTIVOS_PERDA_PRENHEZ = ["aborto", "natimorto", "outros"]
 
 
 class PerdaPrenhezIn(BaseModel):
@@ -1596,6 +1606,17 @@ def registrar_servico(
     ordem_tentativa = (ultimo.ordem_tentativa or 0) + 1 if ultimo else 1
     intervalo = (dados.data_servico - ultimo.data_servico).days if ultimo and ultimo.data_servico else None
 
+    # Pedido do produtor: reinseminar uma vaca cujo serviço vigente ainda está
+    # POSITIVO (sem perda registrada) só pode significar que a prenhez se
+    # perdeu e ninguém contou pro sistema — grava a perda automaticamente no
+    # serviço anterior (dia anterior a esta IA), motivo em aberto (vira
+    # pendência "Cadastrar motivo da perda de prenhez" na Agenda). Sem efeito
+    # quando não há prenhez vigente, quando a perda já foi registrada
+    # (idempotente) ou quando um parto real já resolveu a gestação.
+    detectar_e_registrar_perda_por_reinseminacao(
+        session, numero_matriz=dados.numero_matriz, nova_data_servico=dados.data_servico, fazenda_id=fazenda_id,
+    )
+
     servico = Servico(
         animal_id=animal.id,
         numero_matriz=dados.numero_matriz,
@@ -1706,6 +1727,12 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     ultimo = max(anteriores, key=lambda s: s.data_servico or date.min, default=None)
     ordem_tentativa = (ultimo.ordem_tentativa or 0) + 1 if ultimo else 1
     intervalo = (data_servico - ultimo.data_servico).days if ultimo and ultimo.data_servico else None
+    # Mesma detecção automática de perda por reinseminação de registrar_servico
+    # (ver o comentário lá) — este é o caminho usado por lançamento em lote e
+    # pelo protocolo IATF, então precisa da mesma regra.
+    detectar_e_registrar_perda_por_reinseminacao(
+        session, numero_matriz=numero_matriz, nova_data_servico=data_servico, fazenda_id=fazenda_id,
+    )
     servico = Servico(
         animal_id=animal.id, numero_matriz=numero_matriz, raca_matriz=animal.raca,
         data_nasc_matriz=animal.data_nasc, data_servico=data_servico, tipo_servico=tipo_servico,

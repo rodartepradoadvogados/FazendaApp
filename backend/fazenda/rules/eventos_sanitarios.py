@@ -151,14 +151,34 @@ def _datas_gatilho(
         for s in session.exec(_da_fazenda(select(Servico).where(Servico.data_servico != None), Servico)).all():  # noqa: E711
             saida.append((s.numero_matriz, s.data_servico + offset))
     elif gatilho == "gestacao_confirmada":
-        for s in session.exec(_da_fazenda(select(Servico).where(Servico.diagnostico == "POSITIVO"), Servico)).all():
+        # `data_perda_prenhez.is_(None)` — uma prenhez que já se perdeu (manual
+        # ou automática por reinseminação, ver fazenda.rules.perda_prenhez)
+        # não confirma gestação nenhuma; sem o filtro, o evento (ex.: uma
+        # vacina de gestante) continuava sendo sugerido para uma vaca que já
+        # não está mais prenha.
+        for s in session.exec(
+            _da_fazenda(
+                select(Servico).where(Servico.diagnostico == "POSITIVO", Servico.data_perda_prenhez.is_(None)),
+                Servico,
+            )
+        ).all():
             base = s.data_diagnostico or s.data_servico
             if base:
                 saida.append((s.numero_matriz, base + offset))
     elif gatilho == "mudanca_pre_parto":
         limite = pre_parto_max()
+        # Mesmo filtro de perda de prenhez do gatilho acima — sem ele, uma
+        # vaca que perdeu a prenhez (com ou sem nova IA já lançada) continuava
+        # recebendo a sugestão de mudar para o lote de pré-parto, o pedido
+        # específico do produtor que este módulo existe para atender.
         for s in session.exec(
-            _da_fazenda(select(Servico).where(Servico.diagnostico == "POSITIVO", Servico.data_servico != None), Servico)  # noqa: E711
+            _da_fazenda(
+                select(Servico).where(
+                    Servico.diagnostico == "POSITIVO", Servico.data_servico != None,  # noqa: E711
+                    Servico.data_perda_prenhez.is_(None),
+                ),
+                Servico,
+            )
         ).all():
             prevista = calcular_parto_provavel(s.data_servico, s.raca_matriz).data_parto_provavel
             saida.append((s.numero_matriz, prevista - timedelta(days=limite) + offset))

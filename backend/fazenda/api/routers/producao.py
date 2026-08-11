@@ -359,16 +359,19 @@ def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: dat
     pós-parto (recém-parida). Fora disso (ou recria), retorna None."""
     if not animal:
         return None
-    from fazenda.models import Servico
+    from fazenda.models import Parto, Servico
     from fazenda.rules.gestation import calcular_parto_provavel
+    from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
     # Recém-parida: DEL pequeno na data da pesagem → pós-parto.
     if animal.del_dias is not None and 0 <= animal.del_dias <= 30:
         return "pos_parto"
-    ultimo_pos = session.exec(
-        select(Servico).where(
-            Servico.numero_matriz == animal.numero, Servico.diagnostico == "POSITIVO"
-        ).order_by(Servico.data_servico.desc())
-    ).first()
+    # Serviço vigente positivo (não um "último positivo do histórico"
+    # qualquer) — sem isso, uma vaca reinseminada sem diagnóstico ainda, ou
+    # com a prenhez já perdida, continuava classificada por um diagnóstico
+    # antigo que não vale mais (ver fazenda.rules.perda_prenhez).
+    servicos_da_vaca = session.exec(select(Servico).where(Servico.numero_matriz == animal.numero)).all()
+    partos_da_vaca = session.exec(select(Parto).where(Parto.numero_matriz == animal.numero)).all()
+    ultimo_pos = servicos_positivos_vigentes(servicos_da_vaca, partos_da_vaca).get(animal.numero)
     if ultimo_pos and ultimo_pos.data_servico:
         parto_provavel = calcular_parto_provavel(ultimo_pos.data_servico, animal.raca).data_parto_provavel
         dias_para_parto = (parto_provavel - data_pesagem).days
@@ -1140,11 +1143,14 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
 
-    ultimo_servico = session.exec(
-        select(Servico)
-        .where(Servico.numero_matriz == numero_matriz, Servico.diagnostico == "POSITIVO")
-        .order_by(Servico.data_servico.desc())
-    ).first()
+    # Serviço vigente positivo — não "o último diagnóstico positivo do
+    # histórico" (que continuaria valendo mesmo depois de uma reinseminação
+    # sem diagnóstico ainda, ou de uma perda de prenhez já registrada; ver
+    # fazenda.rules.perda_prenhez).
+    from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+    servicos_da_vaca = session.exec(select(Servico).where(Servico.numero_matriz == numero_matriz)).all()
+    partos_da_vaca = session.exec(select(Parto).where(Parto.numero_matriz == numero_matriz)).all()
+    ultimo_servico = servicos_positivos_vigentes(servicos_da_vaca, partos_da_vaca).get(numero_matriz)
 
     data_prevista = None
     deve_secar = None

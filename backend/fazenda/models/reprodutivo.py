@@ -42,7 +42,15 @@ class Servico(SQLModel, table=True):
     diagnostico: Optional[str] = None  # POSITIVO | NEGATIVO | INDEFINIDO
     metodo_diagnostico: Optional[str] = None  # Palpação | Ultrassom | Cio de repasse
     data_perda_prenhez: Optional[date] = None
-    motivo_perda_prenhez: Optional[str] = None  # aborto | natimorto | outros
+    motivo_perda_prenhez: Optional[str] = None  # aborto | natimorto | outros | nao_informado
+    # Como a perda foi detectada: "reinseminacao" quando o próprio sistema
+    # gravou automaticamente (nova IA lançada sobre um serviço ainda POSITIVO
+    # sem perda — ver fazenda.rules.perda_prenhez) ou None quando foi um
+    # lançamento manual (POST /reproducao/perda-prenhez ou edição direta do
+    # serviço). Só informativo — não entra em nenhum critério de negócio;
+    # existe para a Agenda poder dizer "detectada pela nova inseminação em
+    # dd/mm" no card de pendência de motivo.
+    origem_perda_prenhez: Optional[str] = None  # reinseminacao | None (manual)
     pev_dias: Optional[int] = None
     del_servico: Optional[int] = None
     ult_ocorrencia: Optional[int] = None

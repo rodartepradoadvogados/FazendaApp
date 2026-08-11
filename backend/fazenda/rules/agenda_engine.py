@@ -317,6 +317,15 @@ class AgendaEngine:
             data_servico = servico.get("data_servico")
             diagnostico = (servico.get("diagnostico") or "").upper()
             ordem_parto = parto.get("ordem_parto") or servico.get("ordem_parto") or 0
+            # Perda de prenhez registrada neste serviço (manual ou automática
+            # por reinseminação, ver fazenda.rules.perda_prenhez) — mesmo
+            # diagnóstico ainda marcado POSITIVO, a gestação não é mais
+            # vigente: não gera Parto provável/Pré-parto/Secagem (senão a vaca
+            # continuava recebendo pendência de mudar para o pré-parto mesmo
+            # depois de perder a prenhez, o pedido do produtor que este bloco
+            # existe para fechar).
+            perdeu_prenhez = bool(servico.get("data_perda_prenhez"))
+            gestante_vigente = diagnostico == "POSITIVO" and not perdeu_prenhez
 
             # DEL (dias em lactação) AO VIVO — `Animal.del_dias` é zerado no
             # instante do parto lançado no app (ver registrar_parto) mas fica
@@ -341,7 +350,7 @@ class AgendaEngine:
                 for p in partos_por_animal.get(numero, [])
             )
             data_parto_provavel = None
-            if diagnostico == "POSITIVO" and data_servico and not ja_pariu_deste_servico:
+            if gestante_vigente and data_servico and not ja_pariu_deste_servico:
                 res_gest = calcular_parto_provavel(data_servico, raca)
                 data_parto_provavel = res_gest.data_parto_provavel
                 eventos.append(AgendaItem(
@@ -384,8 +393,11 @@ class AgendaEngine:
                         numero_animal=numero,
                     ))
 
-            # ── SCRATCH (14 dias após último serviço)
-            if data_servico and diagnostico != "POSITIVO":
+            # ── SCRATCH (14 dias após último serviço) — também dispara quando
+            # a prenhez deste serviço já se perdeu (perdeu_prenhez): a vaca
+            # volta a precisar de detector de cio, mesmo com o diagnóstico
+            # antigo ainda marcado POSITIVO no registro.
+            if data_servico and not gestante_vigente:
                 res_scratch = calcular_scratch(numero, data_servico, servico.get("diagnostico"))
                 if res_scratch.ativo and res_scratch.data_scratch >= data_referencia:
                     eventos.append(AgendaItem(

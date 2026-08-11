@@ -974,6 +974,37 @@ def calcular_agenda(
             "tipo": "patrimonio_valor_mercado", "patrimonio_id": item.id,
         })
 
+    # Perda de prenhez sem motivo cadastrado — detectada automaticamente pelo
+    # sistema (nova inseminação sobre um diagnóstico POSITIVO vigente sem
+    # perda registrada, ver fazenda.rules.perda_prenhez) ou lançada manualmente
+    # sem motivo. Fica pendente até o usuário "Cadastrar motivo" ou
+    # "Descartar" (grava o sentinela `nao_informado` — a perda continua
+    # registrada, só o motivo que não foi informado; ver PUT
+    # /reproducao/servicos/{id}). Sem piso de data: uma perda de dias atrás
+    # continua pendente até ser resolvida, mesmo padrão de Pré-parto/Secagem
+    # em agenda_engine.py.
+    eventos_perda_prenhez_pendente = []
+    query_perda_pendente = select(Servico).where(
+        Servico.data_perda_prenhez.is_not(None), Servico.motivo_perda_prenhez.is_(None),
+    )
+    if fazenda_id is not None:
+        query_perda_pendente = query_perda_pendente.where(Servico.fazenda_id == fazenda_id)
+    for s in session.exec(query_perda_pendente).all():
+        chave = f"perda_prenhez_motivo_{s.id}"
+        if chave in realizados:
+            continue
+        origem_txt = (
+            f" — detectada pela nova inseminação de {s.numero_matriz}" if s.origem_perda_prenhez == "reinseminacao" else ""
+        )
+        eventos_perda_prenhez_pendente.append({
+            "id": chave, "data": s.data_perda_prenhez.isoformat(), "categoria": "Reprodutivo",
+            "descricao": f"Cadastrar motivo da perda de prenhez — {s.numero_matriz}",
+            "numero_animal": s.numero_matriz,
+            "observacao": f"Perda em {s.data_perda_prenhez.strftime('%d/%m/%Y')}{origem_txt}.",
+            "fonte": "auto", "cor": "var(--red)", "ref": None,
+            "tipo": "perda_prenhez_motivo", "servico_id": s.id,
+        })
+
     # Diarista com diária ativa cobrindo `data` e sem folga marcada nesse dia —
     # a Agenda passa a refletir o mesmo estado do controle de diárias.
     eventos_diaria_trabalho = []
@@ -1057,7 +1088,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

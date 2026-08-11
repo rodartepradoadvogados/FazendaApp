@@ -72,10 +72,29 @@ def _ultimo_servico(numero: str, servicos_por_animal: dict[str, list[dict]]) -> 
     return servs[-1] if servs else None
 
 
-def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
-    pos = [s for s in _servicos_do_animal(numero, servicos_por_animal)
-           if (s.get("diagnostico") or "").strip().upper() == "POSITIVO"]
-    return pos[-1] if pos else None
+def _ultimo_servico_positivo(
+    numero: str, servicos_por_animal: dict[str, list[dict]],
+    partos_por_animal: dict[str, list[dict]] | None = None,
+) -> dict | None:
+    """Serviço VIGENTE da matriz (o mais recente — e, quando
+    `partos_por_animal` é informado, também posterior ao último parto), SE
+    ele estiver positivo e sem perda de prenhez registrada. Não é "o último
+    serviço positivo do histórico": um serviço mais novo (mesmo sem
+    diagnóstico ainda) ou um parto já encerram aquela prenhez — contá-la
+    mesmo assim fazia uma vaca reinseminada sem diagnóstico (ou já parida)
+    continuar aparecendo como prenhe, com previsão de parto/secagem de uma
+    gestação que não existe mais (ver fazenda.rules.perda_prenhez)."""
+    servs = _servicos_do_animal(numero, servicos_por_animal)
+    if partos_por_animal is not None:
+        ultimo_parto = _ultimo_parto(numero, partos_por_animal)
+        if ultimo_parto is not None:
+            servs = [s for s in servs if s.get("data_servico") and s["data_servico"] > ultimo_parto]
+    if not servs:
+        return None
+    ultimo = servs[-1]
+    if (ultimo.get("diagnostico") or "").strip().upper() == "POSITIVO" and not ultimo.get("data_perda_prenhez"):
+        return ultimo
+    return None
 
 
 def _indexar(servicos: list[dict], partos: list[dict]) -> tuple[dict, dict]:
@@ -150,8 +169,12 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         dparto = _ultimo_parto(num, parto_idx)
         dpp = _dias(dparto, hoje) if dparto else None  # dias pós-parto
         us = _ultimo_servico(num, serv_idx)
-        ups = _ultimo_servico_positivo(num, serv_idx)
-        prenhe = sit == "Ges." or (ups is not None and not (us or {}).get("data_perda_prenhez") and not sit.startswith("Vaz."))
+        ups = _ultimo_servico_positivo(num, serv_idx, parto_idx)
+        # `ups` já garante vigência (mais recente, positivo, sem perda) — não
+        # precisa checar `data_perda_prenhez` de novo aqui (e checar em `us`,
+        # como antes, estava errado: `us` é sempre o serviço MAIS recente,
+        # que pode já ser outro, sem a perda, deixado por uma reinseminação).
+        prenhe = sit == "Ges." or (ups is not None and not sit.startswith("Vaz."))
         vazia = sit.startswith("Vaz.")
         inseminada = sit == "Ins."
         # Serviço em aberto = já tem data_servico lançada e ainda sem
@@ -544,7 +567,7 @@ def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict]
     parir_por_mes: dict[str, dict[str, int]] = {}
     for a in femeas:
         num = a["numero"]
-        ups = _ultimo_servico_positivo(num, serv_idx)
+        ups = _ultimo_servico_positivo(num, serv_idx, parto_idx)
         if not ups or not ups.get("data_servico"):
             continue
         sit = (a.get("sit_rep") or "").strip()

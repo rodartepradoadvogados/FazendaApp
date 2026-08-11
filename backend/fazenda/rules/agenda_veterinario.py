@@ -136,8 +136,19 @@ def classificar_rebanho(
         # fazenda — uma vez tocada positiva já é considerada confirmada; só
         # vaca passa pelo 2º exame aos 60+ dias (ver relatorios_gerenciais.py).
         eh_novilha = categoria == "novilha"
-        gestante_confirmada = tocada and diag1 == "POSITIVO" and (eh_novilha or (reconfirmada and diag2 == "POSITIVO"))
-        perda_prenhez = reconfirmada and diag2 == "NEGATIVO"
+        # Perda de prenhez registrada neste serviço (manual ou automática por
+        # reinseminação, ver fazenda.rules.perda_prenhez) — mesmo com o
+        # diagnóstico ainda POSITIVO no registro, a gestação não é mais
+        # vigente. Sem este filtro, uma vaca com a perda já registrada (mas
+        # sem uma nova IA lançada ainda, então `servico` continua sendo este
+        # mesmo POSITIVO) continuava "gestante confirmada" no roteiro do
+        # veterinário.
+        perda_registrada = bool((servico or {}).get("data_perda_prenhez"))
+        gestante_confirmada = (
+            tocada and diag1 == "POSITIVO" and not perda_registrada
+            and (eh_novilha or (reconfirmada and diag2 == "POSITIVO"))
+        )
+        perda_prenhez = perda_registrada or (reconfirmada and diag2 == "NEGATIVO")
 
         dpp = None
         if gestante_confirmada and data_servico:
