@@ -21,6 +21,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
+from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
@@ -98,14 +99,18 @@ def listar_animais(
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
         query_secagem = query_secagem.where(Secagem.fazenda_id == fazenda_id)
-    ult_pos: dict[str, object] = {}
-    for s in session.exec(query_servico).all():
-        d = s.data_servico
-        if d and (s.diagnostico or "").strip().upper() == "POSITIVO":
-            if s.numero_matriz not in ult_pos or d > ult_pos[s.numero_matriz]:
-                ult_pos[s.numero_matriz] = d
+    servicos_todos = session.exec(query_servico).all()
+    partos_todos = session.exec(query_parto).all()
+    # Serviço vigente positivo por matriz (não "o último diagnóstico positivo
+    # do histórico" cru) — uma vaca reinseminada sem diagnóstico ainda, com a
+    # prenhez já perdida, ou que já pariu depois daquele serviço não deve
+    # continuar contando "dias de gestação" de uma prenhez que não existe
+    # mais (ver fazenda.rules.perda_prenhez).
+    ult_pos: dict[str, object] = {
+        numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
+    }
     ult_parto: dict[str, object] = {}
-    for p in session.exec(query_parto).all():
+    for p in partos_todos:
         d = p.data_parto
         if d and (p.numero_matriz not in ult_parto or d > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = d
@@ -154,15 +159,18 @@ def estratificacao_rebanho(
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    partos_todos = session.exec(query_parto).all()
+    servicos_todos = session.exec(query_servico).all()
     ult_parto: dict[str, date] = {}
-    for p in session.exec(query_parto).all():
+    for p in partos_todos:
         if p.data_parto and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = p.data_parto
-    ult_pos: dict[str, date] = {}
-    for s in session.exec(query_servico).all():
-        if s.data_servico and (s.diagnostico or "").strip().upper() == "POSITIVO":
-            if s.numero_matriz not in ult_pos or s.data_servico > ult_pos[s.numero_matriz]:
-                ult_pos[s.numero_matriz] = s.data_servico
+    # Serviço vigente positivo por matriz — mesmo critério de listar_animais
+    # acima (ver fazenda.rules.perda_prenhez): não conta uma prenhez já
+    # perdida ou já substituída por uma reinseminação sem diagnóstico.
+    ult_pos: dict[str, date] = {
+        numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
+    }
 
     estratos = {
         "aleitamento_0_3m": 0, "recria_4_11m": 0, "recria_12_24m": 0,

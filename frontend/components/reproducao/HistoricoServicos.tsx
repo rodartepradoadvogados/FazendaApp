@@ -27,7 +27,12 @@ export type Serv = {
 export type Foco = "todos" | "ias" | "diagnosticos" | "perdas";
 
 const DIAG_COR: Record<string, string> = { POSITIVO: "var(--green-light)", NEGATIVO: "var(--red)", ABERTO: "var(--amber)" };
-const MOTIVO_LABEL: Record<string, string> = { aborto: "Aborto", natimorto: "Natimorto", outros: "Outros" };
+// "nao_informado" é o sentinela gravado pelo "Descartar" da pendência da
+// Agenda (ver fazenda.rules.perda_prenhez) — a perda continua registrada,
+// só o motivo que o usuário optou por não informar; por isso tem rótulo
+// próprio aqui, distinto de "(sem motivo)" (motivo_perda null, ainda
+// pendente de decisão — ver o fallback usado nos filtros abaixo).
+const MOTIVO_LABEL: Record<string, string> = { aborto: "Aborto", natimorto: "Natimorto", outros: "Outros", nao_informado: "Não informado" };
 const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const ddmm = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
