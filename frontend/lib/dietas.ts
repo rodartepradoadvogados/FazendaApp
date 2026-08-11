@@ -27,6 +27,17 @@ export type Raca = "Holandes" | "Jersey" | "Outra";
 export const RACAS: Raca[] = ["Holandes", "Jersey", "Outra"];
 
 export type EquacaoCms = 0 | 2 | 3 | 8 | 9 | 10 | 11;
+
+// Como descontar o efeito da monensina sobre o consumo (ver consumo.py).
+export type ModoMonensina = "kg" | "pct" | "manual";
+export const OPCOES_MONENSINA: { valor: ModoMonensina; rotulo: string; nota: string }[] = [
+  { valor: "kg", rotulo: "−0,30 kg de MS/dia",
+    nota: "Desconto fixo em quilos. Vem da meta-análise de Duffield et al. (2008), que reuniu vários estudos com vaca leiteira e achou queda média de cerca de 0,3 kg de matéria seca por dia." },
+  { valor: "pct", rotulo: "−2% do consumo",
+    nota: "Desconto proporcional: acompanha o tamanho do animal, descontando mais de uma vaca de alto consumo e menos de uma novilha — ao contrário do valor fixo, que tira o mesmo peso das duas." },
+  { valor: "manual", rotulo: "Informar a redução manualmente",
+    nota: "Use quando você tem medição do próprio rebanho (consumo antes e depois de entrar com monensina)." },
+];
 export const OPCOES_EQ_CMS: { valor: EquacaoCms; rotulo: string; estados: EstadoFisiologico[] | null }[] = [
   { valor: 8, rotulo: "8 — Vaca lactante, fatores animais (padrão)", estados: ["vaca_lactante"] },
   { valor: 9, rotulo: "9 — Vaca lactante, fatores animais + FDN da dieta", estados: ["vaca_lactante"] },
@@ -108,6 +119,8 @@ export type AnimalPayload = {
   eq_cms: EquacaoCms;
   cms_informado_kg_dia?: number | null;
   usa_monensina: boolean;
+  monensina_modo?: ModoMonensina;
+  monensina_reducao_manual?: number | null;
   eq_microbiana: 1;
   usa_dndf48: 0;
 };
@@ -172,7 +185,16 @@ export type Resultado = {
     estado_fisiologico: string; raca: string; peso_vivo_kg: number; peso_metabolico_kg: number;
     peso_maturo_kg: number; peso_vazio_kg: number; peso_maturo_vazio_kg: number; razao_peso_vazio: number;
   };
-  consumo: { cms_kg_dia: number; equacao_usada: number; cms_pct_pv: number; cms_g_kg_pv075: number };
+  consumo: {
+    cms_kg_dia: number; equacao_usada: number; cms_pct_pv: number; cms_g_kg_pv075: number;
+    // As DUAS estimativas da categoria, sempre calculadas (ver consumo.py):
+    // a "sem fibra" só olha o animal, a "com fibra" também lê a dieta. A
+    // diferença entre elas é o quanto a fibra está travando o consumo.
+    cms_sem_fibra_kg_dia: number; cms_com_fibra_kg_dia: number;
+    equacao_sem_fibra: number; equacao_com_fibra: number;
+    fibra_limita_kg_dia: number; fibra_e_limitante: boolean;
+    monensina_reducao_kg_dia: number;
+  };
   dieta: Record<string, number> & { perfis?: Record<string, number | string>[] };
   digestao: Record<string, number | Record<string, number>>;
   energia: Record<string, number | boolean | null>;

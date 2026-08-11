@@ -64,6 +64,10 @@ class AnimalIn(BaseModel):
     eq_cms: int = 8
     cms_informado_kg_dia: float | None = None
     usa_monensina: bool = False
+    # "kg" = -0,30 kg MS/dia (Duffield et al., 2008) | "pct" = -2% do CMS |
+    # "manual" = o valor de monensina_reducao_manual. Ver constantes do motor.
+    monensina_modo: str = "kg"
+    monensina_reducao_manual: float | None = None
     eq_microbiana: int = 1
     usa_dndf48: int = 0
 

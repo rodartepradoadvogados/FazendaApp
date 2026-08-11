@@ -18,6 +18,24 @@ class ResultadoConsumo:
     equacao_usada: int
     cms_pct_pv: float
     cms_g_kg_pv075: float
+    # --- Par "sem fibra" × "com fibra" (ago/2026) ---------------------------
+    # Toda categoria tem DUAS equações de CMS no NASEM: uma só com fatores do
+    # animal (peso, produção, ECC, DEL) e outra que também olha a fibra da
+    # dieta. Antes o usuário escolhia UMA delas e via um número; agora as duas
+    # são sempre calculadas e mostradas lado a lado, porque a pergunta que o
+    # nutricionista faz não é "qual equação usar" e sim "a fibra desta dieta
+    # está limitando o consumo desta vaca?". A diferença entre os dois números
+    # É a resposta: vaca que comeria 22 kg pela genética/produção mas 21 kg
+    # pela fibra tem 1 kg de consumo travado pelo volumoso.
+    cms_sem_fibra_kg_dia: float = 0.0
+    cms_com_fibra_kg_dia: float = 0.0
+    equacao_sem_fibra: int = 0
+    equacao_com_fibra: int = 0
+    # Positivo quando a fibra derruba o consumo (sem_fibra - com_fibra).
+    fibra_limita_kg_dia: float = 0.0
+    fibra_e_limitante: bool = False
+    # Quanto a monensina descontou do CMS, em kg/dia (0 quando não usa).
+    monensina_reducao_kg_dia: float = 0.0
 
 
 def _energia_liquida_leite_alvo_mcal_kg(animal: AnimalEntrada) -> float:
@@ -156,36 +174,112 @@ def _cms_hayirli(animal: AnimalEntrada) -> float:
     return animal.peso_vivo_kg * k.CMS_HAYIRLI_INTERCEPTO_PCT_PV / 100.0 + ajuste_gestacao
 
 
-def calcular_cms(animal: AnimalEntrada, dieta: ConcentracoesDieta) -> ResultadoConsumo:
-    """Bloco B — calcula o CMS segundo `animal.eq_cms`. Assume que a
-    entrada já foi validada por `tipos.validar_entrada`."""
+def _par_de_equacoes(animal: AnimalEntrada) -> tuple[int, int]:
+    """Devolve (equação SEM fibra, equação COM fibra) da categoria do animal.
+
+    O NASEM traz o mesmo par em três categorias — a equação "com fibra" é
+    sempre a que lê a dieta, e a "sem fibra" a que só olha o animal:
+      - vaca lactante ... 8 (animal) × 9 (animal + FDN/DNDF da dieta)
+      - novilha ........ 2 (animal) × 3 (animal + FDN)
+      - vaca seca ...... 11 Hayirli (animal) × 10 transição (usa FDN)
+    A escolha do par vem de `eq_cms`, que continua sendo o que o usuário
+    salvou; ele só não decide mais QUAL número aparece — decide a categoria.
+    """
     eq = animal.eq_cms
+    if eq in (2, 3):
+        return 2, 3
+    if eq in (10, 11):
+        return 11, 10
+    return 8, 9
 
+
+def _cms_por_equacao(eq: int, animal: AnimalEntrada, dieta: ConcentracoesDieta) -> float:
     if eq == 0:
-        cms = animal.cms_informado_kg_dia or 0.0
-    elif eq == 2:
-        cms = _cms_novilha_animal(animal)
-    elif eq == 3:
-        cms = _cms_novilha_dieta(animal, dieta)
-    elif eq == 8:
-        cms = _cms_lactante_animal(animal)
-    elif eq == 9:
-        cms = _cms_lactante_dieta(animal, dieta)
-    elif eq == 10:
-        cms = _cms_transicao(animal, dieta)
-    elif eq == 11:
-        cms = _cms_hayirli(animal)
-    else:  # pragma: no cover — já validado em tipos.validar_entrada
-        raise ValorInvalidoError(f"eq_cms não suportado na Fase 1: {eq}")
+        return animal.cms_informado_kg_dia or 0.0
+    if eq == 2:
+        return _cms_novilha_animal(animal)
+    if eq == 3:
+        return _cms_novilha_dieta(animal, dieta)
+    if eq == 8:
+        return _cms_lactante_animal(animal)
+    if eq == 9:
+        return _cms_lactante_dieta(animal, dieta)
+    if eq == 10:
+        return _cms_transicao(animal, dieta)
+    if eq == 11:
+        return _cms_hayirli(animal)
+    raise ValorInvalidoError(f"eq_cms não suportado na Fase 1: {eq}")  # pragma: no cover
 
-    cms = max(cms, 0.01)  # piso técnico: nunca zero/negativo, evita cascata de NaN
 
+def _reducao_monensina(animal: AnimalEntrada, cms: float) -> float:
+    """Quanto a monensina desconta deste CMS, em kg/dia. Ver constantes.
+
+    Nunca desconta mais que o próprio CMS (uma redução manual absurda não
+    pode virar consumo negativo)."""
+    if not animal.usa_monensina:
+        return 0.0
+    modo = (animal.monensina_modo or "kg").lower()
+    if modo == "manual":
+        reducao = animal.monensina_reducao_manual or 0.0
+    elif modo == "pct":
+        reducao = cms * k.MONENSINA_CMS_REDUCAO_PCT / 100.0
+    else:
+        reducao = k.MONENSINA_CMS_REDUCAO_KG_DIA
+    return limitar(reducao, 0.0, max(cms - 0.01, 0.0))
+
+
+def calcular_cms(animal: AnimalEntrada, dieta: ConcentracoesDieta) -> ResultadoConsumo:
+    """Bloco B — CMS da categoria do animal, calculado nas DUAS equações
+    (sem fibra e com fibra) e descontado o efeito da monensina.
+
+    Quem manda no balanço NÃO é o motor: é `cms_informado_kg_dia`, o
+    "Consumo total" que o usuário define na tela — mesmo desenho do NASEM
+    Dairy 8, onde as duas estimativas são só leitura e existe um campo
+    Total Intake à parte, preenchido digitando ou clicando em "usar esta
+    estimativa". Sem valor definido, o padrão é a estimativa pelo ANIMAL,
+    que é a única que não depende de a grade já estar montada (com a grade
+    vazia, a equação da fibra não tem o que ler e devolve um número sem
+    sentido).
+
+    A monensina desconta só das ESTIMATIVAS. O valor digitado é respeitado
+    como está: se veio de medição no cocho, o efeito da monensina já está
+    embutido nele — descontar de novo seria contar duas vezes.
+
+    Assume entrada já validada por `tipos.validar_entrada`.
+    """
+    eq_sem_fibra, eq_com_fibra = _par_de_equacoes(animal)
+
+    bruto_sem_fibra = max(_cms_por_equacao(eq_sem_fibra, animal, dieta), 0.01)
+    bruto_com_fibra = max(_cms_por_equacao(eq_com_fibra, animal, dieta), 0.01)
+
+    cms_sem_fibra = max(bruto_sem_fibra - _reducao_monensina(animal, bruto_sem_fibra), 0.01)
+    cms_com_fibra = max(bruto_com_fibra - _reducao_monensina(animal, bruto_com_fibra), 0.01)
+
+    informado = animal.cms_informado_kg_dia or 0.0
+    if informado > 0:
+        cms = informado
+        equacao_usada = 0  # 0 = "Consumo total definido pelo usuário"
+    else:
+        cms = cms_sem_fibra
+        equacao_usada = eq_sem_fibra
+    reducao = _reducao_monensina(animal, bruto_sem_fibra)
+
+    limita = cms_sem_fibra - cms_com_fibra
     peso_metabolico = animal.peso_vivo_kg ** 0.75
     return ResultadoConsumo(
         cms_kg_dia=cms,
-        equacao_usada=eq,
+        equacao_usada=equacao_usada,
         cms_pct_pv=divisao_segura(cms, animal.peso_vivo_kg, 0.0) * 100.0,
         cms_g_kg_pv075=divisao_segura(cms * 1000.0, peso_metabolico, 0.0),
+        cms_sem_fibra_kg_dia=cms_sem_fibra,
+        cms_com_fibra_kg_dia=cms_com_fibra,
+        equacao_sem_fibra=eq_sem_fibra,
+        equacao_com_fibra=eq_com_fibra,
+        fibra_limita_kg_dia=limita,
+        # 0,1 kg de folga: diferença menor que isso é ruído de arredondamento
+        # das equações, não fibra travando consumo de verdade.
+        fibra_e_limitante=limita > 0.1,
+        monensina_reducao_kg_dia=reducao,
     )
 
 

@@ -6,14 +6,18 @@ import { useEffect, useState } from "react";
 import { BadgeCheck } from "lucide-react";
 import { fetchLotes } from "@/lib/api";
 import {
-  AnimalPayload, ESTADOS_FISIOLOGICOS_SELECIONAVEIS, EquacaoCms,
-  OPCOES_EQ_CMS, RACAS, contextoFormulacao,
+  AnimalPayload, ESTADOS_FISIOLOGICOS_SELECIONAVEIS, EquacaoCms, ModoMonensina, Resultado,
+  OPCOES_EQ_CMS, OPCOES_MONENSINA, RACAS, contextoFormulacao,
 } from "@/lib/dietas";
+import { ConsumoTotal } from "@/components/dietas/ConsumoTotal";
 
 type LoteOpcao = { codigo: string; nome?: string | null };
 
 const campo: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "0.25rem" };
 const rotulo: React.CSSProperties = { fontSize: "0.74rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.3rem" };
+// Texto explicativo curto, abaixo do campo — usado para a origem de cada
+// desconto de monensina e para a nota das equações de CMS.
+const nota: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", lineHeight: 1.45 };
 const entrada: React.CSSProperties = {
   padding: "0.42rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)",
   background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem",
@@ -38,9 +42,12 @@ function Secao({ titulo, children }: { titulo: string; children: React.ReactNode
 }
 
 export function FormAnimal({
-  animal, onChange, lote, onLoteChange,
+  animal, onChange, lote, onLoteChange, resultado = null, gradeVazia = false,
 }: {
   animal: AnimalPayload; onChange: (a: AnimalPayload) => void; lote: number | null; onLoteChange: (l: number | null) => void;
+  // Vêm do wizard pai, que já calcula o resultado em segundo plano — servem
+  // só ao bloco de Consumo total espelhado no fim desta etapa.
+  resultado?: Resultado | null; gradeVazia?: boolean;
 }) {
   const [lotes, setLotes] = useState<LoteOpcao[]>([]);
   const [estimados, setEstimados] = useState<string[]>([]);
@@ -77,8 +84,38 @@ export function FormAnimal({
     }
   }
 
+  // Unidade da idade — só apresentação. `idade_dias` segue sendo a verdade;
+  // 30,4 dias/mês é a média do ano (365/12), não 30, para 24 meses não virar
+  // 720 dias (dois meses de erro acumulado em novilha de sobreano).
+  const DIAS_POR_MES = 365 / 12;
+  const [unidadeIdade, setUnidadeIdade] = useState<"dias" | "meses">("dias");
+  const idadeNaUnidade = animal.idade_dias == null
+    ? ""
+    : unidadeIdade === "meses"
+      ? String(Math.round((animal.idade_dias / DIAS_POR_MES) * 10) / 10)
+      : String(animal.idade_dias);
+  function mudarIdade(bruto: string) {
+    const n = numOuNull(bruto);
+    if (n == null) return set("idade_dias", null);
+    set("idade_dias", unidadeIdade === "meses" ? Math.round(n * DIAS_POR_MES) : Math.round(n));
+  }
+
   const opcoesEqCms = OPCOES_EQ_CMS.filter((o) => o.estados === null || o.estados.includes(animal.estado_fisiologico));
-  const eqCmsValida = opcoesEqCms.some((o) => o.valor === animal.eq_cms);
+  // `eq_cms` deixou de ser escolha do usuário: agora só diz ao motor QUAL
+  // categoria calcular (o par de equações vem dela). O único valor que ainda
+  // importa aqui é 0 = "CMS informado manualmente"; ao desmarcar, volta-se
+  // para a primeira equação válida da categoria.
+  const cmsPadraoDaCategoria = (opcoesEqCms.find((o) => o.valor !== 0)?.valor ?? 8) as EquacaoCms;
+
+  // Trocar de categoria com um eq_cms de outra (ex.: sair de lactante 8 para
+  // novilha) faria o motor recusar a entrada — realinha sozinho, preservando
+  // a escolha de "informado manualmente".
+  useEffect(() => {
+    if (animal.eq_cms !== 0 && !opcoesEqCms.some((o) => o.valor === animal.eq_cms)) {
+      set("eq_cms", cmsPadraoDaCategoria);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animal.estado_fisiologico]);
 
   const leiteExigeComposicao = animal.estado_fisiologico === "vaca_lactante" && (animal.producao_leite_kg_dia || 0) > 0;
 
@@ -113,9 +150,24 @@ export function FormAnimal({
           <span style={rotulo}>Paridade (0 = novilha)</span>
           <input type="number" step="1" min={0} style={entrada} value={animal.paridade} onChange={(e) => set("paridade", Number(e.target.value))} />
         </label>
+        {/* Idade em dias OU meses: o motor trabalha sempre em dias, mas
+            ninguém fala "novilha de 540 dias" — fala "de 18 meses". A unidade
+            é só da tela; a conversão acontece aqui e `idade_dias` continua
+            sendo o que vai para o backend. */}
         <label style={campo}>
-          <span style={rotulo}>Idade (dias)</span>
-          <input type="number" style={entrada} value={animal.idade_dias ?? ""} onChange={(e) => set("idade_dias", numOuNull(e.target.value))} />
+          <span style={rotulo}>Idade</span>
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <input type="number" min={0} style={{ ...entrada, flex: 1, minWidth: 0 }}
+              value={idadeNaUnidade} onChange={(e) => mudarIdade(e.target.value)} />
+            <select style={{ ...entrada, width: "6.2rem" }} value={unidadeIdade}
+              onChange={(e) => setUnidadeIdade(e.target.value as "dias" | "meses")}>
+              <option value="dias">dias</option>
+              <option value="meses">meses</option>
+            </select>
+          </div>
+          {animal.idade_dias != null && unidadeIdade === "meses" && (
+            <span style={nota}>{animal.idade_dias} dias</span>
+          )}
         </label>
       </Secao>
 
@@ -216,25 +268,60 @@ export function FormAnimal({
         </label>
       </Secao>
 
-      <Secao titulo="Equação de consumo de matéria seca (CMS)">
-        <label style={campo}>
-          <span style={rotulo}>Equação</span>
-          <select style={entrada} value={eqCmsValida ? animal.eq_cms : ""} onChange={(e) => set("eq_cms", Number(e.target.value) as EquacaoCms)}>
-            {!eqCmsValida && <option value="">Escolha uma equação válida para {animal.estado_fisiologico}</option>}
-            {opcoesEqCms.map((o) => <option key={o.valor} value={o.valor}>{o.rotulo}</option>)}
-          </select>
-        </label>
-        {animal.eq_cms === 0 && (
-          <label style={campo}>
-            <span style={rotulo}>CMS informado (kg/dia) *</span>
-            <input type="number" style={entrada} value={animal.cms_informado_kg_dia ?? ""} onChange={(e) => set("cms_informado_kg_dia", numOuNull(e.target.value))} />
-          </label>
-        )}
+      {/* Consumo de matéria seca — não se escolhe mais a equação (ago/2026).
+          As duas estimativas da categoria são sempre calculadas e mostradas
+          lado a lado na Etapa 3; a pergunta que importa é "a fibra está
+          limitando o consumo?", e isso só a comparação responde. Aqui ficam
+          só as duas decisões que ainda são do usuário: medir o CMS na marra e
+          o efeito da monensina. */}
+      <Secao titulo="Consumo de matéria seca (CMS)">
         <label style={{ ...campo, flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
           <input type="checkbox" checked={animal.usa_monensina} onChange={(e) => set("usa_monensina", e.target.checked)} />
           <span style={rotulo}>Usa monensina</span>
         </label>
+        {animal.usa_monensina && (
+          <>
+            <label style={campo}>
+              <span style={rotulo}>Redução do consumo</span>
+              <select style={entrada} value={animal.monensina_modo ?? "kg"}
+                onChange={(e) => set("monensina_modo", e.target.value as ModoMonensina)}>
+                {OPCOES_MONENSINA.map((o) => <option key={o.valor} value={o.valor}>{o.rotulo}</option>)}
+              </select>
+              <span style={nota}>{(OPCOES_MONENSINA.find((o) => o.valor === (animal.monensina_modo ?? "kg")) || OPCOES_MONENSINA[0]).nota}</span>
+            </label>
+            {(animal.monensina_modo ?? "kg") === "manual" && (
+              <label style={campo}>
+                <span style={rotulo}>Redução informada (kg de MS/dia) *</span>
+                <input type="number" step="0.05" style={entrada} value={animal.monensina_reducao_manual ?? ""}
+                  onChange={(e) => set("monensina_reducao_manual", numOuNull(e.target.value))} />
+              </label>
+            )}
+            <span style={nota}>
+              A monensina reduz o consumo e, ao mesmo tempo, melhora a eficiência alimentar — por isso o desconto entra
+              no consumo sem baixar a produção-alvo.
+            </span>
+          </>
+        )}
+
+        <span style={nota}>
+          Não se escolhe mais a equação: as duas da categoria são sempre calculadas e aparecem como estimativas abaixo,
+          para você puxar a que fizer sentido. Para {animal.estado_fisiologico.replace("_", " ")}:{" "}
+          {opcoesEqCms.filter((o) => o.valor !== 0).map((o) => o.rotulo).join(" · ") || "—"}.
+        </span>
       </Secao>
+
+      {/* Mesmo componente da Etapa 4 (balanço ao vivo), editando o mesmo
+          campo — aqui perto dos dados que geram as estimativas, lá perto da
+          grade onde se vê o efeito em kg MS/dia e custo. */}
+      <div style={{ marginTop: "0.9rem" }}>
+        <ConsumoTotal
+          resultado={resultado}
+          valor={animal.cms_informado_kg_dia}
+          onChange={(v) => set("cms_informado_kg_dia", v)}
+          gradeVazia={gradeVazia}
+          compacto
+        />
+      </div>
     </div>
   );
 }

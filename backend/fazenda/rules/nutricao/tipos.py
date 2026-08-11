@@ -36,6 +36,7 @@ ESTADOS_FISIOLOGICOS: frozenset[str] = frozenset(
 RACAS: frozenset[str] = frozenset({"Holandes", "Jersey", "Outra"})
 
 EQUACOES_CMS_VALIDAS: frozenset[int] = frozenset({0, 2, 3, 8, 9, 10, 11})
+MODOS_MONENSINA: frozenset[str] = frozenset({"kg", "pct", "manual"})
 
 SeveridadeAviso = Literal["info", "atencao", "bloqueante"]
 
@@ -84,6 +85,12 @@ class AnimalEntrada:
     eq_cms: int = 8
     cms_informado_kg_dia: Optional[float] = None
     usa_monensina: bool = False
+    # Como descontar o efeito da monensina sobre o CMS quando `usa_monensina`
+    # (ver constantes.MONENSINA_CMS_*): "kg" = desconto fixo de 0,30 kg/dia
+    # (Duffield et al., 2008); "pct" = 2% do CMS; "manual" = o valor digitado
+    # em `monensina_reducao_manual`. Ignorado quando usa_monensina é False.
+    monensina_modo: str = "kg"
+    monensina_reducao_manual: Optional[float] = None
     eq_microbiana: int = 1
     usa_dndf48: int = 0
 
@@ -235,6 +242,17 @@ def validar_entrada(entrada: EntradaFormulacao) -> None:
         raise ValorInvalidoError(
             f"raca inválida: {animal.raca!r}. Valores aceitos: {sorted(RACAS)}"
         )
+
+    if animal.usa_monensina:
+        modo = (animal.monensina_modo or "").lower()
+        if modo not in MODOS_MONENSINA:
+            raise ValorInvalidoError(
+                f"monensina_modo inválido: {animal.monensina_modo!r}. Aceitos: {sorted(MODOS_MONENSINA)}"
+            )
+        if modo == "manual" and (animal.monensina_reducao_manual is None or animal.monensina_reducao_manual < 0):
+            raise ValorInvalidoError(
+                "monensina_modo='manual' exige monensina_reducao_manual informado e não negativo (kg de MS/dia)."
+            )
 
     if animal.eq_cms not in EQUACOES_CMS_VALIDAS:
         raise ValorInvalidoError(

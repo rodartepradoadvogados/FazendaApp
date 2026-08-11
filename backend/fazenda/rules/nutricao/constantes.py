@@ -80,6 +80,22 @@ ENERGIA_PERDIDA_URINA_MCAL_POR_G_N = 0.0143
 MONENSINA_FATOR_REDUCAO_METANO = 0.95
 MONENSINA_FATOR_AUMENTO_ED = 1.02
 
+# Efeito da monensina sobre o CONSUMO de matéria seca (distinto dos dois
+# fatores acima, que agem sobre a energia). A monensina reduz o CMS e, ao
+# mesmo tempo, melhora a eficiência alimentar — por isso o desconto entra no
+# CMS sem mexer na produção-alvo.
+#
+# Duas parametrizações à escolha do usuário (ver `monensina_modo` em
+# tipos.AnimalEntrada), porque a literatura reporta o efeito das duas formas
+# e nenhuma serve bem para todo rebanho:
+#   - absoluta, em kg/dia: meta-análise de Duffield et al. (2008), J. Anim.
+#     Sci. 86:4583 — queda média de ~0,3 kg de MS/dia em vacas leiteiras;
+#   - relativa, em % do CMS: desconto proporcional, que escala com o
+#     tamanho/consumo do animal em vez de descontar o mesmo peso de uma
+#     novilha e de uma vaca de alta produção.
+MONENSINA_CMS_REDUCAO_KG_DIA = 0.30
+MONENSINA_CMS_REDUCAO_PCT = 2.0
+
 # Perda gasosa (metano), Mcal/d — parametrização usada no balanço de EM
 # (a que efetivamente entra em EM = ED - gases - urina no software de
 # referência; a literatura publica uma segunda parametrização, usada só
