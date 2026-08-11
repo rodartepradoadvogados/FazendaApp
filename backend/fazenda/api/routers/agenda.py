@@ -424,7 +424,12 @@ def calcular_agenda(
     aplicacoes_pendentes = session.exec(
         _da_fazenda(select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.realizada == False), ProtocoloSanitarioAplicacao)  # noqa: E712
     ).all()
-    etapas_por_id = {e.id: e for e in session.exec(_da_fazenda(select(ProtocoloSanitarioEtapa), ProtocoloSanitarioEtapa)).all()}
+    # ProtocoloSanitarioEtapa nunca grava fazenda_id (é o "molde" da etapa —
+    # criado em cadastro/protocolos_sanitarios.py sem esse campo, escopado
+    # indiretamente via protocolo_id -> ProtocoloSanitario, que esse sim tem
+    # fazenda_id de verdade); filtrar aqui por _da_fazenda excluía TODAS as
+    # etapas, já que a coluna sempre está NULL.
+    etapas_por_id = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
     lancamentos_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento)).all()}
     protocolos_por_id = {p.id: p for p in session.exec(_da_fazenda(select(ProtocoloSanitario), ProtocoloSanitario)).all()}
     eventos_protocolo = []

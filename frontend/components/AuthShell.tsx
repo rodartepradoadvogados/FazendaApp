@@ -76,7 +76,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // aba nova de verdade do navegador (ver Sidebar.tsx). Painel CowData e
   // Painel do Contador são checados à parte acima: têm a própria casca
   // bespoke, não a deste portal.
-  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/consultor", "/configuracoes"];
+  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes"];
   const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
   // Portal "Formulação de Dietas" (/dietas): casca própria
   // (components/dietas/DietasLayout.tsx via app/dietas/layout.tsx), nunca a

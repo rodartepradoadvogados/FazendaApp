@@ -117,7 +117,7 @@ class DietaSimulacao(SQLModel, table=True):
     """Cabeçalho de uma simulação de Formulação de Dietas — os dados do
     animal/lote (Etapa 2), as chaves de equação escolhidas, e o resultado do
     último cálculo (`resultado_json`, texto-como-JSON — mesmo padrão de
-    `Usuario.permissoes`/`ContratoConsultor` no resto do repo). Uma simulação
+    `Usuario.permissoes` no resto do repo). Uma simulação
     pode ser salva em rascunho, recalculada quantas vezes o usuário quiser, e
     opcionalmente aplicada como uma `DietaLancamento` real do lote."""
 

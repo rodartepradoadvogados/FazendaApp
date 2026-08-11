@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    ContratoConsultor, ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
+    ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 
@@ -430,9 +430,7 @@ def exigir_admin_ou_consultor_fazenda():
     """Formulação de Dietas: restrita ao ADMINISTRADOR desta fazenda (papel
     admin ou vínculo `contratante`) OU ao CONSULTOR desta fazenda
     (UsuarioFazenda.consultor — o veterinário/agrônomo convidado, ver
-    fazenda/models/multitenant.py). NÃO confundir com o Painel do Consultor
-    (/consultor, ContratoConsultor), que é produto independente sobre
-    fazendas que não são clientes do sistema.
+    fazenda/models/multitenant.py).
 
     O contador é bloqueado explicitamente (o Painel do Contador não inclui
     Formulação de Dietas). Operador comum, mesmo com o módulo `alimentacao`
@@ -540,30 +538,6 @@ def exigir_modulo_contratado(modulo: str):
         ).first()
         if not tem:
             raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
-    return _dep
-
-
-# ---------------------------------------------------------------------------
-# Trava por assinatura do CONSULTOR (Fase 2C) — produto independente do
-# consultor (fazendas gerenciadas por importação de planilha, fora de
-# qualquer fazenda-tenant). Não confundir com exigir_modulo_contratado
-# ("consultor"), que é o módulo comercial de uma FAZENDA Diamond (Fase 2B).
-# ---------------------------------------------------------------------------
-def _contrato_consultor_ativo(session: Session, usuario_id: int) -> ContratoConsultor | None:
-    contrato = session.exec(select(ContratoConsultor).where(ContratoConsultor.usuario_id == usuario_id)).first()
-    if not contrato or contrato.status != "ativo":
-        return None
-    return contrato
-
-
-def exigir_consultor_ativo():
-    """Dependência: exige que o USUÁRIO LOGADO (não uma fazenda) tenha uma
-    assinatura de consultor ativa — usada pelo router de fazendas gerenciadas/
-    importação/indicadores (fazenda/api/routers/consultores.py)."""
-    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
-        if not _contrato_consultor_ativo(session, user.id):
-            raise HTTPException(status_code=403, detail="Assinatura de consultor sem contrato ativo — aguardando aprovação")
-        return user
     return _dep
 
 

@@ -37,7 +37,6 @@ from fazenda.api.routers import (
     cofre_acesso,
     compra_animal,
     compra_semen,
-    consultores,
     documentos,
     estoque,
     exclusoes,
@@ -570,11 +569,6 @@ app.include_router(painel_cowdata_parametros.router)
 app.include_router(painel_cowdata_usuarios.router)
 # Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
 app.include_router(cofre_acesso.router)
-# Consultor (Fase 2C): produto independente, escopado por USUÁRIO (não por
-# fazenda) — cada endpoint já tem sua própria trava interna (get_current_user
-# nos públicos, exigir_consultor_ativo/exigir_dono nos demais); não faz
-# sentido usar a trava de módulo contratado por fazenda aqui.
-app.include_router(consultores.router)
 
 _protegido = [Depends(get_current_user)]
 # Trava por PLANO CONTRATADO (fazenda/tenant) — soma-se à permissão por

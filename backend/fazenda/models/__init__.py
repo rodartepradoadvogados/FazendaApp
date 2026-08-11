@@ -195,11 +195,6 @@ from .cofre_acesso import (
 from .equipe_cowdata_acesso import (
     PermissaoEquipeCowData,
 )
-from .consultores import (
-    ContratoConsultor,
-    FazendaGerenciada,
-    RegistroImportado,
-)
 from .documentos import (
     DocumentoArquivado,
     Chamado,
@@ -266,9 +261,6 @@ __all__ = [
     "ContratoAssinaturaZapSign",
     "CobrancaBoleto",
     "CobrancaPix",
-    "ContratoConsultor",
-    "FazendaGerenciada",
-    "RegistroImportado",
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",

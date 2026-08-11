@@ -1,15 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase, Download, PenLine, QrCode, Receipt, Repeat, Pencil, X as XIcon } from "lucide-react";
+import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Download, PenLine, QrCode, Receipt, Repeat, Pencil, X as XIcon } from "lucide-react";
 import {
   fetchFazendas, criarFazenda, atualizarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
   baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda, editarVinculoUsuarioFazenda,
-  fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
   type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin, type AssinaturaZapSign,
+  type AnexoContrato, type UsuarioVinculado, type AssinaturaZapSign,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
 import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
@@ -86,27 +85,6 @@ export default function FazendasAdmin() {
   const [editandoVinculoId, setEditandoVinculoId] = useState<number | null>(null);
   const [papelEditando, setPapelEditando] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
   const [salvandoVinculo, setSalvandoVinculo] = useState(false);
-
-  // Assinaturas do produto de Consultor independente (Fase 2C) — fora de
-  // qualquer fazenda-tenant, ver fazenda/models/consultores.py.
-  const [consultores, setConsultores] = useState<ContratoConsultorAdmin[] | null>(null);
-  const [processandoConsultor, setProcessandoConsultor] = useState<number | null>(null);
-
-  function carregarConsultores() {
-    fetchContratosConsultor().then(setConsultores).catch((e) => setErro(e.message));
-  }
-  useEffect(carregarConsultores, []);
-
-  async function aprovarConsultor(usuarioId: number) {
-    setProcessandoConsultor(usuarioId); setErro(null);
-    try { await aprovarContratoConsultor(usuarioId); carregarConsultores(); }
-    catch (e: any) { setErro(e.message); } finally { setProcessandoConsultor(null); }
-  }
-  async function suspenderConsultor(usuarioId: number) {
-    setProcessandoConsultor(usuarioId); setErro(null);
-    try { await suspenderContratoConsultor(usuarioId); carregarConsultores(); }
-    catch (e: any) { setErro(e.message); } finally { setProcessandoConsultor(null); }
-  }
 
   function carregarFazendas() {
     fetchFazendas().then(setFazendas).catch((e) => setErro(e.message));
@@ -660,42 +638,6 @@ export default function FazendasAdmin() {
               </ul>
             )}
           </div>
-        )}
-      </div>
-
-      <div className="card mt-4">
-        <div className="card-header mb-2 flex items-center gap-2"><Briefcase size={16} style={{ color: "var(--dourado)" }} /> Assinaturas de consultor</div>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-          Produto independente do consultor (fora de qualquer fazenda) — fazendas gerenciadas por importação de
-          planilha. Nada libera até você aprovar o plano solicitado.
-        </p>
-        {!consultores ? <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Carregando…</p> : consultores.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma solicitação de plano de consultor ainda.</p>
-        ) : (
-          <ul style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-            {consultores.map((c) => (
-              <li key={c.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap", fontSize: "0.82rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem" }}>
-                <span>
-                  <strong>@{c.username}</strong>{" "}
-                  <span style={{ color: "var(--text-muted)" }}>— {c.plano || "sem plano"} (até {c.limite_fazendas ?? "—"} fazenda(s))</span>
-                </span>
-                <span className="flex items-center gap-2">
-                  <StatusBadge status={c.status} />
-                  {c.status !== "ativo" ? (
-                    <button onClick={() => aprovarConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
-                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                      <ShieldCheck size={13} /> {processandoConsultor === c.usuario_id ? "Aprovando…" : "Aprovar"}
-                    </button>
-                  ) : (
-                    <button onClick={() => suspenderConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
-                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                      <Ban size={13} /> {processandoConsultor === c.usuario_id ? "Suspendendo…" : "Suspender"}
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
         )}
       </div>
     </div>
