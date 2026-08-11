@@ -181,6 +181,25 @@ export default function FolhaPagamentoView() {
   const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
   const [excluirErro, setExcluirErro] = useState<string | null>(null);
 
+  // Deep-link vindo do card "diária de hoje" da Agenda (?ir=folha&categoria=
+  // diarias&diaria=<id>&calendario=ultimo_periodo, ver app/financeiro/page.tsx
+  // e app/agenda/page.tsx) — abre direto na sub-aba Diária e, se veio um id,
+  // já abre o calendário "Dias trabalhados" daquela diarista, sem o usuário
+  // ter que caçar a linha na tabela de Controle de diárias.
+  const [deepLinkDiaria, setDeepLinkDiaria] = useState<{ id: number; modo: "ultimo_periodo" | "completo" } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cat = params.get("categoria");
+    if (cat && ["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"].includes(cat)) {
+      setCategoria(cat as typeof categoria);
+    }
+    const diariaId = params.get("diaria");
+    if (diariaId && !Number.isNaN(Number(diariaId))) {
+      const modo = params.get("calendario") === "completo" ? "completo" : "ultimo_periodo";
+      setDeepLinkDiaria({ id: Number(diariaId), modo });
+    }
+  }, []);
+
   // Contas correntes (id + rótulo) — para o campo "Conta bancária" dos vales,
   // que precisa gravar o id (o backend agora espera conta_corrente_id, não
   // mais o rótulo em texto usado no Financeiro).
@@ -825,7 +844,7 @@ export default function FolhaPagamentoView() {
 
       {categoria === "empreita" && <EmpreitadaView />}
       {categoria === "contrato" && <ContratoView />}
-      {categoria === "diarias" && <DiariaView />}
+      {categoria === "diarias" && <DiariaView deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />}
       {categoria === "ferias_decimo" && <FeriasDecimoTerceiroView />}
 
       {mostraFormasGerais && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
