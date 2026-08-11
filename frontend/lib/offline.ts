@@ -324,6 +324,99 @@ async function diagnosticoFalhaRede(): Promise<string> {
   return partes.join(" ");
 }
 
+// ── Fallback: ponte nativa CapacitorHttp() chamada DIRETO ──────────────────
+// Prova real (revisão de código, ago/2026 — ver node_modules/@capacitor/
+// android/capacitor/src/main/assets/native-bridge.js e .../plugin/
+// CapacitorHttp.java, .../PluginCall.java): capacitor.config.ts já liga
+// `CapacitorHttp: { enabled: true }` pra fazer window.fetch/XMLHttpRequest
+// passarem pela ponte nativa (OkHttp) em vez do fetch cru da WebView — mas
+// essa flag só produz efeito quando ela realmente chega ao .apk instalado
+// no aparelho (exige `npx cap sync android` refletido no build + o
+// funcionário ter reinstalado essa versão; a flag mora em
+// android/app/src/main/assets/capacitor.config.json, um arquivo GERADO,
+// fora do git). Se o aparelho ainda roda um .apk mais velho que a
+// correção, ou o sync nunca rodou antes do build, window.fetch nunca foi
+// trocado e continua sendo o fetch cru da própria Android System WebView —
+// e o relato real da fila travada prova exatamente isso: o erro capturado
+// é literalmente "TypeError: Failed to fetch", o texto de erro de rede do
+// PRÓPRIO Chromium (blink). Quando a ponte nativa de verdade falha, o erro
+// que ela devolve pro JS tem `.name` "Error" (CapacitorException, sem
+// override de name — ver PluginCall.java `reject()`) e `.message` = a
+// mensagem da exception Java (ex.: "Unable to resolve host…") — NUNCA
+// "TypeError: Failed to fetch". Ou seja: essa string por si só já é a prova
+// de que a requisição que falhou não passou pela ponte nativa.
+// Em vez de confiar de novo só na flag automática (que já devia estar
+// ligada e não resolveu o relato), as funções de envio abaixo chamam o
+// plugin CapacitorHttp DIRETO — `CapacitorHttp.request()` — como ÚLTIMA
+// tentativa depois que o fetch normal já falhou por rede. Funciona mesmo
+// que o patch automático de window.fetch nunca tenha entrado em vigor,
+// porque o Android registra o plugin CapacitorHttp incondicionalmente
+// (Bridge.java, no construtor da Bridge — a flag "enabled" só liga o PATCH
+// automático de fetch/XHR, não a existência do plugin em si). Nunca roda
+// fora do app nativo (PWA/Chrome não têm ponte nenhuma — Capacitor.
+// isNativePlatform() volta false, e a função desiste rápido) — o
+// comportamento do PWA não muda em nada.
+let capacitorCoreCache: typeof import("@capacitor/core") | null = null;
+async function carregarPonteNativa(): Promise<typeof import("@capacitor/core") | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    if (!capacitorCoreCache) capacitorCoreCache = await import("@capacitor/core");
+    return capacitorCoreCache.Capacitor.isNativePlatform() ? capacitorCoreCache : null;
+  } catch {
+    return null; // @capacitor/core ausente (não deveria acontecer dentro do app) — não pode derrubar o envio por isso
+  }
+}
+
+/** Só o suficiente de `Response` que o resto do código usa (`ok`, `status`,
+ *  `json()`) — o mesmo formato serve pra resposta de verdade do fetch da
+ *  WebView e pra resposta "traduzida" da ponte nativa abaixo. */
+type RespostaEnvio = { ok: boolean; status: number; json: () => Promise<any> };
+
+/** Chama CapacitorHttp.request() direto (sem passar por window.fetch — ver
+ *  comentário grande acima). RESOLVE normalmente pra qualquer resposta HTTP
+ *  de verdade, mesmo 4xx/5xx (igual o fetch resolveria) — só LANÇA quando a
+ *  ponte não existe aqui (fora do app Android) ou quando ela mesma falha de
+ *  rede (aí sim equivalente a um TypeError de fetch). */
+async function fetchViaPonteNativa(caminho: string, metodo: string, headers: Record<string, string>, corpo: unknown, timeoutMs: number): Promise<RespostaEnvio> {
+  const cap = await carregarPonteNativa();
+  if (!cap) throw new Error("ponte nativa indisponível aqui (fora do app Android, ou @capacitor/core não carregou)");
+  const nativa = await cap.CapacitorHttp.request({
+    url: `${API}${caminho}`, method: metodo, headers, data: corpo,
+    connectTimeout: timeoutMs, readTimeout: timeoutMs,
+  });
+  return {
+    ok: nativa.status >= 200 && nativa.status < 300,
+    status: nativa.status,
+    // dataType não foi informado no request acima → o Android decide sozinho
+    // a partir do Content-Type da RESPOSTA; nativeResponse.data já vem
+    // objeto quando é JSON, mas alguns servidores/erro devolvem texto cru —
+    // tenta os dois em vez de assumir um formato só.
+    json: async () => (typeof nativa.data === "string" ? JSON.parse(nativa.data) : nativa.data),
+  };
+}
+
+/** Headers comuns aos dois caminhos de envio JSON (fetch da WebView e ponte
+ *  nativa) — Idempotency-Key + Authorization (quando logado). Content-Type
+ *  é responsabilidade de quem monta a chamada (aqui sempre application/json). */
+function headersEnvioJson(id: string): Record<string, string> {
+  const token = getToken();
+  return { "Content-Type": "application/json", "Idempotency-Key": id, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+/** Interpreta uma RespostaEnvio (de qualquer um dos dois caminhos) do mesmo
+ *  jeito que o resto do arquivo sempre interpretou `res` do fetch: 2xx vira
+ *  o corpo JSON já decodificado, qualquer outro status vira Error com a
+ *  mensagem de validação do backend (mensagemErroApi) — usado tanto pela
+ *  tentativa via WebView quanto pela tentativa via ponte nativa, pra não
+ *  duplicar essa lógica duas vezes. */
+async function resolverRespostaJson(res: RespostaEnvio, mensagemErroPadrao: string): Promise<any> {
+  if (!res.ok) {
+    const detalhe = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(detalhe.detail) || mensagemErroPadrao);
+  }
+  return res.json().catch(() => undefined);
+}
+
 /**
  * Tenta enviar agora; sem internet (ou falha de rede), guarda na fila para
  * sincronizar depois. Erro do servidor (4xx/5xx) com internet É repassado —
@@ -367,23 +460,48 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
       body: JSON.stringify(corpo),
       signal: controlador.signal,
     });
-    if (!res.ok) {
-      const detalhe = await res.json().catch(() => ({}));
-      throw new Error(mensagemErroApi(detalhe.detail) || `Erro ${res.status} ao salvar`);
-    }
-    const resposta = await res.json().catch(() => undefined);
+    const resposta = await resolverRespostaJson(res, `Erro ${res.status} ao salvar`);
     return { enviado: true, resposta };
   } catch (e) {
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
-    // aborta como erro de rede, não de validação → nos dois casos, enfileira.
+    // aborta como erro de rede, não de validação → nos dois casos, enfileira
+    // — mas ANTES de desistir, tenta UMA vez a ponte nativa CapacitorHttp
+    // direto (ver fetchViaPonteNativa, acima): cobre o caso real (ago/2026)
+    // em que window.fetch não estava de fato interceptado pela ponte nativa
+    // — mesmo com CapacitorHttp:{enabled:true} escrito em capacitor.config.ts
+    // — porque a flag só produz efeito no .apk que foi de fato sincronizado
+    // e reinstalado com ela. Se a ponte devolver uma resposta de VERDADE do
+    // servidor (2xx ou 4xx/5xx), essa resposta vale tanto quanto a do fetch
+    // normal teria valido — inclusive erro de validação (4xx) vai pro
+    // formulário na hora, não pra fila (por isso resolverRespostaJson roda
+    // dentro do try: um `throw` aí sai deste catch sem cair no `if` abaixo).
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
-      const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      await inserirItem({
-        id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente",
-        fazendaId: getFazendaAtual()?.id ?? null, debugUltimoErro: `${motivo} (${await diagnosticoFalhaRede()})`,
-      });
-      await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
-      return { enviado: false };
+      try {
+        const res2 = await fetchViaPonteNativa(caminho, metodo, headersEnvioJson(id), corpo, TIMEOUT_ENVIO_MS);
+        const resposta = await resolverRespostaJson(res2, `Erro ${res2.status} ao salvar`);
+        return { enviado: true, resposta };
+      } catch (e2) {
+        // e2 pode ser (a) a ponte nativa também falhando de rede, (b) ela
+        // nem existir aqui (PWA/navegador — nunca é o caso na prática, já
+        // que só chegamos aqui dentro do app), ou (c) uma resposta de
+        // validação do servidor VIA PONTE (Error comum, não TypeError) — só
+        // esse último caso deve furar o enfileiramento e ir pro formulário,
+        // exatamente como aconteceria se o fetch normal tivesse recebido a
+        // mesma resposta.
+        if (e2 instanceof Error && !(e2 instanceof TypeError)) {
+          const éFalhaDeTransporteDaPonte = e2.message.startsWith("ponte nativa indisponível");
+          if (!éFalhaDeTransporteDaPonte) throw e2; // validação de verdade, vinda da ponte — repassa pro formulário
+        }
+        const motivoWebview = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        const motivoPonte = e2 instanceof Error ? `${e2.name}: ${e2.message}` : String(e2);
+        await inserirItem({
+          id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente",
+          fazendaId: getFazendaAtual()?.id ?? null,
+          debugUltimoErro: `[webview] ${motivoWebview} | [ponteNativa] ${motivoPonte} (${await diagnosticoFalhaRede()})`,
+        });
+        await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
+        return { enviado: false };
+      }
     }
     throw e; // resposta do servidor (validação etc.) → o formulário mostra
   } finally {
@@ -402,6 +520,16 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
  * enviada sozinha quando a conexão voltar — igual a um lançamento JSON.
  * Lança ErroCotaOutbox se o aparelho não tiver espaço, ou Error comum se o
  * servidor recusou com o app online (dado inválido).
+ *
+ * Diferente de enviarOuEnfileirar, NÃO tenta a ponte nativa (CapacitorHttp.
+ * request()) como fallback aqui: a API nativa exige o arquivo em base64
+ * (~33% maior que o Blob original — pesado pra foto de câmera de vários MB
+ * em 3G rural, ver convertFormData em native-bridge.js) e o multipart
+ * (`dataType: 'formData'`) exigiria remontar cada campo manualmente. Fica
+ * só no fetch/FormData de sempre — se a ponte nativa realmente não estiver
+ * ativa (ver comentário grande em fetchViaPonteNativa, acima), a foto ainda
+ * assim entra na fila normalmente e é reenviada depois; só não ganha a
+ * segunda tentativa imediata que o lançamento JSON ganha.
  */
 export async function enviarOuEnfileirarArquivo(opcoes: {
   caminho: string;
@@ -496,6 +624,33 @@ async function fetchCru(caminho: string, metodo: string, corpo: unknown, id: str
   }
 }
 
+/** fetchCru + fallback pela ponte nativa (ver comentário grande em
+ *  fetchViaPonteNativa, na seção de envio interativo, acima) — mesmo
+ *  raciocínio, aplicado ao reenvio em segundo plano: cada rodada de
+ *  sincronizar() que falhar por rede tenta a ponte nativa direto ANTES de
+ *  desistir e reagendar o backoff, o que é especialmente valioso aqui — é
+ *  esse loop que produz o "tentativa 12" do relato real, e cada tentativa
+ *  adicional pela ponte é uma chance de recuperar sem esperar o usuário
+ *  reinstalar o app. Só para itens `tipo: "json"` (ver fetchCruArquivo,
+ *  sem fallback, pelo mesmo motivo do comentário em
+ *  enviarOuEnfileirarArquivo). Lança um erro combinado (com os dois motivos
+ *  etiquetados) quando AMBOS os caminhos falham, pra debugUltimoErro em
+ *  sincronizar() carregar o diagnóstico completo. */
+async function fetchCruComFallbackNativo(caminho: string, metodo: string, corpo: unknown, id: string): Promise<RespostaEnvio> {
+  try {
+    return await fetchCru(caminho, metodo, corpo, id);
+  } catch (e) {
+    if (!(e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError"))) throw e;
+    try {
+      return await fetchViaPonteNativa(caminho, metodo, headersEnvioJson(id), corpo, TIMEOUT_ENVIO_MS);
+    } catch (e2) {
+      const motivoWebview = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      const motivoPonte = e2 instanceof Error ? `${e2.name}: ${e2.message}` : String(e2);
+      throw new Error(`[webview] ${motivoWebview} | [ponteNativa] ${motivoPonte}`);
+    }
+  }
+}
+
 async function fetchCruArquivo(reg: RegistroOutbox): Promise<Response> {
   const token = getToken();
   const controlador = new AbortController();
@@ -565,7 +720,7 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           continue;
         }
         try {
-          const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCru(atual.caminho, atual.metodo, atual.corpo, atual.id);
+          const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCruComFallbackNativo(atual.caminho, atual.metodo, atual.corpo, atual.id);
           if (res.ok) {
             await removerItem(atual.id);
             enviados++;
