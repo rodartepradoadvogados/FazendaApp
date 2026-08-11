@@ -1,0 +1,130 @@
+{#
+  Base visual dos contratos da Equipe CowData (CLT e PJ). Reproduz a
+  identidade do contrato de fazenda-cliente (contrato_cowdata.html) — mesma
+  faixa, mesmo lockup, mesma tipografia — mas fica num arquivo separado por
+  herança Jinja2 porque aqui são DOIS documentos com o mesmo invólucro e
+  corpos jurídicos completamente distintos; duplicar o CSS em cada um
+  garantiria divergência visual na primeira alteração.
+
+  Blocos que cada contrato preenche: `titulo`, `subtitulo`, `partes`,
+  `clausulas` e `assinaturas`.
+#}<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>{% block titulo_aba %}Contrato — CowData{% endblock %}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@400;600;700;800&display=swap');
+
+  :root {
+    --wine: #3A0F1A;
+    --gold: #E0A63C;
+    --deepgold: #B9831F;
+    --cream: #F3E7D3;
+    --graphite: #150B10;
+  }
+
+  @page { size: A4; margin: 0; }
+
+  body {
+    font-family: "Inter", "Segoe UI", Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: var(--graphite);
+    margin: 0;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .faixa-topo { height: 2px; width: 100%; display: flex; }
+  .faixa-topo .wine { width: 66.66%; background: var(--wine); }
+  .faixa-topo .gold { width: 33.34%; background: var(--gold); }
+
+  .cabecalho {
+    padding: 1.6cm 2cm 0.8cm 2cm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .logo-lockup { display: flex; align-items: center; gap: 0.5rem; }
+  .logo-tile {
+    background: var(--graphite); border-radius: 8px; width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .wordmark { font-family: "Sora", sans-serif; font-weight: 700; font-size: 1.3rem; letter-spacing: -0.01em; }
+  .wordmark .cow { color: var(--graphite); }
+  .wordmark .data { color: var(--gold); }
+  .subtitulo-marca { text-align: right; font-size: 8pt; color: #9ca3af; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  .corpo { padding: 0 2cm; max-width: 780px; margin: 0 auto; }
+
+  h1 { font-family: "Sora", sans-serif; font-size: 14.5pt; text-align: center; margin: 1.4rem 0 0.2rem; color: var(--wine); }
+  h2 { font-family: "Sora", sans-serif; font-size: 12pt; margin-top: 1.6rem; margin-bottom: 0.4rem; color: var(--wine); border-bottom: 1px solid var(--gold); padding-bottom: 0.2rem; }
+  .subtitulo { text-align: center; font-size: 9.5pt; color: #6b7280; margin-bottom: 1.6rem; }
+  .qualificacao { margin: 0.6rem 0; text-align: justify; }
+  .clausula { text-align: justify; margin: 0.5rem 0; }
+  .clausula b { font-weight: 700; }
+  .nota { background: var(--cream); border-left: 3px solid var(--deepgold); padding: 0.4rem 0.7rem; margin: 0.5rem 0; font-size: 9.5pt; font-style: italic; color: #5a4222; }
+  .preencher { background: #ffe9e9; padding: 0 0.2rem; }
+  .assinaturas { margin-top: 3rem; display: flex; justify-content: space-between; gap: 2rem; }
+  .assinatura-bloco { flex: 1; text-align: center; }
+  .linha-assinatura { border-top: 1px solid var(--graphite); margin-top: 3rem; padding-top: 0.3rem; }
+  .testemunhas { margin-top: 2.2rem; display: flex; justify-content: space-between; gap: 2rem; font-size: 9.5pt; }
+
+  .rodape {
+    margin-top: 2.5rem;
+    padding: 0.9rem 2cm 1.4cm 2cm;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8pt;
+    color: #9ca3af;
+  }
+  .rodape .contato { color: var(--wine); font-weight: 600; }
+
+  /* As notas são orientação interna do escritório para quem vai fechar o
+     contrato — nunca saem na via impressa/assinada. */
+  @media print { .nota { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="faixa-topo"><div class="wine"></div><div class="gold"></div></div>
+
+<header class="cabecalho">
+  <div class="logo-lockup">
+    <div class="logo-tile">
+      <svg viewBox="0 0 120 120" width="22" height="22">
+        <path d="M18 92 C30 88 38 50 52 44 C60 41 63 41 70 45 C84 52 90 82 102 90" fill="none" stroke="#E0A63C" stroke-width="7" stroke-linecap="round"/>
+        <circle cx="58" cy="42.5" r="5.5" fill="#F3E7D3"/>
+        <circle cx="58" cy="42.5" r="9.5" fill="none" stroke="#E0A63C" stroke-width="1.6"/>
+      </svg>
+    </div>
+    <div class="wordmark"><span class="cow">Cow</span><span class="data">Data</span></div>
+  </div>
+  <div class="subtitulo-marca">Gestão de Pecuária Leiteira</div>
+</header>
+
+<div class="corpo">
+
+<h1>{% block titulo %}{% endblock %}</h1>
+<p class="subtitulo">{% block subtitulo %}{% endblock %}</p>
+
+{% block partes %}{% endblock %}
+
+{% block clausulas %}{% endblock %}
+
+<p class="clausula" style="margin-top: 1.6rem;">{{ cidade_foro or "[Cidade]" }}, {{ data_hoje }}.</p>
+
+{% block assinaturas %}{% endblock %}
+
+</div>
+
+<footer class="rodape">
+  <div><span class="contato">contato@cowdata.com.br</span> &nbsp;•&nbsp; www.cowdata.com.br</div>
+  <div>{{ empresa_endereco or "Endereço a definir - Brasil" }}</div>
+</footer>
+
+</body>
+</html>

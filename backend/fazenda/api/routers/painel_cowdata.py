@@ -22,6 +22,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -30,6 +31,8 @@ from fazenda.database import get_session
 from fazenda.models import CobrancaAsaas, Fazenda, FolhaPagamento, Pessoa, SeedFlag, TipoPessoa, Usuario
 from fazenda.models.cowdata_interno import LancamentoCowData
 from fazenda.models.equipe_cowdata_acesso import AREAS_PAINEL_COWDATA, PermissaoEquipeCowData
+from fazenda.models.multitenant import EmpresaOperadora
+from fazenda.rules.contrato_equipe_render import nome_arquivo_contrato, render_contrato_equipe
 
 router = APIRouter(prefix="/painel-cowdata", tags=["painel-cowdata"])
 
@@ -287,6 +290,42 @@ def editar_membro_equipe(
     session.commit()
     session.refresh(pessoa)
     return _pessoa_publica(pessoa)
+
+
+@router.get("/equipe/pessoas/{pessoa_id}/contrato")
+def baixar_contrato_membro(
+    pessoa_id: int,
+    funcao: str | None = None, local_prestacao: str | None = None,
+    jornada_semanal: int | None = None, experiencia_dias: int | None = None,
+    objeto_servico: str | None = None, dia_pagamento: int | None = None, vigencia: str | None = None,
+    representante_nome: str | None = None, representante_cpf: str | None = None,
+    cidade_foro: str | None = None, estado_foro: str | None = None,
+    _: Usuario = Depends(exigir_area_painel_cowdata("equipe")), session: Session = Depends(get_session),
+) -> Response:
+    """Minuta do contrato do membro — CLT quando `tipo_vinculo="funcionario"`,
+    prestação de serviços quando `"pj"`. O corpo vem do cadastro (nome, RG,
+    CPF/CNPJ, endereço, estado civil, salário/pagamento, admissão, cargo); os
+    parâmetros de query são sobrescritas pontuais para o que o cadastro não
+    tem (função no contrato, local de prestação, jornada, objeto do serviço,
+    foro), mesmo padrão de /fazendas/{id}/contrato/modelo. O que faltar sai
+    como "[PREENCHER]" destacado — a minuta nunca deixa de ser gerada."""
+    pessoa = _pessoa_equipe_ou_404(session, pessoa_id)
+    empresa = session.exec(select(EmpresaOperadora)).first()
+    try:
+        html = render_contrato_equipe(
+            pessoa, empresa,
+            funcao=funcao, local_prestacao=local_prestacao,
+            jornada_semanal=jornada_semanal, experiencia_dias=experiencia_dias,
+            objeto_servico=objeto_servico, dia_pagamento=dia_pagamento, vigencia=vigencia,
+            representante_nome=representante_nome, representante_cpf=representante_cpf,
+            cidade_foro=cidade_foro, estado_foro=estado_foro,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(
+        content=html, media_type="text/html",
+        headers={"Content-Disposition": f'inline; filename="{nome_arquivo_contrato(pessoa)}"'},
+    )
 
 
 @router.delete("/equipe/pessoas/{pessoa_id}")
