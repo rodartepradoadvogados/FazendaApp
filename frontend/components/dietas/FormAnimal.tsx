@@ -6,9 +6,10 @@ import { useEffect, useState } from "react";
 import { BadgeCheck } from "lucide-react";
 import { fetchLotes } from "@/lib/api";
 import {
-  AnimalPayload, ESTADOS_FISIOLOGICOS_SELECIONAVEIS, EquacaoCms, ModoMonensina,
+  AnimalPayload, ESTADOS_FISIOLOGICOS_SELECIONAVEIS, EquacaoCms, ModoMonensina, Resultado,
   OPCOES_EQ_CMS, OPCOES_MONENSINA, RACAS, contextoFormulacao,
 } from "@/lib/dietas";
+import { ConsumoTotal } from "@/components/dietas/ConsumoTotal";
 
 type LoteOpcao = { codigo: string; nome?: string | null };
 
@@ -41,9 +42,12 @@ function Secao({ titulo, children }: { titulo: string; children: React.ReactNode
 }
 
 export function FormAnimal({
-  animal, onChange, lote, onLoteChange,
+  animal, onChange, lote, onLoteChange, resultado = null, gradeVazia = false,
 }: {
   animal: AnimalPayload; onChange: (a: AnimalPayload) => void; lote: number | null; onLoteChange: (l: number | null) => void;
+  // Vêm do wizard pai, que já calcula o resultado em segundo plano — servem
+  // só ao bloco de Consumo total espelhado no fim desta etapa.
+  resultado?: Resultado | null; gradeVazia?: boolean;
 }) {
   const [lotes, setLotes] = useState<LoteOpcao[]>([]);
   const [estimados, setEstimados] = useState<string[]>([]);
@@ -272,19 +276,6 @@ export function FormAnimal({
           o efeito da monensina. */}
       <Secao titulo="Consumo de matéria seca (CMS)">
         <label style={{ ...campo, flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
-          <input type="checkbox" checked={animal.eq_cms === 0}
-            onChange={(e) => set("eq_cms", (e.target.checked ? 0 : cmsPadraoDaCategoria) as EquacaoCms)} />
-          <span style={rotulo}>CMS informado manualmente</span>
-        </label>
-        {animal.eq_cms === 0 && (
-          <label style={campo}>
-            <span style={rotulo}>CMS informado (kg/dia) *</span>
-            <input type="number" style={entrada} value={animal.cms_informado_kg_dia ?? ""} onChange={(e) => set("cms_informado_kg_dia", numOuNull(e.target.value))} />
-            <span style={nota}>Medido no cocho, vence as duas estimativas.</span>
-          </label>
-        )}
-
-        <label style={{ ...campo, flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
           <input type="checkbox" checked={animal.usa_monensina} onChange={(e) => set("usa_monensina", e.target.checked)} />
           <span style={rotulo}>Usa monensina</span>
         </label>
@@ -313,11 +304,24 @@ export function FormAnimal({
         )}
 
         <span style={nota}>
-          Não é mais preciso escolher a equação: as duas da categoria são calculadas e aparecem lado a lado na Etapa 3
-          (uma só com os dados do animal, outra também com a fibra da dieta). Para {animal.estado_fisiologico.replace("_", " ")}:{" "}
+          Não se escolhe mais a equação: as duas da categoria são sempre calculadas e aparecem como estimativas abaixo,
+          para você puxar a que fizer sentido. Para {animal.estado_fisiologico.replace("_", " ")}:{" "}
           {opcoesEqCms.filter((o) => o.valor !== 0).map((o) => o.rotulo).join(" · ") || "—"}.
         </span>
       </Secao>
+
+      {/* Mesmo componente da Etapa 4 (balanço ao vivo), editando o mesmo
+          campo — aqui perto dos dados que geram as estimativas, lá perto da
+          grade onde se vê o efeito em kg MS/dia e custo. */}
+      <div style={{ marginTop: "0.9rem" }}>
+        <ConsumoTotal
+          resultado={resultado}
+          valor={animal.cms_informado_kg_dia}
+          onChange={(v) => set("cms_informado_kg_dia", v)}
+          gradeVazia={gradeVazia}
+          compacto
+        />
+      </div>
     </div>
   );
 }

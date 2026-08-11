@@ -164,10 +164,16 @@ export default function SimulacaoWizardPage({ params }: { params: Promise<{ id: 
 
       <div>
         {etapa === 1 && <GradeAlimentos itens={itens} onChange={setItens} />}
-        {etapa === 2 && <FormAnimal animal={animal} onChange={setAnimal} lote={lote} onLoteChange={setLote} />}
+        {etapa === 2 && (
+          <FormAnimal animal={animal} onChange={setAnimal} lote={lote} onLoteChange={setLote}
+            resultado={resultado} gradeVazia={itens.length === 0} />
+        )}
         {etapa === 3 && <PainelExigencias resultado={resultado} />}
         {etapa === 4 && (
-          <PainelBalanco itens={itens} onChangeItens={setItens} resultado={resultado} calculando={calculando} onAbrirAplicar={() => setAplicarAberto(true)} />
+          <PainelBalanco itens={itens} onChangeItens={setItens} resultado={resultado} calculando={calculando}
+            onAbrirAplicar={() => setAplicarAberto(true)}
+            cmsTotal={animal.cms_informado_kg_dia}
+            onChangeCmsTotal={(v) => setAnimal({ ...animal, cms_informado_kg_dia: v })} />
         )}
         {etapa === 5 && <PainelDominio dominio="energia" resultado={resultado} />}
         {etapa === 6 && <PainelDominio dominio="proteina" resultado={resultado} />}

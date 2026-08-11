@@ -232,11 +232,18 @@ def calcular_cms(animal: AnimalEntrada, dieta: ConcentracoesDieta) -> ResultadoC
     """Bloco B — CMS da categoria do animal, calculado nas DUAS equações
     (sem fibra e com fibra) e descontado o efeito da monensina.
 
-    Qual dos dois vale para o balanço: o COM FIBRA, por ser o limite físico
-    real — de nada adianta a vaca ter potencial para 22 kg se o volumoso
-    desta dieta só deixa ela comer 21. O número sem fibra fica ao lado como
-    diagnóstico ("quanto a fibra está custando"). CMS informado manualmente
-    (eq_cms=0) vence os dois: é medição, não estimativa.
+    Quem manda no balanço NÃO é o motor: é `cms_informado_kg_dia`, o
+    "Consumo total" que o usuário define na tela — mesmo desenho do NASEM
+    Dairy 8, onde as duas estimativas são só leitura e existe um campo
+    Total Intake à parte, preenchido digitando ou clicando em "usar esta
+    estimativa". Sem valor definido, o padrão é a estimativa pelo ANIMAL,
+    que é a única que não depende de a grade já estar montada (com a grade
+    vazia, a equação da fibra não tem o que ler e devolve um número sem
+    sentido).
+
+    A monensina desconta só das ESTIMATIVAS. O valor digitado é respeitado
+    como está: se veio de medição no cocho, o efeito da monensina já está
+    embutido nele — descontar de novo seria contar duas vezes.
 
     Assume entrada já validada por `tipos.validar_entrada`.
     """
@@ -248,14 +255,14 @@ def calcular_cms(animal: AnimalEntrada, dieta: ConcentracoesDieta) -> ResultadoC
     cms_sem_fibra = max(bruto_sem_fibra - _reducao_monensina(animal, bruto_sem_fibra), 0.01)
     cms_com_fibra = max(bruto_com_fibra - _reducao_monensina(animal, bruto_com_fibra), 0.01)
 
-    if animal.eq_cms == 0:
-        cms = max(animal.cms_informado_kg_dia or 0.0, 0.01)
-        equacao_usada = 0
-        reducao = 0.0
+    informado = animal.cms_informado_kg_dia or 0.0
+    if informado > 0:
+        cms = informado
+        equacao_usada = 0  # 0 = "Consumo total definido pelo usuário"
     else:
-        cms = cms_com_fibra
-        equacao_usada = eq_com_fibra
-        reducao = _reducao_monensina(animal, bruto_com_fibra)
+        cms = cms_sem_fibra
+        equacao_usada = eq_sem_fibra
+    reducao = _reducao_monensina(animal, bruto_sem_fibra)
 
     limita = cms_sem_fibra - cms_com_fibra
     peso_metabolico = animal.peso_vivo_kg ** 0.75

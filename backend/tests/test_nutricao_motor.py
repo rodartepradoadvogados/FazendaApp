@@ -487,12 +487,13 @@ class TestConsumoDuploEMonensina:
         )
         assert (c.equacao_sem_fibra, c.equacao_com_fibra) == (2, 3)
 
-    def test_o_cms_que_vale_e_o_com_fibra(self):
-        # A fibra é o limite físico: não adianta potencial de consumo maior
-        # do que o volumoso permite.
+    def test_sem_consumo_definido_o_padrao_e_a_estimativa_pelo_animal(self):
+        # Mesmo desenho do NASEM Dairy 8: as duas estimativas são leitura e o
+        # "Consumo total" é campo à parte. Sem valor definido, vale a do
+        # ANIMAL — a da fibra depende da grade estar montada.
         c = self._consumo()
-        assert c.cms_kg_dia == pytest.approx(c.cms_com_fibra_kg_dia)
-        assert c.equacao_usada == c.equacao_com_fibra
+        assert c.cms_kg_dia == pytest.approx(c.cms_sem_fibra_kg_dia)
+        assert c.equacao_usada == c.equacao_sem_fibra
 
     def test_escolher_eq_9_nao_muda_mais_o_resultado(self):
         # eq_cms agora só define a CATEGORIA, não qual número aparece.
@@ -541,3 +542,18 @@ class TestConsumoDuploEMonensina:
     def test_modo_manual_sem_valor_e_recusado(self):
         with pytest.raises(ValorInvalidoError):
             self._consumo(usa_monensina=True, monensina_modo="manual", monensina_reducao_manual=None)
+
+    def test_consumo_total_digitado_nao_leva_desconto_de_monensina(self):
+        # O valor digitado é respeitado como está: se veio de medição no
+        # cocho, o efeito da monensina já está embutido nele.
+        c = self._consumo(usa_monensina=True, monensina_modo="kg", cms_informado_kg_dia=21.0)
+        assert c.cms_kg_dia == pytest.approx(21.0)
+        # As estimativas ao lado continuam descontadas.
+        sem = self._consumo(usa_monensina=False)
+        assert c.cms_sem_fibra_kg_dia == pytest.approx(sem.cms_sem_fibra_kg_dia - 0.30)
+
+    def test_consumo_total_vence_mesmo_com_categoria_definida(self):
+        # eq_cms diz só a CATEGORIA; quem manda no balanço é o Consumo total.
+        c = self._consumo(eq_cms=8, cms_informado_kg_dia=19.5)
+        assert c.cms_kg_dia == pytest.approx(19.5)
+        assert c.equacao_usada == 0
