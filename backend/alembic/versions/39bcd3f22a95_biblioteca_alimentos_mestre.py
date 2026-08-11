@@ -25,7 +25,11 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '39bcd3f22a95'
-down_revision: Union[str, Sequence[str], None] = '810153450ce9'
+# Reencadeada em 1b4ba6667dcb (nível de sigilo da Equipe CowData), que entrou
+# na main junto da correção da dose da indução enquanto esta migração estava
+# aberta em PR — sem isso o projeto fica com DUAS heads e o
+# `alembic upgrade head` do deploy quebra.
+down_revision: Union[str, Sequence[str], None] = '1b4ba6667dcb'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
