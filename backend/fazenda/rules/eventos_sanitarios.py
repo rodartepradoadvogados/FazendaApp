@@ -44,13 +44,27 @@ ROTULOS_GATILHO = {
 }
 
 
-def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None, hoje: date) -> list[date]:
+def _ocorrencias_recorrentes(
+    base: date, valor: int | None, unidade: str | None, hoje: date,
+    janela_passado: int | None = None, janela_futuro: int | None = None,
+) -> list[date]:
     """Datas da recorrência dentro da janela [hoje-janela_passado, hoje+janela_futuro]
-    (editável em Configurações > Parâmetros, padrão 120/180 dias)."""
+    (editável em Configurações > Parâmetros, padrão 120/180 dias).
+
+    `janela_passado`/`janela_futuro` são opcionais — quando o chamador está
+    num loop por evento/regra (ver `eventos_agenda`/`_eventos_calendario_agenda`
+    abaixo), calcula os dois UMA vez fora do loop e passa aqui, evitando reler
+    o mesmo parâmetro (via `_linha`, que abre uma sessão de banco própria a
+    cada chamada) uma vez por evento cadastrado. Sem eles, consulta como
+    sempre — mantém quem chama isolado (fora deste arquivo, hoje ninguém)."""
     if not (base and valor and unidade):
         return []
-    minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
-    limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
+    if janela_passado is None:
+        janela_passado = janela_eventos_sanitarios_passado()
+    if janela_futuro is None:
+        janela_futuro = janela_eventos_sanitarios_futuro()
+    minimo = hoje - timedelta(days=janela_passado)
+    limite = hoje + timedelta(days=janela_futuro)
     saida: list[date] = []
     d = base
     guarda = 0
@@ -62,8 +76,10 @@ def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None,
     return saida
 
 
-def _ocorrencias_epoca(ev: EventoSanitario, hoje: date) -> list[date]:
-    return _ocorrencias_recorrentes(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, hoje)
+def _ocorrencias_epoca(
+    ev: EventoSanitario, hoje: date, janela_passado: int | None = None, janela_futuro: int | None = None,
+) -> list[date]:
+    return _ocorrencias_recorrentes(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, hoje, janela_passado, janela_futuro)
 
 
 def _limiares_categoria(session: Session, fazenda_id: int | None) -> tuple[int, int]:
@@ -85,11 +101,19 @@ def _limiares_categoria(session: Session, fazenda_id: int | None) -> tuple[int, 
 def _datas_gatilho(
     session: Session, gatilho: str, gatilho_lote: str | None = None, gatilho_idade_meses: int | None = None,
     offset_dias: int = 0, sexo_alvo: str | None = None, fazenda_id: int | None = None,
+    animais_cache: dict[str, Animal] | None = None,
 ) -> list[tuple[str, date]]:
     """Datas (por animal) em que um gatilho de evento de vida ocorre ou vai
     ocorrer — usado tanto para gerar a pendência na Agenda (`eventos_agenda`)
     quanto para o relatório de "quais animais entrarão em determinado
-    calendário" (rota /sanidade/calendario/relatorio-eventos-vida)."""
+    calendário" (rota /sanidade/calendario/relatorio-eventos-vida).
+
+    `animais_cache` (numero -> Animal) é opcional — quando o chamador já tem
+    a tabela Animal carregada (ver `eventos_agenda` abaixo, que chama esta
+    função uma vez por EVENTO SANITÁRIO "por evento" cadastrado), evita reler
+    a tabela inteira de novo só para o filtro de elegibilidade no fim desta
+    função; sem cache (demais chamadores, uma chamada isolada cada), consulta
+    como sempre."""
     offset = timedelta(days=offset_dias or 0)
     saida: list[tuple[str, date]] = []
 
@@ -144,7 +168,10 @@ def _datas_gatilho(
     # de vacina pra quem não está mais no rebanho não faz sentido — nem fora
     # do sexo-alvo do evento, quando um está definido (ex.: Brucelose B19 só
     # em fêmeas; macho não recebe).
-    animais = {a.numero: a for a in session.exec(_da_fazenda(select(Animal), Animal)).all()}
+    animais = (
+        animais_cache if animais_cache is not None
+        else {a.numero: a for a in session.exec(_da_fazenda(select(Animal), Animal)).all()}
+    )
 
     def elegivel(numero: str) -> bool:
         a = animais.get(numero)
@@ -182,6 +209,11 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
     if fazenda_id is not None:
         query_eventos = query_eventos.where(EventoSanitario.fazenda_id == fazenda_id)
     eventos = {e.id: e for e in session.exec(query_eventos).all()}
+    # Calculado uma vez para todas as regras do loop abaixo — ver o
+    # comentário de `_ocorrencias_recorrentes`: sem isso, cada regra ativa
+    # relia numa nova leitura do parâmetro (sessão de banco própria).
+    janela_passado = janela_eventos_sanitarios_passado()
+    janela_futuro = janela_eventos_sanitarios_futuro()
     saida: list[dict] = []
     for c in regras:
         ev = eventos.get(c.evento_sanitario_id)
@@ -189,7 +221,7 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
         categoria = (ev.categoria_preventiva if ev else None) or None
         eh_exame = categoria == "exame"
         alvo = c.categoria_alvo or "rebanho"
-        for d in _ocorrencias_recorrentes(c.data_evento, c.frequencia_valor, c.frequencia_unidade, hoje):
+        for d in _ocorrencias_recorrentes(c.data_evento, c.frequencia_valor, c.frequencia_unidade, hoje, janela_passado, janela_futuro):
             eid = f"calendario_sanitario_{c.id}__{d.isoformat()}"
             if eid in realizados:
                 continue
@@ -331,6 +363,27 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
             return False
         return ja_aplicado_alguma_vez(numero, condicao.produto_padrao)
 
+    # Cache único de Animal (numero -> objeto), reaproveitado em toda chamada
+    # de _datas_gatilho abaixo. Sem isso, CADA evento sanitário "por evento"
+    # (nascimento, desmama, entrada em lote, novilha apta…) relia numa leitura
+    # nova da tabela Animal inteira só para o filtro final de elegibilidade —
+    # numa fazenda com uma dúzia de eventos cadastrados (comum: uma vacina por
+    # doença), isso multiplicava a mesma consulta pesada uma dúzia de vezes a
+    # cada carregamento da Agenda.
+    query_animais_gatilho = select(Animal)
+    if fazenda_id is not None:
+        query_animais_gatilho = query_animais_gatilho.where(Animal.fazenda_id == fazenda_id)
+    animais_cache = {a.numero: a for a in session.exec(query_animais_gatilho).all()}
+
+    # Mesmo raciocínio do cache de Animal acima, para os dois parâmetros de
+    # janela — ver o comentário de `_ocorrencias_recorrentes`. Calculados uma
+    # vez para todos os eventos deste loop (época e por evento), em vez de
+    # reler `janela_eventos_sanitarios_passado/futuro` (cada leitura abre uma
+    # sessão de banco própria — ver `_linha` em rules/parametros.py) a cada
+    # evento sanitário cadastrado.
+    janela_passado = janela_eventos_sanitarios_passado()
+    janela_futuro = janela_eventos_sanitarios_futuro()
+
     saida: list[dict] = []
 
     for ev in eventos:
@@ -338,7 +391,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         principio_ativo_id = principio_por_nome.get(ev.produto_padrao) if ev.produto_padrao else None
 
         if ev.tipo_agendamento == "epoca":
-            for d in _ocorrencias_epoca(ev, hoje):
+            for d in _ocorrencias_epoca(ev, hoje, janela_passado, janela_futuro):
                 evt = _base(ev, d, None, d.isoformat(), principio_ativo_id)
                 if evt["id"] not in realizados:
                     saida.append(evt)
@@ -347,9 +400,12 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_i
         if ev.tipo_agendamento != "evento" or not ev.gatilho:
             continue
 
-        minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
-        limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
-        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo, fazenda_id)
+        minimo = hoje - timedelta(days=janela_passado)
+        limite = hoje + timedelta(days=janela_futuro)
+        gatilhos = _datas_gatilho(
+            session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo, fazenda_id,
+            animais_cache=animais_cache,
+        )
 
         calendario_cron = calendarios_cronograma.get(ev.id)
 
