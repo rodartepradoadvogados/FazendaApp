@@ -1388,8 +1388,17 @@ def _descricao_medicamentos_dia(etapas: list[ProtocoloInducaoLactacaoEtapa]) -> 
     partes = []
     for e in etapas:
         if e.dose:
-            dose_txt = f"{e.dose:g}".rstrip("0").rstrip(".") if isinstance(e.dose, float) else str(e.dose)
-            partes.append(f"{dose_txt} {e.unidade or ''} {e.produto}".strip())
+            # `:g` sozinho já resolve o que se queria aqui: 30.0 vira "30",
+            # 2.5 continua "2.5". NÃO acrescentar .rstrip("0") — foi
+            # exatamente isso que, até ago/2026, comia o zero SIGNIFICATIVO
+            # de toda dose múltipla de 10 e mostrava "3 ml" onde o protocolo
+            # mandava 30 ml (e "2 ml" onde eram 20, "1 ml" onde eram 10 ou
+            # 100). O rstrip faz sentido depois de um f"{x:.2f}"
+            # ("30.00" → "30"), nunca depois de `:g`.
+            dose_txt = f"{e.dose:g}" if isinstance(e.dose, float) else str(e.dose)
+            # Junta só os pedaços que existem — medicamento sem unidade
+            # cadastrada saía com espaço duplo ("10  Dexametasona").
+            partes.append(" ".join(p for p in (dose_txt, e.unidade, e.produto) if p))
         else:
             partes.append(e.produto)
     return " + ".join(partes) if partes else "-"
