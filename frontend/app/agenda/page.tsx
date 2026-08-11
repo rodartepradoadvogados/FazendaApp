@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
-  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa,
+  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria,
 } from "@/lib/api";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -79,6 +80,7 @@ function corCategoria(categoria: string): string {
 const LEGENDA_CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro"];
 
 export default function AgendaPage() {
+  const router = useRouter();
   const [data, setData] = useState(today());
   const [agenda, setAgenda] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -654,6 +656,42 @@ export default function AgendaPage() {
     finally { setDescartando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
+  // "Contar diária" / "Descartar diária" — card de diarista ativo sem folga
+  // marcada hoje (ver eventos_diaria_trabalho em agenda.py). ANTES eram
+  // "Importar agora" (só levava pro Financeiro, o usuário tinha que repetir a
+  // decisão lá) e "Realizado" (só dispensava o card da Agenda, sem tocar em
+  // nada do controle de diárias — o dia ficava contado por omissão, sem
+  // registro explícito). Agora as duas chamam DIRETO o mesmo endpoint que o
+  // calendário "Dias trabalhados" do Controle de diárias usa
+  // (`salvarDiasDiaria`, ver rh_contratos.py::salvar_dias_diaria): "Contar"
+  // grava o dia sem exceção (conta, que é o padrão do calendário esparso);
+  // "Descartar" grava uma folga explícita — nenhuma etapa intermediária, tudo
+  // resolvido com um clique aqui mesmo na Agenda.
+  const [processandoDiaria, setProcessandoDiaria] = useState<Set<string>>(new Set());
+  const decidirDiaria = async (e: any, contar: boolean) => {
+    setProcessandoDiaria((p) => new Set(p).add(e.id));
+    try {
+      await salvarDiasDiaria(e.diaria_id, {
+        periodo_inicio: e.data, periodo_fim: e.data,
+        dias_nao_trabalhados: contar ? [] : [e.data],
+      });
+      // O dia já está gravado certo no calendário da diária (linha acima) —
+      // isto só cala o lembrete de hoje na Agenda, mesmo EventoRealizado que
+      // qualquer outro "Realizado" usa.
+      await marcarEventoRealizado(e.id);
+      await carregar();
+      mostrarFeedback(contar ? "Diária contada." : "Diária descartada — hoje virou folga no Controle de diárias.");
+    } catch (err: any) {
+      // 409 = o período já tem pagamento registrado (ver salvar_dias_diaria);
+      // o card só cobre "hoje" e não tem contexto pra oferecer o
+      // "confirmar mesmo assim" com segurança — manda resolver no Controle de
+      // diárias, que já sabe pedir essa confirmação.
+      mostrarFeedback(err.message || "Erro ao registrar a diária. Abra o Controle de diárias para resolver.", true);
+    } finally {
+      setProcessandoDiaria((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  };
+
   // Botão "Realizado" com confirmação inline ("Deseja cumprir essa atividade?
   // Sim/Não") em vez de agir direto no primeiro clique.
   const BotaoRealizado = ({ chave, onConfirmar, compacto }: { chave: string; onConfirmar: () => void; compacto?: boolean }) => {
@@ -932,18 +970,28 @@ export default function AgendaPage() {
                       };
                       const ehSugestaoMov = (e as any).tipo === "sugestao_movimentacao";
                       const ehBstAplicacao = (e as any).tipo === "bst_aplicacao";
+                      // Diária de diarista ativa hoje — clicar no CARD (fora dos botões)
+                      // leva direto pro Controle de diárias (Financeiro > Ações > Folha
+                      // de pagamento > Diária), mesmo destino do link usado pelos botões
+                      // de baixo (ver `link` gerado em agenda.py::eventos_diaria_trabalho).
+                      const ehDiariaTrabalho = (e as any).tipo === "diaria_trabalho";
                       return (
                         <React.Fragment key={i}>
                           <tr
-                            style={(ehSugestaoMov || ehBstAplicacao) ? { cursor: "pointer" } : undefined}
-                            onClick={ehSugestaoMov ? () => abrirSugestaoMov(e) : ehBstAplicacao ? () => abrirListasBst() : undefined}
+                            style={(ehSugestaoMov || ehBstAplicacao || ehDiariaTrabalho) ? { cursor: "pointer" } : undefined}
+                            onClick={
+                              ehSugestaoMov ? () => abrirSugestaoMov(e)
+                              : ehBstAplicacao ? () => abrirListasBst()
+                              : ehDiariaTrabalho ? () => router.push((e as any).link)
+                              : undefined
+                            }
                           >
                             {tdAccent(e.categoria)}
                             <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
                             <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
-                            <td onClick={(ehSugestaoMov || ehBstAplicacao) ? (ev) => ev.stopPropagation() : undefined}>
+                            <td onClick={(ehSugestaoMov || ehBstAplicacao || ehDiariaTrabalho) ? (ev) => ev.stopPropagation() : undefined}>
                               {ehSugestaoMov ? (
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirSugestaoMov(e)}>
                                   <Layers size={12} /> Ver sugestão
@@ -957,6 +1005,21 @@ export default function AgendaPage() {
                                 <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a ficha do animal para lançar o dado pendente">
                                   <User size={12} /> Lançar
                                 </a>
+                              ) : ehDiariaTrabalho ? (
+                                <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                  <button className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}
+                                    disabled={processandoDiaria.has(e.id)}
+                                    title="Registra hoje na contagem de diárias — direto, sem passar pelo Financeiro"
+                                    onClick={() => decidirDiaria(e, true)}>
+                                    <CheckCircle2 size={12} /> Contar diária
+                                  </button>
+                                  <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--text-muted)" }}
+                                    disabled={processandoDiaria.has(e.id)}
+                                    title="Marca hoje como folga — não entra na contagem de diárias"
+                                    onClick={() => decidirDiaria(e, false)}>
+                                    <X size={12} /> Descartar diária
+                                  </button>
+                                </div>
                               ) : (e as any).link ? (
                                 <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
                                   <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a tela de importação">
