@@ -28,7 +28,10 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '1b4ba6667dcb'
-down_revision: Union[str, Sequence[str], None] = '810153450ce9'
+# Reencadeada em 7a2b67d909e8 (correção da dose truncada da indução), que
+# entrou na main depois que esta migração foi escrita — sem isso o projeto
+# fica com DUAS heads e o `alembic upgrade head` do deploy quebra.
+down_revision: Union[str, Sequence[str], None] = '7a2b67d909e8'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
