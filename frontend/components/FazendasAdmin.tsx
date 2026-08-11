@@ -7,8 +7,9 @@ import {
   baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda, editarVinculoUsuarioFazenda,
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
+  fetchConsultoresCowData,
   type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato, type UsuarioVinculado, type AssinaturaZapSign,
+  type AnexoContrato, type UsuarioVinculado, type AssinaturaZapSign, type ConsultorCowData,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
 import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
@@ -86,11 +87,35 @@ export default function FazendasAdmin() {
   const [papelEditando, setPapelEditando] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
   const [salvandoVinculo, setSalvandoVinculo] = useState(false);
 
+  // Consultor CowData do plano Diamond/sob medida (backlog #126) — a lista
+  // vem da Equipe CowData (cargo Consultor + login ativo) e o vínculo em si
+  // reusa UsuarioFazenda.consultor, o mesmo do consultor externo.
+  const [consultoresCowData, setConsultoresCowData] = useState<ConsultorCowData[] | null>(null);
+  const [consultorEscolhido, setConsultorEscolhido] = useState<number | "">("");
+  const [vinculandoConsultor, setVinculandoConsultor] = useState(false);
+
   function carregarFazendas() {
     fetchFazendas().then(setFazendas).catch((e) => setErro(e.message));
   }
   useEffect(carregarFazendas, []);
   useEffect(() => { fetchPlanosCatalogo().then(setCatalogo).catch((e) => setErro(e.message)); }, []);
+  useEffect(() => { fetchConsultoresCowData().then(setConsultoresCowData).catch((e) => setErro(e.message)); }, []);
+
+  // Pré-seleciona o Consultor CowData já vinculado à fazenda aberta. Fica
+  // num efeito (e não dentro de carregarContrato) porque depende de DUAS
+  // cargas assíncronas independentes — a lista da Equipe e os vínculos da
+  // fazenda — e a ordem entre elas não é garantida. As dependências mudam só
+  // ao trocar de fazenda ou recarregar as listas, então isso não atropela a
+  // escolha manual do usuário no <select>.
+  useEffect(() => {
+    if (selecionada == null || usuarios == null || consultoresCowData == null) return;
+    // O vínculo mora em UsuarioFazenda.consultor, compartilhado com o
+    // consultor externo do cliente — cruzar com a lista da Equipe CowData é
+    // o que separa um do outro.
+    const ids = new Set(consultoresCowData.map((c) => c.usuario_id));
+    const atual = usuarios.find((u) => u.consultor && ids.has(u.usuario_id));
+    setConsultorEscolhido(atual ? atual.usuario_id : "");
+  }, [selecionada, usuarios, consultoresCowData]);
 
   function carregarContrato(fazendaId: number) {
     fetchContratoFazenda(fazendaId).then((ct) => {
@@ -143,6 +168,12 @@ export default function FazendasAdmin() {
   }
 
   const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
+  // Diferente de `temModuloConsultor` (que lê o contrato JÁ SALVO), este olha
+  // o rascunho na tela — é o que decide mostrar o seletor de Consultor
+  // CowData no mesmo clique em que o usuário escolhe Diamond/sob medida,
+  // sem exigir salvar antes para o campo aparecer.
+  const consultorNoRascunho = planoEscolhido === "diamond"
+    || (planoEscolhido === "custom" && modulosCustom["consultor" as ModuloComercial] != null);
 
   // Trocar de um plano fechado (ex.: Diamond) para "Sob medida" NÃO herdava
   // os módulos que a fazenda já tinha — modulosCustom ficava vazio, e como o
@@ -174,6 +205,38 @@ export default function FazendasAdmin() {
       fetchUsuariosVinculados(selecionada).then(setUsuarios);
       setMsg("Usuário vinculado.");
     } catch (e: any) { setErro(e.message); } finally { setVinculando(false); }
+  }
+
+  // Vincula (ou troca) o Consultor CowData desta fazenda. O backend só
+  // aceita `consultor: true` se o módulo "consultor" já estiver ATIVO e o
+  // contrato APROVADO (ver fazendas.py::_tem_modulo_consultor_ativo) — por
+  // isso o botão avisa em vez de falhar silenciosamente quando o plano ainda
+  // não foi salvo/aprovado.
+  async function vincularConsultorCowData() {
+    if (selecionada == null) return;
+    const anterior = (usuarios || []).find(
+      (u) => u.consultor && (consultoresCowData || []).some((c) => c.usuario_id === u.usuario_id),
+    );
+    setVinculandoConsultor(true); setErro(null); setMsg(null);
+    try {
+      // Trocar de consultor: desvincula o anterior antes (só existe um
+      // Consultor CowData por fazenda por desenho).
+      if (anterior && anterior.usuario_id !== consultorEscolhido) {
+        await desvincularUsuarioFazenda(selecionada, anterior.usuario_id);
+      }
+      if (consultorEscolhido !== "") {
+        const alvo = Number(consultorEscolhido);
+        // O backend recusa um SEGUNDO vínculo do mesmo usuário na mesma
+        // fazenda (400), então quem já está na lista por outro papel é
+        // PROMOVIDO pelo editar-vínculo em vez de vinculado de novo.
+        const jaVinculado = (usuarios || []).some((u) => u.usuario_id === alvo);
+        if (jaVinculado) await editarVinculoUsuarioFazenda(selecionada, alvo, { consultor: true });
+        else await vincularUsuarioFazenda(selecionada, { usuario_id: alvo, consultor: true });
+      }
+      const us = await fetchUsuariosVinculados(selecionada);
+      setUsuarios(us);
+      setMsg(consultorEscolhido === "" ? "Consultor CowData desvinculado." : "Consultor CowData vinculado a esta fazenda.");
+    } catch (e: any) { setErro(e.message); } finally { setVinculandoConsultor(false); }
   }
 
   async function desvincular(usuarioId: number) {
@@ -475,6 +538,43 @@ export default function FazendasAdmin() {
                       onChange={(e) => setModulosCustom((s) => ({ ...s, [m]: e.target.value === "" ? 0 : Number(e.target.value) }))} />
                   </label>
                 ))}
+              </div>
+            )}
+
+            {/* Consultor CowData — só faz sentido no Diamond (que já inclui o
+                módulo) ou no sob medida com o módulo "consultor" marcado. O
+                vínculo em si exige o contrato APROVADO, então o aviso abaixo
+                explica a ordem em vez de deixar o botão falhar. */}
+            {consultorNoRascunho && (
+              <div className="mb-4" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
+                <label style={lbl}>Consultor CowData desta fazenda</label>
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <select style={{ ...inp, maxWidth: "18rem" }} value={consultorEscolhido}
+                    onChange={(e) => setConsultorEscolhido(e.target.value === "" ? "" : Number(e.target.value))}>
+                    <option value="">— sem consultor vinculado —</option>
+                    {(consultoresCowData || []).map((c) => (
+                      <option key={c.usuario_id} value={c.usuario_id}>{c.nome} (@{c.username})</option>
+                    ))}
+                  </select>
+                  <button onClick={vincularConsultorCowData} disabled={vinculandoConsultor || !temModuloConsultor}
+                    style={{ fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado)", cursor: temModuloConsultor ? "pointer" : "not-allowed", opacity: temModuloConsultor ? 1 : 0.5 }}>
+                    {vinculandoConsultor ? "Salvando…" : "Vincular consultor"}
+                  </button>
+                </div>
+                {consultoresCowData?.length === 0 && (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                    Nenhum Consultor CowData disponível — cadastre um membro da Equipe CowData com cargo
+                    &ldquo;Consultor&rdquo; e crie o login dele em Equipe.
+                  </p>
+                )}
+                {!temModuloConsultor && (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                    Salve o plano e aprove o contrato primeiro — o vínculo só é aceito com o módulo Consultor ativo.
+                  </p>
+                )}
+                <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                  É o consultor que atende esta fazenda pela CowData — só ele (e a CowData) acessa a Formulação de Dietas.
+                </p>
               </div>
             )}
 
