@@ -12,6 +12,7 @@ import { SeletorContaGerencial } from "./SeletorContaGerencial";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { casaBusca } from "@/lib/busca";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -165,20 +166,16 @@ export default function CompraSemenForm() {
 
   const escolherOrigem = (o: "estoque" | "naab") => { setOrigem(o); setTouroSel(null); setBuscaTouro(""); };
 
-  const estoqueFiltrado = useMemo(() => {
-    const q = buscaTouro.trim().toLowerCase();
-    const base = estoque ?? [];
-    if (!q) return base;
-    return base.filter((e) => `${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`.toLowerCase().includes(q));
-  }, [estoque, buscaTouro]);
+  const estoqueFiltrado = useMemo(
+    () => (estoque ?? []).filter((e) => casaBusca(`${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`, buscaTouro)),
+    [estoque, buscaTouro]
+  );
   const ordEstoque = useOrdenacao(estoqueFiltrado);
 
-  const naabFiltrado = useMemo(() => {
-    const q = buscaTouro.trim().toLowerCase();
-    const base = naab ?? [];
-    if (!q) return base;
-    return base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q));
-  }, [naab, buscaTouro]);
+  const naabFiltrado = useMemo(
+    () => (naab ?? []).filter((t) => casaBusca(`${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`, buscaTouro)),
+    [naab, buscaTouro]
+  );
 
   const limparSelecaoAtual = () => {
     setOrigem(null); setTouroSel(null); setBuscaTouro(""); setDoses(""); setValor(""); setTipoValor("por_dose"); setTipoSemen("convencional");

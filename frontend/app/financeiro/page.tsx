@@ -52,6 +52,7 @@ import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
 import { DocumentosFiscais } from "@/components/DocumentosFiscais";
 import LancamentosRecorrentesView from "@/components/LancamentosRecorrentesView";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_LANCAMENTOS = [
   { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
@@ -467,7 +468,7 @@ export default function FinanceiroPage() {
       if (relTipo && r.tipo !== relTipo) return false;
       if (relFornecedor && r.fornecedor !== relFornecedor) return false;
       if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
-      if (relDocumento && !((r.numero_documento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(relDocumento.toLowerCase()))) return false;
+      if (relDocumento && !casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, relDocumento)) return false;
       if (!casaContaGerencial(r, relConta)) return false;
       return true;
     });
@@ -1078,7 +1079,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
     return regs.filter((r) =>
       !r.data_pagamento &&
       (tipoFiltro === "todos" || r.tipo === tipoFiltro) &&
-      (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+      casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, numeroDocumento) &&
       (!fornecedor || r.fornecedor === fornecedor) &&
       (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
       (!centroCusto || r.centro_custo === centroCusto) &&
@@ -2966,7 +2967,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
   const filtradosLocal = useMemo(() => itens.filter((r) =>
     (!fProduto || (r.itens || []).some((it) => it.produto === fProduto)) &&
     (!fContraparte || r.fornecedor === fContraparte) &&
-    (!fDocumento || (r.numero_documento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(fDocumento.toLowerCase())) &&
+    casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, fDocumento) &&
     casaContaGerencial(r, fConta) &&
     (rel !== "extrato" || !fTipo || r.tipo === fTipo)
   ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel]);
@@ -3209,7 +3210,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   }, [opcoes.produtos, regs]);
 
   const filtradas = useMemo(() => abertas.filter((r) =>
-    (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+    casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, numeroDocumento) &&
     (!fornecedor || r.fornecedor === fornecedor) &&
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto) &&

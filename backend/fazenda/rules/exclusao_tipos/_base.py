@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from fazenda.rules.busca import casa_busca
+
 
 def _br(data) -> str:
     """Formata uma data como dd/mm/aaaa (padrão brasileiro) para exibição no título."""
@@ -23,10 +25,10 @@ def _br(data) -> str:
 
 
 def _contem(termo: str, *valores) -> bool:
-    if not termo:
-        return True
-    termo = termo.strip().lower()
-    return any(termo in str(v).lower() for v in valores if v is not None)
+    """Busca tolerante a caixa/acento/hífen/underscore/espaço — delega para
+    o normalizador único (`rules/busca.py`) usado por toda busca textual do
+    sistema, em vez de comparar com `.lower()` puro."""
+    return casa_busca(termo, *valores)
 
 
 def _dentro_periodo(data_ref, data_inicio: str, data_fim: str) -> bool:

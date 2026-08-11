@@ -8,6 +8,7 @@ import { fetchSecagensHistorico, atualizarSecagem, confirmarExclusao, ehAdmin } 
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { casaBusca } from "@/lib/busca";
 
 type SecagemReg = {
   id: number;
@@ -128,7 +129,7 @@ export default function HistoricoSecagens() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((s) =>
-      (!animal || s.numero.toLowerCase().includes(animal.toLowerCase())) &&
+      casaBusca(s.numero, animal) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&

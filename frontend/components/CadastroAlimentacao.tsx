@@ -23,6 +23,7 @@ import {
   fetchAlimentos, criarAlimento, atualizarAlimento, excluirAlimento, type Alimento,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
+import { casaBusca } from "@/lib/busca";
 import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { pedirCadastroDeEstoque, onPedidoCadastroDeAlimento, type PrefillNovoAlimento } from "@/lib/alimentoEstoqueBridge";
@@ -253,12 +254,11 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
   };
 
   const nomeCategoria = (id: number | null) => categorias.find((c) => c.id === id)?.nome || "—";
-  const termoEstoque = buscaEstoque.trim().toLowerCase();
   // Só alimentos de verdade (rações, silagens...) — finalidade "Ração/Alimento",
   // nunca medicamento/material/equipamento. Item sem finalidade definida (legado)
   // ainda aparece, mesma regra tolerante do EstoquePicker.
   const estoqueFiltrado = estoqueItens.filter((e) =>
-    (e.finalidade == null || e.finalidade === "Ração/Alimento") && (!termoEstoque || e.nome.toLowerCase().includes(termoEstoque))
+    (e.finalidade == null || e.finalidade === "Ração/Alimento") && casaBusca(e.nome, buscaEstoque)
   );
 
   // Colunas derivadas (nome da categoria/estoque vinculado) só para permitir

@@ -7,6 +7,7 @@ import { EstoquePicker } from "@/components/EstoquePicker";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Campo, inputStyle, type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES } from "@/components/lancamentos/_shared";
+import { casaBusca } from "@/lib/busca";
 
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
 // Movimentos que reduzem o estoque (baixa).
@@ -62,7 +63,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
   const contasUsadas = useMemo(() => opcoesPara("conta_gerencial_despesa_padrao"), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo]);
 
   const itensFiltrados = useMemo(() => itensBase.filter((e) =>
-    passaFiltros(e) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase()))
+    passaFiltros(e) && casaBusca(e.nome, busca)
   ), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
 
   // Vínculo opcional a um item de Pedido de compra — só entrada de estoque faz

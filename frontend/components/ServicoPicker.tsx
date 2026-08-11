@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
+import { casaBusca } from "@/lib/busca";
 
 export type ServicoPickerItem = { nome: string };
 
@@ -31,11 +32,10 @@ export function ServicoPicker({ servicos, value, onChange, placeholder = "Seleci
     return nomes.sort((a, b) => (a === value ? -1 : b === value ? 1 : a.localeCompare(b, "pt-BR")));
   }, [servicos, value]);
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return disponiveis;
-    return disponiveis.filter((n) => n.toLowerCase().includes(q));
-  }, [disponiveis, busca]);
+  const filtrados = useMemo(
+    () => disponiveis.filter((n) => casaBusca(n, busca)),
+    [disponiveis, busca]
+  );
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: value ? "var(--text)" : "var(--text-muted)",

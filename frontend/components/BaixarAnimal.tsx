@@ -6,6 +6,7 @@ import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { casaBusca } from "@/lib/busca";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
@@ -83,7 +84,7 @@ export default function BaixarAnimal() {
     if (!animais) return [];
     return animais.filter((a) => {
       if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
-      return !busca || a.numero.toLowerCase().includes(busca.toLowerCase());
+      return casaBusca(a.numero, busca);
     });
   }, [animais, busca, filtroLote]);
   const ord = useOrdenacao(candidatos);

@@ -8,8 +8,6 @@ registrar o estoque inicial/primeira compra (gatilho de comunicação).
 """
 from __future__ import annotations
 
-import re
-import unicodedata
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +18,7 @@ from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.carencia import carencia_dict
 from fazenda.rules.farmacia import resumo_principios
 from fazenda.rules.visibilidade import visivel
@@ -413,15 +412,6 @@ def atualizar_indicacao(
 # personalizar antes de editar, mas deixou de ser pré-requisito. Nos dois
 # caminhos o global nunca é alterado, e 404 continua reservado a registro de
 # OUTRA fazenda ou inexistente — isolamento, não fricção de UX.
-def _norm_busca(s: str | None) -> str:
-    """Normaliza para a busca do catálogo: sem acento, minúsculo — mesmo
-    critério de fazenda.rules.farmacia._norm, mantido local para não acoplar
-    este router a uma função privada de outro módulo."""
-    if not s:
-        return ""
-    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
-
 
 def _sem_duplicata_do_padrao(itens: list, fazenda_id: int | None) -> list:
     """Some com a linha GLOBAL quando a fazenda atual já tem um clone dela
@@ -622,8 +612,8 @@ def listar_indicacoes_catalogo(
 ) -> list[dict]:
     """Alimenta a aba Farmácia: cada indicação (doença/manejo) com a cadeia
     completa princípios → marcas → bula/carência, pronta pra tela. `tipo`
-    filtra por Doenca.tipo; `busca` casa (sem acento/caixa) pelo nome da
-    indicação, do princípio ou da marca."""
+    filtra por Doenca.tipo; `busca` casa (sem acento/caixa/hífen/underscore/
+    espaço — rules/busca.py) pelo nome da indicação, do princípio ou da marca."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = visivel(select(Doenca), Doenca, fazenda_id)
     if tipo:
@@ -637,15 +627,15 @@ def listar_indicacoes_catalogo(
     saida = [_montar_indicacao_dict(session, d, fazenda_id, resumo_por_pa, principios_cache) for d in doencas]
 
     if busca:
-        alvo = _norm_busca(busca)
+        alvo = normalizar_busca(busca)
 
         def _casa(item: dict) -> bool:
-            if alvo in _norm_busca(item["nome"]):
+            if alvo in normalizar_busca(item["nome"]):
                 return True
             for p in item["principios"]:
-                if alvo in _norm_busca(p["nome"]):
+                if alvo in normalizar_busca(p["nome"]):
                     return True
-                if any(alvo in _norm_busca(m["nome_comercial"]) for m in p["marcas"]):
+                if any(alvo in normalizar_busca(m["nome_comercial"]) for m in p["marcas"]):
                     return True
             return False
 

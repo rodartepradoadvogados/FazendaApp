@@ -4,6 +4,7 @@ import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
 import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao, fetchAnimais } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 type LoteSugerido = { codigo: string; nome: string; rotulo: string; motivo: string | null };
 type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeridos: LoteSugerido[]; motivo: string | null };
@@ -87,7 +88,7 @@ export default function SugestoesMovimentacao() {
   const opcoesLote = Array.from(new Set(dados.sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
   const opcoesCategoria = Array.from(new Set(dados.sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
   const sugestoesFiltradas = dados.sugestoes.filter((s) =>
-    (!fAnimal || s.numero_matriz.toLowerCase().includes(fAnimal.toLowerCase())) &&
+    casaBusca(s.numero_matriz, fAnimal) &&
     (!fLote || s.lote_atual === fLote) &&
     (!fCategoria || categoriaPorAnimal[s.numero_matriz] === fCategoria)
   );

@@ -8,6 +8,7 @@ import {
   fetchTabelaNutricional, criarProdutoTabelaNutricional, renomearProdutoTabelaNutricional,
   excluirProdutoTabelaNutricional, salvarValoresTabelaNutricional, baixarModeloTabelaNutricional, importarTabelaNutricional,
 } from "@/lib/api";
+import { casaBusca } from "@/lib/busca";
 
 type Dados = { alimentos: string[]; linhas: string[][] };
 type DadosEditavel = { alimentos: string[]; produto_ids: number[]; linhas: string[][] };
@@ -82,8 +83,7 @@ export function TabelaNutricionalBotao({ estilo }: { estilo?: React.CSSPropertie
 
   const linhasFiltradas = useMemo(() => {
     if (!dados) return [];
-    const q = busca.trim().toLowerCase();
-    return q ? dados.linhas.filter((l) => (l[0] || "").toLowerCase().includes(q)) : dados.linhas;
+    return dados.linhas.filter((l) => casaBusca(l[0], busca));
   }, [dados, busca]);
 
   return (

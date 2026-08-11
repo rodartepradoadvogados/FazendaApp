@@ -7,6 +7,7 @@
 // visualmente aquele portal do resto do site.
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useCliqueOuDuploClique, abrirNovaAba } from "@/lib/tabs";
+import { normalizarBusca } from "@/lib/busca";
 import type { SubNavNode } from "@/components/SubNavContext";
 
 // Folha mais à esquerda de um nó (usado ao clicar num grupo/sub-grupo: entra
@@ -55,8 +56,10 @@ export function achatarFolhas(nodes: SubNavNode[], caminho: string[] = []): { id
 export function contarFolhas(nodes: SubNavNode[]): number {
   return nodes.reduce((acc, n) => acc + (n.children?.length ? contarFolhas(n.children) : 1), 0);
 }
-// Comparação sem acento/maiúscula — "recebi" acha "Recebidas", "a pagar" etc.
-export const normalizarBusca = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+// Comparação sem acento/maiúscula/hífen/underscore/espaço — "recebi" acha
+// "Recebidas", "a pagar" etc. Reexportado por compatibilidade; a
+// implementação mora em lib/busca.ts (helper único de busca do sistema).
+export { normalizarBusca };
 
 // Árvore de sub-navegação genérica (N níveis) — usada pelo rail esquerdo do
 // portal "Insights e Administração" (ver components/insights/InsightsLayout.tsx).

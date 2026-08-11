@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null; estoque_semen_id?: number | null };
 
@@ -50,11 +51,10 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
   );
   const sel = disponiveis.find((i) => i.nome === value);
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return disponiveis;
-    return disponiveis.filter((i) => `${i.nome} ${i.categoria || ""}`.toLowerCase().includes(q));
-  }, [disponiveis, busca]);
+  const filtrados = useMemo(
+    () => disponiveis.filter((i) => casaBusca(`${i.nome} ${i.categoria || ""}`, busca)),
+    [disponiveis, busca]
+  );
 
   const ord = useOrdenacao(filtrados);
 

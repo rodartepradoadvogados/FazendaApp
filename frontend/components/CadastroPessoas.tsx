@@ -6,6 +6,7 @@ import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 type Pessoa = {
   id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
@@ -36,9 +37,6 @@ const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-// Normaliza texto para busca insensível a maiúsculas e acentos.
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());

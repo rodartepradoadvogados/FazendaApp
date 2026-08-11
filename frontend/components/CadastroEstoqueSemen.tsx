@@ -5,6 +5,7 @@ import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEst
 import { NAAB_CENTRAIS, centralPorCodigoNaab } from "@/lib/constants";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 type Semen = {
   id: number; touro_nome: string; codigo: string | null; naab: string | null; central: string | null;
@@ -17,9 +18,6 @@ const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surf
 const cellInputStyle: React.CSSProperties = { ...inputStyle, padding: "0.25rem 0.4rem", fontSize: "0.78rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-// Normaliza texto para busca insensível a maiúsculas e acentos.
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 // Mesmos limiares do relatório de manejo → Estoque de sêmen.
 // Convencional: <15 vermelho, 15–25 amarelo, >25 verde.

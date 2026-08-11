@@ -4,6 +4,7 @@ import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchLotes, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; del_dias: number | null };
 type Lote = { id: number; codigo: string; nome: string; rotulo: string };
@@ -48,7 +49,7 @@ export default function MovimentarAnimais() {
   const candidatos = useMemo(() => {
     if (!animais) return [];
     return animais.filter((a) =>
-      (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
+      casaBusca(a.numero, busca) &&
       (!filtroLote || a.grupo_primario === filtroLoteRotulo)
     );
   }, [animais, busca, filtroLote, filtroLoteRotulo]);
