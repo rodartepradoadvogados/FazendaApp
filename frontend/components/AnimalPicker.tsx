@@ -4,6 +4,7 @@ import { Search, X, ChevronDown } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
@@ -24,12 +25,11 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
   const sel = animais.find((a) => a.numero === value);
   const { rotuloDe } = useEstadosReprodutivos();
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return animais;
-    return animais.filter((a) =>
-      `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`.toLowerCase().includes(q));
-  }, [animais, busca, rotuloDe]);
+  const filtrados = useMemo(
+    () => animais.filter((a) =>
+      casaBusca(`${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`, busca)),
+    [animais, busca, rotuloDe]
+  );
   const ord = useOrdenacao(filtrados);
 
   const btn: React.CSSProperties = {

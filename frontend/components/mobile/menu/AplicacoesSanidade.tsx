@@ -14,6 +14,7 @@ import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob 
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+import { casaBusca } from "@/lib/busca";
 
 const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
   { chave: "data", rotulo: "Data" },
@@ -57,11 +58,7 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
     const todas = (dados?.aplicacoes || []).slice();
     // Mais recentes primeiro (aplicações sem data vão para o fim).
     todas.sort((a, b) => (b.data || "").localeCompare(a.data || ""));
-    const q = busca.trim().toLowerCase();
-    const filt = q
-      ? todas.filter((a) => a.numero.toLowerCase().includes(q) || a.produto.toLowerCase().includes(q))
-      : todas;
-    return filt;
+    return todas.filter((a) => casaBusca(`${a.numero} ${a.produto}`, busca));
   }, [dados, busca]);
   // useOrdenacao assume o controle só depois que o usuário escolhe um campo em
   // SeletorOrdenacao; até lá, `lista` já vem em ordem (mais recentes primeiro).

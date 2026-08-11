@@ -14,6 +14,7 @@ import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItem
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -85,7 +86,7 @@ function EstoqueInventario() {
     if (!itens) return [];
     return itens.filter((i) =>
       (!fCat || i.categoria === fCat) &&
-      (!busca || i.nome.toLowerCase().includes(busca.toLowerCase())) &&
+      casaBusca(i.nome, busca) &&
       (!soAbaixo || i.abaixo_minimo === true)
     );
   }, [itens, fCat, busca, soAbaixo]);
@@ -370,7 +371,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
       tiposIncluidos.includes(m.movimento) &&
       (!de || (m.data_movimento || "") >= de) &&
       (!ate || (m.data_movimento || "") <= ate) &&
-      (!busca || m.nome_item.toLowerCase().includes(busca.toLowerCase()))
+      casaBusca(m.nome_item, busca)
     );
   }, [movimentos, tiposIncluidos, de, ate, busca]);
 
@@ -535,7 +536,7 @@ function EstoquePorProduto() {
       atual.saldo = atual.totalEntradas - atual.totalSaidas;
       by.set(m.nome_item, atual);
     });
-    return Array.from(by.values()).filter((l) => !busca || l.produto.toLowerCase().includes(busca.toLowerCase()));
+    return Array.from(by.values()).filter((l) => casaBusca(l.produto, busca));
   }, [noPeriodo, busca]);
 
   const ord = useOrdenacao(porProduto);

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Search, Trash2 } from "lucide-react";
 import { fetchMovimentacoes, formatDate, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { rotuloOrigemMovimentoLote } from "@/lib/constants";
+import { casaBusca } from "@/lib/busca";
 
 type Movimento = {
   id: number; numero_matriz: string; lote_origem: string | null; lote_destino: string;
@@ -34,8 +35,7 @@ export default function HistoricoMovimentacoes() {
 
   const filtrados = useMemo(() => {
     if (!movs) return [];
-    if (!busca) return movs;
-    return movs.filter((m) => m.numero_matriz.toLowerCase().includes(busca.toLowerCase()));
+    return movs.filter((m) => casaBusca(m.numero_matriz, busca));
   }, [movs, busca]);
 
   // Mesmo padrão de frontend/app/sanidade/page.tsx: passa pelo fluxo central

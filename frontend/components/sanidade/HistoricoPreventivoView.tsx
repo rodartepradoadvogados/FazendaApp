@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Syringe, Stethoscope, AlertTriangle } from "
 import { fetchSanidade, fetchResultadosExame, fetchAnimais, formatDate } from "@/lib/api";
 import { MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 type LinhaHistorico = {
   tipo: "vacina" | "exame";
@@ -66,7 +67,7 @@ export function HistoricoPreventivoView() {
   const diagnosticosDisponiveis = useMemo(() => Array.from(new Set((linhas || []).map((l) => l.diagnostico).filter((x): x is string => !!x))).sort(), [linhas]);
 
   const filtradas = useMemo(() => (linhas || []).filter((l) =>
-    (!fAnimal.trim() || l.numero.toLowerCase().includes(fAnimal.trim().toLowerCase())) &&
+    casaBusca(l.numero, fAnimal) &&
     (!fLote.length || (l.lote && fLote.includes(l.lote))) &&
     (!fCategoria.length || (l.categoriaAnimal && fCategoria.includes(l.categoriaAnimal))) &&
     (!fProduto.length || fProduto.includes(l.produto)) &&

@@ -5,6 +5,7 @@ import { AnimalRow } from "./AnimalModal";
 import { Modal } from "./Modal";
 import NovoAnimalRapido from "./NovoAnimalRapido";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { casaBusca } from "@/lib/busca";
 
 /**
  * Padrão único de seleção de VÁRIOS animais no site: um botão mostra quantos
@@ -45,11 +46,9 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   );
 
   const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
     return animaisComExtras.filter((a) => {
       if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
-      if (!q) return true;
-      return `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`.toLowerCase().includes(q);
+      return casaBusca(`${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`, busca);
     });
   }, [animaisComExtras, busca, filtroLote, rotuloDe]);
 

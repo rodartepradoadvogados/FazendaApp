@@ -22,6 +22,7 @@ import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
 import RemediosPorDoenca from "@/components/RemediosPorDoenca";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -1301,7 +1302,7 @@ function DoencaMotivoView() {
   const curativos = useMemo(() => (regs || []).filter((r) => r.natureza !== "preventivo"), [regs]);
 
   const filtrados = useMemo(() => curativos.filter((r) =>
-    (!buscaAnimal || r.numero.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+    casaBusca(r.numero, buscaAnimal) &&
     (!fLote || r.lote === fLote) &&
     (!fCategoria || r.categoria_animal === fCategoria) &&
     (!ini || (r.data ? r.data >= ini : false)) &&
@@ -1427,7 +1428,7 @@ function ProtocolosSanitariosView() {
     l.aplicacoes.length && l.aplicacoes.every((a) => a.realizada) ? "concluido" : "andamento";
 
   const filtrados = useMemo(() => (lancs || []).filter((l) =>
-    (!buscaAnimal || l.numero_matriz.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+    casaBusca(l.numero_matriz, buscaAnimal) &&
     (!fProtocolo || l.protocolo_nome === fProtocolo) &&
     (!fStatus || statusDe(l) === fStatus) &&
     (!ini || l.data_inicio >= ini) &&

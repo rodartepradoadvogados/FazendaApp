@@ -23,6 +23,7 @@ from fazenda.models import (
     PesagemCorporal, Secagem, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.busca import casa_busca
 from fazenda.rules.dieta_lancamento import contexto_lote, criar_lancamento_programado
 from fazenda.rules.nutricao import VERSAO_MOTOR, avaliar_dieta, resultado_para_dict
 from fazenda.rules.nutricao.biblioteca import biblioteca_semente, template_por_categoria
@@ -516,8 +517,9 @@ def listar_alimentos_nutricionais(
         query_alimento = query_alimento.where(Alimento.fazenda_id == fazenda_id)
     cadastrados = session.exec(query_alimento).all()
     if busca:
-        termo = busca.strip().lower()
-        cadastrados = [a for a in cadastrados if termo in a.nome.lower()]
+        # casa_busca ignora caixa/acento/hífen/underscore/espaço — mesmo
+        # critério de qualquer outra busca textual do sistema (rules/busca.py).
+        cadastrados = [a for a in cadastrados if casa_busca(busca, a.nome)]
 
     return {
         "biblioteca": [_nutricional_publico(a) for a in biblioteca],

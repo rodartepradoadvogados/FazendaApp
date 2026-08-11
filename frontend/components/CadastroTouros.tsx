@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X } from "lucide-react";
 import { fetchTouros, criarTouro, atualizarTouro, excluirTouro, recarregarCatalogoTouros, type Touro, type TouroIn } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -192,15 +193,10 @@ export default function CadastroTouros() {
   }
   useEffect(() => { carregar(); }, []);
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return touros;
-    return touros.filter((t) =>
-      (t.naab || "").toLowerCase().includes(q) ||
-      (t.nome || "").toLowerCase().includes(q) ||
-      (t.central || "").toLowerCase().includes(q) ||
-      (t.raca || "").toLowerCase().includes(q));
-  }, [touros, busca]);
+  const filtrados = useMemo(
+    () => touros.filter((t) => casaBusca(`${t.naab || ""} ${t.nome || ""} ${t.central || ""} ${t.raca || ""}`, busca)),
+    [touros, busca]
+  );
   const ord = useOrdenacao(filtrados);
 
   async function remover(t: Touro) {

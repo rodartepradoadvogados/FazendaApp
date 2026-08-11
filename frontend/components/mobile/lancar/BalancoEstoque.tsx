@@ -9,6 +9,7 @@ import { fetchEstoque } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
 import { LinhaPills, MobPill } from "./comum";
 import { FormEstoque } from "./FormEstoque";
+import { casaBusca } from "@/lib/busca";
 
 type Item = {
   categoria: string | null; nome: string; quantidade: number | null;
@@ -38,7 +39,7 @@ export default function BalancoEstoque({ onVoltar, onIrParaFinanceiro }: { onVol
 
   const filtrados = useMemo(() => itens.filter((i) =>
     (!fCat || i.categoria === fCat) &&
-    (!busca || i.nome.toLowerCase().includes(busca.toLowerCase())) &&
+    casaBusca(i.nome, busca) &&
     (!soAbaixo || i.abaixo_minimo === true) &&
     (!soPositivo || (i.quantidade ?? 0) > 0)
   ), [itens, fCat, busca, soAbaixo, soPositivo]);

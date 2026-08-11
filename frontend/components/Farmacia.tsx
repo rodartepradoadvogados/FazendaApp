@@ -22,10 +22,7 @@ import {
 } from "@/lib/api";
 import { carenciaNaoInformada } from "@/lib/carencia";
 import { VIAS_APLICACAO } from "@/lib/constants";
-
-// Normaliza texto para busca insensível a maiúsculas e acentos (mesmo
-// critério usado no resto do Cadastro).
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 function num(v?: number | null): string {
   if (v == null) return "—";

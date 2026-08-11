@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 export type LoteOpcao = { codigo: string; total: number; categoria: string; del_medio: number | null };
 
@@ -34,11 +35,10 @@ export function LotePicker({ opcoes, selecionados, onChange, placeholder = "Sele
   const [busca, setBusca] = useState("");
   const sel = new Set(selecionados);
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return opcoes;
-    return opcoes.filter((o) => `${o.codigo} ${o.categoria}`.toLowerCase().includes(q));
-  }, [opcoes, busca]);
+  const filtrados = useMemo(
+    () => opcoes.filter((o) => casaBusca(`${o.codigo} ${o.categoria}`, busca)),
+    [opcoes, busca]
+  );
   const ord = useOrdenacao(filtrados);
 
   const toggle = (codigo: string) => {

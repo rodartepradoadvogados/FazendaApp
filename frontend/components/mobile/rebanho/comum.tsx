@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search, X } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
+import { normalizarBusca } from "@/lib/busca";
 
 export type AnimalMob = {
   numero: string;
@@ -15,9 +16,10 @@ export type AnimalMob = {
   ativo?: boolean;
 };
 
-/** minúsculas + sem acento, para busca tolerante. */
+/** minúsculas, sem acento e sem hífen/underscore/espaço, para busca
+ * tolerante — delega ao helper único (lib/busca.ts). */
 export function normalizar(s: unknown): string {
-  return (s == null ? "" : String(s)).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+  return normalizarBusca(s == null ? "" : String(s));
 }
 
 export function subtituloAnimal(a: { categoria_abrev?: string | null; grupo_primario?: string | null }): string {

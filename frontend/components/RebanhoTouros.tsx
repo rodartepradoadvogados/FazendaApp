@@ -10,6 +10,7 @@ import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./Cad
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 import { usePaginacao, Paginacao } from "./Paginacao";
+import { casaBusca } from "@/lib/busca";
 
 type EstoqueSemenItem = {
   id: number; touro_nome: string; codigo?: string | null; naab?: string | null;
@@ -205,18 +206,15 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
 
   const fazendaFiltrada = tourosFazenda.length ? fazenda.filter((f) => tourosFazenda.includes(f.touro_nome)) : fazenda;
 
-  const estoqueFiltrado = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return emEstoque;
-    return emEstoque.filter((e) => `${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`.toLowerCase().includes(q));
-  }, [emEstoque, busca]);
+  const estoqueFiltrado = useMemo(
+    () => emEstoque.filter((e) => casaBusca(`${e.touro_nome} ${e.codigo || ""} ${e.naab || ""} ${e.central || ""}`, busca)),
+    [emEstoque, busca]
+  );
 
-  const naabFiltrado = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    const base = naab ?? [];
-    if (!q) return base;
-    return base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q));
-  }, [naab, busca]);
+  const naabFiltrado = useMemo(
+    () => (naab ?? []).filter((t) => casaBusca(`${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`, busca)),
+    [naab, busca]
+  );
 
   const ordEstoque = useOrdenacao(estoqueFiltrado);
   const ordNaab = useOrdenacao(naabFiltrado);

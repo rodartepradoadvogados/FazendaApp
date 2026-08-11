@@ -15,6 +15,7 @@ import {
   fetchMotivosAcessoSuporte, fetchFazendasCofre, entrarComoSuporte,
   type FazendaCofre,
 } from "@/lib/api";
+import { casaBusca } from "@/lib/busca";
 
 const COR = {
   cartao: "#262E39", borda: "#39424F", mudo: "#9CA6B4", dourado: "#6B7F99", texto: "#F1F3F5", vermelho: "#b5544a",
@@ -89,11 +90,10 @@ export function AcessoCowDataModal({ onClose, onEntrou }: { onClose: () => void;
   }, []);
 
   const fazenda = useMemo(() => fazendas.find((f) => f.id === fazendaId) || null, [fazendas, fazendaId]);
-  const filtradas = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return fazendas;
-    return fazendas.filter((f) => f.nome.toLowerCase().includes(q));
-  }, [fazendas, busca]);
+  const filtradas = useMemo(
+    () => fazendas.filter((f) => casaBusca(f.nome, busca)),
+    [fazendas, busca]
+  );
 
   async function confirmarEEntrar() {
     if (!fazenda || !motivo || !assunto.trim()) { setErro("Preencha motivo e assunto do chamado."); return; }

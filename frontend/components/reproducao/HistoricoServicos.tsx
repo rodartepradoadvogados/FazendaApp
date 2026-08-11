@@ -9,6 +9,7 @@ import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchIns
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { casaBusca } from "@/lib/busca";
 import { estiloSexado } from "@/lib/constants";
 
 export type Serv = {
@@ -189,7 +190,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
 
   const filtrados = useMemo(() => {
     return base.filter((s) =>
-      (!animal || s.numero.toLowerCase().includes(animal.toLowerCase())) &&
+      casaBusca(s.numero, animal) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&

@@ -3,6 +3,7 @@
 // conta-folha. Usado no seletor do lançamento financeiro e na árvore de
 // Configurações, para que a MESMA aparência hierárquica apareça em todo lugar.
 import type { CSSProperties } from "react";
+import { normalizarBusca } from "@/lib/busca";
 
 export type ContaPlano = {
   id?: number;
@@ -60,10 +61,9 @@ export function filhosDiretos(pai: string, contas: ContaPlano[]): ContaPlano[] {
     .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
 }
 
-/** Normaliza texto para busca (minúsculas, sem acento). */
-export function normalizar(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-}
+/** Normaliza texto para busca — delega ao helper único (lib/busca.ts), que
+ * além de acento/caixa também ignora hífen/underscore/espaço. */
+export const normalizar = normalizarBusca;
 
 /**
  * Nomes dos ANCESTRAIS de uma conta, do pai mais próximo até a raiz — ex.:
