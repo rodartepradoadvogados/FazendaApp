@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ControleLeiteiro, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
@@ -857,7 +857,7 @@ class PartoIn(BaseModel):
 @router.post("/parto")
 def registrar_parto(
     dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Registra o parto e cria a ficha de cada cria nascida viva ainda não
@@ -865,7 +865,6 @@ def registrar_parto(
     /producao/sugestao-lote-evento e só move (POST /movimentacoes/mover) com
     confirmação explícita do usuário.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_mae = select(Animal).where(Animal.numero == dados.numero_matriz)
     if fazenda_id is not None:
         query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
@@ -979,7 +978,7 @@ class ProtocoloIatfIn(BaseModel):
 @router.post("/protocolo-iatf")
 def lancar_protocolo_iatf(
     dados: ProtocoloIatfIn, response: Response, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11 clássico, ou os dias livres
@@ -989,7 +988,6 @@ def lancar_protocolo_iatf(
     cada animal vira uma ProtocoloIatfAplicacao rastreável — a Agenda agrupa
     por (lançamento, dia) em vez de mostrar uma linha por animal.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
@@ -1579,13 +1577,12 @@ def registrar_servico(
     dados: ServicoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Registra a inseminação/cobertura em si — cio natural (sem protocolo) ou a
     inseminação de um protocolo IATF já agendado (protocolo preenchido).
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.numero == dados.numero_matriz)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
@@ -1784,7 +1781,7 @@ def registrar_servico_lote(
     dados: ServicoLoteIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Inseminação de vários animais de uma vez. `tipo` = cio_natural (IA sem
@@ -1794,7 +1791,6 @@ def registrar_servico_lote(
     hormônio. Animais IATF sem protocolo e sem auto-lançar entram em
     `incompativeis` (a UI pergunta o que fazer).
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.tipo not in ("cio_natural", "iatf", "monta_natural"):

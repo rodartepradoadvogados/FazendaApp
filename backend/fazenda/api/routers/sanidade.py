@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlmodel import Session, or_, select
 
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.ordenacao import chave_numero
 from fazenda.models import (
@@ -227,9 +227,8 @@ def registrar_aplicacao(
     dados: AplicacaoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
@@ -1004,7 +1003,7 @@ def cadastrar_preventivo(
     dados: CadastrarPreventivoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
     if not ev:
@@ -1072,6 +1071,10 @@ def cadastrar_preventivo(
                 veterinario=dados.veterinario,
                 frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
                 data_evento=dados.data_evento, observacao=dados.observacao,
+                # Faltava aqui — a regra nascia sem fazenda_id mesmo com a
+                # rota já resolvendo `fazenda_id` (usado logo abaixo só para
+                # a aplicação, nunca carimbado na própria regra).
+                fazenda_id=fazenda_id,
             )
             session.add(regra)
             session.commit()
@@ -1112,6 +1115,7 @@ def cadastrar_preventivo(
                 data_exame=dados.data_evento, resultado=dados.resultado_exame,
                 valor_numerico=dados.resultado_numerico, banda=banda,
                 veterinario=dados.veterinario, observacao=dados.observacao,
+                fazenda_id=fazenda_id,
             )
             session.add(exame_resultado)
             session.flush()
@@ -1229,9 +1233,8 @@ def listar_lancamentos_protocolo(
 @router.post("/protocolos/lancamentos", status_code=201)
 def lancar_protocolo(
     dados: ProtocoloLancamentoIn, response: Response, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")

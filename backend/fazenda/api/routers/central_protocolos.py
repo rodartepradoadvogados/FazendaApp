@@ -21,9 +21,9 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, or_, select
+from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Estoque, MovimentoEstoque,
@@ -83,22 +83,25 @@ def _linha(*, tipo: str, origem: str, origem_id: int, nome: str, data_inicio: da
 
 
 def _filtro_fazenda(query, coluna, fazenda_id: int | None):
-    """Restringe `query` à fazenda atual, mas tolera `coluna IS NULL`.
+    """Restringe `query` à fazenda atual.
 
-    NULL = lançamento feito antes de a rota correspondente carimbar
-    fazenda_id (ou movimento de estoque gerado por um desses lançamentos
-    legados). Um `==` estrito faria essas linhas antigas sumirem da
-    listagem OU — pior, quando a mesma tolerância falta no detalhe/nas
-    ações — aparecerem na lista e dar 404 ao abrir (era exatamente esta
-    assimetria que causava "Lançamento de protocolo não encontrado" ao
-    clicar num protocolo legado que a Central mostrava). A convenção do
-    repo é: linha legada continua visível E operável, nunca vira órfã.
-    Isolamento entre fazendas não afrouxa — só NULL é tolerado, um
-    fazenda_id de OUTRA fazenda continua de fora.
+    Filtro ESTRITO desde o PR claude/fazenda-id-raiz — até lá tolerava
+    `coluna IS NULL` (lançamento feito antes de a rota correspondente
+    carimbar fazenda_id, ou movimento de estoque gerado por um desses
+    lançamentos legados): um `==` estrito fazia essas linhas antigas
+    sumirem da listagem OU — pior, quando a mesma tolerância faltava no
+    detalhe/nas ações — aparecerem na lista e dar 404 ao abrir (era
+    exatamente esta assimetria que causava "Lançamento de protocolo não
+    encontrado" ao clicar num protocolo legado que a Central mostrava).
+    Voltou a estrito só depois de dois reforços: (1) toda rota de escrita
+    passou a recusar gravar fazenda_id nulo (fazenda.auth::
+    get_fazenda_id_escrita) e (2) a migração 029227481e9e preencheu o
+    histórico que já tinha ficado nulo — sem isso, este filtro faria o
+    dado legado desaparecer de novo.
     """
     if fazenda_id is None:
         return query
-    return query.where(or_(coluna == fazenda_id, coluna.is_(None)))
+    return query.where(coluna == fazenda_id)
 
 
 def _linhas_iatf(session: Session, fazenda_id: int | None) -> list[dict]:
@@ -368,13 +371,11 @@ def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id
         "lida": LidaLancamento,
     }[origem]
     lancamento = session.get(modelo, origem_id)
-    # Mesma tolerância a NULL de `_filtro_fazenda`: um lançamento legado
-    # (fazenda_id IS NULL) passa; um de OUTRA fazenda continua 404.
-    if not lancamento or (
-        fazenda_id is not None
-        and lancamento.fazenda_id is not None
-        and lancamento.fazenda_id != fazenda_id
-    ):
+    # Estrito desde o PR claude/fazenda-id-raiz (ver `_filtro_fazenda` acima)
+    # — `fazenda_id is not None` continua cobrindo o caso de leitura sem
+    # fazenda resolvida (token legado/sem contexto multi-fazenda), que não
+    # filtra nada, igual ao resto do sistema.
+    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento de protocolo não encontrado")
     return lancamento
 
@@ -616,7 +617,7 @@ def editar_lancamento(
 @router.post("/{origem}/{origem_id}/baixa")
 def dar_baixa(
     origem: str, origem_id: int, dados: BaixaProtocoloIn,
-    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
     user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Dá baixa num dia do protocolo — o dia inteiro ou só alguns animais —
@@ -624,7 +625,6 @@ def dar_baixa(
     a Agenda usa (Sanidade gerada, baixa de estoque com rastreio); a diferença
     é que aqui a data não é obrigatoriamente hoje e o dia pode já ter passado.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     usuario_id = usuario_id_seguro(user)
     lancamento = _lancamento_ou_404(session, origem, origem_id, fazenda_id)
     if lancamento.encerrado_em:
@@ -828,10 +828,6 @@ def cancelar(
         MovimentoEstoque.origem_id == origem_id,
         MovimentoEstoque.movimento == "Aplicação",
     )
-    # Mesma tolerância a NULL de _filtro_fazenda: um movimento de estoque
-    # legado (fazenda_id IS NULL), gerado por um protocolo legado, também
-    # tem que ser estornado no cancelamento — senão o cancelamento "some"
-    # com uma baixa que de fato aconteceu.
     query_mov = _filtro_fazenda(query_mov, MovimentoEstoque.fazenda_id, fazenda_id)
     for mov in session.exec(query_mov).all():
         item = session.get(Estoque, mov.estoque_id) if mov.estoque_id else None

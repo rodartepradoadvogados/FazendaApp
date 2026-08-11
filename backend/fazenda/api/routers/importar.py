@@ -26,7 +26,7 @@ from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque,
@@ -280,6 +280,8 @@ async def importar_controle_leiteiro_simples(
     file: UploadFile,
     data_controle: date = Form(...),
     session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     CSV enxuto (só nº da matriz + 1ª/2ª ordenha) para quando não se quer
@@ -305,7 +307,7 @@ async def importar_controle_leiteiro_simples(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session)
+        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session=session, user=user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
     return {"categoria": "controle_leiteiro_simples", "criados": criados, "erros": erros}
 
@@ -313,9 +315,8 @@ async def importar_controle_leiteiro_simples(
 @router.post("/financeiro")
 async def importar_financeiro(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -338,7 +339,7 @@ async def importar_financeiro(
                 data_competencia=data,
                 parcelas=[ParcelaIn(data_vencimento=data, valor=valor)],
             )
-            criar_lancamento(dados, session, fazenda_id=fazenda_id)
+            criar_lancamento(dados, session=session, user=user, fazenda_id=fazenda_id)
             criados += 1
         except HTTPException as exc:
             erros.append(f"Linha {i}: {exc.detail}")
@@ -811,7 +812,7 @@ def _ocorrencia_valida(base: date | None, valor: int | None, unidade: str | None
 @router.post("/baixas_pendencias_agenda")
 async def importar_baixas_pendencias_agenda(
     file: UploadFile, data_corte: str = Form(""), session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Baixa em massa de pendências antigas da Agenda (sanitário) — uma linha por
@@ -904,7 +905,7 @@ async def importar_baixas_pendencias_agenda(
                                 responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {ev.nome}",
                                 aplicado=True, natureza="preventivo",
                             ),
-                            session, user,
+                            session=session, user=user, fazenda_id=fazenda_id,
                         )
                         criados += len(alvo_animais)
                     dispensados += 1
@@ -944,7 +945,7 @@ async def importar_baixas_pendencias_agenda(
                                     responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {nome_evento}",
                                     aplicado=True, natureza="preventivo",
                                 ),
-                                session, user,
+                                session=session, user=user, fazenda_id=fazenda_id,
                             )
                             criados += len(numeros)
                         dispensados += 1

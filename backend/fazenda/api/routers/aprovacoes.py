@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import LancamentoPendente, Usuario
 from fazenda.rules import telegram_fluxos as fx
@@ -116,10 +116,20 @@ def editar(
 @router.post("/{pendente_id}/aprovar")
 def aprovar(
     pendente_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Aprova e MATERIALIZA o lançamento — cria o registro real. Se a criação
-    falhar (ex.: animal inexistente), guarda o erro e mantém como pendente."""
+    falhar (ex.: animal inexistente), guarda o erro e mantém como pendente.
+
+    `criar_registro` grava fazenda_id no(s) registro(s) reais criados — antes
+    disso, o lançamento aprovado pelo Telegram sempre nascia com fazenda_id
+    NULO (nenhum `user`/`fazenda_id` chegava até lá, só `dados` e `session`;
+    ver fazenda_id_seguro/usuario_id_seguro em rules/auditoria.py). Prioriza
+    `p.fazenda_id` quando o próprio bot já sabia de qual fazenda é o chat
+    (TELEGRAM_CHAT_FAZENDA, ver `_fazenda_do_chat` em telegram.py); sem isso,
+    cai para a fazenda da sessão de quem está aprovando — `fazenda_id` aqui
+    NUNCA é None (get_fazenda_id_escrita recusa a aprovação com 409 antes
+    de chegar aqui se não der pra resolver com segurança)."""
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
@@ -128,8 +138,11 @@ def aprovar(
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
 
+    fazenda_id_materializacao = p.fazenda_id if p.fazenda_id is not None else fazenda_id
     try:
-        resultado = fx.criar_registro(p.tipo, json.loads(p.payload or "{}"), session)
+        resultado = fx.criar_registro(
+            p.tipo, json.loads(p.payload or "{}"), session, user=user, fazenda_id=fazenda_id_materializacao,
+        )
     except HTTPException as e:
         p.erro = str(e.detail)
         session.add(p)

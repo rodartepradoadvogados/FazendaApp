@@ -9,9 +9,9 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, or_, select
+from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, tem_modulo
+from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
@@ -263,28 +263,25 @@ def calcular_agenda(
     # Toda a base da agenda é escopada pela fazenda atual — sem isso a tela
     # mais usada do sistema misturava animal, serviço, parto, estoque e
     # financeiro de fazendas diferentes no mesmo cálculo.
+    #
+    # Filtro ESTRITO — usado inclusive nas tabelas de protocolo de indução de
+    # lactação (ProtocoloInducaoLancamento/Aplicacao/Medicamento), que até o
+    # PR claude/fazenda-id-raiz precisavam de uma variante tolerante a
+    # `fazenda_id IS NULL` (`_da_fazenda_tolerante`, removida): um lançamento
+    # gravado por rota de escrita que não resolvia a fazenda (token legado,
+    # usuário sem fazenda vinculada, chamada fora do ciclo HTTP — ver
+    # fazenda.auth.get_fazenda_id_escrita) nascia com `fazenda_id` NULO e um
+    # `== fazenda_id` estrito nunca casa com NULL, então a etapa (ex.: D6 de
+    # uma indução) sumia da Agenda sem sumir da Central de Protocolos (que já
+    # tolerava NULL) — o sintoma que abriu este PR. A tolerância voltou a
+    # estrita só depois de dois reforços: (1) toda rota de escrita passou a
+    # recusar gravar `fazenda_id` nulo (`get_fazenda_id_escrita`) e (2) a
+    # migração 029227481e9e preencheu o histórico que já tinha ficado nulo —
+    # sem isso, voltar ao filtro estrito faria o dado legado desaparecer.
     def _da_fazenda(query, modelo):
         if fazenda_id is None:
             return query
         return query.where(modelo.fazenda_id == fazenda_id)
-
-    # Variante tolerante a `fazenda_id IS NULL` — mesma regra que a Central de
-    # Protocolos usa em `_filtro_fazenda` (central_protocolos.py). BUG que isto
-    # corrige: um `ProtocoloInducaoLancamento`/Aplicacao/Medicamento lançado
-    # ANTES da rota carimbar fazenda_id (ou por qualquer outro caminho que
-    # deixe a coluna NULL) ficava com `fazenda_id` nulo mas continuava
-    # aparecendo no Acompanhamento da Central (que já tolera NULL há tempos —
-    # ver `test_inducao_fazenda_id.py`); a Agenda, porém, usava o `_da_fazenda`
-    # estrito acima e o `== fazenda_id` nunca casa com NULL, então a etapa
-    # (ex.: D6 de uma indução de lactação) simplesmente sumia da Agenda sem
-    # sumir da Central — mesma família da regressão já documentada logo abaixo
-    # para `ProtocoloSanitarioEtapa` (que nem GRAVA fazenda_id), só que aqui a
-    # coluna existe e normalmente vem preenchida; o problema é não tolerar os
-    # casos em que não veio.
-    def _da_fazenda_tolerante(query, modelo):
-        if fazenda_id is None:
-            return query
-        return query.where(or_(modelo.fazenda_id == fazenda_id, modelo.fazenda_id.is_(None)))
 
     animais = [
         _model_to_dict(a)
@@ -603,10 +600,10 @@ def calcular_agenda(
     # passo, com a observação de manejo (implante, adaptação na ordenha,
     # iniciar a ordenha) bem visível para o funcionário.
     # Mesma janela de atraso do IATF/customizado — ver o comentário lá em cima.
-    lancamentos_inducao_por_id = {l.id: l for l in session.exec(_da_fazenda_tolerante(select(ProtocoloInducaoLancamento), ProtocoloInducaoLancamento)).all()}
+    lancamentos_inducao_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloInducaoLancamento), ProtocoloInducaoLancamento)).all()}
     aplicacoes_inducao = [
         a for a in session.exec(
-            _da_fazenda_tolerante(select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False), ProtocoloInducaoAplicacao)  # noqa: E712
+            _da_fazenda(select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False), ProtocoloInducaoAplicacao)  # noqa: E712
         ).all()
         if a.data_prevista >= limite_atraso
         and not getattr(lancamentos_inducao_por_id.get(a.lancamento_id), "encerrado_em", None)
@@ -620,7 +617,7 @@ def calcular_agenda(
     # (_opcoes_medicamento), pra dar o campo clicável "qual frasco?" na hora
     # de confirmar, em vez de resolver por nome sozinho.
     medicamentos_por_grupo_inducao: dict[tuple[int, int], list[dict]] = {}
-    for m in session.exec(_da_fazenda_tolerante(select(ProtocoloInducaoMedicamento), ProtocoloInducaoMedicamento)).all():
+    for m in session.exec(_da_fazenda(select(ProtocoloInducaoMedicamento), ProtocoloInducaoMedicamento)).all():
         pa_id, opcoes = _opcoes_medicamento(m.produto)
         medicamentos_por_grupo_inducao.setdefault((m.lancamento_id, m.dia), []).append({
             "produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via,
@@ -1678,11 +1675,10 @@ def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> 
 @router.post("/realizados")
 def marcar_realizado(
     dados: RealizadoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
     user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     usuario_id = usuario_id_seguro(user)
     if dados.evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser marcados como realizados — eles somem sozinhos no dia seguinte.")
@@ -1759,7 +1755,7 @@ class AplicarBstIn(BaseModel):
 @router.post("/bst/aplicar")
 def aplicar_bst_lote(
     dados: AplicarBstIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Confirma (ou agenda) a aplicação de BST (Lactotropin/Boostin) para os
     animais informados. Data retroativa/hoje + aplicado=True materializa na
@@ -1770,7 +1766,6 @@ def aplicar_bst_lote(
     recalcula sozinha a partir da data de aplicação mais recente."""
     from fazenda.rules.parametros import get_param
 
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     usuario_id = usuario_id_seguro(user)
     materializar = dados.aplicado and dados.data_aplicacao <= date.today()
 
@@ -1988,7 +1983,7 @@ class AgendaManualIn(BaseModel):
 @router.post("/manual")
 def adicionar_evento_manual(
     dados: AgendaManualIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Adiciona um evento manual à agenda (equivalente à aba AGENDA_MANUAL do Excel)."""
     if dados.tipo_evento and dados.tipo_evento not in TIPOS_EVENTO:
@@ -2009,7 +2004,7 @@ def adicionar_evento_manual(
         intervalo_dias=dados.intervalo_dias if dados.recorrente else None,
         intervalo_meses=dados.intervalo_meses if dados.recorrente else None,
         usuario_id=user.id,
-        fazenda_id=fazenda_id_seguro(fazenda_id),
+        fazenda_id=fazenda_id,
     )
     session.add(evento)
     session.commit()

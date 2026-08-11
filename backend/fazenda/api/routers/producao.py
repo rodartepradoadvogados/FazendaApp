@@ -11,10 +11,10 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlmodel import Session, or_, select
+from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
@@ -151,14 +151,13 @@ def listar_controles(
 @router.post("/controles")
 def criar_controles(
     dados: ControlesIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Registra a pesagem do dia para uma ou várias vacas de uma vez (lançamento
     individual ou em lote — o front manda uma entrada por vaca do lote).
     """
     usuario_id = _usuario_id_seguro(user)
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     criados = []
     for entrada in dados.entradas:
         if entrada.total_kg is not None:
@@ -264,9 +263,8 @@ def _resolver_lote(session: Session, valor: str, fazenda_id: int | None = None) 
 @router.post("/controle-leiteiro/importar")
 async def importar_controle_leiteiro(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     linhas = list(iter_planilha_rows(file.filename or "", content))
     if not linhas:
@@ -1216,9 +1214,8 @@ class SecagemIn(BaseModel):
 @router.post("/secagem")
 def registrar_secagem(
     dados: SecagemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.motivo not in MOTIVOS_SECAGEM:
         raise HTTPException(status_code=400, detail=f"Motivo inválido (aceitos: {', '.join(MOTIVOS_SECAGEM)})")
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
@@ -1444,9 +1441,8 @@ class LancarInducaoLactacaoIn(BaseModel):
 @router.post("/inducao-lactacao", status_code=201)
 def lancar_inducao_lactacao(
     dados: LancarInducaoLactacaoIn, response: Response, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloInducaoLactacao, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo de indução de lactação não encontrado")
@@ -1554,15 +1550,15 @@ def listar_inducao_lactacao_ativos(
     query_lancamentos = select(ProtocoloInducaoLancamento).order_by(ProtocoloInducaoLancamento.data_d0.desc())
     query_aplicacoes = select(ProtocoloInducaoAplicacao)
     if fazenda_id is not None:
-        # fazenda_id IS NULL = lançamento anterior a esta migração — continua
-        # visível (nunca fica orfão), mesma lógica de fazenda_id_seguro/
-        # get_fazenda_atual_id em toda rota já migrada.
-        query_lancamentos = query_lancamentos.where(
-            or_(ProtocoloInducaoLancamento.fazenda_id == fazenda_id, ProtocoloInducaoLancamento.fazenda_id.is_(None))
-        )
-        query_aplicacoes = query_aplicacoes.where(
-            or_(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id, ProtocoloInducaoAplicacao.fazenda_id.is_(None))
-        )
+        # Filtro ESTRITO desde o PR claude/fazenda-id-raiz — mesma reversão
+        # de tolerância a `fazenda_id IS NULL` de agenda.py/central_
+        # protocolos.py (ver comentário em agenda.calcular_agenda::
+        # _da_fazenda): a escrita não deixa mais a coluna nula
+        # (fazenda.auth.get_fazenda_id_escrita) e a migração 029227481e9e
+        # preencheu o histórico, então a tolerância aqui só escondia dado que
+        # já devia estar correto.
+        query_lancamentos = query_lancamentos.where(ProtocoloInducaoLancamento.fazenda_id == fazenda_id)
+        query_aplicacoes = query_aplicacoes.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
     lancamentos = session.exec(query_lancamentos).all()
     aplicacoes = session.exec(query_aplicacoes).all()
     por_lancamento: dict[int, list[ProtocoloInducaoAplicacao]] = {}

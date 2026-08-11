@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id
+from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoEtapa, ProtocoloCustomizadoLancamento,
@@ -74,9 +74,8 @@ class LancarProtocoloCustomizadoIn(BaseModel):
 @router.post("/lancar", status_code=201)
 def lancar_protocolo_customizado(
     dados: LancarProtocoloCustomizadoIn, response: Response, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloCustomizado, dados.protocolo_id)
     if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo personalizado não encontrado")

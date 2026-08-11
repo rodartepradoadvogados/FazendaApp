@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Doenca, PrincipioAtivo, ProtocoloIatf, ProtocoloIatfEtapa, ProtocoloIatfLancamento,
@@ -129,9 +129,8 @@ def listar_protocolos_sanitarios(
 
 @router.post("/protocolos-sanitarios")
 def criar_protocolo_sanitario(
-    dados: ProtocoloSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -151,7 +150,7 @@ def criar_protocolo_sanitario(
     session.commit()
     session.refresh(protocolo)
     for etapa in dados.etapas:
-        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, fazenda_id=protocolo.fazenda_id, **etapa.model_dump()))
     session.commit()
 
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
@@ -254,7 +253,14 @@ def _upsert_protocolo_sanitario(
         session.commit()
 
     for etapa in etapas_in:
-        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+        # Carimba a MESMA fazenda_id do protocolo-pai (None nos seeds
+        # padrão, que são dado legado/compartilhado de propósito — ver
+        # docstring acima). Antes disto a etapa nunca gravava fazenda_id
+        # (nem quando o protocolo-pai tinha uma), daí o comentário em
+        # agenda.py sobre não filtrar esta tabela direto por fazenda_id —
+        # ainda vale para o histórico, mas a partir daqui pelo menos as
+        # etapas novas nascem consistentes com o protocolo que as criou.
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, fazenda_id=protocolo.fazenda_id, **etapa.model_dump()))
     session.commit()
     return protocolo
 
@@ -399,9 +405,8 @@ def ler_planilha_protocolos_sanitarios(content: bytes, filename: str | None) -> 
 @router.post("/protocolos-sanitarios/importar")
 async def importar_protocolos_sanitarios(
     file: UploadFile = File(...), session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     conteudo = await file.read()
     protocolos = ler_planilha_protocolos_sanitarios(conteudo, file.filename)
     if not protocolos:
@@ -491,9 +496,8 @@ def listar_protocolos_inducao(
 
 @router.post("/protocolos-inducao-lactacao")
 def criar_protocolo_inducao(
-    dados: ProtocoloInducaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloInducaoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -512,7 +516,7 @@ def criar_protocolo_inducao(
     session.commit()
     session.refresh(protocolo)
     for etapa in dados.etapas:
-        session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+        session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, fazenda_id=protocolo.fazenda_id, **etapa.model_dump()))
     session.commit()
     return _serializar_protocolo_inducao(session, protocolo)
 
@@ -644,9 +648,8 @@ def listar_protocolos_iatf_cadastrados(
 
 @router.post("/protocolos-iatf")
 def criar_protocolo_iatf_cadastrado(
-    dados: ProtocoloIatfIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloIatfIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")

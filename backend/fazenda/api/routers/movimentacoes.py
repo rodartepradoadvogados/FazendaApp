@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, ParametroSugestaoMovimentacao, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
@@ -263,9 +263,8 @@ def listar_movimentacoes(
 @router.post("/mover")
 def mover_animais(
     dados: MoverIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.origem is not None and dados.origem not in ORIGENS_MOVIMENTACAO_VALIDAS:

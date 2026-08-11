@@ -42,7 +42,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, criar_lancamento, rotulo_conta_corrente
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import CartaoCredito, ContaCorrente, FaturaCartao, LancamentoCartao, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -330,9 +330,8 @@ class PagarFaturaCartaoIn(BaseModel):
 @router.post("/cartoes/faturas/{fatura_id}/pagar", status_code=201)
 def pagar_fatura_cartao(
     fatura_id: int, dados: PagarFaturaCartaoIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     fatura = _fatura_ou_404(session, fatura_id, fazenda_id)
     cartao = _cartao_ou_404(session, fatura.cartao_id, fazenda_id)
     fatura = _fechar_se_vencida(session, fatura, cartao, date.today())
