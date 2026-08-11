@@ -372,6 +372,7 @@ def me(
     # encerrar (POST /painel-cowdata/cofre/sessoes/{id}/encerrar).
     dados["suporte_ativo"] = suporte["ativo"]
     dados["sessao_suporte_id"] = suporte["sessao_id"]
+    dados["nivel_sigilo_suporte"] = suporte["nivel_sigilo"]
     return dados
 
 

@@ -7,7 +7,8 @@ import {
   baixarContratoMembroEquipe,
   fetchUsuarioEquipeCowData, criarUsuarioEquipeCowData, editarUsuarioEquipeCowData,
   AREAS_PAINEL_COWDATA, LABEL_AREA_PAINEL_COWDATA,
-  type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData,
+  NIVEIS_SIGILO_EQUIPE_COWDATA, LABEL_NIVEL_SIGILO_EQUIPE_COWDATA, DESCRICAO_NIVEL_SIGILO_EQUIPE_COWDATA,
+  type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData, type NivelSigiloEquipeCowData,
 } from "@/lib/api";
 
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
@@ -412,6 +413,10 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
 
 const LOGIN_VAZIO = {
   username: "", email: "", senha: "", ativo: true, areas: [] as AreaPainelCowData[],
+  // Padrão do formulário = o mais restritivo, mesmo raciocínio do backend
+  // (nunca abrir acesso "de graça" — quem cadastra escolhe conscientemente
+  // subir o nível se precisar).
+  nivel_sigilo: "basico" as NivelSigiloEquipeCowData,
   pode_suspender_assinatura: false, pode_acessar_fazendas: false,
   pode_alterar_cadastro: false, pode_modificar_suspender_plano: false, pode_emitir_auditar_contratos: false,
   pode_emitir_cobrancas: false, pode_vincular_usuarios: false, pode_cadastrar_usuarios: false,
@@ -437,6 +442,7 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
     setForm(usuario ? {
       username: usuario.username, email: usuario.email, senha: "", ativo: usuario.ativo,
       areas: usuario.areas as AreaPainelCowData[],
+      nivel_sigilo: usuario.nivel_sigilo,
       pode_suspender_assinatura: usuario.pode_suspender_assinatura, pode_acessar_fazendas: usuario.pode_acessar_fazendas,
       pode_alterar_cadastro: usuario.pode_alterar_cadastro, pode_modificar_suspender_plano: usuario.pode_modificar_suspender_plano,
       pode_emitir_auditar_contratos: usuario.pode_emitir_auditar_contratos, pode_emitir_cobrancas: usuario.pode_emitir_cobrancas,
@@ -482,6 +488,7 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
         <p style={{ fontSize: "0.78rem", color: COR.mudo }}>
           {usuario.username} · {usuario.email} · {usuario.ativo ? <span style={{ color: COR.verde }}>ativo</span> : <span style={{ color: COR.vermelho }}>inativo</span>}
           {" · áreas: "}{usuario.areas.length ? usuario.areas.map((a) => LABEL_AREA_PAINEL_COWDATA[a as AreaPainelCowData] || a).join(", ") : "nenhuma"}
+          {" · em fazenda-cliente (suporte): "}{LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[usuario.nivel_sigilo]}
         </p>
       )}
       {!editando && !usuario && (
@@ -519,6 +526,32 @@ function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
               <label key={a} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", color: COR.texto, cursor: "pointer" }}>
                 <input type="checkbox" checked={form.areas.includes(a)} onChange={() => alternarArea(a)} />
                 {LABEL_AREA_PAINEL_COWDATA[a]}
+              </label>
+            ))}
+          </div>
+
+          {/* Nível de sigilo (#132) — o que este membro enxerga DENTRO de
+              uma fazenda-cliente ao abrir uma sessão de suporte pelo Cofre
+              de acesso; diferente das áreas acima, que são sobre o próprio
+              Painel CowData. Cartões em vez de dropdown pra caber a
+              explicação de uma linha de cada nível — decidir sem precisar
+              ler documentação à parte. */}
+          <p style={labelStyle}>Nível de sigilo — o que ele vê dentro de uma fazenda-cliente, em modo suporte</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.8rem" }}>
+            {NIVEIS_SIGILO_EQUIPE_COWDATA.map((nivel) => (
+              <label key={nivel} style={{
+                display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "0.78rem", cursor: "pointer",
+                padding: "0.5rem 0.6rem", borderRadius: "var(--r-sm)",
+                border: `1px solid ${form.nivel_sigilo === nivel ? COR.dourado : COR.borda}`,
+                background: form.nivel_sigilo === nivel ? "rgba(212, 175, 55, 0.08)" : "transparent",
+              }}>
+                <input type="radio" name="nivel_sigilo" checked={form.nivel_sigilo === nivel} onChange={() => setForm({ ...form, nivel_sigilo: nivel })}
+                  style={{ marginTop: "0.15rem" }} />
+                <span>
+                  <span style={{ fontWeight: 700, color: COR.texto }}>{LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[nivel]}</span>
+                  <br />
+                  <span style={{ color: COR.mudo }}>{DESCRICAO_NIVEL_SIGILO_EQUIPE_COWDATA[nivel]}</span>
+                </span>
               </label>
             ))}
           </div>

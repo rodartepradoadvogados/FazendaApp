@@ -30,7 +30,9 @@ from fazenda.auth import exigir_area_painel_cowdata, exigir_dono, hash_senha
 from fazenda.database import get_session
 from fazenda.models import CobrancaAsaas, Fazenda, FolhaPagamento, Pessoa, SeedFlag, TipoPessoa, Usuario
 from fazenda.models.cowdata_interno import LancamentoCowData
-from fazenda.models.equipe_cowdata_acesso import AREAS_PAINEL_COWDATA, PermissaoEquipeCowData
+from fazenda.models.equipe_cowdata_acesso import (
+    AREAS_PAINEL_COWDATA, NIVEIS_SIGILO_EQUIPE_COWDATA, NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData,
+)
 from fazenda.models.multitenant import EmpresaOperadora
 from fazenda.rules.contrato_equipe_render import nome_arquivo_contrato, render_contrato_equipe
 
@@ -352,6 +354,11 @@ class UsuarioEquipeCowDataIn(BaseModel):
     senha: Optional[str] = None  # obrigatório ao criar; opcional ao editar (None = mantém a senha atual)
     ativo: bool = True
     areas: list[str] = []
+    # #132 — nível de sigilo dentro de uma fazenda-cliente (ver
+    # NIVEIS_SIGILO_EQUIPE_COWDATA). Default explícito no schema já é o mais
+    # restritivo, espelhando NIVEL_SIGILO_PADRAO — um client desatualizado
+    # que não manda esse campo nunca abre acesso maior do que "básico".
+    nivel_sigilo: str = NIVEL_SIGILO_PADRAO
     pode_suspender_assinatura: bool = False
     pode_acessar_fazendas: bool = False
     pode_alterar_cadastro: bool = False
@@ -368,10 +375,16 @@ def _validar_areas(areas: list[str]) -> None:
         raise HTTPException(status_code=400, detail=f"Área inválida: {', '.join(invalidas)}")
 
 
+def _validar_nivel_sigilo(nivel: str) -> None:
+    if nivel not in NIVEIS_SIGILO_EQUIPE_COWDATA:
+        raise HTTPException(status_code=400, detail=f"Nível de sigilo inválido: {nivel}")
+
+
 def _usuario_equipe_publico(usuario: Usuario, perm: PermissaoEquipeCowData) -> dict:
     return {
         "usuario_id": usuario.id, "username": usuario.username, "email": usuario.email, "ativo": usuario.ativo,
         "areas": [a for a in (perm.areas or "").split(",") if a],
+        "nivel_sigilo": perm.nivel_sigilo,
         "pode_suspender_assinatura": perm.pode_suspender_assinatura,
         "pode_acessar_fazendas": perm.pode_acessar_fazendas,
         "pode_alterar_cadastro": perm.pode_alterar_cadastro,
@@ -434,6 +447,7 @@ def criar_usuario_equipe(
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Nome de usuário já em uso")
     _validar_areas(dados.areas)
+    _validar_nivel_sigilo(dados.nivel_sigilo)
 
     usuario = Usuario(
         username=dados.username, nome=pessoa.nome, email=dados.email,
@@ -443,7 +457,7 @@ def criar_usuario_equipe(
     session.commit()
     session.refresh(usuario)
 
-    perm = PermissaoEquipeCowData(usuario_id=usuario.id, areas=",".join(dados.areas))
+    perm = PermissaoEquipeCowData(usuario_id=usuario.id, areas=",".join(dados.areas), nivel_sigilo=dados.nivel_sigilo)
     _aplicar_subpermissoes(perm, dados)
     session.add(perm)
     session.commit()
@@ -463,6 +477,7 @@ def editar_usuario_equipe(
     if outro:
         raise HTTPException(status_code=400, detail="Nome de usuário já em uso")
     _validar_areas(dados.areas)
+    _validar_nivel_sigilo(dados.nivel_sigilo)
 
     usuario.username = dados.username
     usuario.email = dados.email
@@ -473,6 +488,7 @@ def editar_usuario_equipe(
 
     perm = _permissao_equipe_cowdata_ou_vazia(session, usuario.id)
     perm.areas = ",".join(dados.areas)
+    perm.nivel_sigilo = dados.nivel_sigilo
     _aplicar_subpermissoes(perm, dados)
     perm.atualizado_em = datetime.utcnow()
     session.add(perm)

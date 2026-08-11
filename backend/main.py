@@ -375,20 +375,72 @@ async def _carimbar_fazenda_atual(request, call_next):
         fazenda_atual.reset(token)
 
 
+# Folha de pagamento/RH mora hoje sob "/cadastro" (rh_folha.py, rh_contratos.py
+# e rh_vale_item.py, todos montados dentro de fazenda.api.routers.cadastro),
+# não sob "/financeiro" como o comentário antigo desta constante dizia —
+# aquilo ficou desatualizado depois da divisão do cadastro.py monolítico
+# (ver docstring de fazenda/api/routers/cadastro/__init__.py) e por isso uma
+# sessão de suporte CowData conseguia ESCREVER folha, rescisão, férias, 13º,
+# diária e vale de uma fazenda-cliente — só "/financeiro" estava na lista.
+# Falha corrigida aqui (ver PR #132): listamos cada prefixo de RH sob
+# "/cadastro" explicitamente, em vez de bloquear "/cadastro" inteiro (que
+# também tem cadastros operacionais legítimos — raças, motivos, unidades de
+# estoque etc. — que o suporte precisa poder ajustar).
+_PREFIXOS_RH_MODO_SUPORTE = (
+    "/cadastro/folha-pagamento",           # inclui /folha-pagamento/guias e /folha-pagamento/proporcional-admissao
+    "/cadastro/folha-pagamento-unificada",  # ledger consolidado (rh_contratos.py) — só leitura, mas fica na lista por clareza
+    "/cadastro/ferias",
+    "/cadastro/decimo-terceiro",
+    "/cadastro/rescisao",                  # /rescisao/calcular
+    "/cadastro/rescisoes",
+    "/cadastro/vales",
+    "/cadastro/vale-item",
+    "/cadastro/vale-avulso",
+    "/cadastro/empreitadas",
+    "/cadastro/contratos",
+    "/cadastro/diarias",
+)
+
 # Prefixos de rota tratados como "dados sensíveis" em modo suporte (ver
 # _bloquear_modo_suporte, abaixo) — escrita bloqueada mesmo com a claim
-# "suporte" válida. financeiro.py e cartao_credito.py dividem o mesmo
-# prefixo "/financeiro" (cobre Folha/Férias/13º/Rescisão/Diária também,
-# todas sub-telas do módulo Financeiro — ver fazenda/api/routers/financeiro.py).
-_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas")
+# "suporte" válida, para QUALQUER nível de sigilo (inclusive "total": nível
+# de sigilo é sobre LEITURA, ver _PREFIXOS_LEITURA_BLOQUEADA_POR_NIVEL
+# abaixo — escrita nesses domínios continua proibida em modo suporte mesmo
+# para quem enxerga tudo, porque a trava aqui é "ação destrutiva/financeira
+# não é coisa de sessão de suporte", não "confiança").
+_PREFIXOS_SENSIVEIS_MODO_SUPORTE = ("/financeiro", "/planejamento", "/chamados", "/cobranca", "/asaas") + _PREFIXOS_RH_MODO_SUPORTE
+
+# Nível de sigilo por conta (#132) — quais grupos de prefixo ficam bloqueados
+# também para LEITURA (GET) em modo suporte, abaixo do nível carimbado no
+# token (claim "nsig", ver fazenda.auth.criar_token). Cada grupo carrega o
+# nome de área usado na mensagem de erro (requisito: explicar o motivo, não
+# só devolver um 403 mudo). "/financeiro" aqui cobre também os relatórios de
+# custo (relatorio_custo_hectare.py/_producao.py/_safra.py e cartao_credito.py
+# reaproveitam o mesmo prefixo "/financeiro" — ver fazenda/api/routers/), daí
+# "financeiro e custos" ficar liberado já no nível "tecnico". RH continua
+# fechado até "total" — mesmo grupo de prefixos que já tem a escrita sempre
+# bloqueada (_PREFIXOS_RH_MODO_SUPORTE), só que agora também pra leitura nos
+# dois primeiros níveis. Rota fora de todo grupo = sempre livre para leitura
+# (rebanho/reprodução/sanidade/produção/estoque e demais operacionais).
+_PREFIXOS_LEITURA_BLOQUEADA_POR_NIVEL: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "basico": (
+        ("financeiro e custos", ("/financeiro",)),
+        ("folha de pagamento, RH e contratos", _PREFIXOS_RH_MODO_SUPORTE),
+    ),
+    "tecnico": (
+        ("folha de pagamento, RH e contratos", _PREFIXOS_RH_MODO_SUPORTE),
+    ),
+    "total": (),
+}
 
 
 def _registrar_acao_auditoria_suporte(request, dados: dict, bloqueado: bool, status_code: int | None) -> None:
-    """Grava uma linha de auditoria granular (uma por escrita tentada durante
-    modo suporte, permitida ou bloqueada) — ver AcaoAuditoriaSuporte. Nunca
-    deixa uma falha de auditoria derrubar o request de verdade: qualquer
-    erro aqui é engolido, só a escrita/bloqueio original importa pra quem
-    chamou a rota."""
+    """Grava uma linha de auditoria granular durante modo suporte — toda
+    escrita tentada (permitida ou bloqueada) e toda LEITURA bloqueada por
+    nível de sigilo (#132; leitura permitida não gera linha, ver chamador)
+    — ver AcaoAuditoriaSuporte. Nunca deixa uma falha de auditoria derrubar o
+    request de verdade: qualquer erro aqui é engolido, só a escrita/bloqueio
+    original importa pra quem chamou a rota."""
     try:
         from sqlmodel import select
 
@@ -414,39 +466,67 @@ def _registrar_acao_auditoria_suporte(request, dados: dict, bloqueado: bool, sta
 async def _bloquear_modo_suporte(request, call_next):
     """Sessão aberta a partir do Painel CowData (ver cofre_acesso.py) carrega
     a claim "suporte" no token — quem entra assim NÃO pode excluir nada (é o
-    caso mais irreversível) nem escrever em dados financeiros, mesmo sendo
-    dono-equivalente. Quem entra DIRETO na fazenda (token sem essa claim)
-    continua com acesso total de administrador, sem nenhuma mudança.
+    caso mais irreversível) nem escrever em dados financeiros/RH, mesmo
+    sendo dono-equivalente. Quem entra DIRETO na fazenda (token sem essa
+    claim) continua com acesso total de administrador, sem nenhuma mudança.
     Pedido explícito do usuário ("restringir ações" no modo suporte, não só
     marcar/auditar). Toda escrita tentada (bloqueada ou não) também vira uma
     linha em AcaoAuditoriaSuporte — "tudo o que ocorrer nesse acesso de
-    suporte deve ficar disponível para ser auditado" (pedido explícito)."""
+    suporte deve ficar disponível para ser auditado" (pedido explícito).
+
+    #132 — Nível de sigilo por conta: além da escrita (sempre restrita, ver
+    _PREFIXOS_SENSIVEIS_MODO_SUPORTE), passou a barrar também LEITURA (GET)
+    das áreas que o nível de sigilo da sessão (claim "nsig" do token) não
+    alcança — ver _PREFIXOS_LEITURA_BLOQUEADA_POR_NIVEL. Leitura fora desses
+    grupos (rebanho, reprodução, sanidade, produção, estoque, etc.) continua
+    sempre livre, em qualquer nível."""
     from fastapi.responses import JSONResponse
 
     from fazenda.auth import _validar_token_payload
+    from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO
 
     auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
         dados = _validar_token_payload(auth.split(" ", 1)[1])
-        if dados and dados.get("suporte") and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if dados and dados.get("suporte") and request.method in ("POST", "PUT", "PATCH", "DELETE", "GET"):
             path = request.url.path
-            bloquear = request.method == "DELETE" or (
-                request.method in ("POST", "PUT", "PATCH")
-                and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
-            )
             # A rota de encerrar a própria sessão de suporte não é uma "ação
             # do cliente" — não teria sentido poluir a auditoria dele com o
             # próprio encerramento do acesso.
             eh_encerramento = path.startswith("/painel-cowdata/cofre/sessoes/") and path.endswith("/encerrar")
-            if bloquear:
+            mensagem_bloqueio: str | None = None
+
+            if request.method == "GET":
+                # Nunca confia em claim ausente pra abrir acesso — token sem
+                # "nsig" (não deveria existir, mas por segurança) cai no
+                # nível mais restritivo, igual ao default do próprio modelo.
+                nivel = dados.get("nsig") or NIVEL_SIGILO_PADRAO
+                grupos = _PREFIXOS_LEITURA_BLOQUEADA_POR_NIVEL.get(nivel, _PREFIXOS_LEITURA_BLOQUEADA_POR_NIVEL[NIVEL_SIGILO_PADRAO])
+                area_bloqueada = next((area for area, prefixos in grupos if any(path.startswith(p) for p in prefixos)), None)
+                if area_bloqueada:
+                    mensagem_bloqueio = (
+                        f'Esta sessão de suporte tem nível de sigilo "{nivel}" e não alcança dados de {area_bloqueada}. '
+                        "Para consultar isso, é preciso uma sessão com nível de sigilo mais alto."
+                    )
+            else:
+                bloquear = request.method == "DELETE" or (
+                    request.method in ("POST", "PUT", "PATCH")
+                    and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
+                )
+                if bloquear:
+                    mensagem_bloqueio = "Ação bloqueada em modo suporte CowData — para isso, entre na fazenda como administrador."
+
+            if mensagem_bloqueio:
                 if not eh_encerramento:
                     _registrar_acao_auditoria_suporte(request, dados, bloqueado=True, status_code=403)
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "Ação bloqueada em modo suporte CowData — para isso, entre na fazenda como administrador."},
-                )
+                return JSONResponse(status_code=403, content={"detail": mensagem_bloqueio})
+
             resposta = await call_next(request)
-            if not eh_encerramento:
+            # GET permitido não vira linha de auditoria — só bloqueio (acima)
+            # é digno de registro; logar toda leitura liberada inundaria a
+            # auditoria sem agregar nada (ao contrário de escrita, que é rara
+            # e cada uma importa).
+            if request.method != "GET" and not eh_encerramento:
                 _registrar_acao_auditoria_suporte(request, dados, bloqueado=False, status_code=resposta.status_code)
             return resposta
     return await call_next(request)

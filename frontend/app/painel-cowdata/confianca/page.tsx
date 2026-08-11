@@ -39,14 +39,16 @@ export default function ConfiancaLgpdCowData() {
           consolidada de sessões ativas, pedidos e auditoria de todas as fazendas.
         </Bloco>
 
-        <Bloco titulo="Próximo passo: nível de sigilo por conta">
-          O modelo de dados para um controle de sigilo mais fino — por conta da Equipe CowData — já existe
-          (<code style={{ background: COR.bg, padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>Usuario.nivel_sigilo_maximo</code>),
-          mas ainda não está ativo em nenhuma tela.
-          <br /><br />
-          É aditivo e dormente: hoje ninguém alcança nível de sigilo diferenciado por causa dele, e nenhum
-          comportamento muda até uma fase futura ligar esse controle de verdade — quando a Equipe CowData (ver
-          Equipe CowData) ganhar contas de login próprias, além dos cadastros de folha de pagamento que já existem.
+        <Bloco titulo="Nível de sigilo por conta">
+          Cada membro da Equipe CowData tem, além das áreas do próprio Painel, um nível de sigilo que limita o que
+          ele enxerga DENTRO de uma fazenda-cliente ao abrir uma sessão de suporte: "Somente operação da fazenda"
+          (rebanho, reprodução, sanidade, produção, estoque — nada financeiro nem de pessoas), "Operação +
+          financeiro e custos" (o anterior mais lançamentos, estoque valorado e indicadores de custo — ainda sem
+          folha de pagamento) ou "Acesso completo". O nível é definido pelo proprietário em{" "}
+          <Link href="/painel-cowdata/equipe" style={{ color: COR.dourado }}>Equipe CowData</Link> e fica gravado no
+          token da sessão no momento em que ela abre — mudar o nível de alguém depois não altera sessões já
+          abertas. Controla a LEITURA das áreas acima do nível; a ESCRITA em folha de pagamento e financeiro fica
+          sempre bloqueada em modo suporte, em qualquer nível (ver bloco acima).
         </Bloco>
       </div>
 
