@@ -76,6 +76,7 @@ export function FormAnimal({
       if (ctx.campos_estimados.includes("ecc") && ctx.ecc != null) patch.ecc = ctx.ecc;
       if (ctx.campos_estimados.includes("del_dias") && ctx.del_dias != null) patch.del_dias = ctx.del_dias;
       if (ctx.campos_estimados.includes("producao_leite_kg_dia") && ctx.producao_leite_kg_dia != null) patch.producao_leite_kg_dia = ctx.producao_leite_kg_dia;
+      if (ctx.campos_estimados.includes("dias_gestacao") && ctx.dias_gestacao != null) patch.dias_gestacao = ctx.dias_gestacao;
       onChange({ ...animal, ...patch });
     } catch {
       setEstimados([]);
@@ -220,7 +221,7 @@ export function FormAnimal({
 
       <Secao titulo="Gestação e ganho corporal">
         <label style={campo}>
-          <span style={rotulo}>Dias de gestação</span>
+          <span style={rotulo}>Dias de gestação {animal.estado_fisiologico === "vaca_seca" && "*"}{estimados.includes("dias_gestacao") && <Selo />}</span>
           <input type="number" style={entrada} value={animal.dias_gestacao ?? ""} onChange={(e) => set("dias_gestacao", numOuNull(e.target.value))} />
         </label>
         <label style={campo}>

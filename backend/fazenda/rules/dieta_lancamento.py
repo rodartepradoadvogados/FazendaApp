@@ -123,10 +123,12 @@ def _codigo_grupo_lote(grupo_primario: str | None) -> str | None:
 
 def contexto_lote(session: Session, fazenda_id: int | None, lote: int) -> dict:
     """Contexto de um lote para pré-preencher a Etapa 2 de Formulação de
-    Dietas: nome do lote, nº de animais ativos, DEL médio e produção média.
-    Mesma resolução de animais-do-lote do contexto de Alimentação (por
-    `Lote.codigo` batendo com o prefixo de `Animal.grupo_primario`)."""
-    from fazenda.models import Animal
+    Dietas: nome do lote, nº de animais ativos, DEL médio, produção média e
+    dias de gestação médios (para lote de vaca seca). Mesma resolução de
+    animais-do-lote do contexto de Alimentação (por `Lote.codigo` batendo
+    com o prefixo de `Animal.grupo_primario`)."""
+    from fazenda.models import Animal, Parto, Servico
+    from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 
     query_lote = select(Lote).where(Lote.codigo == f"{lote:02d}")
     if fazenda_id is not None:
@@ -145,10 +147,25 @@ def contexto_lote(session: Session, fazenda_id: int | None, lote: int) -> dict:
     dels = [a.del_dias for a in animais if a.del_dias is not None]
     cls = [a.ult_cl_kg for a in animais if a.ult_cl_kg is not None]
 
+    numeros_do_lote = {a.numero for a in animais}
+    gestacoes: list[int] = []
+    if numeros_do_lote:
+        query_servicos = select(Servico).where(Servico.numero_matriz.in_(numeros_do_lote))
+        query_partos = select(Parto).where(Parto.numero_matriz.in_(numeros_do_lote))
+        if fazenda_id is not None:
+            query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+            query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        servicos = session.exec(query_servicos).all()
+        partos = session.exec(query_partos).all()
+        hoje = date.today()
+        for servico in servicos_positivos_vigentes(servicos, partos).values():
+            gestacoes.append((hoje - servico.data_servico).days)
+
     return {
         "lote": lote,
         "nome": lote_cad.nome if lote_cad else None,
         "qtd_animais": n,
         "del_medio": round(sum(dels) / len(dels)) if dels else None,
         "media_cl": round(sum(cls) / len(cls), 1) if cls else None,
+        "dias_gestacao_medio": round(sum(gestacoes) / len(gestacoes)) if gestacoes else None,
     }

@@ -846,9 +846,12 @@ def contexto_formulacao(
         campos_estimados.append("del_dias")
     if base.get("media_cl") is not None:
         campos_estimados.append("producao_leite_kg_dia")
+    if base.get("dias_gestacao_medio") is not None:
+        campos_estimados.append("dias_gestacao")
 
     return {
         **base, "peso_vivo_kg": peso_vivo_kg, "ecc": ecc,
         "del_dias": base.get("del_medio"), "producao_leite_kg_dia": base.get("media_cl"),
+        "dias_gestacao": base.get("dias_gestacao_medio"),
         "campos_estimados": campos_estimados,
     }
