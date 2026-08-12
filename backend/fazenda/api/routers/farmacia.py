@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -66,9 +66,8 @@ class PrincipioIn(BaseModel):
 
 @router.post("/principios", status_code=201)
 def criar_principio(
-    dados: PrincipioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: PrincipioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -125,9 +124,8 @@ class MarcaIn(BaseModel):
 
 @router.post("/medicamentos", status_code=201)
 def criar_marca(
-    dados: MarcaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: MarcaIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome_comercial.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome comercial é obrigatório")
@@ -152,7 +150,7 @@ def criar_marca(
 @router.put("/medicamentos/{marca_id}")
 def atualizar_marca(
     marca_id: int, dados: MarcaIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Edita uma marca comercial — inclusive os campos de bula.
 
@@ -163,10 +161,12 @@ def atualizar_marca(
     aplica a edição no clone da fazenda — o global nunca é tocado. A resposta
     inclui `personalizou_automaticamente` para a tela avisar o usuário.
 
-    Sem fazenda resolvida (token legado), não há para quem clonar: mantém o
-    comportamento antigo de editar o global direto.
+    `fazenda_id` vem de `get_fazenda_id_escrita` (nunca None em produção) —
+    antes, com o resolvedor tolerante, um token legado sem "fid" (mesmo de um
+    usuário vinculado a uma única fazenda de verdade) caía no ramo "sem
+    fazenda resolvida" abaixo e editava o registro GLOBAL direto, vazando a
+    edição de UMA fazenda pro catálogo padrão de TODAS as outras.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     m = session.get(MedicamentoComercial, marca_id)
     if not m:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
@@ -251,12 +251,15 @@ class InicializarIn(BaseModel):
 
 
 @router.post("/estoque/{estoque_id}/inicializar")
-def inicializar_estoque(estoque_id: int, dados: InicializarIn, session: Session = Depends(get_session)) -> dict:
+def inicializar_estoque(
+    estoque_id: int, dados: InicializarIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """Registra o Estoque Inicial / Primeira Compra de um item: define o saldo,
     liga o gatilho (a partir daqui aplicações e dietas passam a dar baixa real) e
     grava o movimento para o histórico."""
     item = session.get(Estoque, estoque_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.quantidade < 0:
         raise HTTPException(status_code=400, detail="Quantidade não pode ser negativa")
@@ -270,6 +273,10 @@ def inicializar_estoque(estoque_id: int, dados: InicializarIn, session: Session 
         nome_item=item.nome, movimento="Estoque inicial", quantidade=dados.quantidade,
         unidade=item.unidade, data_movimento=dados.data or date.today(),
         observacao=dados.observacao or "Estoque inicial — início do controle de baixas",
+        # `fazenda_id` não era gravado aqui (bug pré-existente, achado nesta
+        # varredura) — o movimento nascia sempre órfão, mesmo com o item de
+        # Estoque de origem já escopado corretamente.
+        fazenda_id=fazenda_id, estoque_id=item.id,
     ))
     session.commit()
     return {"ok": True, "estoque_inicializado": True, "quantidade": item.quantidade}
@@ -304,9 +311,8 @@ class IndicacaoIn(BaseModel):
 
 @router.post("/indicacoes", status_code=201)
 def criar_indicacao(
-    dados: IndicacaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: IndicacaoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pa = session.get(PrincipioAtivo, dados.principio_ativo_id)
     if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=400, detail="Princípio ativo inexistente")
@@ -352,7 +358,7 @@ class IndicacaoUpdateIn(BaseModel):
 @router.put("/indicacoes/{indicacao_id}")
 def atualizar_indicacao(
     indicacao_id: int, dados: IndicacaoUpdateIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Edita prioridade/nota de um vínculo princípio↔doença.
 
@@ -361,7 +367,6 @@ def atualizar_indicacao(
     fazenda resolvida personaliza a indicação automaticamente (clona a
     Doenca inteira via `_clonar_doenca`) e edita o vínculo já no clone.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     ind = session.get(IndicacaoTerapeutica, indicacao_id)
     if not ind:
         raise HTTPException(status_code=404, detail="Indicação não encontrada")
@@ -646,7 +651,7 @@ def listar_indicacoes_catalogo(
 
 @router.post("/indicacoes/{doenca_id}/personalizar", status_code=201)
 def personalizar_indicacao(
-    doenca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    doenca_id: int, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Personalização explícita e manual (o botão "Personalizar para minha
     fazenda"): clona a indicação global via `_clonar_doenca` — a mesma
@@ -658,7 +663,6 @@ def personalizar_indicacao(
     Idempotente: se a fazenda já tem um clone desta doença (`origem_id`
     apontando pra cá), devolve o clone existente em vez de duplicar.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if fazenda_id is None:
         raise HTTPException(status_code=400, detail="Fazenda não resolvida — não é possível personalizar")
 

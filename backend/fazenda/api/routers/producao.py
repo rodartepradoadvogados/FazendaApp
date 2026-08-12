@@ -1457,22 +1457,31 @@ def lancar_inducao_lactacao(
     if not animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
-    # Idempotência: nada aqui impede que a MESMA indução chegue duas vezes —
+    # Idempotência: nada aqui impedia que a MESMA indução chegasse duas vezes —
     # duplo clique no botão "Lançar", ou o retry da fila offline do app móvel
-    # reenviando um POST cujo 2xx de confirmação nunca voltou ao aparelho (ver
-    # auditoria: nenhuma das 5 famílias de protocolo tem proteção equivalente
-    # — IATF em reproducao.py, sanitário em cadastro/protocolos_sanitarios.py
-    # + agenda.py, customizado em protocolos_customizados.py e lida em
-    # lida.py também criam um lançamento novo a cada chamada, sem checar se
-    # já existe um igual; é bug de arquitetura, não desta rota isolada — mas
-    # só esta rota está no escopo desta correção). Sem isso, cada retry criava
-    # um SEGUNDO ProtocoloInducaoLancamento (mesmo molde, mesma data_d0, mesmo
-    # conjunto de animais) e os dois conviviam "Ativos" na Central de
-    # Protocolos — exatamente os pares de linha quase idênticas do relato
-    # (uma com baixas já dadas, a outra "órfã", 0 etapas realizadas).
-    # Em vez de duplicar silenciosamente, reaproveita o lançamento
-    # equivalente já ativo: mesmo protocolo_id + mesma data_d0 + mesmo
-    # conjunto de animais + ainda ativo e não encerrado.
+    # reenviando um POST cujo 2xx de confirmação nunca voltou ao aparelho. Sem
+    # proteção, cada retry criava um SEGUNDO ProtocoloInducaoLancamento (mesmo
+    # molde, mesma data_d0, mesmo conjunto de animais) e os dois conviviam
+    # "Ativos" na Central de Protocolos — exatamente os pares de linha quase
+    # idênticas do relato original (uma com baixas já dadas, a outra "órfã",
+    # 0 etapas realizadas). Em vez de duplicar silenciosamente, reaproveita o
+    # lançamento equivalente já ativo: mesmo protocolo_id + mesma data_d0 +
+    # mesmo conjunto de animais + ainda ativo e não encerrado. As outras 4
+    # famílias de protocolo (IATF em reproducao.py, sanitário em sanidade.py —
+    # a rota REAL de lançamento; cadastro/protocolos_sanitarios.py e agenda.py
+    # só cadastram o molde/leem o lançamento, não criam um —, customizado em
+    # protocolos_customizados.py e lida em lida.py) ganharam a MESMA proteção,
+    # cada uma com o critério de equivalência adaptado à sua estrutura — ver
+    # o comentário "Idempotência:" em cada uma.
+    #
+    # `candidato.fazenda_id == fazenda_id` (não tolera `None` do lado do
+    # candidato): a checagem de "mesmo lançamento" cruza tenants se comparar
+    # incompleto — um lançamento órfão de `fazenda_id` nulo (resíduo raro que
+    # a migração 029227481e9e não conseguiu resolver por ambiguidade, nunca
+    # criado a partir daqui, já que a escrita usa get_fazenda_id_escrita) não
+    # deve ser "reaproveitado" por uma fazenda diferente só por coincidir em
+    # data/molde/animal — mesmo filtro ESTRITO do PR #488 (fazenda_id nulo:
+    # fecha a torneira...), que este bloco ainda não seguia.
     animais_set = set(animais)
     candidatos = session.exec(
         select(ProtocoloInducaoLancamento)
@@ -1482,7 +1491,7 @@ def lancar_inducao_lactacao(
         .where(ProtocoloInducaoLancamento.encerrado_em.is_(None))
     ).all()
     for candidato in candidatos:
-        if fazenda_id is not None and candidato.fazenda_id not in (fazenda_id, None):
+        if fazenda_id is not None and candidato.fazenda_id != fazenda_id:
             continue
         animais_candidato = set(session.exec(
             select(ProtocoloInducaoAplicacao.numero_matriz)

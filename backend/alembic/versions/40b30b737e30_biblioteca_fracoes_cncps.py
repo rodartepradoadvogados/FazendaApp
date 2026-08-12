@@ -30,7 +30,11 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '40b30b737e30'
-down_revision: Union[str, Sequence[str], None] = '029227481e9e'
+# Reencadeada em d1cbcec3b276 (backfill do movimento_estoque, que veio junto
+# com a criação das 8 tabelas sem migração) — ela entrou na main enquanto
+# este PR estava aberto. Sem reencadear, o projeto fica com DUAS heads e o
+# `alembic upgrade head` do deploy quebra.
+down_revision: Union[str, Sequence[str], None] = 'd1cbcec3b276'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

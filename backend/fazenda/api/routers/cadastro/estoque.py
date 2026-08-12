@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     CategoriaEstoque, Estoque, EstoqueSemen, FinalidadeEstoque, Fornecedor, LocalArmazenamento, PlanoContaGerencial,
@@ -52,9 +52,8 @@ def listar_fornecedores(
 
 @router.post("/fornecedores")
 def criar_fornecedor(
-    dados: FornecedorIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: FornecedorIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in TIPOS_FORNECEDOR:
         raise HTTPException(status_code=400, detail="Tipo inválido")
     if not dados.nome.strip():
