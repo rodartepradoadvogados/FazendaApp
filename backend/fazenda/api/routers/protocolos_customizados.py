@@ -107,7 +107,11 @@ def lancar_protocolo_customizado(
         .where(ProtocoloCustomizadoLancamento.encerrado_em.is_(None))
     ).all()
     for candidato in candidatos:
-        if fazenda_id is not None and candidato.fazenda_id not in (fazenda_id, None):
+        # Estrito (== , não tolera fazenda_id nulo do candidato) — mesmo
+        # motivo do bloco equivalente em producao.lancar_inducao_lactacao:
+        # reaproveitar um lançamento órfão de outra fazenda por coincidência
+        # de data/molde/animais cruzaria tenant, contra o filtro do PR #488.
+        if fazenda_id is not None and candidato.fazenda_id != fazenda_id:
             continue
         animais_candidato = {
             n for n in session.exec(
