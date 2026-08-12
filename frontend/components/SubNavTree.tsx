@@ -1,10 +1,10 @@
 "use client";
 // Árvore de sub-navegação genérica (N níveis) — reusada em dois lugares:
 // (1) barra de abas horizontais no topo do conteúdo (ver SubNavTabs.tsx), e
-// (2) o rail esquerdo do portal "Insights e Administração" (ver
-// components/insights/InsightsLayout.tsx), que mantém o modelo antigo de
+// (2) o rail esquerdo dos portais "Insights"/"Administração" (ver
+// components/insights/InsightsLayout.tsx), que mantêm o modelo antigo de
 // árvore vertical por pedido explícito do usuário para diferenciar
-// visualmente aquele portal do resto do site.
+// visualmente esses portais do resto do site.
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useCliqueOuDuploClique, abrirNovaAba } from "@/lib/tabs";
 import { normalizarBusca } from "@/lib/busca";
@@ -61,8 +61,8 @@ export function contarFolhas(nodes: SubNavNode[]): number {
 // implementação mora em lib/busca.ts (helper único de busca do sistema).
 export { normalizarBusca };
 
-// Árvore de sub-navegação genérica (N níveis) — usada pelo rail esquerdo do
-// portal "Insights e Administração" (ver components/insights/InsightsLayout.tsx).
+// Árvore de sub-navegação genérica (N níveis) — usada pelo rail esquerdo dos
+// portais "Insights"/"Administração" (ver components/insights/InsightsLayout.tsx).
 export function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0, recolhidos, onToggleRecolhido }: {
   nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void;
   raiz: SubNavNode[]; pathname: string; paginaLabel: string; depth?: number;

@@ -1,14 +1,25 @@
 "use client";
-// Casca do portal "Insights e Administração" — reúne Análise (Indicadores,
-// Listas, Relatórios) e Administração (Controle de Acesso, Portal,
-// Consultor, Configurações; Painel CowData e Painel do Contador entram como
-// atalhos, mas mantêm a própria casca bespoke já existente) num só lugar,
-// aberto pela Sidebar da fazenda numa aba nova de verdade do navegador (ver
-// Sidebar.tsx). Layout INVERTIDO em relação ao resto do site: aqui os
-// módulos (o que na Sidebar é a lista vertical) viram uma barra de abas no
-// TOPO, e a sub-navegação de cada um (o que na Sidebar aparece acima da
-// lista) desce para um rail na LATERAL ESQUERDA — pedido explícito do
-// usuário para diferenciar visualmente este portal do resto do site.
+// Casca dos portais "Insights" e "Administração" — dois atalhos SEPARADOS na
+// Sidebar da fazenda (ver Sidebar.tsx), cada um abrindo numa aba nova de
+// verdade do navegador, mas que compartilham esta mesma casca porque o
+// desenho visual é idêntico — só o CONJUNTO de abas mostrado na barra do
+// topo muda, conforme o grupo a que a rota atual pertence (ver ABAS_POR_MODO
+// abaixo). Antes os dois viviam misturados num único portal "Insights e
+// Administração"; a mistura confundia (um serve para ENXERGAR a fazenda, o
+// outro para CONFIGURAR/GERENCIAR acesso) — separados, cada atalho leva
+// direto ao conjunto de telas que o rótulo promete.
+//
+// Insights: Indicadores, Listas, Relatórios — leitura/análise, sem nenhuma
+// tela de configuração.
+// Administração: Controle de Acesso, Painel CowData, Painel do Contador
+// (os dois últimos entram como atalhos, mas mantêm a própria casca bespoke
+// já existente), Portal, Configurações.
+//
+// Layout INVERTIDO em relação ao resto do site: aqui os módulos (o que na
+// Sidebar é a lista vertical) viram uma barra de abas no TOPO, e a
+// sub-navegação de cada um (o que na Sidebar aparece acima da lista) desce
+// para um rail na LATERAL ESQUERDA — pedido explícito do usuário para
+// diferenciar visualmente estes portais do resto do site.
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -24,10 +35,13 @@ import { getFazendaAtual, getUsuario, podeModulo, ehDono, ROTA_MODULO } from "@/
 
 type Aba = { href: string; label: string; donoOnly?: boolean; requerConfig?: boolean };
 
-const ABAS: Aba[] = [
+const ABAS_INSIGHTS: Aba[] = [
   { href: "/indicadores", label: "Indicadores" },
   { href: "/relatorios", label: "Listas" },
   { href: "/analise-relatorios", label: "Relatórios" },
+];
+
+const ABAS_ADMINISTRACAO: Aba[] = [
   { href: "/usuarios", label: "Controle de Acesso", donoOnly: true },
   { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
   { href: "/contador", label: "Painel do Contador", donoOnly: true },
@@ -37,6 +51,16 @@ const ABAS: Aba[] = [
   // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).
   { href: "/configuracoes", label: "Configurações", requerConfig: true },
 ];
+
+// Qual dos dois grupos a rota ATUAL pertence — decide tanto o conjunto de
+// abas mostrado quanto o título do cabeçalho. Rota que não está em nenhum
+// dos dois (não deveria acontecer, todo consumidor desta casca está numa
+// das duas listas) cai em "insights" por segurança.
+function modoDaRota(path: string): "insights" | "administracao" {
+  return ABAS_ADMINISTRACAO.some((a) => path === a.href || path.startsWith(`${a.href}/`))
+    ? "administracao"
+    : "insights";
+}
 
 // Botão "Exportar" do cabeçalho — só aparece quando a página atual registrou
 // dados (ver ExportContext/ExportarBotoes); mesmo PDF/Excel de sempre
@@ -113,7 +137,9 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehDono());
   }, [path]);
 
-  const abasVisiveis = ABAS.filter((a) => {
+  const modo = modoDaRota(path);
+  const titulo = modo === "administracao" ? "Administração" : "Insights";
+  const abasVisiveis = (modo === "administracao" ? ABAS_ADMINISTRACAO : ABAS_INSIGHTS).filter((a) => {
     if (a.donoOnly) return dono;
     if (a.requerConfig) return temConfiguracoes;
     const mod = ROTA_MODULO[a.href];
@@ -130,7 +156,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
             <div>
               <CowDataWordmark size="1rem" cowColor="#F5EEF1" dataColor="#C9A44C" />
               <p style={{ margin: 0, fontSize: "0.68rem", color: "rgba(245,238,241,0.65)" }}>
-                Insights e Administração · {fazendaNome}
+                {titulo} · {fazendaNome}
               </p>
             </div>
           </div>

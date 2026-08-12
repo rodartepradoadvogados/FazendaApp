@@ -69,19 +69,20 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // contador (Financeiro somente leitura/exportação, sem app móvel) — casca
   // própria (ver frontend/app/contador/layout.tsx), nunca a Sidebar da fazenda.
   const ehPainelContador = path.startsWith("/contador");
-  // Portal "Insights e Administração" (Indicadores, Listas, Relatórios,
-  // Controle de Acesso, Portal, Consultor, Configurações): casca própria
-  // (ver components/insights/InsightsLayout.tsx, aplicada via layout.tsx
-  // dessas 7 rotas), nunca a Sidebar da fazenda — aberto pela Sidebar numa
-  // aba nova de verdade do navegador (ver Sidebar.tsx). Painel CowData e
-  // Painel do Contador são checados à parte acima: têm a própria casca
-  // bespoke, não a deste portal.
+  // Portais "Insights" (Indicadores, Listas, Relatórios) e "Administração"
+  // (Controle de Acesso, Portal, Configurações): casca compartilhada (ver
+  // components/insights/InsightsLayout.tsx, aplicada via layout.tsx dessas
+  // 6 rotas — o próprio InsightsLayout decide qual dos dois grupos de abas
+  // mostrar, conforme a rota), nunca a Sidebar da fazenda — cada um aberto
+  // pelo próprio atalho na Sidebar, numa aba nova de verdade do navegador
+  // (ver Sidebar.tsx). Painel CowData e Painel do Contador são checados à
+  // parte acima: têm a própria casca bespoke, não a desta.
   const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes"];
   const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
   // Portal "Formulação de Dietas" (/dietas): casca própria
   // (components/dietas/DietasLayout.tsx via app/dietas/layout.tsx), nunca a
   // Sidebar da fazenda — aberto pela Sidebar numa aba nova de verdade do
-  // navegador. Mesmo padrão do portal Insights e Administração, com gate de
+  // navegador. Mesmo padrão dos portais Insights/Administração, com gate de
   // acesso próprio (admin desta fazenda OU consultor desta fazenda — ver
   // podeFormularDietas em lib/api.ts).
   const ehDietasPortal = path === "/dietas" || path.startsWith("/dietas/");
