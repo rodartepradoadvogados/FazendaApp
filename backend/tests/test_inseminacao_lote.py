@@ -161,8 +161,24 @@ class TestIatfNaoAbsorveAnimalDeOutroLancamento:
 
 class TestD0ConfirmadoNaListaAtivos:
     def test_d0_confirmado_falso_ate_marcar_realizado_na_agenda(self, client):
+        # D0 fixo em "2026-07-03" era uma bomba-relógio: `GET
+        # /protocolo-iatf/ativos` (fazenda/api/routers/reproducao.py) só
+        # lista um protocolo com D0 tão velho enquanto `date.today()` REAL
+        # ainda estiver dentro da janela de graça — GRACA_D11_ATRASADO_DIAS
+        # (7 dias após o D11 previsto) some soma outros +7 dias após
+        # `proxima_visita` antes de sumir de vez da lista (ver comentário
+        # acima de `listar_protocolos_iatf_ativos`). Passados esses dias —
+        # o caso de "2026-07-03" a partir de meados de agosto/2026 — o
+        # protocolo simplesmente não aparece mais em `ativos`, e o
+        # `next(...)` do teste estoura `StopIteration`. O comportamento de
+        # produção está certo (protocolo abandonado há muito tempo
+        # realmente deve sumir da lista); o teste é quem fixou uma data que
+        # teria que ser eternamente "recente". Usa D0 = hoje (protocolo
+        # recém-lançado, ainda dentro de toda janela por dezenas de dias),
+        # que é também o cenário que o nome do teste descreve.
         c, engine = client
-        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        hoje = date.today()
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": hoje.isoformat()})
 
         ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
         animal = next(a for g in ativos for a in g["animais"] if a["numero_matriz"] == "700")
@@ -170,7 +186,7 @@ class TestD0ConfirmadoNaListaAtivos:
 
         # evento_id da Agenda é chaveado por (data prevista, dia), não mais
         # por lancamento_id — ver comentário em calcular_agenda.
-        c.post("/agenda/realizados", json={"evento_id": "protocolo_iatf_2026-07-03_0"})
+        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{hoje.isoformat()}_0"})
         ativos2 = c.get("/reproducao/protocolo-iatf/ativos").json()
         animal2 = next(a for g in ativos2 for a in g["animais"] if a["numero_matriz"] == "700")
         assert animal2["d0_confirmado"] is True
