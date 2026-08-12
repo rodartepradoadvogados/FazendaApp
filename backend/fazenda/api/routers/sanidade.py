@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
-from sqlmodel import Session, or_, select
+from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
@@ -1297,9 +1297,11 @@ def lancar_protocolo(
         .where(ProtocoloSanitarioLancamento.numero_matriz.in_(numeros))
     )
     if fazenda_id is not None:
-        existentes_query = existentes_query.where(
-            or_(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id, ProtocoloSanitarioLancamento.fazenda_id.is_(None))
-        )
+        # Estrito (== , não tolera fazenda_id nulo do candidato) — mesmo
+        # motivo do bloco equivalente em producao.lancar_inducao_lactacao:
+        # pular um animal como "já lançado" com base num registro órfão de
+        # outra fazenda cruzaria tenant, contra o filtro do PR #488.
+        existentes_query = existentes_query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
     numeros_existentes = set(session.exec(existentes_query).all())
 
     protocolos = {protocolo.id: protocolo}

@@ -763,3 +763,147 @@ class TestNomeCurtoNaoAmbiguoDentroDoProprioCartao:
         c2 = gerar_nome_lancamento("Indução de Lactação — 18 dias (Ativos 2)", date(2026, 9, 1), 0, 18)
         assert c1 != c2
         assert nome_curto(c1) == nome_curto(c2)
+
+
+class TestIdempotenciaNaoCruzaTenantComFazendaIdNulo:
+    """A checagem de "já existe um lançamento igual" comparava
+    `candidato.fazenda_id` tolerando `None` (`not in (fazenda_id, None)`) —
+    sobra de quando a leitura em geral tolerava fazenda_id nulo. O PR #488
+    (fazenda_id nulo: fecha a torneira...) voltou TODA leitura ao filtro
+    ESTRITO porque a escrita não deixa mais a coluna nula e o histórico foi
+    migrado, mas esqueceu estes 5 blocos de idempotência: um lançamento órfão
+    (fazenda_id NULL — resíduo raro que a migração 029227481e9e não
+    resolveu, nunca criado pelas rotas de hoje) podia ser "reaproveitado"
+    por QUALQUER fazenda que coincidisse em molde/data/animais, cruzando
+    tenant — o oposto do que a idempotência deveria fazer. Cada teste abaixo
+    planta esse órfão direto no banco (não existe caminho de API que o
+    produza mais) e prova que uma fazenda de verdade não o enxerga: cria o
+    seu próprio lançamento, incólume."""
+
+    def test_inducao_nao_reaproveita_lancamento_orfao_de_outra_fazenda(self, client):
+        c, engine, estado = client
+        pid = _criar_molde(c)
+
+        with Session(engine) as s:
+            orfao = ProtocoloInducaoLancamento(
+                protocolo_id=pid, nome_protocolo="ÓRFÃO", data_d0=date(2026, 8, 4), fazenda_id=None,
+            )
+            s.add(orfao)
+            s.commit()
+            s.refresh(orfao)
+            s.add(ProtocoloInducaoAplicacao(
+                lancamento_id=orfao.id, numero_matriz="422", dia=0, descricao="D0",
+                data_prevista=date(2026, 8, 4), fazenda_id=None,
+            ))
+            s.commit()
+            orfao_id = orfao.id
+
+        r = _lancar(c, pid, ["422"], data_d0="2026-08-04")
+        assert r.status_code == 201, r.text
+        assert r.json()["criado"] is True
+        assert r.json()["lancamento_id"] != orfao_id
+
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloInducaoLancamento)).all()) == 2
+
+    def test_iatf_nao_reaproveita_lancamento_orfao_de_outra_fazenda(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_iatf(c)
+        from fazenda.models import ProtocoloIatfAplicacao, ProtocoloIatfLancamento
+
+        with Session(engine) as s:
+            orfao = ProtocoloIatfLancamento(
+                protocolo_id=pid, nome_protocolo="ÓRFÃO", data_d0=date(2026, 8, 4), fazenda_id=None,
+            )
+            s.add(orfao)
+            s.commit()
+            s.refresh(orfao)
+            s.add(ProtocoloIatfAplicacao(
+                lancamento_id=orfao.id, numero_matriz="422", dia=0, descricao="D0",
+                data_prevista=date(2026, 8, 4), fazenda_id=None,
+            ))
+            s.commit()
+            orfao_id = orfao.id
+
+        r = _lancar_iatf(c, ["422"], data_d0="2026-08-04", protocolo_id=pid)
+        assert r.status_code == 200, r.text
+        assert r.json()["criado"] is True
+        assert r.json()["lancamento_id"] != orfao_id
+
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloIatfLancamento)).all()) == 2
+
+    def test_customizado_nao_reaproveita_lancamento_orfao_de_outra_fazenda(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_customizado(c)
+        from fazenda.models import ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento
+
+        with Session(engine) as s:
+            orfao = ProtocoloCustomizadoLancamento(
+                protocolo_id=pid, nome_protocolo="ÓRFÃO", categoria="Rebanho", dia_inicial=0,
+                data_inicio=date(2026, 8, 4), fazenda_id=None,
+            )
+            s.add(orfao)
+            s.commit()
+            s.refresh(orfao)
+            s.add(ProtocoloCustomizadoAplicacao(
+                lancamento_id=orfao.id, numero_matriz="422", dia=0, descricao="D0",
+                data_prevista=date(2026, 8, 4), fazenda_id=None,
+            ))
+            s.commit()
+            orfao_id = orfao.id
+
+        r = _lancar_customizado(c, pid, ["422"], data_inicio="2026-08-04")
+        assert r.status_code == 201, r.text
+        assert r.json()["criado"] is True
+        assert r.json()["lancamento_id"] != orfao_id
+
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloCustomizadoLancamento)).all()) == 2
+
+    def test_lida_nao_reaproveita_lancamento_orfao_de_outra_fazenda(self, client):
+        c, engine, estado = client
+        lid = _criar_molde_lida(c)
+        from fazenda.models import LidaAplicacao, LidaLancamento
+
+        with Session(engine) as s:
+            orfao = LidaLancamento(
+                lida_id=lid, nome_protocolo="ÓRFÃO", modo="periodo", dia_inicial=0,
+                data_inicio=date(2026, 8, 4), alvo_tipo="animal", fazenda_id=None,
+            )
+            s.add(orfao)
+            s.commit()
+            s.refresh(orfao)
+            s.add(LidaAplicacao(
+                lancamento_id=orfao.id, numero_matriz="422", dia=0, descricao="D0",
+                data_prevista=date(2026, 8, 4), fazenda_id=None,
+            ))
+            s.commit()
+            orfao_id = orfao.id
+
+        r = _lancar_lida(c, lid, ["422"], data_inicio="2026-08-04")
+        assert r.status_code == 201, r.text
+        assert r.json()["criado"] is True
+        assert r.json()["lancamento_id"] != orfao_id
+
+        with Session(engine) as s:
+            assert len(s.exec(select(LidaLancamento)).all()) == 2
+
+    def test_sanitario_nao_pula_animal_por_lancamento_orfao_de_outra_fazenda(self, client):
+        c, engine, estado = client
+        pid = _criar_molde_sanitario(c)
+        from fazenda.models import ProtocoloSanitarioLancamento
+
+        with Session(engine) as s:
+            s.add(ProtocoloSanitarioLancamento(
+                protocolo_id=pid, numero_matriz="422", data_inicio=date(2026, 8, 4), fazenda_id=None,
+            ))
+            s.commit()
+
+        r = _lancar_sanitario(c, pid, ["422"], data_inicio="2026-08-04")
+        assert r.status_code == 201, r.text
+        assert r.json()["criados"] == 1
+        assert r.json()["pulados"] == 0
+
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloSanitarioLancamento)).all()) == 2
