@@ -217,10 +217,12 @@ export function BibliotecaAlimentos() {
                   <td style={{ fontWeight: 600 }}>
                     {item.nome} {item.eh_mestre && <BadgeCowData />} {item.eh_copia_editada && <BadgeEditado />}
                     {item.avisos_fechamento.length > 0 && (
-                      <AlertTriangle
-                        size={13} style={{ marginLeft: "0.35rem", color: "var(--amber)", verticalAlign: "middle" }}
+                      <span
                         title={`Fracionamento CNCPS não fecha 100%:\n${item.avisos_fechamento.join("\n")}`}
-                      />
+                        style={{ display: "inline-flex", marginLeft: "0.35rem", verticalAlign: "middle" }}
+                      >
+                        <AlertTriangle size={13} style={{ color: "var(--amber)" }} />
+                      </span>
                     )}
                   </td>
                   <td style={{ fontSize: "0.78rem" }}>{item.categoria_nasem}</td>
