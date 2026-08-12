@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{tempfile.mktemp(suffix='.db')}")
 
@@ -249,6 +249,57 @@ class TestIsolamentoEntreFazendas:
         assert c.get(f"/formulacao/simulacoes/{sim_id}").status_code == 404
         assert c.put(f"/formulacao/simulacoes/{sim_id}", json=DIETA_MINIMA).status_code == 404
         assert c.delete(f"/formulacao/simulacoes/{sim_id}").status_code == 404
+
+
+class TestContextoLote:
+    """GET /formulacao/contexto/{lote} — pré-preenchimento da Etapa 2.
+
+    `dias_gestacao` precisa vir estimado do rebanho pelo mesmo motivo que
+    `del_dias`/`producao_leite_kg_dia` já vêm: sem isso, um lote de vaca seca
+    nunca consegue calcular a estimativa de CMS (eq_cms 10/11 exige
+    `dias_gestacao` — ver `fazenda.rules.nutricao.tipos.validar_entrada`),
+    porque nada preenche o campo sozinho e a Etapa 3 fica presa mostrando só
+    o campo de digitação manual, nunca as duas estimativas lado a lado."""
+
+    def test_dias_gestacao_estimado_de_servico_vigente_do_lote(self, client):
+        c, engine = client
+        from fazenda.models import Lote, Servico
+
+        with Session(engine) as s:
+            s.add(Lote(codigo="02", nome="Vacas secas", fazenda_id=1))
+            s.add(Animal(numero="S1", sexo="F", ativo=True, grupo_primario="02 - Vacas secas", fazenda_id=1))
+            s.add(Animal(numero="S2", sexo="F", ativo=True, grupo_primario="02 - Vacas secas", fazenda_id=1))
+            # S1: 60 dias de gestação; S2: 40 — média esperada 50.
+            s.add(Servico(
+                numero_matriz="S1", data_servico=date.today() - timedelta(days=60),
+                diagnostico="POSITIVO", fazenda_id=1,
+            ))
+            s.add(Servico(
+                numero_matriz="S2", data_servico=date.today() - timedelta(days=40),
+                diagnostico="POSITIVO", fazenda_id=1,
+            ))
+            # Serviço de outro lote/fazenda não deve entrar na média.
+            s.add(Servico(
+                numero_matriz="A1", data_servico=date.today() - timedelta(days=200),
+                diagnostico="POSITIVO", fazenda_id=1,
+            ))
+            s.commit()
+
+        _como(13)
+        r = c.get("/formulacao/contexto/2")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["dias_gestacao"] == 50
+        assert "dias_gestacao" in corpo["campos_estimados"]
+
+    def test_sem_servico_vigente_dias_gestacao_fica_nulo(self, client):
+        c, _ = client
+        _como(13)
+        r = c.get("/formulacao/contexto/1")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["dias_gestacao"] is None
+        assert "dias_gestacao" not in corpo["campos_estimados"]
 
 
 class TestAplicarNaDieta:

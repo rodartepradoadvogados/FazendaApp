@@ -548,8 +548,9 @@ export async function salvarAlimentoNaBiblioteca(dados: AlimentoNutricionalPaylo
 // ── Contexto do lote (Etapa 2) ──
 export type ContextoLote = {
   lote: number; nome: string | null; qtd_animais: number;
-  del_medio: number | null; media_cl: number | null;
+  del_medio: number | null; media_cl: number | null; dias_gestacao_medio: number | null;
   peso_vivo_kg: number | null; ecc: number | null; del_dias: number | null; producao_leite_kg_dia: number | null;
+  dias_gestacao: number | null;
   campos_estimados: string[];
 };
 
