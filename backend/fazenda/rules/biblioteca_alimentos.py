@@ -24,12 +24,18 @@ from openpyxl import load_workbook
 from sqlmodel import Session, select
 
 from fazenda.models import AlimentoNutricional
+from fazenda.models.formulacao import CAMPOS_CNCPS_CARBOIDRATO, CAMPOS_CNCPS_FRACIONAMENTO, CAMPOS_CNCPS_PROTEINA
 from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.nutricao.biblioteca import biblioteca_semente
 from fazenda.rules.nutricao.tipos import CATEGORIAS_NASEM
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 
 MAXIMO_LINHAS_IMPORTACAO = 500
+
+# ±1 ponto percentual — folga de arredondamento de laudo de laboratório (a
+# soma de frações medidas separadamente raramente fecha em 100,00% exato,
+# mesmo quando o laudo está correto). Acima disso, o fechamento vira aviso.
+TOLERANCIA_FECHAMENTO_FRACOES_PCT = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -99,12 +105,21 @@ def listar_biblioteca(session: Session, fazenda_id: int | None) -> list[Alimento
 def _clonar_para_fazenda(mestre: AlimentoNutricional, fazenda_id: int, *, ativo: bool) -> AlimentoNutricional:
     from fazenda.rules.nutricao.tipos import CAMPOS_NUTRICIONAIS
     campos = {c: getattr(mestre, c) for c in CAMPOS_NUTRICIONAIS}
+    # Frações CNCPS (fora de CAMPOS_NUTRICIONAIS de propósito — ver docstring
+    # de CAMPOS_CNCPS_FRACIONAMENTO) também precisam ser copiadas: sem isso,
+    # editar um item mestre que já tivesse fracionamento cadastrado apagaria
+    # silenciosamente esse dado na cópia da fazenda.
+    campos_cncps = {c: getattr(mestre, c) for c in CAMPOS_CNCPS_FRACIONAMENTO}
     return AlimentoNutricional(
         fazenda_id=fazenda_id, origem_mestre_id=mestre.id, alimento_id=None, nome=mestre.nome,
         categoria_nasem=mestre.categoria_nasem, conc_pct=mestre.conc_pct, fonte=mestre.fonte,
         observacao=mestre.observacao, ativo=ativo, extras_json=mestre.extras_json,
         inclusao_min_pct=mestre.inclusao_min_pct, inclusao_max_pct=mestre.inclusao_max_pct,
-        **campos,
+        # campos_editados_json NÃO é copiado: a mestre nunca tem nada
+        # marcado como editado (é sempre 100% CowData, por definição) — a
+        # cópia nasce sem marcação, e o router grava a marcação de verdade
+        # (o que o USUÁRIO editou nesta operação) logo em seguida.
+        **campos, **campos_cncps,
     )
 
 
@@ -177,6 +192,82 @@ def excluir_ou_restaurar(session: Session, fazenda_id: int | None, item_id: int)
 
 
 # ---------------------------------------------------------------------------
+# Checagem de fechamento das frações CNCPS (não bloqueante — ver docstring)
+# ---------------------------------------------------------------------------
+def _soma_se_alguma_preenchida(item: AlimentoNutricional, campos: tuple[str, ...]) -> float | None:
+    """None quando NENHUM campo do grupo foi preenchido (nada a conferir —
+    o usuário simplesmente ainda não começou a fracionar este alimento, o
+    que não é um erro). Caso contrário, soma tratando os campos vazios como
+    zero — é exatamente essa soma parcial que avisa "faltam X pontos" quando
+    o preenchimento é incompleto."""
+    valores = [getattr(item, c) for c in campos]
+    if all(v is None for v in valores):
+        return None
+    return sum(v or 0.0 for v in valores)
+
+
+def avisos_fechamento_fracoes(item: AlimentoNutricional) -> list[str]:
+    """Avisos (nunca erros que bloqueiam) de que as frações CNCPS não fecham
+    100% dentro de `TOLERANCIA_FECHAMENTO_FRACOES_PCT` — chamado tanto ao
+    salvar um alimento pela tela quanto linha a linha na importação de
+    planilha. Deliberadamente NÃO É validação bloqueante: a maioria dos
+    alimentos vai chegar com fracionamento parcial (só o que o laudo do
+    nutricionista trouxe), e travar o cadastro por causa disso empurraria a
+    pessoa a inventar um número só para fechar a conta — pior que deixar o
+    campo vazio. Cada mensagem já diz QUANTO falta (déficit) ou sobra
+    (excesso), não só "não fecha".
+
+    Proteína: PA1+PA2+PB1+PB2+PC precisa somar 100% da PB — os campos já são
+    definidos em % da PB (ver docstring de AlimentoNutricional), então o
+    alvo é sempre 100, sem cálculo extra.
+
+    Carboidrato: os campos são em % da MATÉRIA SECA (não % do carboidrato),
+    então o alvo não é 100 — é o carboidrato TOTAL do alimento, que se
+    calcula por diferença (100 − PB − EE − Cinzas, todos em % da MS; mesma
+    fórmula do CNCPS para "CHO"). Sem PB/EE/Cinzas preenchidos não dá pra
+    calcular esse alvo — o aviso então explica a causa em vez de arriscar
+    comparar com o número errado."""
+    avisos: list[str] = []
+
+    soma_proteina = _soma_se_alguma_preenchida(item, CAMPOS_CNCPS_PROTEINA)
+    if soma_proteina is not None:
+        diferenca = 100.0 - soma_proteina
+        if abs(diferenca) > TOLERANCIA_FECHAMENTO_FRACOES_PCT:
+            if diferenca > 0:
+                avisos.append(
+                    f"Frações de proteína (PA1+PA2+PB1+PB2+PC) somam {soma_proteina:.1f}% da PB — "
+                    f"faltam {diferenca:.1f} pontos percentuais para fechar 100%."
+                )
+            else:
+                avisos.append(
+                    f"Frações de proteína (PA1+PA2+PB1+PB2+PC) somam {soma_proteina:.1f}% da PB — "
+                    f"{-diferenca:.1f} pontos percentuais além de 100%."
+                )
+
+    soma_carboidrato = _soma_se_alguma_preenchida(item, CAMPOS_CNCPS_CARBOIDRATO)
+    if soma_carboidrato is not None:
+        if item.pb_pct is None or item.ee_pct is None or item.cinzas_pct is None:
+            avisos.append(
+                "Frações de carboidrato preenchidas, mas PB, EE e Cinzas precisam estar todos informados "
+                "para calcular quanto de carboidrato este alimento tem e conferir se as frações fecham 100% dele."
+            )
+        else:
+            cho_total = 100.0 - item.pb_pct - item.ee_pct - item.cinzas_pct
+            diferenca = cho_total - soma_carboidrato
+            if abs(diferenca) > TOLERANCIA_FECHAMENTO_FRACOES_PCT:
+                base = (
+                    f"Frações de carboidrato (CA1+CA2+CA3+CA4+CB1+CB2+CB3+CC) somam {soma_carboidrato:.1f}% da MS — "
+                    f"o carboidrato deste alimento é {cho_total:.1f}% da MS (100% − PB − EE − Cinzas)"
+                )
+                if diferenca > 0:
+                    avisos.append(f"{base}; faltam {diferenca:.1f} pontos percentuais para fechar.")
+                else:
+                    avisos.append(f"{base}; {-diferenca:.1f} pontos percentuais além disso.")
+
+    return avisos
+
+
+# ---------------------------------------------------------------------------
 # Planilha-modelo (.xlsx) e importação em lote (.xlsx/.csv)
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -189,10 +280,12 @@ class _Coluna:
 
 
 # Só o subconjunto de campos que um laudo/planilha de nutricionista costuma
-# trazer — o resto (fracionamento proteico, digestibilidades de referência,
-# coeficientes de absorção — "Fase 2/3") não entra na planilha e continua
-# sendo completado pelo template da categoria no cálculo, exatamente como um
-# alimento cadastrado manualmente com campo em branco.
+# trazer, MAIS o fracionamento CNCPS de carboidrato/proteína (frações e kd,
+# ver CAMPOS_CNCPS_FRACIONAMENTO/AlimentoNutricional) — o resto
+# (digestibilidades de referência, coeficientes de absorção de mineral,
+# "Fase 2/3") não entra na planilha e continua sendo completado pelo
+# template da categoria no cálculo, exatamente como um alimento cadastrado
+# manualmente com campo em branco.
 COLUNAS_IMPORTACAO: tuple[_Coluna, ...] = (
     _Coluna("nome", "Nome do alimento", ("alimento", "ingrediente", "nome do ingrediente")),
     _Coluna("categoria_nasem", "Categoria NASEM", ("categoria", "grupo", "categoria nutricional")),
@@ -206,6 +299,31 @@ COLUNAS_IMPORTACAO: tuple[_Coluna, ...] = (
     _Coluna("acucares_pct", "Açúcares (% da MS)", ("acucares", "acucar", "acucares pct"), 0, 100),
     _Coluna("ee_pct", "EE - extrato etéreo/gordura (% da MS)", ("ee", "ee pct", "gordura"), 0, 100),
     _Coluna("cinzas_pct", "Cinzas/matéria mineral (% da MS)", ("cinzas", "cinzas pct", "materia mineral", "mm"), 0, 100),
+    # ---- Fracionamento CNCPS de carboidrato (% da MS) e proteína (% da PB)
+    # — ver docstring completa de AlimentoNutricional/CAMPOS_CNCPS_*. Todas
+    # opcionais; kd só existe para a fração que de fato tem taxa própria.
+    _Coluna("cncps_ca1_pct", "CNCPS CA1 - ácidos orgânicos (% da MS)", ("ca1", "cncps ca1"), 0, 100),
+    _Coluna("cncps_ca2_pct", "CNCPS CA2 - ácido lático (% da MS)", ("ca2", "cncps ca2"), 0, 100),
+    _Coluna("cncps_kd_ca2_pct_h", "CNCPS kd CA2 (%/h)", ("kd ca2",), 0, 500),
+    _Coluna("cncps_ca3_pct", "CNCPS CA3 - outros solúveis (% da MS)", ("ca3", "cncps ca3"), 0, 100),
+    _Coluna("cncps_kd_ca3_pct_h", "CNCPS kd CA3 (%/h)", ("kd ca3",), 0, 500),
+    _Coluna("cncps_ca4_pct", "CNCPS CA4 - açúcares (% da MS)", ("ca4", "cncps ca4"), 0, 100),
+    _Coluna("cncps_kd_ca4_pct_h", "CNCPS kd CA4 (%/h)", ("kd ca4",), 0, 500),
+    _Coluna("cncps_cb1_pct", "CNCPS CB1 - amido (% da MS)", ("cb1", "cncps cb1"), 0, 100),
+    _Coluna("cncps_kd_cb1_pct_h", "CNCPS kd CB1 (%/h)", ("kd cb1",), 0, 500),
+    _Coluna("cncps_cb2_pct", "CNCPS CB2 - fibra solúvel (% da MS)", ("cb2", "cncps cb2"), 0, 100),
+    _Coluna("cncps_kd_cb2_pct_h", "CNCPS kd CB2 (%/h)", ("kd cb2",), 0, 500),
+    _Coluna("cncps_cb3_pct", "CNCPS CB3 - FDN digestível (% da MS)", ("cb3", "cncps cb3"), 0, 100),
+    _Coluna("cncps_kd_cb3_pct_h", "CNCPS kd CB3 (%/h)", ("kd cb3",), 0, 500),
+    _Coluna("cncps_cc_pct", "CNCPS CC - FDN indigestível (% da MS)", ("cc", "cncps cc", "undf"), 0, 100),
+    _Coluna("cncps_pa1_pct", "CNCPS PA1 - amônia (% da PB)", ("pa1", "cncps pa1"), 0, 100),
+    _Coluna("cncps_pa2_pct", "CNCPS PA2 - peptídeos solúveis (% da PB)", ("pa2", "cncps pa2"), 0, 100),
+    _Coluna("cncps_kd_pa2_pct_h", "CNCPS kd PA2 (%/h)", ("kd pa2",), 0, 500),
+    _Coluna("cncps_pb1_pct", "CNCPS PB1 - proteína rapidamente degradável (% da PB)", ("pb1", "cncps pb1"), 0, 100),
+    _Coluna("cncps_kd_pb1_pct_h", "CNCPS kd PB1 (%/h)", ("kd pb1",), 0, 500),
+    _Coluna("cncps_pb2_pct", "CNCPS PB2 - proteína lentamente degradável (% da PB)", ("pb2", "cncps pb2"), 0, 100),
+    _Coluna("cncps_kd_pb2_pct_h", "CNCPS kd PB2 (%/h)", ("kd pb2",), 0, 500),
+    _Coluna("cncps_pc_pct", "CNCPS PC - proteína indisponível (% da PB)", ("pc", "cncps pc"), 0, 100),
     _Coluna("ca_pct", "Ca - cálcio (% da MS)", ("ca", "ca pct", "calcio"), 0, 50),
     _Coluna("p_pct", "P - fósforo (% da MS)", ("p", "p pct", "fosforo"), 0, 50),
     _Coluna("mg_pct", "Mg - magnésio (% da MS)", ("mg", "mg pct", "magnesio"), 0, 50),
@@ -441,6 +559,12 @@ def importar_planilha(session: Session, fazenda_id: int | None, nome_arquivo: st
         for campo, valor in valores.items():
             setattr(item, campo, valor)
         item.atualizado_em = datetime.utcnow()
+        # Fechamento das frações CNCPS — mesma checagem não bloqueante da
+        # tela (ver avisos_fechamento_fracoes), aqui linha a linha: a
+        # importação não pode travar por causa de um laudo parcial, então
+        # isto vira aviso, nunca erro.
+        for aviso_fechamento in avisos_fechamento_fracoes(item):
+            avisos.append(f'Linha {i} ("{nome}"): {aviso_fechamento}')
         session.add(item)
         da_fazenda_por_nome[chave] = item
 
@@ -453,6 +577,8 @@ __all__ = [
     "listar_biblioteca",
     "obter_para_editar",
     "excluir_ou_restaurar",
+    "avisos_fechamento_fracoes",
+    "TOLERANCIA_FECHAMENTO_FRACOES_PCT",
     "gerar_modelo_planilha",
     "importar_planilha",
     "COLUNAS_IMPORTACAO",
