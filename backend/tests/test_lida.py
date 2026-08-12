@@ -9,7 +9,7 @@ para IATF/indução/customizado, "lida" é só mais uma origem).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +18,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Estoque, LidaAplicacao, LidaLancamento
+from fazenda.rules.lida import JANELA_ATRASO_DIAS, eventos_agenda
 
 
 @pytest.fixture
@@ -211,3 +212,42 @@ class TestListagemAtivos:
         assert len(ativos) == 1
         assert ativos[0]["pendentes"] == 2
         assert ativos[0]["proxima_etapa"] == "D0"
+
+
+# ---------------------------------------------------------------------------
+# JANELA_ATRASO_DIAS via `eventos_agenda` — mesmo teste direto de
+# test_protocolo_customizado.py::test_janela_atraso_dias_..., aplicado à
+# família Lida. `data` é parâmetro OBRIGATÓRIO (sem fallback interno para
+# date.today()) propositalmente — é isso que torna este teste imune ao
+# defeito que já quebrou 7 testes deste repositório (ver PR #492).
+# ---------------------------------------------------------------------------
+def test_janela_atraso_dias_inclui_ate_o_limite_e_exclui_um_dia_depois():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    referencia = date(2030, 1, 1)
+
+    with Session(engine) as session:
+        lanc = LidaLancamento(
+            lida_id=1, nome_protocolo="Molde X", modo="frequencia",
+            data_inicio=referencia - timedelta(days=JANELA_ATRASO_DIAS + 5),
+        )
+        session.add(lanc)
+        session.commit()
+        session.refresh(lanc)
+
+        # Etapa vencida há exatamente JANELA_ATRASO_DIAS: ainda aparece —
+        # `data_prevista >= limite` inclui a borda.
+        session.add(LidaAplicacao(
+            lancamento_id=lanc.id, dia=0, descricao="Dentro da janela",
+            data_prevista=referencia - timedelta(days=JANELA_ATRASO_DIAS),
+        ))
+        # Etapa vencida há JANELA_ATRASO_DIAS + 1: já saiu da Agenda.
+        session.add(LidaAplicacao(
+            lancamento_id=lanc.id, dia=1, descricao="Fora da janela",
+            data_prevista=referencia - timedelta(days=JANELA_ATRASO_DIAS + 1),
+        ))
+        session.commit()
+
+        eventos = eventos_agenda(session, referencia, realizados=set())
+        descricoes = {e["descricao"].rsplit(" — ", 1)[-1] for e in eventos}
+        assert descricoes == {"Dentro da janela"}

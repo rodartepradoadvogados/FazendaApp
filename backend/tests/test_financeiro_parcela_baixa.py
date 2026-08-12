@@ -139,6 +139,48 @@ def test_lancamentos_e_contas_a_pagar_refletem_parcela_paga(client):
     assert parcelas_pendentes == {2, 3}
 
 
+def test_contas_a_pagar_data_referencia_fixa_a_janela_independente_do_dia_real(client):
+    """`data_referencia` (ver GET /contas-a-pagar em financeiro.py) existe
+    para que este teste não dependa do dia real em que a suíte roda — mesmo
+    defeito que já quebrou 7 testes deste repositório (ver PR #492): janela
+    de dias comparada contra data absoluta, sem forma de fixar o "hoje" da
+    consulta. Aqui a referência é fixa em 2030-01-01, bem longe de qualquer
+    data real de execução, e o resultado tem que ser sempre o mesmo."""
+    c, engine = client
+    referencia = date(2030, 1, 1)
+    r = c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa",
+        "itens": [{"produto": "Ração", "quantidade": 1, "valor_unitario": 500.0, "valor_total": 500.0}],
+        "data_emissao": referencia.isoformat(),
+        "centro_custo": "Pecuária Leiteira",
+        "parcelas": [
+            # Dentro da janela de 10 dias a partir da referência.
+            {"data_vencimento": (referencia + timedelta(days=5)).isoformat(), "valor": 500.0},
+        ],
+    })
+    assert r.status_code == 201, r.text
+    numero_lancamento = r.json()["numero_lancamento"]
+
+    r2 = c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa",
+        "itens": [{"produto": "Sal mineral", "quantidade": 1, "valor_unitario": 300.0, "valor_total": 300.0}],
+        "data_emissao": referencia.isoformat(),
+        "centro_custo": "Pecuária Leiteira",
+        "parcelas": [
+            # Fora da janela de 10 dias a partir da referência.
+            {"data_vencimento": (referencia + timedelta(days=30)).isoformat(), "valor": 300.0},
+        ],
+    })
+    assert r2.status_code == 201, r2.text
+    numero_lancamento_fora = r2.json()["numero_lancamento"]
+
+    rp = c.get("/financeiro/contas-a-pagar", params={"data_referencia": referencia.isoformat()})
+    assert rp.status_code == 200
+    numeros = {x["numero_lancamento"] for x in rp.json()}
+    assert numero_lancamento in numeros
+    assert numero_lancamento_fora not in numeros
+
+
 def test_boleto_do_lancamento_vai_para_primeira_parcela_ao_parcelar(client):
     c, engine = client
     hoje = _hoje()
