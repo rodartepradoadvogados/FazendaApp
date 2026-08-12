@@ -90,6 +90,93 @@ export const CAMPOS_GRADE_PRINCIPAL: CampoNutricional[] = [
   "ms_pct", "pb_pct", "fdn_pct", "fda_pct", "amido_pct", "ee_pct", "ca_pct", "p_pct", "custo_kg_mn",
 ];
 
+// ── Fracionamento CNCPS (carboidrato/proteína) — SÓ na biblioteca de
+// alimentos (BibliotecaAlimentos.tsx), DELIBERADAMENTE fora de
+// CAMPOS_NUTRICIONAIS/GRUPOS_CAMPOS_NUTRICIONAIS acima: estes campos não
+// entram na grade da Etapa 1 nem no motor de cálculo hoje — preparam o dado
+// para as futuras Etapas 8 (Modelo ruminal) e 9 (Aminoácidos), que ainda
+// não existem. Espelha CAMPOS_CNCPS_FRACIONAMENTO em
+// backend/fazenda/models/formulacao.py — ver lá a fonte (CNCPS v6.5) e a
+// decisão de quais frações têm kd.
+export const CAMPOS_CNCPS_CARBOIDRATO = [
+  "cncps_ca1_pct", "cncps_ca2_pct", "cncps_kd_ca2_pct_h", "cncps_ca3_pct", "cncps_kd_ca3_pct_h",
+  "cncps_ca4_pct", "cncps_kd_ca4_pct_h", "cncps_cb1_pct", "cncps_kd_cb1_pct_h", "cncps_cb2_pct",
+  "cncps_kd_cb2_pct_h", "cncps_cb3_pct", "cncps_kd_cb3_pct_h", "cncps_cc_pct",
+] as const;
+export const CAMPOS_CNCPS_PROTEINA = [
+  "cncps_pa1_pct", "cncps_pa2_pct", "cncps_kd_pa2_pct_h", "cncps_pb1_pct", "cncps_kd_pb1_pct_h",
+  "cncps_pb2_pct", "cncps_kd_pb2_pct_h", "cncps_pc_pct",
+] as const;
+export const CAMPOS_CNCPS_FRACIONAMENTO = [...CAMPOS_CNCPS_CARBOIDRATO, ...CAMPOS_CNCPS_PROTEINA] as const;
+export type CampoCncps = (typeof CAMPOS_CNCPS_FRACIONAMENTO)[number];
+
+export const GRUPOS_CAMPOS_CNCPS: { titulo: string; campos: CampoCncps[] }[] = [
+  { titulo: "Fracionamento CNCPS de carboidrato (% da MS)", campos: [...CAMPOS_CNCPS_CARBOIDRATO] },
+  { titulo: "Fracionamento CNCPS de proteína (% da PB)", campos: [...CAMPOS_CNCPS_PROTEINA] },
+];
+
+export const ROTULOS_CAMPOS_CNCPS: Record<CampoCncps, string> = {
+  cncps_ca1_pct: "CA1 — ácidos orgânicos %", cncps_ca2_pct: "CA2 — ácido lático %", cncps_kd_ca2_pct_h: "kd CA2 (%/h)",
+  cncps_ca3_pct: "CA3 — outros solúveis %", cncps_kd_ca3_pct_h: "kd CA3 (%/h)",
+  cncps_ca4_pct: "CA4 — açúcares %", cncps_kd_ca4_pct_h: "kd CA4 (%/h)",
+  cncps_cb1_pct: "CB1 — amido %", cncps_kd_cb1_pct_h: "kd CB1 (%/h)",
+  cncps_cb2_pct: "CB2 — fibra solúvel %", cncps_kd_cb2_pct_h: "kd CB2 (%/h)",
+  cncps_cb3_pct: "CB3 — FDN digestível %", cncps_kd_cb3_pct_h: "kd CB3 (%/h)",
+  cncps_cc_pct: "CC — FDN indigestível %",
+  cncps_pa1_pct: "PA1 — amônia %", cncps_pa2_pct: "PA2 — peptídeos solúveis %", cncps_kd_pa2_pct_h: "kd PA2 (%/h)",
+  cncps_pb1_pct: "PB1 — proteína rápida %", cncps_kd_pb1_pct_h: "kd PB1 (%/h)",
+  cncps_pb2_pct: "PB2 — proteína lenta %", cncps_kd_pb2_pct_h: "kd PB2 (%/h)",
+  cncps_pc_pct: "PC — proteína indisponível %",
+};
+
+// ±1 ponto percentual — mesma tolerância/constante do backend
+// (TOLERANCIA_FECHAMENTO_FRACOES_PCT em fazenda.rules.biblioteca_alimentos).
+export const TOLERANCIA_FECHAMENTO_FRACOES_PCT = 1.0;
+
+// Espelho em TS de `avisos_fechamento_fracoes` (backend) — só para dar
+// feedback AO VIVO enquanto o usuário digita no modal de edição, antes de
+// salvar; o valor que fica de fato gravado/exibido na listagem
+// (EntradaBiblioteca.avisos_fechamento) sempre vem do backend, essa função
+// nunca é a fonte da verdade. Nunca bloqueia — só avisa.
+function somaSeAlgumaPreenchida(valores: Record<string, number | null | undefined>, campos: readonly string[]): number | null {
+  const presentes = campos.map((c) => valores[c]).filter((v) => v != null);
+  if (presentes.length === 0) return null;
+  return campos.reduce((soma, c) => soma + (Number(valores[c]) || 0), 0);
+}
+
+export function avisosFechamentoFracoes(valores: Record<string, number | null | undefined>): string[] {
+  const avisos: string[] = [];
+
+  const somaProteina = somaSeAlgumaPreenchida(valores, CAMPOS_CNCPS_PROTEINA);
+  if (somaProteina != null) {
+    const diferenca = 100 - somaProteina;
+    if (Math.abs(diferenca) > TOLERANCIA_FECHAMENTO_FRACOES_PCT) {
+      avisos.push(
+        diferenca > 0
+          ? `Frações de proteína somam ${somaProteina.toFixed(1)}% da PB — faltam ${diferenca.toFixed(1)} pontos percentuais para fechar 100%.`
+          : `Frações de proteína somam ${somaProteina.toFixed(1)}% da PB — ${(-diferenca).toFixed(1)} pontos percentuais além de 100%.`,
+      );
+    }
+  }
+
+  const somaCarboidrato = somaSeAlgumaPreenchida(valores, CAMPOS_CNCPS_CARBOIDRATO);
+  if (somaCarboidrato != null) {
+    const pb = valores.pb_pct, ee = valores.ee_pct, cinzas = valores.cinzas_pct;
+    if (pb == null || ee == null || cinzas == null) {
+      avisos.push("Frações de carboidrato preenchidas, mas PB, EE e Cinzas precisam estar todos informados para conferir o fechamento.");
+    } else {
+      const choTotal = 100 - Number(pb) - Number(ee) - Number(cinzas);
+      const diferenca = choTotal - somaCarboidrato;
+      if (Math.abs(diferenca) > TOLERANCIA_FECHAMENTO_FRACOES_PCT) {
+        const base = `Frações de carboidrato somam ${somaCarboidrato.toFixed(1)}% da MS — o carboidrato deste alimento é ${choTotal.toFixed(1)}% da MS`;
+        avisos.push(diferenca > 0 ? `${base}; faltam ${diferenca.toFixed(1)} pontos percentuais para fechar.` : `${base}; ${(-diferenca).toFixed(1)} pontos percentuais além disso.`);
+      }
+    }
+  }
+
+  return avisos;
+}
+
 // ── Animal (Etapa 2) ──
 export type AnimalPayload = {
   estado_fisiologico: EstadoFisiologico;
@@ -361,7 +448,16 @@ export type EntradaBiblioteca = {
   // (editado ou ocultado) — controla o rótulo do botão excluir ("Restaurar
   // padrão CowData" em vez de "Excluir") na aba de biblioteca.
   eh_mestre: boolean; eh_copia_editada: boolean;
-  valores: { [K in CampoNutricional]?: number | null } & Record<string, number | null | undefined>;
+  // Quais chaves de `valores` já foram digitadas à mão pela fazenda — cinza
+  // (ainda é o valor da mestre) x preto e negrito (verificado/editado por
+  // esta fazenda), mesma convenção de ItemGrade.campos_editados.
+  campos_editados: string[];
+  // Fechamento das frações CNCPS (não bloqueante) — vazio = fecha dentro da
+  // tolerância ou nada foi preenchido ainda; ver avisos_fechamento_fracoes
+  // no backend. Cada string já vem pronta para exibir na tela.
+  avisos_fechamento: string[];
+  valores: { [K in CampoNutricional]?: number | null } & { [K in CampoCncps]?: number | null }
+    & Record<string, number | null | undefined>;
 };
 
 export type AlimentoCadastradoResumo = { id: number; nome: string; sem_composicao: boolean };
@@ -393,6 +489,9 @@ export type AlimentoNutricionalPayload = {
   fonte?: string | null; observacao?: string | null;
   inclusao_min_pct?: number | null; inclusao_max_pct?: number | null;
   valores: Record<string, number | null | undefined>;
+  // Ver EntradaBiblioteca.campos_editados — o que o usuário digitou à mão
+  // nesta edição, para o backend persistir a marcação cinza/preto.
+  campos_editados?: string[];
 };
 
 export async function atualizarAlimentoNaBiblioteca(id: number, dados: AlimentoNutricionalPayload): Promise<EntradaBiblioteca> {

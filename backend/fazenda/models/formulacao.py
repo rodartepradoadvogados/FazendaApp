@@ -57,7 +57,15 @@ class AlimentoNutricional(SQLModel, table=True):
     Os ~38 campos numéricos abaixo cobrem só o que a Fase 1 usa; aminoácidos,
     microminerais, vitaminas e perfil de ácidos graxos (Fase 2) ficam em
     `extras_json` até serem promovidos a colunas reais — mantém a migração
-    pequena sem impedir que o dado já seja digitado e guardado hoje."""
+    pequena sem impedir que o dado já seja digitado e guardado hoje.
+
+    Exceção deliberada: o fracionamento CNCPS de carboidrato/proteína
+    (`cncps_*` abaixo) JÁ nasce como coluna tipada, à frente do resto da
+    Fase 2 — é o dado de entrada que as Etapas 8 (Modelo ruminal) e 9
+    (Aminoácidos) do wizard vão precisar quando forem implementadas (ainda
+    NÃO estão; esta classe só guarda o dado, não há leitor dele hoje). Ver
+    `fazenda.rules.biblioteca_alimentos.avisos_fechamento_fracoes` para a
+    checagem (não bloqueante) de que as frações somam 100%."""
 
     __tablename__ = "alimento_nutricional"
     __table_args__ = (UniqueConstraint("alimento_id", "fazenda_id", name="uq_alimento_nutricional_alimento_fazenda"),)
@@ -148,8 +156,99 @@ class AlimentoNutricional(SQLModel, table=True):
     # ---- Custo -----------------------------------------------------------
     custo_kg_mn: Optional[float] = None  # R$/kg de matéria natural
 
+    # ---- Fracionamento CNCPS de carboidrato (v6.5), % da MATÉRIA SECA ---
+    # Nomenclatura A (solúvel) / B (insolúvel potencialmente digestível) /
+    # C (indigestível) do CNCPS original (Sniffen et al., 1992, J. Anim.
+    # Sci. 70:3562-3577), com o detalhamento em subfrações da revisão v6.5
+    # (Van Amburgh et al., 2015, J. Dairy Sci. 98:6361-6380; Higgs et al.,
+    # 2015, J. Dairy Sci. 98:6340-6360 — tabela de kd por alimento). Junto
+    # com PB/EE/Cinzas dá o "fechamento": CA1+CA2+CA3+CA4+CB1+CB2+CB3+CC
+    # deve somar (100 − PB − EE − Cinzas), isto é, 100% do carboidrato do
+    # alimento — ver `avisos_fechamento_fracoes`.
+    #
+    # kd (taxa de degradação ruminal, %/h) só vira COLUNA para a fração que
+    # de fato tem uma taxa própria, medida/estimada por alimento (varia de
+    # ingrediente pra ingrediente). Duas frações ficam de fora de propósito:
+    #   - CA1 (ácidos orgânicos — acético/propiônico/butírico, típico de
+    #     silagem): já é produto final de fermentação, não fermenta mais no
+    #     rúmen — kd=0 por definição do sistema, não é dado do alimento.
+    #   - CC (FDN indigestível/uNDF): indigestível É o oposto de "ter uma
+    #     taxa" — kd=0 sempre, por definição, também não é dado do alimento.
+    # As outras seis (CA2, CA3, CA4, CB1, CB2, CB3) ganham campo de kd.
+    cncps_ca1_pct: Optional[float] = None  # ácidos orgânicos (acético/propiônico/butírico) — sem kd, ver acima
+    cncps_ca2_pct: Optional[float] = None  # ácido lático
+    cncps_kd_ca2_pct_h: Optional[float] = None
+    cncps_ca3_pct: Optional[float] = None  # outros ácidos orgânicos/solúveis
+    cncps_kd_ca3_pct_h: Optional[float] = None
+    cncps_ca4_pct: Optional[float] = None  # açúcares (WSC — carboidrato solúvel em água)
+    cncps_kd_ca4_pct_h: Optional[float] = None
+    cncps_cb1_pct: Optional[float] = None  # amido
+    cncps_kd_cb1_pct_h: Optional[float] = None
+    cncps_cb2_pct: Optional[float] = None  # fibra solúvel (pectina e afins — calculada por diferença no laudo)
+    cncps_kd_cb2_pct_h: Optional[float] = None
+    cncps_cb3_pct: Optional[float] = None  # FDN potencialmente digestível
+    cncps_kd_cb3_pct_h: Optional[float] = None
+    cncps_cc_pct: Optional[float] = None  # FDN indigestível (uNDF/uNDF240) — sem kd, ver acima
+
+    # ---- Fracionamento CNCPS de proteína (v6.5), % da PROTEÍNA BRUTA ----
+    # PA1+PA2+PB1+PB2+PC deve somar 100% da PB do alimento — ver
+    # `avisos_fechamento_fracoes`. Mesma fonte da seção de carboidrato acima.
+    #
+    # kd só vira coluna pra quem tem taxa própria e variável por alimento:
+    #   - PA1 (amônia): já é N mineral, não "degrada" — é absorvida direto.
+    #     O próprio CNCPS trata isso como praticamente instantâneo (kd
+    #     nominal de 200%/h, um valor de sistema, não medido por alimento —
+    #     Van Amburgh et al., 2015), então não é dado do alimento.
+    #   - PC (proteína indisponível, ligada a ADF/lignina): por definição
+    #     praticamente indigestível — sem taxa própria de degradação.
+    # PA2, PB1 e PB2 ganham campo de kd (variam de verdade por alimento —
+    # PB2, em especial, acompanha a taxa de digestão da fibra, CB3).
+    cncps_pa1_pct: Optional[float] = None  # amônia
+    cncps_pa2_pct: Optional[float] = None  # peptídeos solúveis/proteína verdadeira solúvel
+    cncps_kd_pa2_pct_h: Optional[float] = None
+    cncps_pb1_pct: Optional[float] = None  # proteína rapidamente degradável
+    cncps_kd_pb1_pct_h: Optional[float] = None
+    cncps_pb2_pct: Optional[float] = None  # proteína lentamente degradável (ligada à FDN)
+    cncps_kd_pb2_pct_h: Optional[float] = None
+    cncps_pc_pct: Optional[float] = None  # proteína indisponível (ligada a ADF/lignina) — sem kd, ver acima
+
+    # Quais dos campos acima (e dos ~38 campos "Base"/"Custo" desta classe)
+    # foram digitados à mão pelo usuário desta fazenda, em oposição a
+    # puxados automaticamente da linha mestre CowData — mesma convenção
+    # (nomes de coluna como string num array-JSON) de
+    # `DietaSimulacaoItem.campos_editados_json`, reaproveitada aqui de
+    # propósito (não é um mecanismo novo). Cinza na tela = ainda é o valor
+    # da mestre; preto e negrito = este item já foi verificado/editado pela
+    # fazenda para este campo específico. Nunca populado na própria linha
+    # mestre (ela é sempre 100% CowData, por definição).
+    campos_editados_json: Optional[str] = None
+
     # ---- Fase 2/3 (aminoácidos, microminerais, vitaminas, perfil de AG) -
     extras_json: Optional[str] = None
+
+
+# Todos os campos do fracionamento CNCPS acima — usado para o copy-on-write
+# (`_clonar_para_fazenda`, em fazenda.rules.biblioteca_alimentos) e para a
+# extração/gravação genérica no router (criar/atualizar item da biblioteca),
+# igual em espírito a `CAMPOS_NUTRICIONAIS` (fazenda.rules.nutricao.tipos)
+# mas DELIBERADAMENTE um conjunto separado: estes campos NÃO entram no
+# contrato do motor (`IngredienteEntrada`) nem na grade/snapshot do wizard
+# (`DietaSimulacaoItem.valores_json`) — a Fase 1 (Etapas 1-7, já
+# implementada) não lê nenhum deles; só a biblioteca cadastra/importa/valida
+# o fechamento, para quando as Etapas 8/9 existirem.
+CAMPOS_CNCPS_CARBOIDRATO: tuple[str, ...] = (
+    "cncps_ca1_pct", "cncps_ca2_pct", "cncps_ca3_pct", "cncps_ca4_pct",
+    "cncps_cb1_pct", "cncps_cb2_pct", "cncps_cb3_pct", "cncps_cc_pct",
+)
+CAMPOS_CNCPS_PROTEINA: tuple[str, ...] = (
+    "cncps_pa1_pct", "cncps_pa2_pct", "cncps_pb1_pct", "cncps_pb2_pct", "cncps_pc_pct",
+)
+CAMPOS_CNCPS_KD: tuple[str, ...] = (
+    "cncps_kd_ca2_pct_h", "cncps_kd_ca3_pct_h", "cncps_kd_ca4_pct_h",
+    "cncps_kd_cb1_pct_h", "cncps_kd_cb2_pct_h", "cncps_kd_cb3_pct_h",
+    "cncps_kd_pa2_pct_h", "cncps_kd_pb1_pct_h", "cncps_kd_pb2_pct_h",
+)
+CAMPOS_CNCPS_FRACIONAMENTO: tuple[str, ...] = CAMPOS_CNCPS_CARBOIDRATO + CAMPOS_CNCPS_PROTEINA + CAMPOS_CNCPS_KD
 
 
 class DietaSimulacao(SQLModel, table=True):
