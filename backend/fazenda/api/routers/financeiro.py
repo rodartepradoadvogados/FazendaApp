@@ -2796,11 +2796,20 @@ async def enviar_recibo(
 @router.get("/contas-a-pagar")
 def contas_a_pagar(
     dias: int = Query(10, description="Janela em dias"),
+    data_referencia: date | None = Query(None, description="Data de referência para calcular a janela (default: hoje)"),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
-    """Retorna contas com vencimento nos próximos N dias (não quitadas)."""
-    hoje = date.today()
+    """Retorna contas com vencimento nos próximos N dias (não quitadas).
+    `data_referencia` segue a mesma convenção de calcular_pev
+    (fazenda/rules/scratch_pev.py) — sem ela, mesmo comportamento de sempre
+    (janela a partir de hoje); com ela, permite fixar o "hoje" da consulta.
+    Existe para que um teste comparando essa janela contra uma data possa
+    fixar as duas pontas em vez de depender do dia real em que a suíte
+    roda — mesmo defeito que já quebrou 7 testes deste repositório (ver
+    PR #492): asserção com data absoluta escrita à mão, comparada contra
+    `date.today()` real, passa em alguns dias do mês e falha em outros."""
+    hoje = data_referencia or date.today()
     limite = hoje + __import__("datetime").timedelta(days=dias)
 
     query = select(ContaGerencial)
