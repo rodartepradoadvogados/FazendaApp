@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
+from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, ContaCorrente, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria, DiariaAuditoria,
@@ -306,9 +306,8 @@ def listar_empreitadas(
 @router.post("/empreitadas")
 def criar_empreitada(
     dados: EmpreitadaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -360,7 +359,7 @@ def criar_empreitada(
 @router.put("/empreitadas/{empreitada_id}/etapas/{etapa_id}/concluir")
 def concluir_etapa_empreitada(
     empreitada_id: int, etapa_id: int, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Marca uma etapa como concluída e lança a conta a pagar correspondente no
@@ -368,7 +367,6 @@ def concluir_etapa_empreitada(
     a partir da própria data_vencimento da conta) e em Contas a Pagar, para
     análise/pagamento.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     etapa = session.get(EmpreitadaEtapa, etapa_id)
     if not etapa or etapa.empreitada_id != empreitada_id or (fazenda_id is not None and etapa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Etapa não encontrada")
@@ -574,9 +572,8 @@ def listar_contratos(
 @router.post("/contratos")
 def criar_contrato(
     dados: ContratoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -964,11 +961,11 @@ class ParametroDiariaPadraoIn(BaseModel):
 @router.put("/diarias/parametro-padrao")
 def salvar_parametro_diaria_padrao(
     dados: ParametroDiariaPadraoIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     if dados.frequencia_auditoria not in ("semanal", "intervalo_dias", "mensal"):
         raise HTTPException(status_code=400, detail="Frequência inválida")
-    padrao = _parametro_diaria_padrao(session, fazenda_id_seguro(fazenda_id))
+    padrao = _parametro_diaria_padrao(session, fazenda_id)
     padrao.auditar_periodicamente = dados.auditar_periodicamente
     padrao.frequencia_auditoria = dados.frequencia_auditoria
     padrao.dia_semana_auditoria = dados.dia_semana_auditoria
@@ -983,9 +980,8 @@ def salvar_parametro_diaria_padrao(
 @router.post("/diarias")
 def criar_diaria(
     dados: DiariaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -1068,9 +1064,8 @@ def responder_auditoria_diaria(
 @router.post("/diarias/{diaria_id}/pagamentos")
 def registrar_pagamento_diaria(
     diaria_id: int, dados: DiariaPagamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     diaria = session.get(Diaria, diaria_id)
     if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
@@ -1185,11 +1180,10 @@ def obter_dias_diaria(
 @router.put("/diarias/{diaria_id}/dias")
 def salvar_dias_diaria(
     diaria_id: int, dados: DiariaDiasPutIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Substitui (replace, não merge) o estado dos dias no período informado
     — o cliente sempre manda o estado corrigido inteiro da janela visível."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
     pessoa = session.get(Pessoa, diaria.pessoa_id)
     if dados.periodo_inicio > dados.periodo_fim:
@@ -1581,14 +1575,13 @@ def _sincronizar_conta_vale_avulso(
 @router.post("/vale-avulso")
 def criar_vale_avulso(
     dados: ValeAvulsoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Lança um vale (adiantamento) para Empreitada/Contrato/Diária — análogo ao
     Vale de funcionário, permitindo controlar o que já foi adiantado a
     empreiteiros/contratados/diaristas antes do pagamento final.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.origem_tipo not in ORIGENS_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Tipo de origem inválido")
     if dados.valor <= 0:
@@ -1658,9 +1651,8 @@ def listar_todos_vales_avulsos(
 @router.put("/vale-avulso/{vale_id}")
 def atualizar_vale_avulso(
     vale_id: int, dados: ValeAvulsoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeAvulso, vale_id)
     if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")

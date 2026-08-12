@@ -18,14 +18,16 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.models import (
     Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, DietaSimulacao, DietaSimulacaoItem,
     PesagemCorporal, Secagem, Usuario,
 )
+from fazenda.models.formulacao import CAMPOS_CNCPS_FRACIONAMENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.biblioteca_alimentos import (
-    excluir_ou_restaurar, gerar_modelo_planilha, importar_planilha, listar_biblioteca, obter_para_editar,
+    avisos_fechamento_fracoes, excluir_ou_restaurar, gerar_modelo_planilha, importar_planilha, listar_biblioteca,
+    obter_para_editar,
 )
 from fazenda.rules.busca import casa_busca
 from fazenda.rules.dieta_lancamento import contexto_lote, criar_lancamento_programado
@@ -177,6 +179,12 @@ class AlimentoNutricionalIn(BaseModel):
     inclusao_min_pct: float | None = None
     inclusao_max_pct: float | None = None
     valores: dict[str, float | None] = {}
+    # Quais chaves de `valores` foram digitadas à mão pelo usuário desta
+    # fazenda (em vez de ainda serem o valor puxado da linha mestre CowData)
+    # — mesma convenção `campos_editados` de DietaSimulacaoItem/GradeAlimentos
+    # (ver docstring de AlimentoNutricional.campos_editados_json). Puramente
+    # de exibição (cinza/preto na tela); não afeta cálculo nenhum.
+    campos_editados: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -303,10 +311,14 @@ def listar_simulacoes(
 
 @router.post("/simulacoes", status_code=201)
 def criar_simulacao(
-    dados: SimulacaoCriarIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: SimulacaoCriarIn, fazenda_id: int | None = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # `DietaSimulacao.fazenda_id` é obrigatório (não Optional) — mantém a
+    # guarda mesmo depois do resolvedor porque ele só devolve None em
+    # silêncio no ambiente sem multi-fazenda provisionado nenhum (ver
+    # docstring de resolver_fazenda_id_escrita); em qualquer outro caso
+    # ambíguo ele mesmo já recusa com 409.
     if fazenda_id is None:
         raise HTTPException(status_code=400, detail="Selecione a fazenda antes de criar uma simulação")
     if not dados.nome.strip():
@@ -404,7 +416,13 @@ def salvar_simulacao(
 
     for ordem, item_in in enumerate(dados.itens):
         session.add(DietaSimulacaoItem(
-            fazenda_id=fazenda_id, simulacao_id=simulacao_id, ordem=ordem,
+            # `sim.fazenda_id` (obrigatório, já resolvido na criação da
+            # simulação — ver criar_simulacao), NUNCA a variável `fazenda_id`
+            # tolerante a nulo desta função (usada só para o filtro de
+            # LEITURA acima): um dono-equivalente editando sem fazenda
+            # selecionada faria `fazenda_id` chegar None aqui e gravaria o
+            # item órfão, mesmo a simulação-pai já tendo fazenda_id certo.
+            fazenda_id=sim.fazenda_id, simulacao_id=simulacao_id, ordem=ordem,
             alimento_id=item_in.alimento_id, alimento_nutricional_id=item_in.alimento_nutricional_id,
             analise_bromatologica_id=item_in.analise_bromatologica_id, nome=item_in.nome, origem=item_in.origem,
             proporcao_ms_pct=item_in.proporcao_ms_pct, categoria_nasem=item_in.categoria_nasem, conc_pct=item_in.conc_pct,
@@ -443,9 +461,15 @@ def duplicar_simulacao(
     original = _buscar_simulacao(session, fazenda_id, simulacao_id)
     itens_originais = _itens_da_simulacao(session, fazenda_id, simulacao_id)
 
+    # `original.fazenda_id` (obrigatório, já resolvido quando a simulação
+    # original foi criada) — NÃO a variável `fazenda_id` tolerante a nulo
+    # desta função: duplicar sempre pertence à MESMA fazenda da original,
+    # então nem precisa re-resolver do token (evita um dono-equivalente sem
+    # fazenda selecionada gravar a cópia órfã, igual ao bug corrigido em
+    # salvar_simulacao acima).
     nova = DietaSimulacao(
-        nome=dados.nome.strip() or f"{original.nome} (cópia)", lote=original.lote, fazenda_id=fazenda_id, usuario_id=user.id,
-        status="rascunho", etapa_atual=original.etapa_atual,
+        nome=dados.nome.strip() or f"{original.nome} (cópia)", lote=original.lote, fazenda_id=original.fazenda_id,
+        usuario_id=user.id, status="rascunho", etapa_atual=original.etapa_atual,
         **{f: getattr(original, f) for f in AnimalIn.model_fields},
         resultado_json=original.resultado_json, avisos_json=original.avisos_json,
         motor_versao=original.motor_versao, calculado_em=original.calculado_em,
@@ -456,7 +480,7 @@ def duplicar_simulacao(
     session.refresh(nova)
     for item in itens_originais:
         session.add(DietaSimulacaoItem(
-            fazenda_id=fazenda_id, simulacao_id=nova.id, ordem=item.ordem, alimento_id=item.alimento_id,
+            fazenda_id=nova.fazenda_id, simulacao_id=nova.id, ordem=item.ordem, alimento_id=item.alimento_id,
             alimento_nutricional_id=item.alimento_nutricional_id, analise_bromatologica_id=item.analise_bromatologica_id,
             nome=item.nome, origem=item.origem, proporcao_ms_pct=item.proporcao_ms_pct, categoria_nasem=item.categoria_nasem,
             conc_pct=item.conc_pct, ms_pct=item.ms_pct, custo_kg_mn=item.custo_kg_mn,
@@ -492,7 +516,12 @@ def aplicar_simulacao(
     if any(a.get("severidade") == "bloqueante" for a in resultado_dict.get("avisos") or []):
         raise HTTPException(status_code=422, detail="Há um aviso bloqueante nesta simulação — resolva-o antes de aplicar na dieta.")
 
-    contexto = contexto_lote(session, fazenda_id, dados.lote)
+    # `sim.fazenda_id` (obrigatório, resolvido na criação da simulação) daqui
+    # pra baixo — não a variável `fazenda_id` tolerante a nulo desta função
+    # (só serve para a LEITURA da própria simulação acima): o lançamento
+    # gerado tem que pertencer à fazenda da simulação, nunca a uma fazenda
+    # nula/errada por causa de token sem "fid".
+    contexto = contexto_lote(session, sim.fazenda_id, dados.lote)
     qtd_animais = contexto["qtd_animais"] or 1
 
     itens_lancamento = []
@@ -507,7 +536,7 @@ def aplicar_simulacao(
         })
 
     dieta = criar_lancamento_programado(
-        session, fazenda_id, user.id,
+        session, sim.fazenda_id, user.id,
         lote=dados.lote, responsavel=dados.responsavel, data_abertura=dados.data_abertura,
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=f"Gerada pela simulação \"{sim.nome}\"",
         base_quantidade=dados.base_quantidade, leite_bezerros_kg_dia=None,
@@ -531,6 +560,12 @@ def aplicar_simulacao(
 def _nutricional_publico(a: AlimentoNutricional) -> dict:
     valores = {campo: getattr(a, campo) for campo in CAMPOS_NUTRICIONAIS if campo != "custo_kg_mn"}
     valores["custo_kg_mn"] = a.custo_kg_mn
+    # Frações CNCPS (fora de CAMPOS_NUTRICIONAIS de propósito — ver docstring
+    # de CAMPOS_CNCPS_FRACIONAMENTO) entram no mesmo dict `valores` que o
+    # resto — a tela não distingue tecnicamente as duas origens, só agrupa
+    # visualmente por seção.
+    for campo in CAMPOS_CNCPS_FRACIONAMENTO:
+        valores[campo] = getattr(a, campo)
     if a.extras_json:
         valores.update(json.loads(a.extras_json))
     eh_mestre = a.fazenda_id is None
@@ -545,6 +580,12 @@ def _nutricional_publico(a: AlimentoNutricional) -> dict:
         # já é uma cópia desta fazenda de um item mestre (editou ou ocultou).
         "eh_mestre": eh_mestre,
         "eh_copia_editada": (not eh_mestre) and a.origem_mestre_id is not None,
+        # Cinza/preto na tela — ver AlimentoNutricional.campos_editados_json.
+        "campos_editados": json.loads(a.campos_editados_json or "[]"),
+        # Checagem de fechamento das frações CNCPS (nunca bloqueia — ver
+        # avisos_fechamento_fracoes); vazio = fecha dentro da tolerância ou
+        # nada foi preenchido ainda.
+        "avisos_fechamento": avisos_fechamento_fracoes(a),
         "valores": valores,
     }
 
@@ -579,10 +620,17 @@ def listar_alimentos_nutricionais(
 
 @router.post("/alimentos", status_code=201)
 def criar_alimento_nutricional(
-    dados: AlimentoNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: AlimentoNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Guarda explícita (não confia só no resolvedor): `fazenda_id` é a ÚNICA
+    # coluna do sistema em que NULO é um valor legítimo (marca a biblioteca
+    # MESTRE) — se deixasse passar None aqui, o item "próprio" desta fazenda
+    # viraria indistinguível de um item mestre global, visível para TODAS as
+    # outras fazendas. Nas demais tabelas do módulo um fazenda_id nulo já é
+    # barrado pelo próprio resolvedor (409); aqui precisa ser barrado também
+    # no caminho "multi-fazenda não provisionado" (resolvedor devolve None
+    # em silêncio nesse caso — ver docstring de resolver_fazenda_id_escrita).
     if fazenda_id is None:
         raise HTTPException(status_code=400, detail="Selecione a fazenda antes de cadastrar")
     if not dados.nome.strip():
@@ -590,12 +638,14 @@ def criar_alimento_nutricional(
     if dados.categoria_nasem not in CATEGORIAS_NASEM:
         raise HTTPException(status_code=400, detail=f"categoria_nasem inválida: {dados.categoria_nasem!r}")
     campos = {c: dados.valores.get(c) for c in CAMPOS_NUTRICIONAIS}
-    extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS}
+    campos_cncps = {c: dados.valores.get(c) for c in CAMPOS_CNCPS_FRACIONAMENTO}
+    extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS and k not in CAMPOS_CNCPS_FRACIONAMENTO}
     item = AlimentoNutricional(
         alimento_id=dados.alimento_id, nome=dados.nome.strip(), categoria_nasem=dados.categoria_nasem, conc_pct=dados.conc_pct,
         fonte=dados.fonte, observacao=dados.observacao, fazenda_id=fazenda_id, usuario_id=user.id,
         inclusao_min_pct=dados.inclusao_min_pct, inclusao_max_pct=dados.inclusao_max_pct,
-        extras_json=json.dumps(extras) if extras else None, **campos,
+        campos_editados_json=json.dumps(dados.campos_editados) if dados.campos_editados else None,
+        extras_json=json.dumps(extras) if extras else None, **campos, **campos_cncps,
     )
     session.add(item)
     session.commit()
@@ -605,14 +655,19 @@ def criar_alimento_nutricional(
 
 @router.put("/alimentos/{item_id}")
 def atualizar_alimento_nutricional(
-    item_id: int, dados: AlimentoNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    item_id: int, dados: AlimentoNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Editar um item da biblioteca MESTRE nunca grava na linha mestre — cria
     (ou reaproveita) a cópia-por-fazenda via `obter_para_editar` (copy-on-write,
     ver fazenda.rules.biblioteca_alimentos). As outras fazendas continuam
     vendo a mestre original, intocada."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Sem fazenda resolvida, `obter_para_editar` devolveria a PRÓPRIA linha
+    # mestre para edição direta (ver seu docstring) — o oposto do
+    # copy-on-write que este endpoint promete. Trava aqui, não lá: a função
+    # de regra continua servindo outros chamadores tolerantes a fazenda nula.
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail="Selecione a fazenda antes de editar")
     if dados.categoria_nasem not in CATEGORIAS_NASEM:
         raise HTTPException(status_code=400, detail=f"categoria_nasem inválida: {dados.categoria_nasem!r}")
     item = obter_para_editar(session, fazenda_id, item_id)
@@ -622,8 +677,11 @@ def atualizar_alimento_nutricional(
     item.inclusao_min_pct, item.inclusao_max_pct = dados.inclusao_min_pct, dados.inclusao_max_pct
     for campo in CAMPOS_NUTRICIONAIS:
         setattr(item, campo, dados.valores.get(campo))
-    extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS}
+    for campo in CAMPOS_CNCPS_FRACIONAMENTO:
+        setattr(item, campo, dados.valores.get(campo))
+    extras = {k: v for k, v in dados.valores.items() if k not in CAMPOS_NUTRICIONAIS and k not in CAMPOS_CNCPS_FRACIONAMENTO}
     item.extras_json = json.dumps(extras) if extras else None
+    item.campos_editados_json = json.dumps(dados.campos_editados) if dados.campos_editados else None
     item.atualizado_em = datetime.utcnow()
     if item.usuario_id is None:
         item.usuario_id = user.id
@@ -635,13 +693,18 @@ def atualizar_alimento_nutricional(
 
 @router.delete("/alimentos/{item_id}")
 def excluir_alimento_nutricional(
-    item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    item_id: int, fazenda_id: int | None = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     """Um único botão de excluir cobre os 3 casos do CRUD (ver
     `excluir_ou_restaurar`): item próprio some de vez; cópia editada de um
     item mestre "volta ao padrão CowData"; item mestre nunca editado é
     ocultado só para esta fazenda, sem afetar as outras."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Sem isto, `excluir_ou_restaurar` com fazenda_id=None pula a checagem
+    # de isolamento entre fazendas (ela só compara `item.fazenda_id !=
+    # fazenda_id` quando fazenda_id não é nulo) — deixaria excluir/restaurar
+    # item de OUTRA fazenda sem dono resolvido barrar o acesso.
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail="Selecione a fazenda antes de remover um item da biblioteca")
     return excluir_ou_restaurar(session, fazenda_id, item_id)
 
 
@@ -659,13 +722,12 @@ def baixar_modelo_biblioteca() -> Response:
 
 @router.post("/alimentos/importar")
 async def importar_biblioteca(
-    file: UploadFile, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    file: UploadFile, fazenda_id: int | None = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     """Importa alimentos em lote de um .xlsx ou .csv — cria/atualiza sempre
     na biblioteca DESTA fazenda (copy-on-write se o nome bater com um item
     mestre ainda não sobrescrito). Ver mini manual da aba "Biblioteca de
     referência" pras regras de coluna obrigatória/reconhecida/faixa válida."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     conteudo = await file.read()
     return importar_planilha(session, fazenda_id, file.filename or "", conteudo)
 
