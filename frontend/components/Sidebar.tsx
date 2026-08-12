@@ -22,6 +22,7 @@ import {
   ChevronsRight,
   ExternalLink,
   FlaskConical,
+  LineChart,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
@@ -351,7 +352,7 @@ export function Sidebar() {
               color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
               border: "1px solid var(--sidebar-border)",
             }}>
-            <BarChart3 size={16} />
+            <LineChart size={16} />
             {!recolhida && <span className="flex-1">Insights</span>}
             {!recolhida && <ExternalLink size={12} />}
           </a>
