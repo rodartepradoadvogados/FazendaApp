@@ -73,8 +73,8 @@ function SidebarLink({ href, title, label, active, recolhida, children }: {
 // ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
 // insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) financeiro
 // (Controle Financeiro + Pedidos). Análise e Administração não têm mais
-// grupo aqui — viraram o portal "Insights e Administração" (ver
-// components/insights/InsightsLayout.tsx), aberto por um único atalho no
+// grupo aqui — viraram os portais "Insights" e "Administração" (ver
+// components/insights/InsightsLayout.tsx), cada um com o próprio atalho no
 // rodapé desta barra, numa aba nova de verdade do navegador. Recria não tem
 // mais item próprio aqui — virou sub-aba de Indicadores.
 const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Financeiro"] as const;
@@ -149,7 +149,9 @@ export function Sidebar() {
   const [dono, setDono] = useState(false);
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+  const [temInsights, setTemInsights] = useState(false);
   const [insightsHref, setInsightsHref] = useState("/indicadores");
+  const [administracaoHref, setAdministracaoHref] = useState("/portal");
   const [formularDietas, setFormularDietas] = useState(false);
   // Nome exibido embaixo do logo CowData — vem da fazenda selecionada no
   // login (piloto conservador de multi-fazenda). "Jairo Nasser" é o valor
@@ -168,15 +170,23 @@ export function Sidebar() {
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
-    // Destino do atalho "Insights e Administração" (ver botão no rodapé) —
-    // primeira aba que o usuário realmente enxerga dentro do portal, na
-    // mesma ordem da barra de abas do portal (ver InsightsLayout.tsx:
+    // Atalho "Insights" (ver botão no rodapé) — só aparece para quem tem
+    // acesso a pelo meno um item do grupo (ver InsightsLayout.tsx:
     // Indicadores e Relatórios usam o módulo "indicadores"; Listas usa
-    // "reproducao"). Portal é o único item de lá sem nenhuma permissão de
-    // módulo — garante que o atalho sempre leva a algum lugar válido.
+    // "reproducao"), diferente de Administração, que sempre tem o Portal
+    // como destino universal.
+    setTemInsights(podeModulo("indicadores") || podeModulo("reproducao"));
     setInsightsHref(
       podeModulo("indicadores") ? "/indicadores" :
-      podeModulo("reproducao") ? "/relatorios" :
+      "/relatorios"
+    );
+    // Destino do atalho "Administração" — Controle de Acesso e Painel
+    // CowData/Contador são só do dono; Configurações exige módulo próprio;
+    // Portal é o único item sem nenhuma permissão, garante que o atalho
+    // sempre leva a algum lugar válido.
+    setAdministracaoHref(
+      ehDono() ? "/usuarios" :
+      (podeModulo("parametros") || podeModulo("upload") || ehAdmin()) ? "/configuracoes" :
       "/portal"
     );
     setFormularDietas(podeFormularDietas());
@@ -291,7 +301,7 @@ export function Sidebar() {
           {(() => {
             // Administração (Controle de Acesso, Painel CowData, Painel do
             // Contador, Portal, Consultor, Configurações) saiu daqui — mora
-            // no portal Insights e Administração agora (atalho no rodapé).
+            // no portal Administração agora (atalho próprio no rodapé).
             const todos = visiveis;
             return GRUPOS.map((grupo, i) => {
               const itens = todos.filter((l) => l.grupo === grupo);
@@ -322,16 +332,34 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Atalho para o portal "Insights e Administração" (Indicadores,
-          Listas, Relatórios, Controle de Acesso, Painel CowData, Painel do
-          Contador, Portal, Consultor, Configurações — ver
-          components/insights/InsightsLayout.tsx). Abre numa aba NOVA de
-          verdade do navegador (target="_blank"), não uma aba interna
-          simulada (ver lib/tabs.ts) — pedido explícito do usuário para este
-          portal "parecer um novo portal". */}
+      {/* Dois atalhos separados (antes era um só, "Insights e Administração"
+          — a mistura confundia: um é para ENXERGAR a fazenda (Indicadores,
+          Listas, Relatórios), o outro para CONFIGURAR/GERENCIAR acesso
+          (Controle de Acesso, Painel CowData, Painel do Contador, Portal,
+          Configurações). Ver components/insights/InsightsLayout.tsx, que
+          agora mostra só as abas do grupo correspondente. Cada um abre numa
+          aba NOVA de verdade do navegador (target="_blank"), não uma aba
+          interna simulada (ver lib/tabs.ts) — pedido explícito do usuário
+          para esses portais "parecerem um novo portal". */}
+      {temInsights && (
+        <div className="p-2 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
+          <a href={insightsHref} target="_blank" rel="noopener noreferrer"
+            title="Abrir Insights numa aba nova"
+            className="flex items-center gap-2 rounded-lg transition-all duration-150"
+            style={{
+              padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
+              color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+              border: "1px solid var(--sidebar-border)",
+            }}>
+            <BarChart3 size={16} />
+            {!recolhida && <span className="flex-1">Insights</span>}
+            {!recolhida && <ExternalLink size={12} />}
+          </a>
+        </div>
+      )}
       <div className="p-2 border-t" style={{ borderColor: "var(--sidebar-border)" }}>
-        <a href={insightsHref} target="_blank" rel="noopener noreferrer"
-          title="Abrir Insights e Administração numa aba nova"
+        <a href={administracaoHref} target="_blank" rel="noopener noreferrer"
+          title="Abrir Administração numa aba nova"
           className="flex items-center gap-2 rounded-lg transition-all duration-150"
           style={{
             padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
@@ -339,7 +367,7 @@ export function Sidebar() {
             border: "1px solid var(--sidebar-border)",
           }}>
           <Building2 size={16} />
-          {!recolhida && <span className="flex-1">Insights e Administração</span>}
+          {!recolhida && <span className="flex-1">Administração</span>}
           {!recolhida && <ExternalLink size={12} />}
         </a>
       </div>
