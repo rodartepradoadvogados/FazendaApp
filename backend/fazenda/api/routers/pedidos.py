@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     ContaGerencial, Fornecedor, MovimentoEstoque, Pedido, PedidoItem, ServicoCadastro, Usuario,
@@ -204,9 +204,8 @@ def obter_pedido(
 @router.post("/", status_code=201)
 def criar_pedido(
     dados: PedidoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("compra", "venda"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'compra' ou 'venda'")
     if not dados.itens:
@@ -250,9 +249,8 @@ def criar_pedido(
 @router.put("/{pedido_id}")
 def atualizar_pedido(
     pedido_id: int, dados: PedidoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
     if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")

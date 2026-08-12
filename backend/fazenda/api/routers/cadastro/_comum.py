@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.rules.auditoria import fazenda_id_seguro
 
@@ -28,6 +28,15 @@ def _crud_nome_ativo(model, com_fazenda: bool = False):
     fazenda_id) em vez de unique(nome) global) — filtra a listagem e a
     checagem de duplicata pela fazenda atual, e carimba fazenda_id no
     registro criado. Os demais (sem fazenda_id na tabela) ignoram o parâmetro.
+
+    `criar` (o único caminho de ESCRITA que grava fazenda_id — `atualizar`/
+    `excluir` só leem um registro já existente) usa o resolvedor único
+    `get_fazenda_id_escrita` quando `com_fazenda=True`, em vez do
+    `get_fazenda_atual_id` tolerante — nunca grava fazenda_id nulo em
+    silêncio (ver fazenda.auth::resolver_fazenda_id_escrita). Isso vale pra
+    TODO cadastro "nome + ativo" que usa esta fábrica com `com_fazenda=True`
+    (Local de Armazenamento, Categoria/Finalidade/Unidade de Estoque, Raça,
+    Motivo de baixa/venda, Princípio ativo, Doença, Serviço de cadastro...).
     """
 
     def listar(session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> list[dict]:
@@ -38,22 +47,35 @@ def _crud_nome_ativo(model, com_fazenda: bool = False):
                 query = query.where(model.fazenda_id == fazenda_id)
         return [m.model_dump() for m in session.exec(query).all()]
 
-    def criar(dados: NomeAtivoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> dict:
+    def _criar_com_fazenda(dados: NomeAtivoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita)) -> dict:
         nome = dados.nome.strip()
         if not nome:
             raise HTTPException(status_code=400, detail="Nome é obrigatório")
         query_dup = select(model).where(model.nome == nome)
-        if com_fazenda:
-            fazenda_id = fazenda_id_seguro(fazenda_id)
-            if fazenda_id is not None:
-                query_dup = query_dup.where(model.fazenda_id == fazenda_id)
+        if fazenda_id is not None:
+            query_dup = query_dup.where(model.fazenda_id == fazenda_id)
         if session.exec(query_dup).first():
             raise HTTPException(status_code=409, detail=f"Já existe um registro com o nome '{nome}'")
-        obj = model(nome=nome, ativo=dados.ativo, **({"fazenda_id": fazenda_id} if com_fazenda else {}))
+        obj = model(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id)
         session.add(obj)
         session.commit()
         session.refresh(obj)
         return obj.model_dump()
+
+    def _criar_sem_fazenda(dados: NomeAtivoIn, session: Session = Depends(get_session)) -> dict:
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        query_dup = select(model).where(model.nome == nome)
+        if session.exec(query_dup).first():
+            raise HTTPException(status_code=409, detail=f"Já existe um registro com o nome '{nome}'")
+        obj = model(nome=nome, ativo=dados.ativo)
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+    criar = _criar_com_fazenda if com_fazenda else _criar_sem_fazenda
 
     def atualizar(
         item_id: int, dados: NomeAtivoIn, session: Session = Depends(get_session),

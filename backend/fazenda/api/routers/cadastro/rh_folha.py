@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
@@ -359,9 +359,8 @@ def criar_folha_pagamento(
     dados: FolhaPagamentoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -557,7 +556,7 @@ def lancar_guia_folha_encargo(
     dados: GuiaFolhaEncargoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Lança uma guia de FGTS ou DCTF: cria a conta a pagar (mesmo padrão de
@@ -570,7 +569,6 @@ def lancar_guia_folha_encargo(
     """
     if dados.tipo not in ("fgts", "dctf"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'fgts' ou 'dctf'")
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     valor_total = round(dados.valor_principal + dados.valor_multa + dados.valor_juros, 2)
     if valor_total <= 0:
         raise HTTPException(status_code=400, detail="O valor total da guia deve ser positivo")
@@ -684,9 +682,8 @@ def criar_ferias(
     dados: FeriasIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -872,9 +869,8 @@ def criar_decimo_terceiro(
     dados: DecimoTerceiroIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -1386,9 +1382,8 @@ def criar_rescisao_simulacao(
     dados: RescisaoSimulacaoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = _pessoa_para_rescisao(dados, session, fazenda_id)
 
     registro = RescisaoFuncionario(
@@ -1455,9 +1450,8 @@ def excluir_rescisao_simulacao(
 @router.post("/rescisoes/{registro_id}/fechar")
 def fechar_rescisao(
     registro_id: int, dados: RescisaoFecharIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(RescisaoFuncionario, registro_id)
     if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Rescisão não encontrada")
@@ -1747,9 +1741,8 @@ def listar_vales(
 @router.post("/vales")
 def criar_vale(
     dados: ValeIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -1828,9 +1821,8 @@ def criar_vale(
 @router.put("/vales/{vale_id}")
 def atualizar_vale(
     vale_id: int, dados: ValeIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeFuncionario, vale_id)
     if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
