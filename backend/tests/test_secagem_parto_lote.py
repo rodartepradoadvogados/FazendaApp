@@ -297,8 +297,20 @@ class TestSugestaoLoteEvento:
             s.add(Lote(codigo="03", nome="Média", categorias="vaca", del_min=61, del_max=200))
             s.commit()
 
+        # "2026-07-08" era o próprio dia em que este teste foi escrito
+        # (commit 938e325, "Nova sub-aba Secagem e alocação automática de
+        # lote em parto/nascimento (#36)") — a data de nascimento aqui
+        # simula uma bezerra "ao nascer", então tinha que ser SEMPRE hoje,
+        # não uma data fixa. `/sugestao-lote-evento` calcula a idade contra
+        # `date.today()` em produção (correto: o lote "0 a 30 dias" não pode
+        # aceitar quem já passou dos 30 dias), então uma data fixa vira uma
+        # bomba-relógio: assim que o relógio real passa de 30 dias depois de
+        # 08/07/2026 (por volta de 07/08/2026), a bezerra "recém-nascida"
+        # do teste já não é mais recém-nascida e o endpoint corretamente
+        # deixa de sugerir o lote — sem nenhum bug de produção nem mudança
+        # de regra de negócio envolvida.
         r = c.post("/producao/sugestao-lote-evento", json={
-            "numero_matriz": "600", "categoria_abrev": "Bezerra", "data_nasc": "2026-07-08",
+            "numero_matriz": "600", "categoria_abrev": "Bezerra", "data_nasc": date.today().isoformat(),
         })
         assert r.status_code == 200
         assert r.json()["lote_sugerido"]["codigo"] == "01"

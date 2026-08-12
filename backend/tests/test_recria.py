@@ -277,12 +277,30 @@ class TestCategoriaManejo:
             s.commit()
         j = c.get("/recria/categorias/composicao").json()
         comp = {x["categoria"]: x["n"] for x in j["composicao"]}
-        assert comp.get("Aleitamento") == 1
-        assert comp.get("Recria 1", 0) >= 1  # C2 + os animais do fixture (~192 dias)
-        assert comp.get("Recria 2") == 1
+        # O fixture `client` (classe acima) cadastra 101/102/103 com
+        # data_nasc FIXA em 2026-01-01 — ao contrário de C1-C4, que nascem
+        # relativos a `hoje`. `/categorias/composicao` classifica TODOS os
+        # animais ativos, então essas 3 bezerras do fixture entram na conta e
+        # migram de categoria sozinhas conforme o calendário avança (eram
+        # ~192 dias — "Recria 1" — quando este teste foi escrito no commit
+        # 2ef8e53, em 12/jul/2026; passam a "Recria 2" a partir dos 211
+        # dias, por volta de 29/jul/2026). Isso nunca foi um bug de produção
+        # nem uma mudança de regra: era uma bomba-relógio no teste, que
+        # cravava "Recria 2" == 1 supondo que o fixture ficaria para sempre
+        # em "Recria 1". Em vez de repetir aqui os limiares de dia
+        # cadastrados em seed_recria, pergunta à própria API (mesma
+        # categorização, endpoint por-animal) qual é a categoria ATUAL do
+        # fixture e soma essa contribuição ao esperado — o teste passa em
+        # qualquer dia, presente ou futuro.
+        categoria_fixture = c.get("/recria/categorias/animal/101").json()["categoria"]
+        esperado = {"Aleitamento": 1, "Recria 1": 1, "Recria 2": 1, "Prenha": 1}
+        esperado[categoria_fixture] = esperado.get(categoria_fixture, 0) + 3  # 101, 102 e 103
+        assert comp.get("Aleitamento") == esperado["Aleitamento"]
+        assert comp.get("Recria 1", 0) == esperado["Recria 1"]
+        assert comp.get("Recria 2", 0) == esperado["Recria 2"]
         # "Prenha" (situação reprodutiva) tem prioridade sobre a "Recria apta"
         # legada (usa_status_reprodutivo) — ver _CATEGORIAS_NOVAS_PADRAO.
-        assert comp.get("Prenha") == 1
+        assert comp.get("Prenha") == esperado["Prenha"]
 
     def test_categorias_semeadas_crud(self, client):
         c, _ = client
