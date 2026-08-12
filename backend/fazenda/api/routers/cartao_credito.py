@@ -199,8 +199,23 @@ def _congelar_fatura(session: Session, fatura: FaturaCartao, cartao: CartaoCredi
 
 def _fechar_se_vencida(session: Session, fatura: FaturaCartao, cartao: CartaoCredito, hoje: date) -> FaturaCartao:
     """Congela e fecha quando o dia de fechamento já passou — preguiçoso, na
-    leitura (mesmo padrão de `cronograma_aberto()`)."""
-    if fatura.status != "aberta" or hoje < fatura.data_fechamento:
+    leitura (mesmo padrão de `cronograma_aberto()`).
+
+    Bug real corrigido aqui: a comparação era `hoje < data_fechamento`, ou
+    seja, a fatura já congelava ao ALCANÇAR o dia de fechamento — em
+    contradição com a própria regra de qual fatura uma compra pertence, em
+    `_competencia_da_compra` (`data_compra.day <= cartao.dia_fechamento`,
+    documentada acima como "compra até o dia de fechamento = mês corrente":
+    inclusivo). `criar_lancamento_cartao` busca/cria a fatura e SÓ DEPOIS
+    chama esta função antes de inserir o item — com `<`, no próprio dia do
+    fechamento a fatura fechava sozinha antes de aceitar o lançamento que,
+    pela regra de competência, deveria caber nela: toda compra lançada
+    exatamente no dia do fechamento do cartão vinha rejeitada com "A fatura
+    desta competência já foi fechada", e o extrato lido nesse mesmo dia
+    congelava a fatura um dia mais cedo do que devido. `<=` mantém a fatura
+    aberta durante todo o dia de fechamento; ela só congela a partir do dia
+    seguinte, como o resto do módulo já documentava."""
+    if fatura.status != "aberta" or hoje <= fatura.data_fechamento:
         return fatura
     return _congelar_fatura(session, fatura, cartao)
 
