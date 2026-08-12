@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, Dieta, DietaItemProgramado, DietaLancamento,
@@ -313,9 +313,8 @@ class CategoriaAlimentoIn(BaseModel):
 
 @router.post("/categorias", status_code=201)
 def criar_categoria_alimento(
-    dados: CategoriaAlimentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: CategoriaAlimentoIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_dup = select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome)
     if fazenda_id is not None:
         query_dup = query_dup.where(CategoriaAlimento.fazenda_id == fazenda_id)
@@ -414,9 +413,8 @@ def _vincular_estoque_ao_alimento(session: Session, alimento_id: int, estoque_id
 
 @router.post("/alimentos", status_code=201)
 def criar_alimento(
-    dados: AlimentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: AlimentoIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_dup = select(Alimento).where(Alimento.nome == dados.nome)
     if fazenda_id is not None:
         query_dup = query_dup.where(Alimento.fazenda_id == fazenda_id)
@@ -524,11 +522,10 @@ class IngredienteMSIn(BaseModel):
 
 @router.put("/materia-seca")
 def salvar_materia_seca(
-    dados: IngredienteMSIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: IngredienteMSIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     """Upsert do % de matéria seca de um ingrediente (cadastro/edição)."""
     from fazenda.models import IngredienteMS
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do ingrediente é obrigatório")
@@ -604,10 +601,9 @@ class TabelaNutricionalProdutoIn(BaseModel):
 
 @router.post("/tabela-nutricional/produtos", status_code=201)
 def criar_produto_tabela_nutricional(
-    dados: TabelaNutricionalProdutoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: TabelaNutricionalProdutoIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     from fazenda.models import TabelaNutricionalProduto
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do produto é obrigatório")
@@ -667,11 +663,10 @@ class SalvarValoresTabelaNutricionalIn(BaseModel):
 
 @router.put("/tabela-nutricional/valores")
 def salvar_valores_tabela_nutricional(
-    dados: SalvarValoresTabelaNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: SalvarValoresTabelaNutricionalIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     """Upsert em lote — salva a grade inteira (nutriente × produto) de uma vez."""
     from fazenda.models import TabelaNutricionalValor
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(TabelaNutricionalValor)
     if fazenda_id is not None:
         query = query.where(TabelaNutricionalValor.fazenda_id == fazenda_id)
@@ -731,7 +726,7 @@ def baixar_modelo_tabela_nutricional(
 
 @router.post("/tabela-nutricional/importar")
 async def importar_tabela_nutricional(
-    file: UploadFile, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    file: UploadFile, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     """
     Importa a planilha no mesmo formato do modelo baixado: 1ª coluna =
@@ -743,7 +738,6 @@ async def importar_tabela_nutricional(
     from openpyxl import load_workbook
     from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
 
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     try:
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -848,11 +842,10 @@ def listar_analise_bromatologica(
 
 @router.post("/analise-bromatologica", status_code=201)
 def criar_analise_bromatologica(
-    dados: AnaliseBromatologicaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: AnaliseBromatologicaIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
     from fazenda.models import AnaliseBromatologica
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.alimento.strip():
         raise HTTPException(status_code=400, detail="Alimento é obrigatório")
     registro = AnaliseBromatologica(**dados.model_dump(), usuario_id=user.id, fazenda_id=fazenda_id)
@@ -926,10 +919,9 @@ def listar_dietas(
 
 @router.post("/dietas", status_code=201)
 def criar_dieta(
-    dados: DietaLancamentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: DietaLancamentoIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = criar_lancamento_programado(
         session, fazenda_id, user.id,
         lote=dados.lote, responsavel=dados.responsavel, data_abertura=dados.data_abertura,
@@ -1079,10 +1071,9 @@ class RegistroRealIn(BaseModel):
 @router.post("/dietas/{dieta_id}/real", status_code=201)
 def registrar_real(
     dieta_id: int, dados: RegistroRealIn,
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
     if not dieta:
         raise HTTPException(status_code=404, detail="Dieta não encontrada")

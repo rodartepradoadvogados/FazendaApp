@@ -15,9 +15,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.models import (
     Animal,
     ContaGerencial,
@@ -79,7 +78,18 @@ async def upload_csv(
     tipo: str,
     file: UploadFile,
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    # Resolvedor único de escrita (nunca devolve fazenda_id nulo em silêncio,
+    # ver fazenda.auth::resolver_fazenda_id_escrita) — antes usava o
+    # tolerante get_fazenda_atual_id + fazenda_id_seguro: um token legado
+    # (ou sessão "manter conectado" sem "fid") caía direto no ramo
+    # `fazenda_id is None` de `_carimbar`, e o upload inteiro do Ideagri
+    # (que reimporta o histórico completo de Animal/Servico/Parto/
+    # ContaGerencial/Estoque/Dieta/Sanidade/ControleLeiteiro/CurvaABC/
+    # PlanoContaGerencial/Patrimonio) nascia sem fazenda_id — exatamente o
+    # padrão de "chamador fora do ciclo HTTP normal" citado no PR
+    # claude/fazenda-id-raiz (aqui o ciclo HTTP existe, mas o token é que
+    # não carrega a fazenda).
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ):
     """
     Recebe um arquivo CSV do Ideagri e realiza o upsert no banco.
@@ -97,7 +107,6 @@ async def upload_csv(
         )
 
     content = await file.read()
-    fazenda_id = fazenda_id_seguro(fazenda_id)
 
     try:
         if tipo == "geral":

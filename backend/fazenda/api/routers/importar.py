@@ -254,7 +254,10 @@ def listar_modelos() -> dict:
 
 
 @router.post("/pesagem")
-async def importar_pesagem(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_pesagem(
+    file: UploadFile, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     content = await file.read()
     por_data: dict[date, list[PesoIn]] = {}
     erros: list[str] = []
@@ -270,7 +273,12 @@ async def importar_pesagem(file: UploadFile, session: Session = Depends(get_sess
 
     criados = 0
     for data, entradas in por_data.items():
-        resultado = criar_pesagens(PesagensIn(data_pesagem=data, entradas=entradas), session)
+        # `user`/`fazenda_id` SEMPRE por keyword — chamada direta (fora do
+        # ciclo HTTP) igual ao bug original do telegram_fluxos.py: sem isso,
+        # `criar_pesagens` recebe os `Depends(...)` não resolvidos como
+        # `user`/`fazenda_id` e `_usuario_id_seguro`/`fazenda_id_seguro`
+        # caem pra None — toda pesagem importada nascia órfã e sem autor.
+        resultado = criar_pesagens(PesagensIn(data_pesagem=data, entradas=entradas), session=session, user=user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
     return {"categoria": "pesagem", "criados": criados, "erros": erros}
 
@@ -350,9 +358,8 @@ async def importar_financeiro(
 @router.post("/estoque_movimento")
 async def importar_estoque_movimento(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -383,9 +390,8 @@ async def importar_estoque_movimento(
 @router.post("/produtos_estoque")
 async def importar_produtos_estoque(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados, atualizados = 0, 0
     erros: list[str] = []
@@ -439,9 +445,8 @@ async def importar_produtos_estoque(
 @router.post("/fornecedores")
 async def importar_fornecedores(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados, atualizados = 0, 0
     erros: list[str] = []
@@ -1021,7 +1026,7 @@ async def importar_touros_naab(
 @router.post("/backfill")
 def backfill_fornecedores_e_estoque(
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Varre os dados já importados (financeiro, curva ABC, dieta, sanidade) e
@@ -1029,8 +1034,6 @@ def backfill_fornecedores_e_estoque(
     que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
     Não sobrescreve nada que já existe, só preenche o que falta.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-
     fornecedor_query = select(Fornecedor.nome)
     conta_query = select(ContaGerencial.fornecedor_cliente)
     if fazenda_id is not None:

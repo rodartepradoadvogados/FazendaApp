@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BenchmarkRecria, CategoriaManejo, Doenca, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
@@ -642,9 +642,8 @@ def listar_categorias(
 @router.post("/categorias", status_code=201)
 def criar_categoria(
     dados: CategoriaManejoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Informe o nome da categoria.")
     c = CategoriaManejo(**dados.model_dump(), fazenda_id=fazenda_id)
@@ -736,9 +735,8 @@ def listar_cocho(
 @router.post("/cocho", status_code=201)
 def criar_cocho(
     dados: CochoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.lote.strip():
         raise HTTPException(status_code=400, detail="Informe o lote.")
     if dados.kg_sobra > dados.kg_ofertado:
@@ -783,9 +781,8 @@ def modelo_excel_cocho() -> Response:
 @router.post("/cocho/importar")
 async def importar_cocho_planilha(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     linhas = list(iter_planilha_rows(file.filename or "", content))
     if not linhas:
@@ -864,9 +861,8 @@ def listar_ocorrencias(
 @router.post("/ocorrencias", status_code=201)
 def criar_ocorrencia(
     dados: OcorrenciaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.numero_matriz.strip() or not dados.doenca.strip():
         raise HTTPException(status_code=400, detail="Informe o animal e a doença.")
     # Quando vem doenca_id (seletor do catálogo), o texto é denormalizado a
@@ -919,9 +915,9 @@ def obter_metas(
 @router.put("/metas")
 def salvar_metas(
     dados: MetaIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    m = _meta_recria(session, fazenda_id_seguro(fazenda_id))
+    m = _meta_recria(session, fazenda_id)
     for campo, valor in dados.model_dump().items():
         setattr(m, campo, valor)
     m.atualizado_em = datetime.utcnow()
@@ -953,10 +949,9 @@ def listar_peso_alvo(
 @router.post("/peso-alvo", status_code=201)
 def salvar_peso_alvo(
     dados: PesoAlvoIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Cria ou atualiza a faixa daquele mês (upsert por mês, escopado por fazenda)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.peso_min_kg > dados.peso_max_kg:
         raise HTTPException(status_code=400, detail="Peso mínimo não pode ser maior que o máximo.")
     query = select(PesoAlvoIdade).where(PesoAlvoIdade.mes == dados.mes)
@@ -1014,9 +1009,8 @@ def listar_fases(
 @router.post("/fases", status_code=201)
 def criar_fase(
     dados: FaseIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.dia_min > dados.dia_max:
         raise HTTPException(status_code=400, detail="Dia inicial não pode ser maior que o final.")
     f = FaseRecria(**dados.model_dump(), fazenda_id=fazenda_id)
@@ -1064,9 +1058,8 @@ def listar_janelas(
 @router.post("/janelas", status_code=201)
 def criar_janela(
     dados: JanelaIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.dia_min > dados.dia_max:
         raise HTTPException(status_code=400, detail="Dia inicial não pode ser maior que o final.")
     # Quando vem doenca_id (seletor do catálogo), o texto é denormalizado a
@@ -1141,10 +1134,9 @@ def listar_benchmark(
 @router.post("/benchmark", status_code=201)
 def salvar_benchmark(
     dados: BenchmarkIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Upsert por indicador (escopado por fazenda)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(BenchmarkRecria).where(BenchmarkRecria.indicador == dados.indicador)
     if fazenda_id is not None:
         query = query.where(BenchmarkRecria.fazenda_id == fazenda_id)

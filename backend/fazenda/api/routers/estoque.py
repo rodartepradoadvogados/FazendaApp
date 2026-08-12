@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -216,10 +216,9 @@ class EstoqueIn(BaseModel):
 
 @router.post("/", status_code=201)
 def criar_item_estoque(
-    dados: EstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: EstoqueIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
     """Cadastra um item de estoque novo (não existe ainda um com esse nome)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_existente = select(Estoque).where(Estoque.nome == dados.nome)
     if fazenda_id is not None:
         query_existente = query_existente.where(Estoque.fazenda_id == fazenda_id)
@@ -640,7 +639,7 @@ def _criar_movimento_estoque(
 @router.post("/movimentar")
 def movimentar_estoque(
     dados: MovimentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     item = _criar_movimento_estoque(dados, session, usuario_id=user.id, fazenda_id=fazenda_id)
     return item.model_dump()
