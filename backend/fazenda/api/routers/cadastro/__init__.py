@@ -17,7 +17,9 @@ disponíveis aqui, reexportadas dos submódulos onde agora vivem.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from fazenda.auth import exigir_modulo_contratado
 
 from . import (
     animais,
@@ -61,9 +63,18 @@ router.include_router(protocolos_sanitarios.router)
 router.include_router(protocolos_customizados.router)
 router.include_router(lida.router)
 router.include_router(servicos.router)
-router.include_router(rh_folha.router)
-router.include_router(rh_contratos.router)
-router.include_router(rh_vale_item.router)
+# RH/Folha (folha de pagamento, férias, 13º, rescisão, vale, empreitada,
+# diária, contrato de trabalho) exige o módulo comercial "financeiro"
+# contratado pela fazenda — antes só a permissão genérica "parametros" do
+# funcionário (herdada do include deste router inteiro em main.py) travava
+# aqui, então RH ficava liberado até no plano Standard. Mesmo grupo de rotas
+# já tratado como financeiro-adjacente em main.py::_PREFIXOS_RH_MODO_SUPORTE
+# (bloqueio de escrita/leitura em modo suporte) — esta trava só estende essa
+# mesma decisão para o módulo contratado.
+_exige_financeiro = [Depends(exigir_modulo_contratado("financeiro"))]
+router.include_router(rh_folha.router, dependencies=_exige_financeiro)
+router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
+router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)
 
 __all__ = [
     "router",
