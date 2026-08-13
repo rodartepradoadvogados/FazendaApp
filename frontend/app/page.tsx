@@ -158,7 +158,7 @@ export default function Home() {
       )}
 
       {semDados && (
-        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>
+        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>
       )}
 
       {/* Alertas */}
@@ -260,7 +260,7 @@ export default function Home() {
                 <Area type="monotone" dataKey="kg" stroke="var(--green-light)" strokeWidth={2.5} fill="url(#gradProd)" dot={{ r: 3, fill: "var(--green-light)", strokeWidth: 0 }} activeDot={{ r: 5 }} />
               </AreaChart>
             </ResponsiveContainer>
-          ) : <EstadoVazio icon={MilkOff}>Sem controle leiteiro ainda — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a> para ver o gráfico aqui.</EstadoVazio>}
+          ) : <EstadoVazio icon={MilkOff}>Sem controle leiteiro ainda — <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)" }}>importe os dados</a> para ver o gráfico aqui.</EstadoVazio>}
         </div>
         <div className="card">
           <div className="card-header mb-2 flex flex-wrap items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva{animais.length ? <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span> : null}

@@ -618,7 +618,7 @@ export default function FinanceiroPage() {
         )}
       </div>
 
-      {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o CONTA_GERENCIAL</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && regs.length === 0 && !error && (
@@ -626,7 +626,7 @@ export default function FinanceiroPage() {
           <BarChart3 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
           <p style={{ color: "var(--text-muted)" }}>Nenhum lançamento financeiro no banco.</p>
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload</a>.
+            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.
             Se você já subiu e sumiu, o banco de produção não está persistindo — confira o Postgres no Railway.
           </p>
         </div>
@@ -1481,7 +1481,7 @@ function PatrimonioViewAdmin() {
     proximaManutencao: (i) => i.data_proxima_manutencao || "",
   });
 
-  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o LISTA_DE_PATRIMONIO.csv</a>.</span></div>;
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe o patrimônio</a>.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
   if (!dados.itens.length) {
     return (
@@ -1489,7 +1489,7 @@ function PatrimonioViewAdmin() {
         <Building2 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
         <p style={{ color: "var(--text-muted)" }}>Nenhum item de patrimônio no banco.</p>
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-          Suba o <strong>LISTA_DE_PATRIMONIO.csv</strong> na tela de <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload</a>.
+          Suba o <strong>LISTA_DE_PATRIMONIO.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.
         </p>
       </div>
     );

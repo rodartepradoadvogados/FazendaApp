@@ -452,6 +452,7 @@ def calcular_indicadores(
     peso_por_animal: dict[str, float] | None = None,
     lotes: list[dict] | None = None,
     aplicacoes_iatf: list[dict] | None = None,
+    controles: list[dict] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
 
@@ -572,11 +573,36 @@ def calcular_indicadores(
     ]
     del_medio = _media([float(d) for d in del_lactacao])
 
-    producoes = [
-        a.get("ult_cl_kg")
-        for a in animais
-        if a.get("ult_cl_kg") and a.get("ult_cl_kg") > 0
-    ]
+    # Produção do ÚLTIMO CONTROLE de cada animal, lida dos controles leiteiros
+    # de verdade. `Animal.ult_cl_kg` (o campo que isto usava sozinho) só era
+    # escrito pelo parser do GERAL.csv do Ideagri — quem lança pelo app via
+    # este número congelado na data do último CSV importado, enquanto o
+    # gráfico de produção ao lado já mostrava os valores novos. Com a
+    # importação do Ideagri aposentada, `ult_cl_kg` nunca mais seria escrito.
+    # Ele segue como fallback por animal, para as fazendas cujo histórico só
+    # existe no campo importado.
+    ultimo_controle_kg: dict[str, float] = {}
+    data_do_ultimo: dict[str, date] = {}
+    for c in controles or []:
+        numero = c.get("numero_matriz") or c.get("numero")
+        producao = c.get("producao_kg")
+        data_c = c.get("data")
+        if not numero or not producao or producao <= 0:
+            continue
+        anterior = data_do_ultimo.get(numero)
+        if anterior is None or (isinstance(data_c, date) and data_c >= anterior):
+            ultimo_controle_kg[numero] = float(producao)
+            if isinstance(data_c, date):
+                data_do_ultimo[numero] = data_c
+
+    producoes = []
+    for a in animais:
+        numero = a.get("numero")
+        valor = ultimo_controle_kg.get(numero) if numero else None
+        if valor is None:
+            valor = a.get("ult_cl_kg")
+        if valor and valor > 0:
+            producoes.append(valor)
     producao_media = _media([float(p) for p in producoes])
     producao_total_dia = round(sum(float(p) for p in producoes), 1) if producoes else 0.0
 
