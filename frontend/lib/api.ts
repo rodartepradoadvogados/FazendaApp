@@ -5008,12 +5008,24 @@ export async function lerDocumentoFinanceiro(file: File) {
 
 // Anexos do lançamento (ex.: boleto de um parcelamento) — o lançamento já
 // precisa existir (numero_lancamento vem do retorno de criarLancamentoFinanceiro).
-export type AnexoLancamento = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria?: string | null; criado_em?: string };
+// numero_documento/data_documento: o número/data impressos no PRÓPRIO
+// documento (nº da nota, do boleto, da OS, do orçamento...) — é por eles que
+// a Central de Documentos acha um documento específico dentro de um
+// lançamento que reúne vários (ver app/documentos-central/page.tsx).
+export type AnexoLancamento = {
+  id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria?: string | null;
+  numero_documento?: string | null; data_documento?: string | null; criado_em?: string;
+};
 
-export async function anexarArquivoLancamento(numeroLancamento: string, file: File, categoria?: string | null): Promise<AnexoLancamento> {
+export async function anexarArquivoLancamento(
+  numeroLancamento: string, file: File, categoria?: string | null,
+  numeroDocumento?: string | null, dataDocumento?: string | null,
+): Promise<AnexoLancamento> {
   const form = new FormData();
   form.append("file", file);
   if (categoria) form.append("categoria", categoria);
+  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+  if (dataDocumento) form.append("data_documento", dataDocumento);
   const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
@@ -5029,10 +5041,15 @@ export async function listarAnexosLancamento(numeroLancamento: string): Promise<
 // lançamento importado da planilha nasce sem `numero_lancamento`, e sem ele
 // não havia como anexar comprovante nenhum — o backend emite a numeração na
 // primeira anexação (ver _garantir_numero_lancamento).
-export async function anexarArquivoLancamentoPorId(lancamentoId: number, file: File, categoria?: string | null): Promise<AnexoLancamento> {
+export async function anexarArquivoLancamentoPorId(
+  lancamentoId: number, file: File, categoria?: string | null,
+  numeroDocumento?: string | null, dataDocumento?: string | null,
+): Promise<AnexoLancamento> {
   const form = new FormData();
   form.append("file", file);
   if (categoria) form.append("categoria", categoria);
+  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+  if (dataDocumento) form.append("data_documento", dataDocumento);
   const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
@@ -5062,6 +5079,37 @@ export async function listarAnexosLancamentoPorId(lancamentoId: number): Promise
 
 export function urlAnexoLancamento(anexoId: number): string {
   return `${API}/financeiro/anexos/${anexoId}`;
+}
+
+// Central de Documentos (Administração) — busca unificada sobre o arquivo
+// fiscal-contábil (só admin) e os anexos de lançamento (só quem tem o
+// módulo financeiro); o backend decide o que cada usuário vê (ver
+// central_documentos.py) — o frontend só mostra o que voltou.
+export type LinhaCentralDocumento = {
+  origem: "fiscal" | "financeiro"; id: number; categoria: string | null; nome_arquivo: string;
+  numero_documento: string | null; data_documento: string | null; criado_em: string;
+  numero_lancamento: string | null; fornecedor_cliente: string | null; descricao: string | null; url: string;
+};
+
+export async function fetchCentralDocumentos(filtros?: {
+  categoria?: string; numero_documento?: string; data_de?: string; data_ate?: string;
+}): Promise<LinhaCentralDocumento[]> {
+  const params = new URLSearchParams();
+  if (filtros?.categoria) params.set("categoria", filtros.categoria);
+  if (filtros?.numero_documento) params.set("numero_documento", filtros.numero_documento);
+  if (filtros?.data_de) params.set("data_de", filtros.data_de);
+  if (filtros?.data_ate) params.set("data_ate", filtros.data_ate);
+  const qs = params.toString();
+  const res = await authFetch(`${API}/documentos-central${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Erro ao buscar documentos");
+  return res.json();
+}
+
+// Abre o documento (fiscal ou financeiro) numa aba nova — o `url` já vem
+// pronto na linha da Central de Documentos, só falta a base da API e o
+// mesmo mecanismo autenticado usado no resto do site.
+export function abrirLinhaCentralDocumento(linha: LinhaCentralDocumento): string {
+  return `${API}${linha.url}`;
 }
 
 export async function fetchDestinatarioRecibo(numeroLancamento: string): Promise<{ nome: string | null; email: string | null }> {

@@ -31,6 +31,7 @@ from fazenda.api.routers import (
     baixas,
     cadastro,
     cartao_credito,
+    central_documentos,
     central_protocolos,
     chamados,
     cobranca,
@@ -704,8 +705,19 @@ app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("fin
 app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
 # Arquivo fiscal-contábil (Documentos) — SEM bloquear_escrita_contador: o
 # contador pode arquivar documentos livremente (decisão do usuário), só a
-# escrita em Financeiro/Planejamento/Chamados fica atrás do cadeado.
+# escrita em Financeiro/Planejamento/Chamados fica atrás do cadeado. Este
+# router continua exigindo só o módulo financeiro (não admin) — é o próprio
+# fluxo de upload/gestão, usado inclusive pelo contador; a restrição a
+# administrador que a Central de Documentos precisa (ver abaixo) é sobre a
+# TELA DE CONSULTA unificada, decidida dentro de central_documentos.py, não
+# aqui — apertar aqui quebraria o upload do contador.
 app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+# Central de Documentos (Administração) — busca unificada e só-leitura sobre
+# documentos.router (fiscal, admin-only) + anexos de lançamento (financeiro,
+# quem tem o módulo) — cada tier de acesso é decidido DENTRO do endpoint
+# (ver central_documentos.py), não aqui; por isso a única exigência comum é
+# estar autenticado com contrato ativo, igual a qualquer outra rota.
+app.include_router(central_documentos.router, dependencies=_protegido + _contrato_ativo)
 # Chamados (suporte) — mesmo padrão de financeiro: contador só escreve
 # (abrir chamado) com o cadeado destravado.
 app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])

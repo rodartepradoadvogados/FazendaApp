@@ -37,7 +37,11 @@ from fazenda.config import settings
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
-TIPOS_DOCUMENTO = ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]
+# "Comprovante" e "Orçamento" (pra planejamento ou pedido) entraram junto com
+# a Central de Documentos — antes só existiam via "Boleto"/"Ordem de
+# serviço" (que já estavam em SEED_TIPOS_DOCUMENTO) e "Recibo" (parecido com
+# comprovante, mas não o mesmo rótulo pedido).
+TIPOS_DOCUMENTO = ["Nota fiscal", "Recibo", "Comprovante", "Folha de pagamento", "Fatura", "Orçamento", "Contrato"]
 
 # Categorias do Arquivo fiscal-contábil (fazenda/api/routers/documentos.py) —
 # documentos sem contrapartida em lançamento (CCIR, IRPF/IRPJ, inscrição
@@ -2501,6 +2505,11 @@ def _caminho_anexo_lancamento(session: Session, fazenda_id: int | None, numero_l
 @router.post("/lancamentos/{numero_lancamento}/anexos", status_code=201)
 async def anexar_arquivo_lancamento(
     numero_lancamento: str, file: UploadFile, categoria: str | None = Form(None),
+    # Número/data impressos no PRÓPRIO documento (nº do boleto, da nota
+    # fiscal, da OS, do orçamento...) — diferente de `criado_em` (quando foi
+    # enviado). É por aqui que a Central de Documentos acha, por exemplo,
+    # "o boleto número X" mesmo sabendo só esse dado, sem saber o lançamento.
+    numero_documento: str | None = Form(None), data_documento: date | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
@@ -2532,6 +2541,8 @@ async def anexar_arquivo_lancamento(
         mime_type=file.content_type or "application/octet-stream",
         tamanho_bytes=len(conteudo),
         categoria=categoria or conta.tipo_documento,
+        numero_documento=numero_documento,
+        data_documento=data_documento,
         caminho_storage=caminho,
         usuario_id=user.id if isinstance(user, Usuario) else None,
         fazenda_id=fazenda_id,
@@ -2542,6 +2553,8 @@ async def anexar_arquivo_lancamento(
     return {
         "id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type,
         "tamanho_bytes": anexo.tamanho_bytes, "categoria": anexo.categoria,
+        "numero_documento": anexo.numero_documento,
+        "data_documento": anexo.data_documento.isoformat() if anexo.data_documento else None,
     }
 
 
@@ -2571,6 +2584,7 @@ def _garantir_numero_lancamento(session: Session, fazenda_id: int | None, lancam
 @router.post("/lancamentos/por-id/{lancamento_id}/anexos", status_code=201)
 async def anexar_arquivo_lancamento_por_id(
     lancamento_id: int, file: UploadFile, categoria: str | None = Form(None),
+    numero_documento: str | None = Form(None), data_documento: date | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
@@ -2581,7 +2595,8 @@ async def anexar_arquivo_lancamento_por_id(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     conta = _garantir_numero_lancamento(session, fazenda_id, lancamento_id)
     return await anexar_arquivo_lancamento(
-        conta.numero_lancamento, file, categoria, session=session, user=user, fazenda_id=fazenda_id,
+        conta.numero_lancamento, file, categoria, numero_documento, data_documento,
+        session=session, user=user, fazenda_id=fazenda_id,
     )
 
 
@@ -2690,7 +2705,9 @@ def listar_anexos_lancamento(
     anexos = session.exec(query).all()
     return [
         {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
-         "categoria": a.categoria, "criado_em": a.criado_em.isoformat()}
+         "categoria": a.categoria, "numero_documento": a.numero_documento,
+         "data_documento": a.data_documento.isoformat() if a.data_documento else None,
+         "criado_em": a.criado_em.isoformat()}
         for a in anexos
     ]
 
