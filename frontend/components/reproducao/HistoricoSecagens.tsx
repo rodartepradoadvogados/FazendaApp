@@ -3,12 +3,13 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo) + motivo,
 // análogo ao MultiFiltro de Diagnóstico/Motivo das outras abas.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Search, Trash2, X } from "lucide-react";
-import { fetchSecagensHistorico, atualizarSecagem, confirmarExclusao, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { fetchSecagensHistorico, atualizarSecagem, fetchAnimais, confirmarExclusao, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
-import { casaBusca } from "@/lib/busca";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import type { AnimalRow } from "@/components/AnimalModal";
 
 type SecagemReg = {
   id: number;
@@ -30,7 +31,9 @@ const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "
 export default function HistoricoSecagens() {
   const [regs, setRegs] = useState<SecagemReg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [animal, setAnimal] = useState("");
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [motivo, setMotivo] = useState<string[]>([]);
@@ -129,13 +132,13 @@ export default function HistoricoSecagens() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((s) =>
-      casaBusca(s.numero, animal) &&
+      (animaisSel.size === 0 || animaisSel.has(s.numero)) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
       (!motivo.length || motivo.includes(s.motivo))
     );
-  }, [regs, animal, ini, fim, motivo, modo, janelas]);
+  }, [regs, animaisSel, ini, fim, motivo, modo, janelas]);
 
   const ordSecagens = useOrdenacao(filtrados);
   const pagSecagens = usePaginacao(ordSecagens.linhasOrdenadas);
@@ -163,8 +166,17 @@ export default function HistoricoSecagens() {
             onChange={setModo}
           />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={animal} onChange={(e) => setAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
+              <AnimalPickerModal
+                animais={animais} selecionados={animaisSel}
+                onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                placeholder="Todos" titulo="Filtrar por animal(is) — inclui seleção por lote"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                ]}
+              /></div>
             {modo === "data" ? (
               <>
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label><input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
