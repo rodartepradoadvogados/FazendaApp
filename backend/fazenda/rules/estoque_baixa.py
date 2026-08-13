@@ -255,6 +255,18 @@ def movimentar(
         estoque_id=item.id, origem_tipo=origem_tipo, origem_id=origem_id,
     ))
 
+    # Item espelhado de sêmen (Estoque.estoque_semen_id) — mantém EstoqueSemen
+    # em sincronia, senão a compra/baixa fica só do lado genérico e some do
+    # Inventário de Sêmen / "touro em estoque" da inseminação (que só leem
+    # EstoqueSemen). Mesmo espelhamento que `_movimentar_dose_semen` já faz no
+    # sentido inverso (dose de sêmen -> Estoque).
+    if item.estoque_semen_id:
+        touro = session.get(EstoqueSemen, item.estoque_semen_id)
+        if touro is not None:
+            touro.doses = (touro.doses or 0) + sinal * quantidade
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
+
     avisos: list[str] = []
     if item.quantidade < 0:
         avisos.append(

@@ -773,7 +773,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         const falhas = (await Promise.all(boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f).then(() => null).catch(() => f.name)))).filter(Boolean);
         if (falhas.length) avisoAnexo = ` (não foi possível anexar: ${falhas.join(", ")})`;
       }
-      setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
+      // avisos_estoque: ex. "X não está no estoque desta fazenda" — o backend
+      // já calcula, mas até aqui ninguém no frontend lia a resposta pra
+      // mostrar isso ao usuário (a nota salvava normal, o aviso se perdia).
+      const avisoEstoque = (r.avisos_estoque || []).length ? ` ${r.avisos_estoque.join(" ")}` : "";
+      setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}${avisoEstoque}`);
       // Vínculo sanitário/reprodutivo — 2 caminhos (ver estado `origemEvento`
       // e `contasQuePedemVinculo` acima): se este lançamento nasceu de "lançar
       // em contas a pagar" a partir de um evento, vincula direto; senão, se
@@ -789,7 +793,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       }
       limpar();
       onSujo?.(false);
-      onSalvo?.(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
+      onSalvo?.(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}${avisoEstoque}`);
     } catch (e: any) {
       if (e.status === 409 && e.detail?.competencias_excedidas) {
         const idx = itens.findIndex((i) => i.vale?.modo === "folha" && !i.vale?.confirmar);
