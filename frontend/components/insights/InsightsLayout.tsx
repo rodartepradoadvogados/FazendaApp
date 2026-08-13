@@ -47,6 +47,11 @@ const ABAS_ADMINISTRACAO: Aba[] = [
   { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
   { href: "/contador", label: "Painel do Contador", donoOnly: true },
   { href: "/portal", label: "Portal" },
+  // Aberta a qualquer logado (igual a Portal) — o filtro de verdade é do
+  // backend (GET /documentos-central): documento fiscal só pra admin,
+  // documento de lançamento só pra quem tem o módulo financeiro. Quem não
+  // tem nenhum dos dois só vê a tela vazia, não um 403.
+  { href: "/documentos-central", label: "Central de Documentos" },
   // A assinatura independente de consultor foi removida (backlog #122) — o
   // consultor passa a existir só dentro da própria fazenda (vínculo
   // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).

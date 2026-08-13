@@ -288,7 +288,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const parcelasExtraidasRef = useRef<Parcela[] | null>(null);
   // Boleto(s) a anexar ao lançamento quando ele nascer parcelado — sobem
   // depois que o lançamento é criado (o anexo precisa do numero_lancamento).
-  const [boletoFiles, setBoletoFiles] = useState<File[]>([]);
+  // Cada documento anexado (boleto, nota, orçamento, pedido...) carrega sua
+  // PRÓPRIA categoria/número/data — um mesmo lançamento pode reunir vários
+  // tipos de documento juntos (ver Central de Documentos), não um só rótulo
+  // pra tudo que for anexado de uma vez. `categoria` nasce com o "Tipo de
+  // documento" escolhido acima (mesmo default de sempre), mas é editável por
+  // arquivo.
+  type AnexoStaged = { file: File; categoria: string; numero_documento: string; data_documento: string };
+  const [boletoFiles, setBoletoFiles] = useState<AnexoStaged[]>([]);
   const boletoInputRef = useRef<HTMLInputElement>(null);
   const fotoBoletoInputRef = useRef<HTMLInputElement>(null);
   const [avisoTipoDocumento, setAvisoTipoDocumento] = useState(false);
@@ -298,7 +305,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // Sem isso, marcar "já pago" na hora de criar o lançamento não tinha
   // NENHUMA forma de anexar o comprovante — só dava pra fazer depois, em
   // Controle Financeiro > Editar ou > Tratar pagamento.
-  const [comprovanteFiles, setComprovanteFiles] = useState<File[]>([]);
+  const [comprovanteFiles, setComprovanteFiles] = useState<{ file: File; numero_documento: string; data_documento: string }[]>([]);
   const comprovanteInputRef = useRef<HTMLInputElement>(null);
   const fotoComprovanteInputRef = useRef<HTMLInputElement>(null);
 
@@ -779,8 +786,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       const r = await criarLancamentoFinanceiro(montarPayload());
       let avisoAnexo = "";
       const falhasAnexo = (await Promise.all([
-        ...boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f).then(() => null).catch(() => f.name)),
-        ...comprovanteFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f, "Comprovante").then(() => null).catch(() => f.name)),
+        ...boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f.file, f.categoria, f.numero_documento || undefined, f.data_documento || undefined).then(() => null).catch(() => f.file.name)),
+        ...comprovanteFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f.file, "Comprovante", f.numero_documento || undefined, f.data_documento || undefined).then(() => null).catch(() => f.file.name)),
       ])).filter(Boolean);
       if (falhasAnexo.length) avisoAnexo = ` (não foi possível anexar: ${falhasAnexo.join(", ")})`;
       // avisos_estoque: ex. "X não está no estoque desta fazenda" — o backend
@@ -1213,7 +1220,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         onDrop={(e) => {
           e.preventDefault();
           if (!tipoDocumento) { setAvisoTipoDocumento(true); return; }
-          const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]);
+          const fs = Array.from(e.dataTransfer.files || []);
+          if (fs.length) setBoletoFiles((arr) => [...arr, ...fs.map((file) => ({ file, categoria: tipoDocumento, numero_documento: "", data_documento: "" }))]);
         }}
         onDragOver={(e) => e.preventDefault()}
         className="card mt-3"
@@ -1222,7 +1230,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
           <FileText size={15} style={{ color: "var(--dourado-light)" }} />
           <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            Arraste o(s) documento(s) deste lançamento aqui (boleto, nota, comprovante — PDF/JPEG/PNG), ou
+            Arraste o(s) documento(s) deste lançamento aqui (boleto, nota, orçamento, comprovante — PDF/JPEG/PNG), ou
           </span>
           <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }}
             onClick={() => { if (!tipoDocumento) { setAvisoTipoDocumento(true); return; } boletoInputRef.current?.click(); }}>
@@ -1234,13 +1242,21 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           </button>
         </div>
         <input ref={boletoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
-          onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+          onChange={(e) => {
+            const fs = Array.from(e.target.files || []);
+            if (fs.length) setBoletoFiles((arr) => [...arr, ...fs.map((file) => ({ file, categoria: tipoDocumento, numero_documento: "", data_documento: "" }))]);
+            e.target.value = "";
+          }}
           style={{ display: "none" }} />
         {/* capture="environment" abre a câmera do celular direto (mesmo padrão do
             app móvel — ver components/mobile/menu/FotosCampo.tsx); em desktop sem
             câmera, cai de volta no seletor de arquivo normal. */}
         <input ref={fotoBoletoInputRef} type="file" accept="image/*" capture="environment"
-          onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+          onChange={(e) => {
+            const fs = Array.from(e.target.files || []);
+            if (fs.length) setBoletoFiles((arr) => [...arr, ...fs.map((file) => ({ file, categoria: tipoDocumento, numero_documento: "", data_documento: "" }))]);
+            e.target.value = "";
+          }}
           style={{ display: "none" }} />
         {avisoTipoDocumento && (
           <p style={{ color: "var(--red)", fontSize: "0.74rem", marginTop: "0.4rem", fontWeight: 600 }}>
@@ -1249,13 +1265,28 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           </p>
         )}
         {boletoFiles.length > 0 && (
-          <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem" }}>
+          <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
             {boletoFiles.map((f, i) => (
-              <li key={i} className="flex items-center justify-between" style={{ padding: "0.15rem 0" }}>
-                <span>{f.name}</span>
-                <button type="button" className="btn-ghost" title="Remover" onClick={() => setBoletoFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem" }}>
-                  <X size={12} style={{ color: "var(--red)" }} />
-                </button>
+              <li key={i} className="card" style={{ padding: "0.4rem 0.5rem", marginBottom: "0.35rem", background: "var(--surface)" }}>
+                <div className="flex items-center justify-between" style={{ gap: "0.4rem" }}>
+                  <a href={URL.createObjectURL(f.file)} target="_blank" rel="noreferrer" title="Abrir este documento numa aba nova"
+                    style={{ color: "var(--dourado-light)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.file.name}
+                  </a>
+                  <button type="button" className="btn-ghost" title="Remover" onClick={() => setBoletoFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                    <X size={12} style={{ color: "var(--red)" }} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2" style={{ marginTop: "0.3rem" }}>
+                  <select style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} value={f.categoria} title="Tipo deste documento"
+                    onChange={(e) => setBoletoFiles((arr) => arr.map((x, j) => j === i ? { ...x, categoria: e.target.value } : x))}>
+                    {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Comprovante", "Fatura", "Orçamento", "Boleto", "Ordem de serviço"]).map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                  <input style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} placeholder="Número do documento" value={f.numero_documento}
+                    onChange={(e) => setBoletoFiles((arr) => arr.map((x, j) => j === i ? { ...x, numero_documento: e.target.value } : x))} />
+                  <input type="date" style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} title="Data deste documento" value={f.data_documento}
+                    onChange={(e) => setBoletoFiles((arr) => arr.map((x, j) => j === i ? { ...x, data_documento: e.target.value } : x))} />
+                </div>
               </li>
             ))}
           </ul>
@@ -1300,7 +1331,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 </p>
               )}
               <div
-                onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs]); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fs = Array.from(e.dataTransfer.files || []);
+                  if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs.map((file) => ({ file, numero_documento: numeroDocumentoPagamento, data_documento: dataPagamento }))]);
+                }}
                 onDragOver={(e) => e.preventDefault()}
                 style={{ gridColumn: "1 / -1", border: "1px dashed var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem", textAlign: "center" }}
               >
@@ -1315,19 +1350,32 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   </button>
                 </div>
                 <input ref={comprovanteInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
-                  onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+                  onChange={(e) => {
+                    const fs = Array.from(e.target.files || []);
+                    if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs.map((file) => ({ file, numero_documento: numeroDocumentoPagamento, data_documento: dataPagamento }))]);
+                    e.target.value = "";
+                  }}
                   style={{ display: "none" }} />
                 <input ref={fotoComprovanteInputRef} type="file" accept="image/*" capture="environment"
-                  onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+                  onChange={(e) => {
+                    const fs = Array.from(e.target.files || []);
+                    if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs.map((file) => ({ file, numero_documento: numeroDocumentoPagamento, data_documento: dataPagamento }))]);
+                    e.target.value = "";
+                  }}
                   style={{ display: "none" }} />
                 {comprovanteFiles.length > 0 && (
-                  <ul style={{ marginTop: "0.4rem", textAlign: "left", fontSize: "0.76rem" }}>
+                  <ul style={{ marginTop: "0.4rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
                     {comprovanteFiles.map((f, i) => (
-                      <li key={i} className="flex items-center justify-between" style={{ padding: "0.15rem 0" }}>
-                        <span>{f.name}</span>
-                        <button type="button" className="btn-ghost" title="Remover" onClick={() => setComprovanteFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem" }}>
-                          <X size={12} style={{ color: "var(--red)" }} />
-                        </button>
+                      <li key={i} className="card" style={{ padding: "0.35rem 0.5rem", marginBottom: "0.3rem", background: "var(--surface)" }}>
+                        <div className="flex items-center justify-between" style={{ gap: "0.4rem" }}>
+                          <a href={URL.createObjectURL(f.file)} target="_blank" rel="noreferrer" title="Abrir este comprovante numa aba nova"
+                            style={{ color: "var(--dourado-light)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {f.file.name}
+                          </a>
+                          <button type="button" className="btn-ghost" title="Remover" onClick={() => setComprovanteFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                            <X size={12} style={{ color: "var(--red)" }} />
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>

@@ -2677,6 +2677,11 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [anexos, setAnexos] = useState<AnexoLancamento[] | null>(null);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
   const [categoriaAnexo, setCategoriaAnexo] = useState(lanc.tipo_documento || "");
+  // Número/data do PRÓXIMO arquivo a anexar — cada documento deste
+  // lançamento (orçamento, pedido, nota fiscal, boleto, comprovante...) pode
+  // ter seu próprio número/data, achável depois na Central de Documentos.
+  const [numeroDocAnexo, setNumeroDocAnexo] = useState("");
+  const [dataDocAnexo, setDataDocAnexo] = useState("");
   // Vincular esta compra/venda a um item de Patrimônio (entrada/saída de
   // patrimônio) — FK de verdade, editável tanto aqui quanto pela tela de
   // Patrimônio (mesmo endpoint, ver vincularLancamentoPatrimonio).
@@ -2731,8 +2736,9 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const enviarAnexo = async (file: File) => {
     setEnviandoAnexo(true); setErro("");
     try {
-      const novo = await anexarArquivoLancamentoPorId(lanc.id, file, categoriaAnexo || null);
+      const novo = await anexarArquivoLancamentoPorId(lanc.id, file, categoriaAnexo || null, numeroDocAnexo || null, dataDocAnexo || null);
       setAnexos((p) => [...(p || []), novo]);
+      setNumeroDocAnexo(""); setDataDocAnexo("");
     } catch (e: any) { setErro(e.message); }
     finally { setEnviandoAnexo(false); }
   };
@@ -2913,11 +2919,17 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       {(
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
           <label style={labelStyleLote}>Anexos</label>
-          <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-            <select style={{ ...selStyleLote, width: "auto" }} value={categoriaAnexo} onChange={(e) => setCategoriaAnexo(e.target.value)}>
+          {/* Um lançamento pode reunir vários documentos diferentes (orçamento,
+              pedido, nota fiscal, boleto, comprovante...) — cada um com sua
+              própria categoria/número/data, achável depois na Central de
+              Documentos mesmo sabendo só um desses dados. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+            <select style={selStyleLote} value={categoriaAnexo} onChange={(e) => setCategoriaAnexo(e.target.value)}>
               <option value="">Categoria do anexo…</option>
-              {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
+              {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Comprovante", "Fatura", "Orçamento", "Boleto", "Ordem de serviço", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
             </select>
+            <input style={selStyleLote} placeholder="Número do documento" value={numeroDocAnexo} onChange={(e) => setNumeroDocAnexo(e.target.value)} />
+            <input type="date" style={selStyleLote} title="Data deste documento" value={dataDocAnexo} onChange={(e) => setDataDocAnexo(e.target.value)} />
           </div>
           <Dropzone
             compact
@@ -2934,8 +2946,9 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {anexos.map((a) => (
                 <li key={a.id} className="flex items-center gap-2" style={{ padding: "0.25rem 0", fontSize: "0.78rem" }}>
-                  <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}>
-                    {a.nome_arquivo}{a.categoria ? ` — ${a.categoria}` : ""}
+                  <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}
+                    title="Abrir este documento numa aba nova">
+                    {a.nome_arquivo}{a.categoria ? ` — ${a.categoria}` : ""}{a.numero_documento ? ` (${a.numero_documento})` : ""}
                   </a>
                   <button type="button" className="btn-ghost" title="Excluir anexo" onClick={() => removerAnexo(a.id)}><Trash2 size={13} /></button>
                 </li>
@@ -3627,12 +3640,17 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
               label={enviandoAnexoPagamento ? "Enviando…" : "Arraste o comprovante aqui, ou"}
               onFiles={(files) => enviarAnexoPagamento(files[0])}
             />
+            {/* Documentos já anexados a ESTE lançamento (boleto, nota fiscal,
+                orçamento...), não só comprovantes de pagamento — clicáveis,
+                pra abrir o boleto e ler código de barras/QR code sem precisar
+                lembrar onde ele foi guardado, com o lançamento ainda aberto
+                aqui na tela enquanto paga. */}
             {anexosPagamento && anexosPagamento.length > 0 && (
               <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0" }}>
                 {anexosPagamento.map((a) => (
                   <li key={a.id} className="flex items-center justify-between" style={{ fontSize: "0.78rem", padding: "0.2rem 0" }}>
                     <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>
-                      {a.nome_arquivo}{a.categoria ? ` (${a.categoria})` : ""}
+                      {a.nome_arquivo}{a.categoria ? ` (${a.categoria}${a.numero_documento ? ` ${a.numero_documento}` : ""})` : ""}
                     </a>
                     <button className="btn-ghost" title="Remover anexo" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => removerAnexoPagamento(a.id)}>
                       <Trash2 size={12} />

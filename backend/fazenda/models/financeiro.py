@@ -140,6 +140,15 @@ class LancamentoAnexo(SQLModel, table=True):
     tamanho_bytes: int
     conteudo: Optional[bytes] = None  # formato antigo (legado) — ver docstring acima
     categoria: Optional[str] = None  # nome de um tipo de documento cadastrado (TIPOS_DOCUMENTO)
+    # Número impresso no próprio documento (nº da nota fiscal, do boleto, da
+    # OS, do orçamento/pedido...) e a data dele — diferentes de `criado_em`
+    # (quando o arquivo foi enviado). É por aqui que a Central de Documentos
+    # (fazenda.api.routers.central_documentos) permite achar, por exemplo,
+    # "o boleto número X" ou "tudo com data de documento em julho", mesmo
+    # sabendo só um dos vários documentos que um lançamento reúne (orçamento,
+    # pedido, nota fiscal, boleto, comprovante — cada um com seu próprio número).
+    numero_documento: Optional[str] = Field(default=None, index=True)
+    data_documento: Optional[date] = None
     caminho_storage: Optional[str] = None  # Supabase Storage — formato atual
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
