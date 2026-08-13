@@ -29,7 +29,8 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.models import (
-    CompraAnimal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Fazenda, Fornecedor, Sanidade,
+    CompraAnimal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, EntregaLeiteMensal, Fazenda, Fornecedor,
+    Sanidade,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -65,6 +66,7 @@ def client(monkeypatch):
             valor_total=100000.0, data_competencia=date(2026, 7, 5), fazenda_id=1,
         ))
         s.add(Fornecedor(id=1, fazenda_id=1, nome="Fornecedor original da F1", tipo="fornecedor"))
+        s.add(EntregaLeiteMensal(fazenda_id=1, competencia="2026-07", quantidade_litros=90000.0))
 
         # --- Fazenda 2: o dado legítimo de quem está consultando ---
         s.add(Sanidade(
@@ -76,6 +78,7 @@ def client(monkeypatch):
             fornecedor_cliente="Fornecedor F2", tipo="despesa", origem="manual",
             valor_total=7.0, data_competencia=date(2026, 7, 5), fazenda_id=2,
         ))
+        s.add(EntregaLeiteMensal(fazenda_id=2, competencia="2026-07", quantidade_litros=1000.0))
         s.commit()
 
     def _get_session_override():
@@ -150,6 +153,18 @@ class TestG2CustoHectare:
         assert r.status_code == 200, r.text
         # Só a despesa da própria fazenda (7,00) — não os 100.000,00 da fazenda 1.
         assert r.json()["despesas_total"] == 7.0
+
+
+class TestG4CustoLitroLeite:
+    def test_litros_entregues_pela_fazenda_1_nao_diluem_o_custo_da_fazenda_2(self, client):
+        # O custo já era filtrado por fazenda; os litros não eram. O custo por
+        # litro da fazenda 2 saía dividido por 91.000 L (1.000 dela + 90.000 da
+        # fazenda 1), ou seja, ~91x menor que o real.
+        c, _ = client
+        _como_fazenda(2)
+        r = c.get("/financeiro/custo-litro-leite", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r.status_code == 200, r.text
+        assert r.json()["litros"] == 1000.0
 
 
 class TestG3FornecedorIDOR:
