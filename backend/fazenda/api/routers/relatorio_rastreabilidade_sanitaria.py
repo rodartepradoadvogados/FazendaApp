@@ -17,11 +17,13 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BaixaAnimal, CompraAnimal, Estoque, EventoSanitario, ExameResultado, MedicamentoComercial,
     OcorrenciaClinica, ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, VendaAnimal,
 )
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
 
 router = APIRouter(prefix="/relatorio-rastreabilidade-sanitaria", tags=["relatorio-rastreabilidade-sanitaria"])
@@ -33,16 +35,32 @@ def relatorio(
     gta: str | None = Query(None, description="Número da GTA (compra ou venda)"),
     data_de: date | None = None,
     data_ate: date | None = None,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> list[dict]:
+    # Toda consulta daqui é escopada na fazenda autenticada. Antes NENHUMA das
+    # queries filtrava, e o relatório devolvia o dossiê sanitário (GTA,
+    # comprador/vendedor, resultado de exame, doença, causa de baixa) de TODAS
+    # as fazendas para qualquer usuário cuja fazenda tivesse o módulo
+    # sanitário — ver tests/test_isolamento_relatorios_fornecedor.py (G1).
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+
+    def _da_fazenda(query, modelo):
+        """Aplica o escopo de fazenda. `fazenda_id is None` (token legado ou
+        instalação de fazenda única) mantém o comportamento antigo de não
+        filtrar — mesma convenção do resto do sistema."""
+        return query if fazenda_id is None else query.where(modelo.fazenda_id == fazenda_id)
+
     # Determina o conjunto de animais a percorrer: um número específico, os
     # animais ligados a uma GTA (compra ou venda), ou todos (sem filtro).
     numeros: set[str] | None = None
     if numero:
         numeros = {numero}
     elif gta:
-        numeros = {c.numero_animal for c in session.exec(select(CompraAnimal).where(CompraAnimal.gta == gta)).all()}
-        numeros |= {v.numero_animal for v in session.exec(select(VendaAnimal).where(VendaAnimal.gta == gta)).all()}
+        numeros = {c.numero_animal for c in session.exec(
+            _da_fazenda(select(CompraAnimal).where(CompraAnimal.gta == gta), CompraAnimal)).all()}
+        numeros |= {v.numero_animal for v in session.exec(
+            _da_fazenda(select(VendaAnimal).where(VendaAnimal.gta == gta), VendaAnimal)).all()}
 
     def _dentro_periodo(d: date | None) -> bool:
         if d is None:
@@ -58,7 +76,7 @@ def relatorio(
 
     linhas: list[dict] = []
 
-    for c in session.exec(select(CompraAnimal)).all():
+    for c in session.exec(_da_fazenda(select(CompraAnimal), CompraAnimal)).all():
         if not _incluido(c.numero_animal) or not _dentro_periodo(c.data_compra):
             continue
         linhas.append({
@@ -67,7 +85,7 @@ def relatorio(
             "produto": None, "resultado": None, "doenca": None, "responsavel": c.responsavel,
         })
 
-    for v in session.exec(select(VendaAnimal)).all():
+    for v in session.exec(_da_fazenda(select(VendaAnimal), VendaAnimal)).all():
         if not _incluido(v.numero_animal) or not _dentro_periodo(v.data_venda):
             continue
         linhas.append({
@@ -78,10 +96,12 @@ def relatorio(
 
     # Item de Estoque por nome do produto — casa cada aplicação com a marca
     # comercial dona da carência (mesma resolução de sanidade.listar_aplicacoes),
-    # cacheada por nome porque o mesmo produto se repete em muitas linhas. Este
-    # relatório não filtra por fazenda (nenhum outro campo aqui filtra), então
-    # o casamento também não filtra — coerente com o resto do arquivo.
-    estoque_por_nome = {(e.nome or "").strip().lower(): e for e in session.exec(select(Estoque)).all()}
+    # cacheada por nome porque o mesmo produto se repete em muitas linhas. O
+    # casamento também é escopado na fazenda, senão a carência exibida poderia
+    # vir do item de estoque homônimo de outro cliente.
+    estoque_por_nome = {
+        (e.nome or "").strip().lower(): e for e in session.exec(_da_fazenda(select(Estoque), Estoque)).all()
+    }
     resolvido_por_produto: dict[str, tuple[Estoque | None, MedicamentoComercial | None]] = {}
 
     def _item_e_marca(produto: str | None) -> tuple[Estoque | None, MedicamentoComercial | None]:
@@ -95,7 +115,7 @@ def relatorio(
             resolvido_por_produto[chave] = (item, marca)
         return resolvido_por_produto[chave]
 
-    for s in session.exec(select(Sanidade)).all():
+    for s in session.exec(_da_fazenda(select(Sanidade), Sanidade)).all():
         if not _incluido(s.numero_matriz) or not _dentro_periodo(s.data_aplicacao):
             continue
         item_produto, marca_produto = _item_e_marca(s.produto)
@@ -106,8 +126,10 @@ def relatorio(
             "carencia": carencia_para_item(item_produto, marca_produto, data_aplicacao=s.data_aplicacao),
         })
 
-    protocolos_nomes = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
-    for p in session.exec(select(ProtocoloSanitarioLancamento)).all():
+    protocolos_nomes = {
+        p.id: p.nome for p in session.exec(_da_fazenda(select(ProtocoloSanitario), ProtocoloSanitario)).all()
+    }
+    for p in session.exec(_da_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento)).all():
         if not _incluido(p.numero_matriz) or not _dentro_periodo(p.data_inicio):
             continue
         linhas.append({
@@ -116,8 +138,10 @@ def relatorio(
             "produto": None, "resultado": None, "doenca": None, "responsavel": p.responsavel,
         })
 
-    eventos_nomes = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
-    for e in session.exec(select(ExameResultado)).all():
+    eventos_nomes = {
+        e.id: e.nome for e in session.exec(_da_fazenda(select(EventoSanitario), EventoSanitario)).all()
+    }
+    for e in session.exec(_da_fazenda(select(ExameResultado), ExameResultado)).all():
         if not _incluido(e.numero_matriz) or not _dentro_periodo(e.data_exame):
             continue
         linhas.append({
@@ -126,7 +150,7 @@ def relatorio(
             "produto": None, "resultado": e.resultado, "doenca": None, "responsavel": e.veterinario,
         })
 
-    for o in session.exec(select(OcorrenciaClinica)).all():
+    for o in session.exec(_da_fazenda(select(OcorrenciaClinica), OcorrenciaClinica)).all():
         if not _incluido(o.numero_matriz) or not _dentro_periodo(o.data_ocorrencia):
             continue
         linhas.append({
@@ -135,7 +159,7 @@ def relatorio(
             "produto": None, "resultado": None, "doenca": o.doenca, "responsavel": None,
         })
 
-    for b in session.exec(select(BaixaAnimal)).all():
+    for b in session.exec(_da_fazenda(select(BaixaAnimal), BaixaAnimal)).all():
         if not _incluido(b.numero_animal) or not _dentro_periodo(b.data_baixa):
             continue
         linhas.append({
@@ -146,7 +170,7 @@ def relatorio(
 
     # Nome do animal, para exibir junto do número na tabela do relatório.
     nomes_animal = {
-        a.numero: a.nome for a in session.exec(select(Animal)).all()
+        a.numero: a.nome for a in session.exec(_da_fazenda(select(Animal), Animal)).all()
         if numeros is None or a.numero in numeros
     }
     for l in linhas:
