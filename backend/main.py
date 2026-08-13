@@ -13,8 +13,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import (
     bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_contrato_ativo, exigir_modulo,
-    exigir_modulo_contratado, exigir_modulo_qualquer, get_current_user, seed_admin, seed_email_dono_backfill,
-    seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
+    exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao, get_current_user, seed_admin,
+    seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine, get_session
 from fazenda.models import IdempotenciaChave
@@ -176,6 +176,9 @@ async def _loop_manual_fazenda_semanal() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Cria tabelas e garante o admin inicial e os dados padrão (idempotente)."""
+    # Antes de qualquer coisa: recusa subir em produção assinando sessões com
+    # o segredo público de desenvolvimento (ver fazenda/auth.py).
+    exigir_segredo_de_producao()
     create_db_and_tables()
     # A suíte de testes cria ~1500 TestClient(main.app) — um por teste, cada
     # um disparando este lifespan inteiro. Os ~50 seeds abaixo bootstrapam um

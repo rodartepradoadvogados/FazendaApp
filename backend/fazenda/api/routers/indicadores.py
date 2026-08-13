@@ -393,6 +393,7 @@ def estados_reprodutivos(
             peso_kg=peso_por.get(a.numero),
             idade_apta_dias=idade_apta,
             peso_apta_kg=peso_apta,
+            raca=a.raca,
         )
         estado["categoria"] = a.categoria_abrev or a.grupo_primario or "—"
         estado["lote"] = a.grupo_primario

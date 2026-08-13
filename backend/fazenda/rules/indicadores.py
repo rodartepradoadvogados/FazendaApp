@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
-from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_raca
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.parametros import (
     BENCHMARK_METAS,
@@ -638,7 +638,12 @@ def calcular_indicadores(
         data_serv = ult_pos.get(num)
         if not data_serv:
             continue
-        parto = data_serv + timedelta(days=gestacao_prevista_dias)
+        # Gestação da RAÇA do animal (Holandês 280, Girolando 287, Gir/Zebu
+        # 295); só cai no ponto médio da faixa configurável quando a raça não
+        # é conhecida. Fixar um valor único adiantava em 7-15 dias o parto
+        # previsto de Girolando e Gir — e com ele a secagem e o pré-parto.
+        dias_ate_parto = dias_gestacao_da_raca(a.get("raca"), gestacao_prevista_dias)
+        parto = data_serv + timedelta(days=dias_ate_parto)
         dias = (parto - hoje).days
         gestantes_detalhe.append({
             "numero": num,

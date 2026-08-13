@@ -42,6 +42,24 @@ def dias_gestacao(raca: str | None) -> float:
     return gestacao_dias_referencia()
 
 
+def dias_gestacao_da_raca(raca: str | None, padrao: int) -> int:
+    """Dias de gestação quando a raça é CONHECIDA; `padrao` quando não é.
+
+    Diferente de `dias_gestacao()`, que cai no ponto médio da faixa
+    (gestacao_dias_min/max) para raça desconhecida. Usada nas telas que antes
+    tinham um valor fixo e passaram a respeitar a raça (ficha do animal,
+    estado reprodutivo, partos previstos): ali trocar o padrão de quem NÃO tem
+    raça cadastrada seria uma mudança de comportamento que ninguém pediu — o
+    ajuste é só para quem tem raça informada.
+    """
+    if raca:
+        raca_norm = raca.strip().lower()
+        for chave, dias in GESTACAO_DIAS.items():
+            if chave in raca_norm:
+                return dias
+    return padrao
+
+
 @dataclass
 class ResultadoGestacao:
     data_parto_provavel: date

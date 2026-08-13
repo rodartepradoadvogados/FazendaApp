@@ -51,6 +51,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+from fazenda.rules.gestation import dias_gestacao_da_raca
+
 # Estados possíveis — mutuamente exclusivos (ver matriz no topo do módulo).
 GESTANTE = "gestante"
 INSEMINADA = "inseminada"
@@ -72,8 +74,10 @@ ROTULOS = {
     VAZIA: "Vazia",
 }
 
-# Gestação média de bovino leiteiro — usada para prever o parto a partir da
-# data do serviço que emprenhou.
+# Gestação média de bovino leiteiro — fallback de quando a raça do animal não
+# é informada. Com a raça em mãos, use `dias_gestacao(raca)` (Holandês 280,
+# Girolando 287, Gir/Zebu 295): fixar 280 para todo mundo previa o parto de
+# um Gir 15 dias antes do real, adiantando secagem e pré-parto na mesma medida.
 DIAS_GESTACAO = 280
 # Janela do protocolo IATF: D0 (implante) até D11 (inseminação).
 DIA_FINAL_PROTOCOLO = 11
@@ -115,6 +119,7 @@ def classificar_animal(
     peso_kg: float | None = None,
     idade_apta_dias: int | None = None,
     peso_apta_kg: float | None = None,
+    raca: str | None = None,
 ) -> dict:
     """Estado reprodutivo de UM animal, recalculado dos registros.
 
@@ -163,7 +168,9 @@ def classificar_animal(
         # 1. GESTANTE — prenhez confirmada e ainda de pé.
         if diagnostico == _POSITIVO and not perdeu:
             base["dias_gestacao"] = (hoje - ds).days if ds else None
-            base["parto_previsto"] = (ds + timedelta(days=DIAS_GESTACAO)).isoformat() if ds else None
+            base["parto_previsto"] = (
+                (ds + timedelta(days=dias_gestacao_da_raca(raca, DIAS_GESTACAO))).isoformat() if ds else None
+            )
             return {**base, "estado": GESTANTE}
 
         # 2. INSEMINADA — serviço feito, resultado ainda em aberto. Vence

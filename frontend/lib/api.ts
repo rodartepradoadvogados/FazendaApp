@@ -4020,7 +4020,7 @@ export async function fetchEntregaLeiteMensal() {
   if (!res.ok) throw new Error(`Venda mensal do leite error: ${res.status}`);
   return res.json();
 }
-export async function criarEntregaLeiteMensal(dados: { competencia: string; quantidade_litros: number; observacao?: string | null }) {
+export async function criarEntregaLeiteMensal(dados: { competencia: string; quantidade_litros: number; unidade?: string; observacao?: string | null }) {
   const res = await authFetch(`${API}/producao/entrega-leite`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -4030,7 +4030,7 @@ export async function criarEntregaLeiteMensal(dados: { competencia: string; quan
 // G6 — o POST acima já faz upsert por competência (editar o valor de um mês
 // já funciona); o PUT serve pra corrigir a COMPETÊNCIA errada. 409 se a nova
 // competência já tiver outro registro na mesma fazenda.
-export type EntregaLeiteEditIn = { competencia: string; quantidade_litros: number; observacao?: string | null };
+export type EntregaLeiteEditIn = { competencia: string; quantidade_litros: number; unidade?: string; observacao?: string | null };
 export async function atualizarEntregaLeite(id: number, dados: EntregaLeiteEditIn) {
   const res = await authFetch(`${API}/producao/entrega-leite/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

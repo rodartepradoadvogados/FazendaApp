@@ -122,7 +122,16 @@ class EntregaLeiteMensal(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     competencia: str = Field(index=True)  # "YYYY-MM"
+    # Volume entregue, NA UNIDADE indicada em `unidade` (o nome do campo é
+    # histórico — nasceu quando só havia litro). O laticínio paga por um dos
+    # dois conforme o contrato, então o produtor escolhe como lança.
     quantidade_litros: float
+    # "kg" (padrão) | "L". O controle leiteiro é sempre em kg, então a
+    # comparação Controle × Entregue converte a entrega para kg antes de
+    # subtrair (ver DENSIDADE_LEITE_KG_POR_L em rules/unidades.py). Sem isso o
+    # litro entrava como se fosse kg e o "não entregue" (bezerros + equipe)
+    # saía inflado em ~2,9% do volume entregue.
+    unidade: str = Field(default="kg")
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
