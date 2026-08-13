@@ -174,6 +174,19 @@ class TestLerDocumento:
             r = c.post("/financeiro/ler-documento", files={"file": ("nota.pdf", b"%PDF-1.4", "application/pdf")})
         assert r.status_code == 400
 
+    def test_resposta_cortada_por_max_tokens_vira_erro_400_com_mensagem_acionavel(self, client, monkeypatch):
+        """Nota fiscal com muitos itens ou boleto com muitas parcelas pode
+        gerar um JSON grande demais pro limite de max_tokens — sem essa
+        checagem, json.loads() do texto cortado no meio estourava um erro de
+        parse ilegível em vez de dizer ao usuário o que fazer."""
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock({}, stop_reason="max_tokens")
+            r = c.post("/financeiro/ler-documento", files={"file": ("nota.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 400
+        assert "itens/páginas demais" in r.json()["detail"]
+
     def test_boleto_multiplas_paginas_corrige_valor_total_para_a_soma(self, client, monkeypatch):
         """Reproduz o bug relatado: um PDF de 8 páginas, uma parcela de
         R$586,25 por página — a IA devolveu valor_total=586.25 (valor de
