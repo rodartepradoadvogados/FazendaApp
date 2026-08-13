@@ -29,7 +29,7 @@ class BaixaIn(BaseModel):
     animais: list[str]
     tipo_baixa: str
     motivo: str
-    motivo_doenca: str | None = None
+    motivo_doenca: str | None = None  # causa específica cadastrada (Configurações > Motivos de baixa) — motivo == "doenca" (obrigatório) ou "acidente" (opcional)
     motivo_outro: str | None = None  # texto livre opcional — só quando motivo == "outros"
     valor: float | None = None
     cliente: str | None = None
@@ -202,7 +202,7 @@ def registrar_baixa(
     for numero, animal in encontrados:
         session.add(BaixaAnimal(
             numero_animal=numero, tipo_baixa=dados.tipo_baixa, motivo=dados.motivo,
-            motivo_doenca=dados.motivo_doenca if dados.motivo == "doenca" else None,
+            motivo_doenca=dados.motivo_doenca if dados.motivo in ("doenca", "acidente") else None,
             motivo_outro=dados.motivo_outro if dados.motivo == "outros" else None,
             valor=valor_unitario if dados.motivo == "venda" else None,
             cliente=dados.cliente if dados.motivo == "venda" else None,
@@ -216,6 +216,8 @@ def registrar_baixa(
         animal.ativo = False
         animal.data_baixa = dados.data_baixa
         if dados.motivo == "doenca":
+            animal.motivo_baixa = dados.motivo_doenca
+        elif dados.motivo == "acidente" and (dados.motivo_doenca or "").strip():
             animal.motivo_baixa = dados.motivo_doenca
         elif dados.motivo == "outros" and (dados.motivo_outro or "").strip():
             animal.motivo_baixa = dados.motivo_outro

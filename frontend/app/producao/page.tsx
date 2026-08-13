@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2 } from "lucide-react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2, Info } from "lucide-react";
+import { LineChart as RechartsLineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -214,6 +215,25 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
       };
     });
   }, [qlFiltrados, qlIndicadores]);
+
+  // Mais de um indicador selecionado = um único gráfico com uma linha colorida
+  // por indicador (não um gráfico por indicador) — cada um tem escala própria
+  // (CCS em milhares, gordura em %), por isso normaliza (% do próprio máximo)
+  // pra caber junto no mesmo eixo Y; o valor real continua no tooltip.
+  const qlNormalizar = qlSeries.length > 1;
+  const qlChartData = useMemo(() => {
+    const porData = new Map<string, Record<string, number | null>>();
+    qlSeries.forEach((s) => {
+      const max = qlNormalizar ? Math.max(1e-9, ...s.dados.map((d) => Math.abs(d.total))) : 1;
+      s.dados.forEach((d) => {
+        const linha = porData.get(d.data) ?? {};
+        linha[s.key] = d.total;
+        if (qlNormalizar) linha[`${s.key}__norm`] = Math.round((d.total / max) * 1000) / 10;
+        porData.set(d.data, linha);
+      });
+    });
+    return Array.from(porData.keys()).sort().map((data) => ({ data, ...porData.get(data) }));
+  }, [qlSeries, qlNormalizar]);
 
   // #548 — coletas ordenadas da mais recente para a mais antiga, para a
   // tabela de bonificação estimada por lançamento (e para achar a última).
@@ -559,17 +579,46 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
                   {!qlIndicadores.length ? (
                     <p style={{ color: "var(--amber)", fontSize: "0.85rem" }}>Selecione ao menos um indicador para ver o gráfico.</p>
                   ) : (
-                    qlSeries.map((s, i) => (
-                      <div key={s.key} className={i > 0 ? "mt-4" : undefined}>
-                        <div className="grid grid-cols-2 gap-4 mb-3">
-                          <Indicador categoria="producao" valor={`${s.atual ?? "—"} ${s.atual != null ? s.unidade : ""}`} cor={CORES_INDICADOR[s.key]} rotulo={`${s.label} atual (última coleta)`} />
-                          <Indicador categoria="producao" valor={`${s.media ?? "—"} ${s.media != null ? s.unidade : ""}`} rotulo={`${s.label} média no período`} />
-                        </div>
-                        {s.dados.length
-                          ? <LineChart dados={s.dados} cor={CORES_INDICADOR[s.key]} unidade={s.unidade} />
-                          : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de {s.label} no filtro.</p>}
+                    <>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+                        {qlSeries.map((s) => (
+                          <Fragment key={s.key}>
+                            <Indicador categoria="producao" valor={`${s.atual ?? "—"} ${s.atual != null ? s.unidade : ""}`} cor={CORES_INDICADOR[s.key]} rotulo={`${s.label} atual`} />
+                            <Indicador categoria="producao" valor={`${s.media ?? "—"} ${s.media != null ? s.unidade : ""}`} rotulo={`${s.label} média`} />
+                          </Fragment>
+                        ))}
                       </div>
-                    ))
+                      {qlNormalizar && (
+                        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                          <Info size={12} /> Mais de um indicador selecionado — valores normalizados (% do próprio máximo de cada um) para caberem no mesmo gráfico; passe o mouse para ver o valor real.
+                        </p>
+                      )}
+                      {qlChartData.length ? (
+                        <ResponsiveContainer width="100%" height={280}>
+                          <RechartsLineChart data={qlChartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                            <XAxis dataKey="data" tickFormatter={(v) => formatDate(v as string)} tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
+                            <YAxis tick={{ fill: "var(--text-muted)", fontSize: 10 }} domain={qlNormalizar ? [0, 100] : undefined} />
+                            <RechartsTooltip
+                              labelFormatter={(v) => formatDate(v as string)}
+                              contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: "0.78rem" }}
+                              formatter={(_value: any, _name: any, item: any) => {
+                                const key = item?.dataKey?.toString().replace("__norm", "") || "";
+                                const info = INDICADORES_QUALIDADE.find((i) => i.key === key);
+                                const real = item?.payload?.[key];
+                                return [`${real ?? "—"} ${info?.unidade || ""}`, info?.label || key];
+                              }}
+                            />
+                            <Legend wrapperStyle={{ fontSize: "0.75rem" }} formatter={(key: string) => INDICADORES_QUALIDADE.find((i) => i.key === key.replace("__norm", ""))?.label || key} />
+                            {qlIndicadores.map((key) => (
+                              <Line key={key} type="monotone" dataKey={qlNormalizar ? `${key}__norm` : key} name={key} stroke={CORES_INDICADOR[key]} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                            ))}
+                          </RechartsLineChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas no filtro.</p>
+                      )}
+                    </>
                   )}
                 </div>
 
