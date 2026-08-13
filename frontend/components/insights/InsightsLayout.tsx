@@ -32,6 +32,7 @@ import { useSubNav } from "@/components/SubNavContext";
 import { useExportAtual } from "@/components/ExportContext";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { getFazendaAtual, getUsuario, podeModulo, ehDono, ROTA_MODULO } from "@/lib/api";
+import { marcarVeioDaAdministracao } from "@/lib/portalAdministracao";
 
 type Aba = { href: string; label: string; donoOnly?: boolean; requerConfig?: boolean };
 
@@ -176,12 +177,20 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
         <nav style={{ display: "flex", gap: "0.2rem", padding: "0 1rem", overflowX: "auto", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           {abasVisiveis.map((a) => {
             const ativo = path === a.href || (a.href !== "/" && path.startsWith(a.href));
+            // Painel CowData e Painel do Contador têm casca própria, fora
+            // desta (ver app/painel-cowdata/layout.tsx, app/contador/
+            // layout.tsx) — marca que a navegação partiu daqui para o
+            // "Voltar" de lá saber voltar para Administração, não para a
+            // Capa da fazenda (ver lib/portalAdministracao.ts).
+            const destinoBespoke = a.href === "/painel-cowdata" || a.href === "/contador";
             return (
-              <Link key={a.href} href={a.href} style={{
-                padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
-                color: ativo ? "#F5EEF1" : "rgba(245,238,241,0.62)",
-                borderBottom: ativo ? "2px solid #C9A44C" : "2px solid transparent",
-              }}>
+              <Link key={a.href} href={a.href}
+                onClick={destinoBespoke ? marcarVeioDaAdministracao : undefined}
+                style={{
+                  padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
+                  color: ativo ? "#F5EEF1" : "rgba(245,238,241,0.62)",
+                  borderBottom: ativo ? "2px solid #C9A44C" : "2px solid transparent",
+                }}>
                 {a.label}
               </Link>
             );
