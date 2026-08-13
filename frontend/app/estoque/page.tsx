@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes, X } from "lucide-react";
+import { AlertTriangle, Filter, Pencil, Trash2, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes, X } from "lucide-react";
 import {
   fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, atualizarMovimentoEstoque, confirmarExclusao,
   ehAdmin, formatDate, type MovimentoEstoqueRow,
@@ -304,6 +304,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
   titulo: string; descricao: string; tiposIncluidos: string[]; icon: any; corIcone: string; corQtd: string; nomeArquivoBase: string;
 }) {
   const [movimentos, setMovimentos] = useState<MovimentoRow[] | null>(null);
+  const [itens, setItens] = useState<Item[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
@@ -325,7 +326,10 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
 
   const carregar = () => fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos as MovimentoRow[])).catch((e) => setError(e.message));
 
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => {
+    carregar();
+    fetchEstoque().then((d) => setItens(d.itens)).catch(() => {});
+  }, []);
 
   const abrirEdicao = (m: MovimentoRow) => {
     setEditando(m);
@@ -399,10 +403,20 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                 <input type="date" style={selStyle} value={de} onChange={(e) => setDe(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
                 <input type="date" style={selStyle} value={ate} onChange={(e) => setAte(e.target.value)} /></div>
+              {/* Janela suspensa em vez de texto livre — mesmo padrão do
+                  Inventário (linha ~161): lista já carregada, sem depender do
+                  usuário acertar acento/abreviação do nome do produto. */}
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
+                <div className="flex items-center gap-1">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <EstoquePicker itens={itens} value={busca} onChange={setBusca}
+                      placeholder="Todos os produtos" todasFinalidades incluirNaoEstocaveis />
+                  </div>
+                  {busca && (
+                    <button type="button" onClick={() => setBusca("")} className="btn-ghost" title="Limpar filtro de produto" aria-label="Limpar filtro de produto">
+                      <X size={14} />
+                    </button>
+                  )}
                 </div></div>
             </div>
           </div>
@@ -515,12 +529,16 @@ type LinhaPorProduto = { produto: string; unidade: string; totalEntradas: number
 // mapas acima, só agrupado por item em vez de listado movimento a movimento.
 function EstoquePorProduto() {
   const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
+  const [itens, setItens] = useState<Item[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [busca, setBusca] = useState("");
 
-  useEffect(() => { fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message)); }, []);
+  useEffect(() => {
+    fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message));
+    fetchEstoque().then((d) => setItens(d.itens)).catch(() => {});
+  }, []);
 
   const noPeriodo = useMemo(() => {
     if (!movimentos) return [];
@@ -562,9 +580,16 @@ function EstoquePorProduto() {
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
                 <input type="date" style={selStyle} value={ate} onChange={(e) => setAte(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
+                <div className="flex items-center gap-1">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <EstoquePicker itens={itens} value={busca} onChange={setBusca}
+                      placeholder="Todos os produtos" todasFinalidades incluirNaoEstocaveis />
+                  </div>
+                  {busca && (
+                    <button type="button" onClick={() => setBusca("")} className="btn-ghost" title="Limpar filtro de produto" aria-label="Limpar filtro de produto">
+                      <X size={14} />
+                    </button>
+                  )}
                 </div></div>
             </div>
           </div>

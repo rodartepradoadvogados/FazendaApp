@@ -1812,8 +1812,14 @@ def criar_lancamento(
     # despesa e só quando NÃO está vinculada a um Pedido (nesse caso a
     # entrada física já é lançada manualmente via POST /estoque/movimentar
     # quando a mercadoria chega; dar entrada aqui também duplicaria a
-    # contagem). Item não encontrado ou não-estocável: melhor esforço,
-    # segue sem erro (a nota fiscal é o que importa, o estoque é acessório).
+    # contagem). Item não-estocável (financeiro puro): melhor esforço, segue
+    # sem aviso (comportamento intencional). Item NÃO encontrado no estoque
+    # cadastrado (nome digitado em "texto livre" ou fora do cadastro): antes
+    # o `continue` abaixo pulava em silêncio — a nota fiscal salvava normal e
+    # ninguém percebia que o produto nunca deu entrada no estoque (foi o que
+    # aconteceu com sêmen comprado por nome de touro ainda não cadastrado).
+    # Agora sempre passa por `movimentar()`, que já sabe gerar o aviso
+    # "não está no estoque desta fazenda" quando `item` vem None.
     avisos_estoque: list[str] = []
     if dados.tipo == "despesa" and dados.pedido_id is None:
         data_movimento = dados.data_emissao or data_competencia or date.today()
@@ -1825,13 +1831,15 @@ def criar_lancamento(
             if item_in.tipo_item != "produto" or not item_in.quantidade or item_in.quantidade <= 0:
                 continue
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
-            if estoque_item is None or estoque_item.estocavel is False:
+            if estoque_item is not None and estoque_item.estocavel is False:
                 continue
             avisos_estoque += estoque_baixa.movimentar(
-                session, item=estoque_item, quantidade=item_in.quantidade, unidade=estoque_item.unidade,
+                session, item=estoque_item, quantidade=item_in.quantidade,
+                unidade=estoque_item.unidade if estoque_item else None,
                 data=data_movimento, fazenda_id=fazenda_id, movimento="Entrada de compra",
                 observacao=f"Entrada por compra — lançamento {numero_lancamento}",
                 usuario_id=usuario_id, origem_tipo="compra_financeiro", origem_id=item_criado.id, sinal=+1,
+                produto=item_in.produto,
             )
         session.commit()
 
