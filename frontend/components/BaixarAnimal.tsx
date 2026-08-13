@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
@@ -45,7 +45,12 @@ export default function BaixarAnimal() {
   const [tipoBaixa, setTipoBaixa] = useState("");
   const [motivo, setMotivo] = useState("");
   const [motivoDoenca, setMotivoDoenca] = useState("");
+  // "Causa do acidente" reaproveita a mesma lista cadastrada em Configurações
+  // > Motivos de baixa (opcoes.motivos_doenca) — mas é opcional (diferente de
+  // doença, onde é obrigatória) e fica num campo próprio.
+  const [motivoAcidente, setMotivoAcidente] = useState("");
   const [motivoOutro, setMotivoOutro] = useState("");
+  const datalistMotivosId = useId();
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_animal");
   const [cliente, setCliente] = useState("");
@@ -98,7 +103,7 @@ export default function BaixarAnimal() {
   );
 
   const limpar = () => {
-    setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoOutro("");
+    setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoAcidente(""); setMotivoOutro("");
     setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
@@ -130,7 +135,7 @@ export default function BaixarAnimal() {
     try {
       const r = await criarBaixaAnimal({
         animais: Array.from(selecionados), tipo_baixa: tipoBaixa, motivo,
-        motivo_doenca: motivo === "doenca" ? motivoDoenca : undefined,
+        motivo_doenca: motivo === "doenca" ? motivoDoenca : motivo === "acidente" ? (motivoAcidente || undefined) : undefined,
         motivo_outro: motivo === "outros" ? (motivoOutro.trim() || undefined) : undefined,
         valor: motivo === "venda" ? Number(valor) : undefined,
         tipo_valor: motivo === "venda" ? tipoValor : undefined,
@@ -262,10 +267,23 @@ export default function BaixarAnimal() {
             </div>
           )}
 
+          {motivo === "acidente" && (
+            <div className="mb-3" style={{ maxWidth: "320px" }}>
+              <label style={labelStyle}>Causa do acidente (opcional)</label>
+              <select style={selStyle} value={motivoAcidente} onChange={(e) => setMotivoAcidente(e.target.value)}>
+                <option value="">Selecione...</option>
+                {opcoes.motivos_doenca.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+
           {motivo === "outros" && (
             <div className="mb-3" style={{ maxWidth: "320px" }}>
               <label style={labelStyle}>Descreva o motivo (opcional)</label>
-              <input style={selStyle} value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)} placeholder="ex.: transferência para outra fazenda" />
+              <input style={selStyle} list={datalistMotivosId} value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)} placeholder="ex.: transferência para outra fazenda" />
+              <datalist id={datalistMotivosId}>
+                {opcoes.motivos_doenca.map((d) => <option key={d} value={d} />)}
+              </datalist>
             </div>
           )}
 
