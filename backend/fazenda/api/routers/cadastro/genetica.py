@@ -246,6 +246,9 @@ def criar_estoque_semen(
     # no Inventário de Sêmen mas fica invisível no módulo Estoque genérico.
     sincronizar_item_estoque_semen(item, session)
     session.commit()
+    # 2º commit expira os atributos de `item` de novo — sem este refresh,
+    # `model_dump()` devolvia {} (nenhum campo, nem "id") em vez do item.
+    session.refresh(item)
     return item.model_dump()
 
 
@@ -270,6 +273,7 @@ def atualizar_estoque_semen(
     session.refresh(item)
     sincronizar_item_estoque_semen(item, session)
     session.commit()
+    session.refresh(item)
     return item.model_dump()
 
 

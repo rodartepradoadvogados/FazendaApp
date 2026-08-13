@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import CompraSemen, ContaGerencial, EstoqueSemen, Touro
+from fazenda.models import CompraSemen, ContaGerencial, Estoque, EstoqueSemen, MovimentoEstoque, Touro
 
 
 @pytest.fixture
@@ -85,6 +85,30 @@ class TestRegistrarCompraSemen:
             assert registro.origem == "estoque"
             assert registro.doses == 20
             assert registro.estoque_semen_id == estoque_id
+
+    def test_compra_grava_movimento_de_estoque_entrada_de_compra(self, client):
+        # Regressão: a compra somava doses certinho em EstoqueSemen (e a
+        # aplicação na inseminação já baixava e registrava normalmente), mas
+        # a ENTRADA em si nunca deixava rastro em MovimentoEstoque — sumia do
+        # Mapa de entradas do Estoque mesmo com o saldo correto.
+        estoque_id = _criar_estoque_semen(client.engine)
+        r = client.post("/compras-semen/", json={
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 50.0, "tipo_valor": "por_dose", "doses": 20}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+        })
+        assert r.status_code == 200
+
+        with Session(client.engine) as s:
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "compra_semen")).first()
+            assert mov is not None
+            assert mov.movimento == "Entrada de compra"
+            assert mov.quantidade == 20
+            assert mov.unidade == "dose"
+            assert mov.nome_item == "Touro da Fazenda"
+
+            item_espelho = s.exec(select(Estoque).where(Estoque.estoque_semen_id == estoque_id)).first()
+            assert item_espelho is not None
+            assert mov.estoque_id == item_espelho.id
 
     def test_compra_valor_total_calcula_valor_por_dose(self, client):
         estoque_id = _criar_estoque_semen(client.engine)

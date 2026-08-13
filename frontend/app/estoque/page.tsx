@@ -44,7 +44,10 @@ type MovimentoRow = MovimentoEstoqueRow & { origem_tipo?: string | null; pedido_
 // Mesma classificação entrada/saída do backend (backend/fazenda/api/routers/estoque.py) —
 // usada para separar o mesmo histórico de movimentos nos mapas de entrada/saída
 // e no resumo por produto, sem precisar de um endpoint novo.
-const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia"];
+// "Entrada de compra" faltava aqui — compra de produto/sêmen (Financeiro ou
+// Comprar sêmen) já gerava esse movimento no backend, mas sumia dos 3 mapas
+// abaixo porque nenhum deles reconhecia o tipo como entrada.
+const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia", "Entrada de compra"];
 const MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"];
 
 type Item = {

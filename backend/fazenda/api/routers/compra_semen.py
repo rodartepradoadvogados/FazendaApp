@@ -7,7 +7,9 @@ compradas ao Estoque de Sêmen, seja de um touro já cadastrado na fazenda
 casa por NAAB com uma linha de EstoqueSemen existente, ou cria uma nova).
 É essa soma em EstoqueSemen.doses que faz a compra "comunicar" com os
 relatórios de estoque de sêmen e com a baixa por dose nas aplicações de
-inseminação (ver fazenda.api.routers.reproducao).
+inseminação (ver fazenda.api.routers.reproducao). Também grava um
+MovimentoEstoque "Entrada de compra" por item — sem isso a compra tinha
+saldo certo, mas nenhum rastro no Mapa de entradas do Estoque.
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import CompraSemen, ContaGerencial, EstoqueSemen, Touro, Usuario
+from fazenda.models import CompraSemen, ContaGerencial, Estoque, EstoqueSemen, MovimentoEstoque, Touro, Usuario
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
 from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
@@ -225,6 +227,7 @@ def registrar_compra(
             registro.numero_documento_pagamento = dados.numero_documento_pagamento
         session.add(registro)
 
+    usuario_id = usuario_id_seguro(user)
     estoque_semen_ids = []
     for estoque, item, valor_unitario, _ in resolvidos:
         estoque.doses = estoque.doses + item.doses
@@ -233,13 +236,29 @@ def registrar_compra(
         session.flush()
         sincronizar_item_estoque_semen(estoque, session)
 
-        session.add(CompraSemen(
+        compra = CompraSemen(
             estoque_semen_id=estoque.id, touro_nome=estoque.touro_nome, naab=estoque.naab,
             origem=item.origem, tipo=estoque.tipo, doses=item.doses, valor_unitario=valor_unitario,
             vendedor=dados.vendedor, data_compra=dados.data_compra,
             responsavel=dados.responsavel, observacao=dados.observacao,
             numero_lancamento_gerado=numero_lancamento,
-            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+            usuario_id=usuario_id, fazenda_id=fazenda_id,
+        )
+        session.add(compra)
+        session.flush()
+
+        # Sem isto, a compra somava as doses certinho em EstoqueSemen (e a
+        # aplicação/inseminação já baixava e registrava normalmente — ver
+        # estoque_baixa.baixar_dose_semen), mas a ENTRADA em si nunca deixava
+        # rastro em MovimentoEstoque — sumia do Mapa de entradas do Estoque e
+        # de qualquer relatório de movimentação, mesmo com o saldo certo.
+        item_espelho = session.exec(select(Estoque).where(Estoque.estoque_semen_id == estoque.id)).first()
+        session.add(MovimentoEstoque(
+            nome_item=estoque.touro_nome, movimento="Entrada de compra", quantidade=item.doses, unidade="dose",
+            data_movimento=dados.data_compra, observacao=f"Compra de sêmen — {dados.vendedor} (lançamento {numero_lancamento})",
+            usuario_id=usuario_id, fazenda_id=fazenda_id,
+            estoque_id=item_espelho.id if item_espelho is not None else None,
+            origem_tipo="compra_semen", origem_id=compra.id,
         ))
         estoque_semen_ids.append(estoque.id)
 
