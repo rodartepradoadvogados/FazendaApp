@@ -17,7 +17,7 @@ from fazenda.auth import (
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
-    CronogramaSanitario, DietaLancamento, Diaria,
+    CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
     Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
@@ -1240,10 +1240,25 @@ class RealizadoIn(BaseModel):
     observacao: str | None = None                   # cronograma_sanitario_aplicar_
 
 
-def _decidir_cronograma_animal(session: Session, evento_id: str, incluir: bool | None) -> None:
+def _exigir_da_fazenda(registro, fazenda_id: int | None, rotulo: str):
+    """`evento_id` chega como string livre no corpo do POST /agenda/realizados
+    e vira id inteiro sequencial — sem esta checagem, um usuário de qualquer
+    fazenda decidia/aplicava o cronograma sanitário de outra só chutando o id
+    (e o número do animal alheio acabava copiado para dentro da fazenda dele
+    via Sanidade). 404 para não confirmar a existência do id.
+    Ver tests/test_isolamento_relatorios_fornecedor.py (G6)."""
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail=f"{rotulo} não encontrado")
+    return registro
+
+
+def _decidir_cronograma_animal(
+    session: Session, evento_id: str, incluir: bool | None, fazenda_id: int | None = None
+) -> None:
     if incluir is None:
         raise HTTPException(status_code=400, detail="Informe se o animal deve ser incluído ou excluído do cronograma")
     linha_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}animal_"))
+    _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
     try:
         _cronograma_sanitario_rules.decidir_animal(session, linha_id, incluir, date.today())
     except CronogramaError as e:
@@ -1252,12 +1267,10 @@ def _decidir_cronograma_animal(session: Session, evento_id: str, incluir: bool |
 
 def _decidir_cronograma_modo(
     session: Session, evento_id: str, modo: str | None, veterinario_pessoa_id: int | None,
-    nova_data: date | None, motivo: str | None,
+    nova_data: date | None, motivo: str | None, fazenda_id: int | None = None,
 ) -> None:
     cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}modo_"))
-    cronograma = session.get(CronogramaSanitario, cronograma_id)
-    if not cronograma:
-        raise HTTPException(status_code=404, detail="Cronograma não encontrado")
+    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
     try:
         if nova_data is not None:
             _cronograma_sanitario_rules.adiar(session, cronograma, nova_data, motivo)
@@ -1278,14 +1291,13 @@ def _aplicar_cronograma(
     endpoint. Reaproveita 100% a lógica de baixa de estoque/Sanidade já
     usada por /sanidade/calendario/cadastrar-preventivo."""
     cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}aplicar_"))
-    cronograma = session.get(CronogramaSanitario, cronograma_id)
-    if not cronograma:
-        raise HTTPException(status_code=404, detail="Cronograma não encontrado")
+    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
     if cronograma.status != "agendado":
         raise HTTPException(status_code=400, detail="Este cronograma ainda não tem veterinário/aplicação própria confirmado")
-    calendario = session.get(CalendarioSanitario, cronograma.calendario_sanitario_id)
-    if not calendario:
-        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    calendario = _exigir_da_fazenda(
+        session.get(CalendarioSanitario, cronograma.calendario_sanitario_id), fazenda_id,
+        "Regra do calendário sanitário",
+    )
 
     incluidos = _cronograma_sanitario_rules.animais_por_status(session, cronograma.id, "incluido")
     alvo = set(animais) if animais else {l.numero_matriz for l in incluidos}
@@ -1739,10 +1751,10 @@ def marcar_realizado(
         )
         return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
-        _decidir_cronograma_animal(session, dados.evento_id, dados.incluir)
+        _decidir_cronograma_animal(session, dados.evento_id, dados.incluir, fazenda_id)
         return {"marcado": True}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}modo_"):
-        _decidir_cronograma_modo(session, dados.evento_id, dados.modo, dados.veterinario_pessoa_id, dados.nova_data, dados.motivo)
+        _decidir_cronograma_modo(session, dados.evento_id, dados.modo, dados.veterinario_pessoa_id, dados.nova_data, dados.motivo, fazenda_id)
         return {"marcado": True}
     if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}aplicar_"):
         avisos = _aplicar_cronograma(
