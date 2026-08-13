@@ -1,11 +1,11 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X } from "lucide-react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X } from "lucide-react";
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
-import { SecaoRecolhivel, MultiFiltro, Indicador } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -14,6 +14,8 @@ import { TabelasStatusBst } from "@/components/PainelLancarBst";
 import { CaixaProximaAplicacaoBst, PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
 import { casaBusca } from "@/lib/busca";
 import { Modal } from "@/components/Modal";
+import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
+import { ListaProtocolos } from "@/app/protocolos/page";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -117,7 +119,17 @@ type RelatorioControleEntrega = {
   nao_entregue_kg: number | null; leite_bezerros_kg_dia: number; bezerros_kg: number; bezerros_fonte: string; equipe_kg: number | null;
 };
 
-export function ProducaoLeiteira() {
+// "controle" (padrão) mostra tudo relacionado ao controle leiteiro em si —
+// curva de lactação, ranking, projeção 305 dias, registros filtrados —
+// SEM Qualidade do leite/Controle × Entregue, que viram abas próprias no
+// sub-menu de Histórico > Produção (antes ficavam sempre juntas aqui dentro,
+// e por isso "sumiam" — ninguém achava Qualidade do leite fora de dentro da
+// aba Produção leiteira). Continuam no MESMO componente (não em arquivos
+// separados) para não duplicar os hooks/fetches — só o que renderiza muda.
+export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | "qualidade" | "entrega" } = {}) {
+  const mostrarControle = secao === "controle";
+  const mostrarQualidade = secao === "qualidade";
+  const mostrarEntrega = secao === "entrega";
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,9 +143,10 @@ export function ProducaoLeiteira() {
   const [ucN, setUcN] = useState<1 | 2 | 3 | "todos">(1);
   const [ucAnimal, setUcAnimal] = useState("");
   const [ucLotes, setUcLotes] = useState<string[]>([]);
-  // Lista real de animais (para o seletor "lista vermelha" — Nº/Grupo/Categoria/Sit.Rep./DEL).
+  // Lista real de animais (para o seletor "lista vermelha" — Nº/Grupo/Categoria/Sit.Rep./DEL)
+  // — só usada na aba "controle" (seletor de animal do painel "Últimos controles").
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
-  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
+  useEffect(() => { if (mostrarControle) fetchAnimais().then(setAnimais).catch(() => {}); }, [mostrarControle]);
 
   const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
   const [qualidadeErro, setQualidadeErro] = useState<string | null>(null);
@@ -150,10 +163,11 @@ export function ProducaoLeiteira() {
   const [qlIndividual, setQlIndividual] = useState(true);
 
   useEffect(() => {
+    if (!mostrarQualidade) return;
     fetchQualidadeLeite()
       .then((d) => { setQualidade(d.registros); setQlTemFaixasBonificacao(!!d.tem_faixas_bonificacao); })
       .catch((e) => setQualidadeErro(e.message));
-  }, []);
+  }, [mostrarQualidade]);
 
   const qlFiltrados = useMemo(() => {
     if (!qualidade) return [];
@@ -190,12 +204,14 @@ export function ProducaoLeiteira() {
   const [ce, setCe] = useState<RelatorioControleEntrega | null>(null);
   const [ceErro, setCeErro] = useState<string | null>(null);
   useEffect(() => {
+    if (!mostrarEntrega) return;
     fetchRelatorioControleEntrega(ceIni || undefined, ceFim || undefined).then(setCe).catch((e) => setCeErro(e.message));
-  }, [ceIni, ceFim]);
+  }, [mostrarEntrega, ceIni, ceFim]);
 
   useEffect(() => {
+    if (!mostrarControle) return;
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
-  }, []);
+  }, [mostrarControle]);
 
   const delMin = fDelMin === "" ? null : Number(fDelMin);
   const delMax = fDelMax === "" ? null : Number(fDelMax);
@@ -337,13 +353,33 @@ export function ProducaoLeiteira() {
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Milk size={22} style={{ color: "var(--dourado-light)" }} /> Produção Leiteira
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Curva de lactação, evolução e ranking — filtre por ano, mês ou faixa de DEL (de/até).</p>
-      </div>
+      {mostrarControle && (
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Milk size={22} style={{ color: "var(--dourado-light)" }} /> Produção Leiteira
+          </h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Curva de lactação, evolução e ranking — filtre por ano, mês ou faixa de DEL (de/até).</p>
+        </div>
+      )}
+      {mostrarQualidade && (
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <FlaskConical size={22} style={{ color: "var(--dourado-light)" }} /> Qualidade do leite
+          </h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>CCS, CBT, gordura, proteína, sólidos e ESD — série histórica por período, do tanque ou por vaca.</p>
+        </div>
+      )}
+      {mostrarEntrega && (
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Scale size={22} style={{ color: "var(--dourado-light)" }} /> Venda mensal do leite
+          </h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fecha, no período, o leite do controle contra o entregue ao laticínio — separando bezerros e equipe/família.</p>
+        </div>
+      )}
 
+      {mostrarControle && (
+      <>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o controle leiteiro</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -435,7 +471,12 @@ export function ProducaoLeiteira() {
               </table>
             </div>
           </div>
+        </>
+      )}
+      </>
+      )}
 
+      {mostrarQualidade && (
           <SecaoRecolhivel
             titulo="Qualidade do leite"
             icon={FlaskConical}
@@ -540,7 +581,9 @@ export function ProducaoLeiteira() {
               </>
             )}
           </SecaoRecolhivel>
+      )}
 
+      {mostrarEntrega && (
           <SecaoRecolhivel
             titulo="Controle leiteiro × Entregue"
             icon={Scale}
@@ -619,7 +662,10 @@ export function ProducaoLeiteira() {
             </>
             )}
           </SecaoRecolhivel>
+      )}
 
+      {mostrarControle && regs && (
+        <>
           <SecaoRecolhivel
             titulo="Curva de Lactação e evolução do rebanho"
             icon={TrendingUp}
@@ -1185,11 +1231,64 @@ export function RelatoriosBstView() {
   );
 }
 
-type AbaProducao = "leiteira" | "bst" | "pesagens";
+// Secagem: mesmo componente do Histórico > Reprodução (HistoricoSecagens),
+// só embrulhado com um título próprio — Secagem é lançada em Lançamentos >
+// Produção, então precisa aparecer aqui também, sem tirar de Reprodução
+// (onde já é usado no ciclo reprodutivo/pré-parto).
+export function HistoricoSecagensProducao() {
+  return (
+    <div className="p-6 animate-in">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Droplet size={22} style={{ color: "var(--dourado-light)" }} /> Secagem
+        </h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Histórico de secagens — data, motivo, ECC e observação.</p>
+      </div>
+      <HistoricoSecagens />
+    </div>
+  );
+}
+
+// Indução de lactação nunca teve histórico próprio fora da Central de
+// Protocolos — reaproveita a mesma lista/exportação/detalhe de lá
+// (ListaProtocolos, exportada de app/protocolos/page.tsx), travada na
+// origem "inducao" e com o próprio alternador Ativos/Concluídos (a Central
+// separa isso em duas ABAS; aqui, sendo uma tela só de indução, vira um
+// alternador dentro da mesma tela).
+export function HistoricoInducaoLactacao() {
+  const [historico, setHistorico] = useState(false);
+  return (
+    <div className="p-6 animate-in">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Syringe size={22} style={{ color: "var(--dourado-light)" }} /> Indução de lactação
+        </h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Cronogramas de indução lançados — em andamento ou já concluídos/cancelados. O lançamento continua em Lançamentos &gt; Produção ou na Central de Protocolos.</p>
+      </div>
+      <TabBar<"ativos" | "historico">
+        abas={[
+          { id: "ativos", label: "Em andamento" },
+          { id: "historico", label: "Concluídos/cancelados" },
+        ]}
+        ativa={historico ? "historico" : "ativos"}
+        onChange={(id) => setHistorico(id === "historico")}
+      />
+      <div className="mt-4">
+        <ListaProtocolos historico={historico} origemFixa="inducao" />
+      </div>
+    </div>
+  );
+}
+
+type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst";
 export const ABAS_PRODUCAO = [
-  { id: "leiteira" as const, label: "Produção leiteira", icon: Milk, title: "Série histórica, curva de lactação e ranking por vaca" },
-  { id: "bst" as const, label: "BST (aplicações)", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
-  { id: "pesagens" as const, label: "Pesagens", icon: Scale, title: "Histórico de pesagem corporal — GMD/GPD por animal, lote ou rebanho" },
+  { id: "leiteira" as const, label: "Controle leiteiro", icon: Milk, title: "Série histórica, curva de lactação e ranking por vaca" },
+  { id: "pesagens" as const, label: "Pesagem corporal", icon: Scale, title: "Histórico de pesagem corporal — GMD/GPD por animal, lote ou rebanho" },
+  { id: "secagem" as const, label: "Secagem", icon: Droplet, title: "Histórico de secagens — data, motivo, ECC e observação" },
+  { id: "inducao" as const, label: "Indução de lactação", icon: Syringe, title: "Cronogramas de indução lançados — em andamento ou concluídos" },
+  { id: "qualidade" as const, label: "Qualidade do leite", icon: FlaskConical, title: "CCS, CBT, gordura, proteína, sólidos e ESD — série histórica" },
+  { id: "entrega" as const, label: "Venda mensal do leite", icon: TrendingUp, title: "Controle leiteiro × entregue ao laticínio, por período" },
+  { id: "bst" as const, label: "BST", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
 ];
 
 export default function ProducaoPage() {
@@ -1197,5 +1296,13 @@ export default function ProducaoPage() {
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_PRODUCAO.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as AbaProducao) }), [subNavTree, aba]));
 
-  return aba === "bst" ? <RelatoriosBstView /> : aba === "pesagens" ? <RelatoriosPesagemView /> : <ProducaoLeiteira />;
+  switch (aba) {
+    case "bst": return <RelatoriosBstView />;
+    case "pesagens": return <RelatoriosPesagemView />;
+    case "secagem": return <HistoricoSecagensProducao />;
+    case "inducao": return <HistoricoInducaoLactacao />;
+    case "qualidade": return <ProducaoLeiteira secao="qualidade" />;
+    case "entrega": return <ProducaoLeiteira secao="entrega" />;
+    default: return <ProducaoLeiteira secao="controle" />;
+  }
 }

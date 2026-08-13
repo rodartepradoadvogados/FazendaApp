@@ -800,12 +800,16 @@ const TIPOS_ACOMPANHAMENTO = [
   { id: "customizado", label: "Customizado", desc: "Roteiro livre" },
   { id: "lida", label: "Lida", desc: "Tarefa geral da fazenda" },
 ] as const;
-type OrigemAcompanhamento = typeof TIPOS_ACOMPANHAMENTO[number]["id"];
+export type OrigemAcompanhamento = typeof TIPOS_ACOMPANHAMENTO[number]["id"];
 
-function ListaProtocolos({ historico }: { historico: boolean }) {
+// `origemFixa` — reaproveitada por Histórico > Produção para a aba "Indução
+// de lactação" (ver app/producao/page.tsx::HistoricoInducaoLactacao):
+// mesma lista/exportação/detalhe de sempre, só travando o filtro de origem
+// e escondendo o seletor (redundante quando a própria aba já diz qual é).
+export function ListaProtocolos({ historico, origemFixa }: { historico: boolean; origemFixa?: OrigemAcompanhamento }) {
   const [linhas, setLinhas] = useState<LinhaCentralProtocolos[] | null>(null);
   const [nome, setNome] = useState("");
-  const [origem, setOrigem] = useState<OrigemAcompanhamento>("");
+  const [origem, setOrigem] = useState<OrigemAcompanhamento>(origemFixa ?? "");
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -835,7 +839,7 @@ function ListaProtocolos({ historico }: { historico: boolean }) {
         <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
       </div>
 
-      <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />
+      {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
 
       {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
       {!linhas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (

@@ -8,9 +8,12 @@ import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
 import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
 import { ABAS_VISAO, type AbaVisao } from "@/app/reproducao/page";
-import { ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView, RelatoriosPesagemView } from "@/app/producao/page";
+import {
+  ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView, RelatoriosPesagemView,
+  HistoricoInducaoLactacao, HistoricoSecagensProducao,
+} from "@/app/producao/page";
 
-type AbaProducao = "leiteira" | "bst" | "pesagens";
+type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst";
 type Aba = "reproducao" | "producao";
 
 export default function HistoricoPage() {
@@ -34,7 +37,15 @@ export default function HistoricoPage() {
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId, onSelect }), [subNavTree, activeId, onSelect]));
 
   if (aba === "producao") {
-    return abaProducao === "bst" ? <RelatoriosBstView /> : abaProducao === "pesagens" ? <RelatoriosPesagemView /> : <ProducaoLeiteira />;
+    switch (abaProducao) {
+      case "bst": return <RelatoriosBstView />;
+      case "pesagens": return <RelatoriosPesagemView />;
+      case "secagem": return <HistoricoSecagensProducao />;
+      case "inducao": return <HistoricoInducaoLactacao />;
+      case "qualidade": return <ProducaoLeiteira secao="qualidade" />;
+      case "entrega": return <ProducaoLeiteira secao="entrega" />;
+      default: return <ProducaoLeiteira secao="controle" />;
+    }
   }
 
   const visaoAtiva = ABAS_VISAO.find((v) => v.id === abaVisao) ?? ABAS_VISAO[0];
