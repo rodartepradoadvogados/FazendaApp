@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, type NotaCapa,
+  fetchNotaCapa, podeModulo, type NotaCapa,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -179,7 +179,13 @@ export default function Home() {
         <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" cat="reprodutivo"
           podeClicar={candidatasList.length > 0}
           onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
-        <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+        {/* Some por completo (não só o valor) para quem não tem o módulo
+            Financeiro contratado — antes o card ficava sempre visível, com
+            "—" no lugar do valor, revelando uma métrica paga a quem nunca
+            comprou o módulo (ver auditoria de planos). */}
+        {podeModulo("financeiro") && (
+          <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+        )}
       </div>
 
       {/* Medidores reprodutivos (modelo velocímetro) */}

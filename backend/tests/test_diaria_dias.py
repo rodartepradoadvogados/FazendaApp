@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContratoFazenda, Diaria, DiariaAuditoria, DiariaDia, DiariaPagamento
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Diaria, DiariaAuditoria, DiariaDia, DiariaPagamento
 
 
 class _FakeUser:
@@ -74,6 +74,10 @@ def client_multi():
     with Session(engine) as s:
         s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
         s.add(ContratoFazenda(fazenda_id=2, status="ativo"))
+        # /cadastro/diarias exige o módulo comercial "financeiro" contratado
+        # (RH passou a exigi-lo — ver cadastro/__init__.py).
+        s.add(ContratoFazendaModulo(fazenda_id=1, modulo="financeiro", ativo=True))
+        s.add(ContratoFazendaModulo(fazenda_id=2, modulo="financeiro", ativo=True))
         s.commit()
 
     main.app.dependency_overrides[database.get_session] = _get_session_override

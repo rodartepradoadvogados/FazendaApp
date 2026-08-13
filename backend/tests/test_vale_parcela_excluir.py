@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContratoFazenda, FolhaPagamento, Pessoa, ValeFuncionario, ValeParcela
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, FolhaPagamento, Pessoa, ValeFuncionario, ValeParcela
 
 
 @pytest.fixture
@@ -28,6 +28,13 @@ def client():
 
     with Session(engine) as s:
         s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
+        # DELETE /cadastro/vales/.../parcelas/... exige o módulo comercial
+        # "financeiro" contratado (RH passou a exigi-lo — ver
+        # cadastro/__init__.py). test_isolamento_entre_fazendas troca a
+        # fazenda atual para 1 via override — sem o módulo aqui, o teste
+        # levaria 403 antes de chegar na checagem de isolamento que quer
+        # exercitar.
+        s.add(ContratoFazendaModulo(fazenda_id=1, modulo="financeiro", ativo=True))
         s.commit()
 
     import main

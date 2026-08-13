@@ -629,6 +629,26 @@ def exigir_contrato_ativo():
     return _dep
 
 
+def fazenda_tem_modulo_contratado(session: Session, fazenda_id: int | None, modulo: str) -> bool:
+    """A FAZENDA (não o usuário) tem este módulo comercial contratado e
+    ativo? Mesma regra usada por `exigir_modulo_contratado` (dependência de
+    rota), exposta aqui como função simples para quem precisa da mesma
+    checagem DENTRO do corpo de uma função já autenticada — ex.: a Agenda
+    decidindo se mostra ou não um card financeiro/de estoque sem recusar a
+    rota inteira (ver fazenda/api/routers/agenda.py). Sem fazenda selecionada,
+    não restringe — mesmo "sem retroatividade" de get_fazenda_atual_id."""
+    if fazenda_id is None:
+        return True
+    tem = session.exec(
+        select(ContratoFazendaModulo).where(
+            ContratoFazendaModulo.fazenda_id == fazenda_id,
+            ContratoFazendaModulo.modulo == modulo,
+            ContratoFazendaModulo.ativo == True,  # noqa: E712
+        )
+    ).first()
+    return tem is not None
+
+
 def exigir_modulo_contratado(modulo: str):
     """Dependência: exige que A FAZENDA (não o usuário) tenha este módulo
     comercial contratado e ativo, dentro de um contrato aprovado. Some junto
@@ -654,14 +674,7 @@ def exigir_modulo_contratado(modulo: str):
             return
         if not _contrato_ativo(session, fazenda_id):
             raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
-        tem = session.exec(
-            select(ContratoFazendaModulo).where(
-                ContratoFazendaModulo.fazenda_id == fazenda_id,
-                ContratoFazendaModulo.modulo == modulo,
-                ContratoFazendaModulo.ativo == True,  # noqa: E712
-            )
-        ).first()
-        if not tem:
+        if not fazenda_tem_modulo_contratado(session, fazenda_id, modulo):
             raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
     return _dep
 

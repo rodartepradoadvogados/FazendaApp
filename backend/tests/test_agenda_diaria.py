@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContratoFazenda, Diaria, DiariaAuditoria, DiariaDia, Pessoa
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Diaria, DiariaAuditoria, DiariaDia, Pessoa
 
 
 class _FakeAdmin:
@@ -77,6 +77,13 @@ def client_multi():
     with Session(engine) as s:
         s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
         s.add(ContratoFazenda(fazenda_id=2, status="ativo"))
+        # Diária/auditoria de diária entra no bloco "Gestão/Financeiro" da
+        # Agenda (ver agenda.py::tem_financeiro) — sem o módulo financeiro
+        # contratado pelas duas fazendas, os testes deste arquivo (que
+        # exercitam esse bloco) levariam 403 em vez do cenário que querem
+        # testar.
+        s.add(ContratoFazendaModulo(fazenda_id=1, modulo="financeiro", ativo=True))
+        s.add(ContratoFazendaModulo(fazenda_id=2, modulo="financeiro", ativo=True))
         s.commit()
 
     main.app.dependency_overrides[database.get_session] = _get_session_override

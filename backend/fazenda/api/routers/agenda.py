@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita, tem_modulo
+from fazenda.auth import (
+    Usuario, fazenda_tem_modulo_contratado, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita,
+)
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
@@ -74,6 +76,17 @@ MODULO_POR_CATEGORIA = {
     "Rebanho": "rebanho",
 }
 
+# Chave "técnica"/de permissão do funcionário (a mesma usada em
+# MODULO_POR_CATEGORIA.values() e em Usuario.permissoes) -> chave COMERCIAL
+# do catálogo de planos (fazenda/models/planos.py) — mesma tradução que o
+# frontend já faz em lib/api.ts::MODULO_CONTRATO. "rebanho"/"reproducao"
+# ficam de fora do mapa de propósito: os dois estão em TODO plano do
+# catálogo, não há módulo contratado para checar.
+MODULO_TECNICO_PARA_COMERCIAL = {
+    "producao": "produtivo", "sanidade": "sanitario", "financeiro": "financeiro",
+    "alimentacao": "alimentacao", "estoque": "estoque",
+}
+
 # Prefixos de eventos "comunicado" (aviso informativo, ex.: nova dieta) — ao
 # contrário de uma atividade (alguém executa e dá baixa), um comunicado só
 # informa: fica fixo enquanto vigora e some sozinho depois, sem poder ser
@@ -85,7 +98,11 @@ TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
 
 def _modulos_liberados(usuario: Usuario) -> set[str]:
     if usuario.papel == "admin":
-        return set(MODULO_POR_CATEGORIA.values()) | {"reproducao"}
+        # "estoque" não é categoria de nenhum evento (não entra em
+        # MODULO_POR_CATEGORIA.values()) — só é usado via a flag `tem_estoque`
+        # (estoque_negativo/estoque_abaixo_minimo), então precisa entrar aqui
+        # à parte, senão admin nunca teria acesso a esse bloco.
+        return set(MODULO_POR_CATEGORIA.values()) | {"reproducao", "estoque"}
     return {m.strip() for m in (usuario.permissoes or "").split(",") if m.strip()}
 
 
@@ -1067,7 +1084,19 @@ def calcular_agenda(
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
     # reprodutivos (candidatas IATF, BST).
-    modulos = _modulos_liberados(usuario)
+    #
+    # `_modulos_liberados` sozinho só olha a permissão do FUNCIONÁRIO —
+    # admin sempre passa em tudo, então um dono de fazenda Standard (sem
+    # Financeiro/Sanitário/Produtivo/Alimentação/Estoque contratado)
+    # continuava vendo eventos dessas categorias na Agenda. Filtra de novo
+    # aqui pelo módulo CONTRATADO pela fazenda (MODULO_TECNICO_PARA_COMERCIAL,
+    # topo do arquivo) antes de usar `modulos` no filtro de categoria abaixo.
+    modulos_funcionario = _modulos_liberados(usuario)
+    modulos = {
+        m for m in modulos_funcionario
+        if MODULO_TECNICO_PARA_COMERCIAL.get(m) is None
+        or fazenda_tem_modulo_contratado(session, fazenda_id, MODULO_TECNICO_PARA_COMERCIAL[m])
+    }
     eventos_visiveis = [
         {
             "id": e.chave,
@@ -1092,9 +1121,12 @@ def calcular_agenda(
         if (MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos)
         and (eh_admin or not e.get("apenas_admin"))  # eventos só-admin ocultos para os demais
     ]
+    # `modulos` já saiu de cima com a dupla checagem aplicada (funcionário E
+    # fazenda) — só reaproveita aqui. "reproducao" nunca precisou da segunda
+    # trava: está em TODO plano do catálogo (planos.py), não há o que vazar.
     tem_financeiro = "financeiro" in modulos
-    tem_reproducao = "reproducao" in modulos
-    tem_estoque = tem_modulo(usuario, "estoque")
+    tem_reproducao = "reproducao" in modulos_funcionario
+    tem_estoque = "estoque" in modulos
 
     diaria_auditorias_pendentes = []
     if tem_financeiro:
