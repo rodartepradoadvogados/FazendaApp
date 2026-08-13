@@ -18,6 +18,7 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { ehAppOuPwa } from "@/lib/nativo";
 import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api";
+import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 import { PainelCowDataTemaProvider, usePainelCowDataTema, type TemaPainelCowData } from "@/lib/painelCowDataTema";
 
 // Só estas 3 áreas têm a permissão de verdade aplicada nas rotas do backend
@@ -147,8 +148,20 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   // app/app/menu/page.tsx) — "voltar à fazenda" precisa cair no /app, nunca
   // no site desktop completo (mesma regra do AuthShell::destinoRaiz). Cobre
   // app nativo E PWA instalado (ver lib/nativo.ts::ehAppOuPwa).
+  // "Voltar" tem 3 destinos possíveis: veio do portal Administração (voltar
+  // para lá, não para a Capa — ver lib/portalAdministracao.ts), app/PWA
+  // nativo (voltar para o Menu do app), ou nenhum dos dois (voltar para a
+  // Capa do site, o de sempre).
   const [voltarHref, setVoltarHref] = useState("/");
-  useEffect(() => { ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); }); }, []);
+  const [voltarLabel, setVoltarLabel] = useState("Voltar à fazenda");
+  useEffect(() => {
+    if (consumirVeioDaAdministracao()) {
+      setVoltarHref("/usuarios");
+      setVoltarLabel("Voltar à Administração");
+      return;
+    }
+    ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); });
+  }, []);
 
   const gruposVisiveis = ehDono()
     ? GRUPOS
@@ -160,7 +173,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
     <>
       <div style={{ padding: "1.1rem 1.1rem 0.9rem" }}>
         <Link href={voltarHref} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
-          <ArrowLeft size={13} /> Voltar à fazenda
+          <ArrowLeft size={13} /> {voltarLabel}
         </Link>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
           <CowDataMark size={40} />

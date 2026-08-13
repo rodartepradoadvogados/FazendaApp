@@ -10,8 +10,10 @@
 // AuthShell.tsx).
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { ehContador, getFazendaAtual, getUsuario, logout } from "@/lib/api";
+import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 
 export const CORES_CONTADOR = {
   bg: "#1A2028",
@@ -36,6 +38,18 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
   const usuario = getUsuario();
   const C = CORES_CONTADOR;
 
+  // Quem chega aqui pelo portal Administração (aba "Painel do Contador",
+  // ver InsightsLayout.tsx) precisa voltar para lá, não para a Capa da
+  // fazenda — ver lib/portalAdministracao.ts.
+  const [voltarHref, setVoltarHref] = useState("/");
+  const [voltarLabel, setVoltarLabel] = useState("Voltar à fazenda");
+  useEffect(() => {
+    if (consumirVeioDaAdministracao()) {
+      setVoltarHref("/usuarios");
+      setVoltarLabel("Voltar à Administração");
+    }
+  }, []);
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.texto, fontFamily: FONTE_BASE }}>
       <header style={{ borderBottom: `1px solid ${C.borda}`, background: C.painel }}>
@@ -44,8 +58,8 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
               aparece para o proprietário espiando esta tela pela Sidebar >
               Administração (ver AuthShell.tsx). */}
           {!ehContador() && (
-            <Link href="/" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: C.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
-              <ArrowLeft size={13} /> Voltar à fazenda
+            <Link href={voltarHref} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: C.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
+              <ArrowLeft size={13} /> {voltarLabel}
             </Link>
           )}
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: "0.6rem" }}>
