@@ -4,12 +4,13 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, ehAdmin, confirmarExclusao } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Plus, Trash2, X } from "lucide-react";
+import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
-import { casaBusca } from "@/lib/busca";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import type { AnimalRow } from "@/components/AnimalModal";
 import { estiloSexado } from "@/lib/constants";
 
 export type Serv = {
@@ -42,7 +43,9 @@ const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "
 export default function HistoricoServicos({ foco, titulo, descricao }: { foco: Foco; titulo: string; descricao: string }) {
   const [regs, setRegs] = useState<Serv[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [animal, setAnimal] = useState("");
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [ordemParto, setOrdemParto] = useState<string[]>([]);
@@ -195,7 +198,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
 
   const filtrados = useMemo(() => {
     return base.filter((s) =>
-      casaBusca(s.numero, animal) &&
+      (animaisSel.size === 0 || animaisSel.has(s.numero)) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
@@ -205,7 +208,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       (foco !== "diagnosticos" || !diag.length || diag.includes(s.diagnostico || "")) &&
       (foco !== "perdas" || !motivo.length || motivo.includes(s.motivo_perda || "(sem motivo)"))
     ).sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1));
-  }, [base, animal, ini, fim, ordemParto, ordemTentativa, metodo, diag, motivo, modo, janelas, foco]);
+  }, [base, animaisSel, ini, fim, ordemParto, ordemTentativa, metodo, diag, motivo, modo, janelas, foco]);
 
   const diagnosticados = filtrados.filter((s) => s.diagnosticado).length;
   const positivos = filtrados.filter((s) => s.positivo).length;
@@ -240,8 +243,17 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
             onChange={setModo}
           />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={animal} onChange={(e) => setAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
+              <AnimalPickerModal
+                animais={animais} selecionados={animaisSel}
+                onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                placeholder="Todos" titulo="Filtrar por animal(is) — inclui seleção por lote"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                ]}
+              /></div>
             {modo === "data" ? (
               <>
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label><input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>

@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X } from "lucide-react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2 } from "lucide-react";
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -8,6 +8,7 @@ import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { SecaoRecolhivel, MultiFiltro, Indicador, TabBar } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabelasStatusBst } from "@/components/PainelLancarBst";
@@ -58,8 +59,12 @@ function opcoes<T>(a: T[], f: (x: T) => string | null) {
   return Array.from(s).sort((x, y) => (isNaN(+x) || isNaN(+y) ? x.localeCompare(y) : +x - +y));
 }
 
-// Linha simples (produção do rebanho por controle)
-function LineChart({ dados }: { dados: { data: string; total: number }[] }) {
+// Linha simples (produção do rebanho por controle, ou um indicador de
+// qualidade do leite). `cor`/`unidade` só mudam a cor da linha e o rótulo do
+// tooltip — cada indicador de qualidade tem sua própria escala (CCS em
+// milhares, gordura em %), por isso cada um ganha seu próprio gráfico em vez
+// de dividir um único eixo Y com indicadores de grandezas muito diferentes.
+function LineChart({ dados, cor = "var(--green-light)", unidade = "kg" }: { dados: { data: string; total: number }[]; cor?: string; unidade?: string }) {
   const W = 760, H = 220, m = { t: 14, r: 16, b: 40, l: 44 };
   const iw = W - m.l - m.r, ih = H - m.t - m.b;
   const max = Math.max(1, ...dados.map((d) => d.total));
@@ -75,9 +80,9 @@ function LineChart({ dados }: { dados: { data: string; total: number }[] }) {
             <text x={4} y={y(max * g) + 3} fontSize="9" fill="var(--text-muted)">{Math.round(max * g)}</text>
           </g>
         ))}
-        {dados.length > 1 && <polyline points={pts} fill="none" stroke="var(--green-light)" strokeWidth="2" />}
+        {dados.length > 1 && <polyline points={pts} fill="none" stroke={cor} strokeWidth="2" />}
         {dados.map((d, i) => (
-          <circle key={i} cx={x(i)} cy={y(d.total)} r="2.5" fill="var(--green-light)"><title>{d.data}: {d.total} kg</title></circle>
+          <circle key={i} cx={x(i)} cy={y(d.total)} r="2.5" fill={cor}><title>{d.data}: {d.total} {unidade}</title></circle>
         ))}
         {dados.map((d, i) => (i % Math.ceil(dados.length / 12 || 1) === 0) && (
           <text key={i} x={x(i)} y={H - m.b + 14} fontSize="8" fill="var(--text-muted)" textAnchor="middle"
@@ -111,6 +116,14 @@ const INDICADORES_QUALIDADE = [
   { key: "lactose_pct", label: "Lactose", unidade: "%" },
   { key: "nul", label: "NUL (ureia)", unidade: "mg/dL" },
 ] as const;
+// Uma cor por indicador — estável (mesma ordem de INDICADORES_QUALIDADE), pra
+// cada gráfico manter a mesma cor do indicador não importa quais outros
+// estejam selecionados junto.
+const CORES_INDICADOR: Record<string, string> = {
+  ccs: "var(--green-light)", cbt: "var(--red)", gordura_pct: "var(--dourado-light)",
+  proteina_pct: "var(--blue)", solidos_totais_pct: "var(--amber)", esd_pct: "var(--vinho-light, #416180)",
+  lactose_pct: "#9b6bd6", nul: "#4fb0a5",
+};
 
 type RelatorioControleEntrega = {
   data_inicio: string; data_fim: string; dias_periodo: number; dias_com_controle: number;
@@ -146,7 +159,7 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
   // Lista real de animais (para o seletor "lista vermelha" — Nº/Grupo/Categoria/Sit.Rep./DEL)
   // — só usada na aba "controle" (seletor de animal do painel "Últimos controles").
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
-  useEffect(() => { if (mostrarControle) fetchAnimais().then(setAnimais).catch(() => {}); }, [mostrarControle]);
+  useEffect(() => { if (mostrarControle || mostrarQualidade) fetchAnimais().then(setAnimais).catch(() => {}); }, [mostrarControle, mostrarQualidade]);
 
   const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
   const [qualidadeErro, setQualidadeErro] = useState<string | null>(null);
@@ -154,13 +167,20 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
   // Configurações > Parâmetros, a coluna de ajuste estimado mostra um aviso
   // em vez de "R$ 0,00" (que seria um valor incorreto, não "sem bônus").
   const [qlTemFaixasBonificacao, setQlTemFaixasBonificacao] = useState(true);
-  const [qlIndicador, setQlIndicador] = useState<(typeof INDICADORES_QUALIDADE)[number]["key"]>("ccs");
+  // Multi-seleção de indicadores (ex.: CCS e CBT juntos) — cada um vira seu
+  // próprio mini-gráfico abaixo (ver qlSeries), já que têm escalas diferentes.
+  const [qlIndicadores, setQlIndicadores] = useState<string[]>(["ccs"]);
   const [qlDe, setQlDe] = useState("");
   const [qlAte, setQlAte] = useState("");
   // Duas caixas de seleção independentes (em vez de um único filtro exclusivo) —
   // dá para ver tanque e animal juntos ou isolar só um dos dois.
   const [qlTanque, setQlTanque] = useState(true);
   const [qlIndividual, setQlIndividual] = useState(true);
+  // Quais vacas contam como "relatório por animal" — vazio (padrão) = todas as
+  // amostras individuais, igual ao comportamento de sempre. Selecionar uma ou
+  // mais restringe às vacas escolhidas (ex.: acompanhar uma vaca específica
+  // com histórico de mastite, sem misturar com o resto do rebanho no gráfico).
+  const [qlAnimaisSel, setQlAnimaisSel] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!mostrarQualidade) return;
@@ -173,19 +193,27 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
     if (!qualidade) return [];
     return qualidade.filter((r) =>
       (!qlDe || r.data_coleta >= qlDe) && (!qlAte || r.data_coleta <= qlAte) &&
-      (r.numero_matriz ? qlIndividual : qlTanque)
+      (r.numero_matriz
+        ? (qlIndividual && (qlAnimaisSel.size === 0 || qlAnimaisSel.has(r.numero_matriz)))
+        : qlTanque)
     );
-  }, [qualidade, qlDe, qlAte, qlTanque, qlIndividual]);
+  }, [qualidade, qlDe, qlAte, qlTanque, qlIndividual, qlAnimaisSel]);
 
-  const qlIndicadorInfo = INDICADORES_QUALIDADE.find((i) => i.key === qlIndicador)!;
-  const qlSerie = useMemo(() => {
-    return qlFiltrados
-      .map((r) => ({ data: r.data_coleta, total: r[qlIndicador] }))
-      .filter((d): d is { data: string; total: number } => d.total != null)
-      .sort((a, b) => a.data.localeCompare(b.data));
-  }, [qlFiltrados, qlIndicador]);
-  const qlAtual = qlSerie.length ? qlSerie[qlSerie.length - 1].total : null;
-  const qlMedia = qlSerie.length ? media(qlSerie.map((d) => d.total)) : null;
+  // Uma série (+ atual/média) por indicador selecionado.
+  const qlSeries = useMemo(() => {
+    return qlIndicadores.map((key) => {
+      const info = INDICADORES_QUALIDADE.find((i) => i.key === key)!;
+      const dados = qlFiltrados
+        .map((r) => ({ data: r.data_coleta, total: (r as unknown as Record<string, number | null>)[key] }))
+        .filter((d): d is { data: string; total: number } => d.total != null)
+        .sort((a, b) => a.data.localeCompare(b.data));
+      return {
+        key, label: info.label, unidade: info.unidade, dados,
+        atual: dados.length ? dados[dados.length - 1].total : null,
+        media: dados.length ? media(dados.map((d) => d.total)) : null,
+      };
+    });
+  }, [qlFiltrados, qlIndicadores]);
 
   // #548 — coletas ordenadas da mais recente para a mais antiga, para a
   // tabela de bonificação estimada por lançamento (e para achar a última).
@@ -195,6 +223,7 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
   );
   const qlBonificacaoUltima = qlRecentes.find((r) => r.bonificacao_por_litro != null)?.bonificacao_por_litro ?? null;
   const pagQlRecentes = usePaginacao(qlRecentes);
+  const pagQlListagem = usePaginacao(qlRecentes);
 
   // Controle × Entregue — período próprio (default: últimos 30 dias até hoje).
   const hojeISO = new Date().toISOString().slice(0, 10);
@@ -488,43 +517,105 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
               <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
             ) : (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
-                    <input type="date" style={selStyle} value={qlDe} onChange={(e) => setQlDe(e.target.value)} /></div>
-                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>até</label>
-                    <input type="date" style={selStyle} value={qlAte} onChange={(e) => setQlAte(e.target.value)} /></div>
-                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Indicador</label>
-                    <select style={selStyle} value={qlIndicador} onChange={(e) => setQlIndicador(e.target.value as any)}>
-                      {INDICADORES_QUALIDADE.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
-                    </select></div>
-                  <div>
-                    <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Mostrar</label>
-                    <div className="flex items-center gap-3" style={{ marginTop: "0.4rem" }}>
-                      <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }} title="Amostras do tanque (rebanho todo, sem número de matriz)">
-                        <input type="checkbox" checked={qlTanque} onChange={(e) => setQlTanque(e.target.checked)} /> Relatório do tanque
-                      </label>
-                      <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }} title="Amostras de uma vaca específica (ex.: investigação de mastite)">
-                        <input type="checkbox" checked={qlIndividual} onChange={(e) => setQlIndividual(e.target.checked)} /> Relatório por animal
-                      </label>
+                <div className="card mb-4">
+                  <div className="card-header mb-3 flex items-center gap-2"><TrendingUp size={14} /> Gráfico</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                    <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
+                      <input type="date" style={selStyle} value={qlDe} onChange={(e) => setQlDe(e.target.value)} /></div>
+                    <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>até</label>
+                      <input type="date" style={selStyle} value={qlAte} onChange={(e) => setQlAte(e.target.value)} /></div>
+                    <MultiFiltro label="Indicador(es)" opcoes={INDICADORES_QUALIDADE.map((i) => i.key)} selecionados={qlIndicadores} onChange={setQlIndicadores}
+                      formatar={(k) => INDICADORES_QUALIDADE.find((i) => i.key === k)?.label || k} />
+                    <div>
+                      <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Mostrar</label>
+                      <div className="flex items-center gap-3" style={{ marginTop: "0.4rem" }}>
+                        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }} title="Amostras do tanque (rebanho todo, sem número de matriz)">
+                          <input type="checkbox" checked={qlTanque} onChange={(e) => setQlTanque(e.target.checked)} /> Relatório do tanque
+                        </label>
+                        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }} title="Amostras de uma ou mais vacas específicas (ex.: investigação de mastite)">
+                          <input type="checkbox" checked={qlIndividual} onChange={(e) => setQlIndividual(e.target.checked)} /> Relatório por animal
+                        </label>
+                      </div>
                     </div>
                   </div>
+                  {qlIndividual && (
+                    <div className="mb-3" style={{ maxWidth: "420px" }}>
+                      <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Vaca(s) do relatório por animal (vazio = todas)</label>
+                      <AnimalPickerModal
+                        animais={animais} selecionados={qlAnimaisSel}
+                        onToggle={(n) => setQlAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                        placeholder="Todas as vacas com coleta individual" titulo="Escolher vaca(s) — inclui seleção por lote"
+                        colunas={[
+                          { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                          { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                          { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                        ]}
+                      />
+                    </div>
+                  )}
+                  {!qlTanque && !qlIndividual && (
+                    <p style={{ color: "var(--amber)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>Selecione ao menos um dos dois relatórios acima.</p>
+                  )}
+                  {!qlIndicadores.length ? (
+                    <p style={{ color: "var(--amber)", fontSize: "0.85rem" }}>Selecione ao menos um indicador para ver o gráfico.</p>
+                  ) : (
+                    qlSeries.map((s, i) => (
+                      <div key={s.key} className={i > 0 ? "mt-4" : undefined}>
+                        <div className="grid grid-cols-2 gap-4 mb-3">
+                          <Indicador categoria="producao" valor={`${s.atual ?? "—"} ${s.atual != null ? s.unidade : ""}`} cor={CORES_INDICADOR[s.key]} rotulo={`${s.label} atual (última coleta)`} />
+                          <Indicador categoria="producao" valor={`${s.media ?? "—"} ${s.media != null ? s.unidade : ""}`} rotulo={`${s.label} média no período`} />
+                        </div>
+                        {s.dados.length
+                          ? <LineChart dados={s.dados} cor={CORES_INDICADOR[s.key]} unidade={s.unidade} />
+                          : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de {s.label} no filtro.</p>}
+                      </div>
+                    ))
+                  )}
                 </div>
-                {!qlTanque && !qlIndividual && (
-                  <p style={{ color: "var(--amber)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>Selecione ao menos um dos dois relatórios acima.</p>
-                )}
-                <div className="grid grid-cols-2 gap-4 mb-3">
-                  <Indicador categoria="producao" valor={`${qlAtual ?? "—"} ${qlAtual != null ? qlIndicadorInfo.unidade : ""}`} cor="var(--green-light)" rotulo={`${qlIndicadorInfo.label} atual (última coleta)`} />
-                  <Indicador categoria="producao" valor={`${qlMedia ?? "—"} ${qlMedia != null ? qlIndicadorInfo.unidade : ""}`} rotulo={`${qlIndicadorInfo.label} média no período`} />
+
+                {/* Segundo card — mesma base filtrada do Gráfico acima (mesmo
+                    período, mesmos indicadores, mesmo tanque/individual), só
+                    em forma de tabela em vez de gráfico. */}
+                <div className="card mb-4">
+                  <div className="card-header mb-3 flex items-center justify-between">
+                    <span className="flex items-center gap-2"><Table2 size={14} /> Listagem de qualidade do leite</span>
+                    <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{qlRecentes.length} coleta(s)</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="fazenda-table">
+                      <thead>
+                        <tr>
+                          <th>Data</th><th>Tipo</th>
+                          {qlIndicadores.map((key) => <th key={key} style={{ textAlign: "right" }}>{INDICADORES_QUALIDADE.find((i) => i.key === key)?.label || key}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagQlListagem.linhasPagina.map((r) => (
+                          <tr key={r.id}>
+                            <td style={{ fontSize: "0.78rem" }}>{new Date(r.data_coleta + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                            <td style={{ fontSize: "0.78rem" }}>{r.numero_matriz ? `Vaca ${r.numero_matriz}` : "Tanque"}</td>
+                            {qlIndicadores.map((key) => (
+                              <td key={key} style={{ textAlign: "right" }}>{(r as unknown as Record<string, number | null>)[key] ?? "—"}</td>
+                            ))}
+                          </tr>
+                        ))}
+                        {!qlRecentes.length && (
+                          <tr><td colSpan={2 + qlIndicadores.length} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
+                            Sem coletas no filtro.
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Paginacao pagina={pagQlListagem.pagina} totalPaginas={pagQlListagem.totalPaginas} totalLinhas={pagQlListagem.totalLinhas}
+                    tamanhoPagina={pagQlListagem.tamanhoPagina} onMudarPagina={pagQlListagem.setPagina} onMudarTamanho={pagQlListagem.setTamanhoPagina} />
                 </div>
-                {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
 
                 {/* #548 — bonificação/penalização estimada por qualidade, contra as
                     faixas de CCS/CBT/gordura/proteína cadastradas em Configurações >
                     Parâmetros (cada laticínio tem a sua própria tabela). */}
-                <div className="mt-4">
-                  <h4 style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-                    Bonificação/penalização estimada por qualidade
-                  </h4>
+                <div className="card">
+                  <div className="card-header mb-3">Bonificação/penalização estimada por qualidade</div>
                   {!qlTemFaixasBonificacao ? (
                     <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
                       Nenhuma faixa de bonificação cadastrada — configure em <strong>Configurações &gt; Parâmetros</strong> as
