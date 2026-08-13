@@ -92,7 +92,9 @@ from fazenda.api.routers.financeiro import (
     seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas,
     seed_tipos_documento_formas_pagamento, seed_centro_custo_agricultura,
 )
-from fazenda.api.routers.reproducao import deduplicar_partos, backfill_categoria_crias, backfill_numero_cria_partos
+from fazenda.api.routers.reproducao import (
+    backfill_categoria_crias, backfill_fechar_servicos_abertos, backfill_numero_cria_partos, deduplicar_partos,
+)
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_pessoa_robo_milknews,
     seed_servicos, seed_semen_categorias,
@@ -207,6 +209,7 @@ async def lifespan(app: FastAPI):
         seed_centro_custo_agricultura(session)
         deduplicar_partos(session)
         backfill_categoria_crias(session)
+        backfill_fechar_servicos_abertos(session)
         backfill_numero_cria_partos(session)
         seed_tipos_pessoa(session, fazenda_id=1)
         # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não

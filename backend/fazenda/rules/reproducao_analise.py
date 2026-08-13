@@ -68,6 +68,10 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "data": ds.isoformat() if isinstance(ds, date) else None,
             "del_servico": _del_servico(ds, s.get("data_ult_parto")),
             "diagnostico": diag,
+            # "reinseminacao" = o sistema concluiu que não pegou porque veio
+            # uma nova tentativa, não porque alguém tocou a vaca. A tela marca
+            # essa diferença para o veterinário não achar que houve exame.
+            "origem_diagnostico": s.get("origem_diagnostico"),
             "diagnosticado": diagnosticado,
             "positivo": diag == "POSITIVO",
             "perda": bool(s.get("data_perda_prenhez")),

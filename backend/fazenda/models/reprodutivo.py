@@ -40,6 +40,14 @@ class Servico(SQLModel, table=True):
     intervalo_tentativas: Optional[int] = None
     data_diagnostico: Optional[date] = None
     diagnostico: Optional[str] = None  # POSITIVO | NEGATIVO | INDEFINIDO
+    # Como o diagnóstico chegou aqui: "reinseminacao" quando o próprio sistema
+    # o fechou como NEGATIVO ao receber um serviço mais novo para a mesma
+    # matriz na mesma lactação (ver fazenda.rules.perda_prenhez), ou None
+    # quando foi lançado por gente (POST /reproducao/diagnostico, edição do
+    # serviço, ou importação). Serve para (a) o histórico distinguir o que foi
+    # inferido do que foi tocado de verdade, e (b) poder desfazer só o que é
+    # automático sem apagar diagnóstico digitado por alguém.
+    origem_diagnostico: Optional[str] = None  # reinseminacao | None (manual)
     metodo_diagnostico: Optional[str] = None  # Palpação | Ultrassom | Cio de repasse
     data_perda_prenhez: Optional[date] = None
     motivo_perda_prenhez: Optional[str] = None  # aborto | natimorto | outros | nao_informado

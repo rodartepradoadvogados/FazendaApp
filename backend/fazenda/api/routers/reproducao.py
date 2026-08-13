@@ -27,7 +27,10 @@ from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.perda_prenhez import (
     MOTIVOS_PERDA_PRENHEZ,
     MOTIVOS_PERDA_PRENHEZ_VALIDOS,
+    ORIGEM_REINSEMINACAO,
     detectar_e_registrar_perda_por_reinseminacao,
+    fechar_servicos_abertos_por_reinseminacao,
+    servico_esta_em_aberto,
 )
 from fazenda.rules.protocolo_iatf import (
     PASSOS_PROTOCOLO_IATF_PADRAO as PASSOS_PROTOCOLO_IATF,
@@ -56,6 +59,64 @@ def deduplicar_partos(session: Session) -> None:
             session.delete(p)
         else:
             vistos.add(k)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def backfill_fechar_servicos_abertos(session: Session) -> None:
+    """Aplica ao histórico a mesma regra que passou a valer nos lançamentos
+    novos: serviço em aberto que já foi sucedido por outro na mesma lactação
+    fecha como NEGATIVO (ver rules/perda_prenhez.fechar_servicos_abertos_por_reinseminacao).
+
+    Sem isto, a taxa de concepção só melhora dos lançamentos novos em diante e
+    o histórico continua mostrando ABERTO em serviços de meses atrás — que foi
+    exatamente a reclamação que originou a correção. A base do produtor tem 21
+    registros vindos do CSV do Ideagri com o texto "ABERTO".
+
+    Roda UMA vez (SeedFlag) e é conservador: só toca serviço que a regra dos
+    lançamentos novos também tocaria, e carimba `origem_diagnostico` para que
+    dê para distinguir (e desfazer) o que foi inferido do que foi lançado por
+    gente."""
+    chave = "backfill_fechar_servicos_abertos_v1"
+    if session.get(SeedFlag, chave):
+        return
+
+    servicos = session.exec(select(Servico).order_by(Servico.data_servico)).all()
+    partos = session.exec(select(Parto)).all()
+
+    ultimo_parto: dict[tuple[object, str], date] = {}
+    for p in partos:
+        if not p.numero_matriz or not p.data_parto:
+            continue
+        k = (p.fazenda_id, p.numero_matriz)
+        if k not in ultimo_parto or p.data_parto > ultimo_parto[k]:
+            ultimo_parto[k] = p.data_parto
+
+    # Data do serviço MAIS RECENTE de cada matriz — só o que vier antes dele
+    # (e depois do último parto) pode ter sido superado por uma nova tentativa.
+    mais_recente: dict[tuple[object, str], date] = {}
+    for s in servicos:
+        if not s.numero_matriz or not s.data_servico:
+            continue
+        k = (s.fazenda_id, s.numero_matriz)
+        if k not in mais_recente or s.data_servico > mais_recente[k]:
+            mais_recente[k] = s.data_servico
+
+    for s in servicos:
+        if not s.numero_matriz or not s.data_servico:
+            continue
+        k = (s.fazenda_id, s.numero_matriz)
+        if s.data_servico >= mais_recente.get(k, s.data_servico):
+            continue  # é o último da matriz — pode legitimamente estar aguardando toque
+        parto = ultimo_parto.get(k)
+        if parto is not None and s.data_servico <= parto:
+            continue  # lactação anterior
+        if not servico_esta_em_aberto(s):
+            continue
+        s.diagnostico = "NEGATIVO"
+        s.origem_diagnostico = ORIGEM_REINSEMINACAO
+        session.add(s)
+
     session.add(SeedFlag(chave=chave))
     session.commit()
 
@@ -1093,6 +1154,14 @@ def lancar_protocolo_iatf(
 
     eventos_criados = 0
     for numero in dados.animais:
+        # Colocar a matriz num protocolo novo é decidir que ela vai ser
+        # inseminada de novo — logo, o serviço anterior que ainda estava sem
+        # diagnóstico não pegou. Fecha como NEGATIVO aqui também, e não só no
+        # lançamento da inseminação: entre o D0 e a IA passam ~11 dias, e
+        # nesse intervalo o veterinário já precisa ver o histórico correto.
+        fechar_servicos_abertos_por_reinseminacao(
+            session, numero_matriz=numero, nova_data_servico=dados.data_d0, fazenda_id=fazenda_id,
+        )
         for dias, descricao in passos:
             session.add(ProtocoloIatfAplicacao(
                 lancamento_id=lancamento.id,
@@ -1459,6 +1528,11 @@ def adicionar_animais_iatf(
     for numero in dados.animais:
         if numero in ja_no_protocolo:
             continue
+        # Mesma regra do D0 (ver lancar_protocolo_iatf): entrar no protocolo
+        # fecha o serviço anterior que ficou sem diagnóstico.
+        fechar_servicos_abertos_por_reinseminacao(
+            session, numero_matriz=numero, nova_data_servico=lancamento.data_d0, fazenda_id=fazenda_id,
+        )
         for dias, descricao in passos:
             session.add(ProtocoloIatfAplicacao(
                 lancamento_id=lancamento_id,
@@ -1617,6 +1691,13 @@ def registrar_servico(
     detectar_e_registrar_perda_por_reinseminacao(
         session, numero_matriz=dados.numero_matriz, nova_data_servico=dados.data_servico, fazenda_id=fazenda_id,
     )
+    # E o caso irmão: serviço anterior que ficou SEM diagnóstico. A nova
+    # inseminação prova que aquele não pegou, então ele fecha como NEGATIVO —
+    # senão fica em aberto para sempre, sai do denominador da taxa de
+    # concepção e polui o histórico da matriz.
+    fechar_servicos_abertos_por_reinseminacao(
+        session, numero_matriz=dados.numero_matriz, nova_data_servico=dados.data_servico, fazenda_id=fazenda_id,
+    )
 
     servico = Servico(
         animal_id=animal.id,
@@ -1732,6 +1813,9 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     # (ver o comentário lá) — este é o caminho usado por lançamento em lote e
     # pelo protocolo IATF, então precisa da mesma regra.
     detectar_e_registrar_perda_por_reinseminacao(
+        session, numero_matriz=numero_matriz, nova_data_servico=data_servico, fazenda_id=fazenda_id,
+    )
+    fechar_servicos_abertos_por_reinseminacao(
         session, numero_matriz=numero_matriz, nova_data_servico=data_servico, fazenda_id=fazenda_id,
     )
     servico = Servico(

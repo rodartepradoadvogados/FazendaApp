@@ -21,6 +21,9 @@ export type Serv = {
   tipo_semen?: string | null; inseminador?: string | null;
   data: string | null; del_servico: number | null; data_d0?: string | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
+  // "reinseminacao" quando o NEGATIVO foi concluído pelo sistema (veio uma
+  // nova tentativa para a matriz), e não porque alguém tocou a vaca.
+  origem_diagnostico?: string | null;
   data_perda: string | null; motivo_perda: string | null;
   usuario_nome?: string | null;
 };
@@ -315,7 +318,17 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.tipo_servico}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.metodo_ia || "—"}</td>
-                    <td><span style={{ color: DIAG_COR[s.diagnostico || "ABERTO"] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{s.diagnostico || "ABERTO"}</span></td>
+                    <td>
+                      <span style={{ color: DIAG_COR[s.diagnostico || "ABERTO"] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{s.diagnostico || "ABERTO"}</span>
+                      {s.origem_diagnostico === "reinseminacao" && (
+                        <span
+                          title="Concluído pelo sistema: a matriz foi inseminada de novo, então este serviço não pegou. Não houve exame."
+                          style={{ marginLeft: "0.3rem", fontSize: "0.62rem", color: "var(--text-muted)", fontWeight: 400 }}
+                        >
+                          (auto)
+                        </span>
+                      )}
+                    </td>
                     <td style={{ textAlign: "right" }}>{s.ordem_parto ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.del_servico ?? "—"}</td>
