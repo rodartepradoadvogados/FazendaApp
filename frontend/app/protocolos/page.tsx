@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus, Trash2, FileText, FileSpreadsheet } from "lucide-react";
 import {
@@ -813,12 +813,27 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
+  // Nomes já usados (sem o filtro de nome, senão a lista de sugestões encolhe
+  // conforme a pessoa digita) — vira o <datalist> da busca, pra sugerir os
+  // protocolos existentes em vez de depender só de texto livre.
+  const [nomesConhecidos, setNomesConhecidos] = useState<string[]>([]);
+  const datalistId = useId();
 
   useEffect(() => {
     const fetcher = historico ? fetchCentralProtocolosHistorico : fetchCentralProtocolosAcompanhamento;
     fetcher({ nome: nome || undefined })
       .then(setLinhas).catch((e) => setErro(e.message));
   }, [nome, historico, recarga]);
+
+  useEffect(() => {
+    const fetcher = historico ? fetchCentralProtocolosHistorico : fetchCentralProtocolosAcompanhamento;
+    fetcher()
+      .then((ls) => {
+        const doTipo = origemFixa ? ls.filter((l) => l.origem === origemFixa) : ls;
+        setNomesConhecidos(Array.from(new Set(doTipo.map((l) => l.nome))).sort((a, b) => a.localeCompare(b)));
+      })
+      .catch(() => {});
+  }, [historico, origemFixa, recarga]);
 
   const linhasFiltradas = useMemo(
     () => (linhas || []).filter((l) => !origem || l.origem === origem),
@@ -836,7 +851,10 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
     <div>
       <div className="mb-3">
         <label style={labelStyle}>Buscar por nome do protocolo</label>
-        <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
+        <input style={inputStyle} list={datalistId} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
+        <datalist id={datalistId}>
+          {nomesConhecidos.map((n) => <option key={n} value={n} />)}
+        </datalist>
       </div>
 
       {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}

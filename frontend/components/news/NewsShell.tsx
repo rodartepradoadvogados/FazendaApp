@@ -35,29 +35,44 @@ export function NewsShell({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ ...NEWS_VARS, minHeight: "100vh", background: "var(--bg)" }}>
-      <header
-        style={{
-          position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0.9rem 1.5rem", background: "rgba(255,255,255,0.92)", backdropFilter: "blur(10px)",
-          borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: "0.6rem",
-        }}
-      >
-        <Link href="/login" style={{ display: "flex", alignItems: "center", gap: "0.55rem", textDecoration: "none" }}>
-          <CowDataMark size={30} variant="claro" />
-          <span style={{ fontFamily: "var(--font-sora), sans-serif" }}>
-            <CowDataWordmark size="1rem" cowColor="var(--text)" dataColor="var(--dourado-light)" />
-          </span>
-        </Link>
-        <Link href={voltarHref} className="news-voltar" style={{
-          display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", fontWeight: 600,
-          color: "var(--text)", textDecoration: "none", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
-          border: "1px solid var(--border)",
-        }}>
-          {voltarLabel}
-        </Link>
-      </header>
-      {children}
+    <div style={{ ...NEWS_VARS, minHeight: "100vh", background: "var(--bg)", position: "relative" }}>
+      {/* Marca d'água fixa do Milk News: a mesma "Curva" da marca, bem apagada
+          em azul-marinho sobre o fundo branco, acompanhando a rolagem — igual
+          em espírito ao que a tela de login faz em branco sobre a foto. */}
+      <div aria-hidden="true" style={{ position: "fixed", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
+        <div
+          style={{
+            position: "absolute", top: "-6vh", left: "50%", transform: "translateX(-50%)",
+            width: "clamp(480px, 78vw, 960px)", opacity: 0.05,
+          }}
+        >
+          <CowDataMark size="100%" variant="mono" color="#0E2A47" />
+        </div>
+      </div>
+      <div style={{ position: "relative", zIndex: 1 }}>
+        <header
+          style={{
+            position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "0.9rem 1.5rem", background: "rgba(255,255,255,0.92)", backdropFilter: "blur(10px)",
+            borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: "0.6rem",
+          }}
+        >
+          <Link href="/login" style={{ display: "flex", alignItems: "center", gap: "0.55rem", textDecoration: "none" }}>
+            <CowDataMark size={30} variant="claro" />
+            <span style={{ fontFamily: "var(--font-sora), sans-serif" }}>
+              <CowDataWordmark size="1rem" cowColor="var(--text)" dataColor="var(--dourado-light)" />
+            </span>
+          </Link>
+          <Link href={voltarHref} className="news-voltar" style={{
+            display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", fontWeight: 600,
+            color: "var(--text)", textDecoration: "none", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
+            border: "1px solid var(--border)",
+          }}>
+            {voltarLabel}
+          </Link>
+        </header>
+        {children}
+      </div>
       <style>{`.news-voltar:hover { color: var(--dourado-light) !important; border-color: var(--dourado-light) !important; }`}</style>
     </div>
   );
