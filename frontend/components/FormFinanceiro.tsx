@@ -292,6 +292,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const boletoInputRef = useRef<HTMLInputElement>(null);
   const fotoBoletoInputRef = useRef<HTMLInputElement>(null);
   const [avisoTipoDocumento, setAvisoTipoDocumento] = useState(false);
+  // Comprovante de pagamento — dropzone própria dentro do bloco "Já foi
+  // pago", categoria fixa "Comprovante" (não passa pelo mesmo "Tipo de
+  // documento" do lançamento como um todo, nem exige preenchê-lo antes).
+  // Sem isso, marcar "já pago" na hora de criar o lançamento não tinha
+  // NENHUMA forma de anexar o comprovante — só dava pra fazer depois, em
+  // Controle Financeiro > Editar ou > Tratar pagamento.
+  const [comprovanteFiles, setComprovanteFiles] = useState<File[]>([]);
+  const comprovanteInputRef = useRef<HTMLInputElement>(null);
+  const fotoComprovanteInputRef = useRef<HTMLInputElement>(null);
 
   const [jaPago, setJaPago] = useState(false);
   const [dataPagamento, setDataPagamento] = useState("");
@@ -419,7 +428,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     entregueTocadoRef.current = false;
     setPedidoId("");
     setDesconto(""); setAcrescimo("");
-    setParcelado(false); setQtdParcelas("2"); setParcelas([]); setBoletoFiles([]);
+    setParcelado(false); setQtdParcelas("2"); setParcelas([]); setBoletoFiles([]); setComprovanteFiles([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
     setXmlTexto(""); setXmlAberto(false);
   }
@@ -769,10 +778,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     try {
       const r = await criarLancamentoFinanceiro(montarPayload());
       let avisoAnexo = "";
-      if (boletoFiles.length) {
-        const falhas = (await Promise.all(boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f).then(() => null).catch(() => f.name)))).filter(Boolean);
-        if (falhas.length) avisoAnexo = ` (não foi possível anexar: ${falhas.join(", ")})`;
-      }
+      const falhasAnexo = (await Promise.all([
+        ...boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f).then(() => null).catch(() => f.name)),
+        ...comprovanteFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f, "Comprovante").then(() => null).catch(() => f.name)),
+      ])).filter(Boolean);
+      if (falhasAnexo.length) avisoAnexo = ` (não foi possível anexar: ${falhasAnexo.join(", ")})`;
       // avisos_estoque: ex. "X não está no estoque desta fazenda" — o backend
       // já calcula, mas até aqui ninguém no frontend lia a resposta pra
       // mostrar isso ao usuário (a nota salvava normal, o aviso se perdia).
@@ -1289,6 +1299,40 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   {diferencaPagamento < 0 ? `Desconto de ${formatBRL(Math.abs(diferencaPagamento))}` : `Acréscimo de ${formatBRL(diferencaPagamento)}`} em relação ao valor líquido (na baixa do pagamento, diferente do desconto/acréscimo da nota acima).
                 </p>
               )}
+              <div
+                onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs]); }}
+                onDragOver={(e) => e.preventDefault()}
+                style={{ gridColumn: "1 / -1", border: "1px dashed var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem", textAlign: "center" }}
+              >
+                <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <FileText size={14} style={{ color: "var(--dourado-light)" }} />
+                  <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Comprovante de pagamento (opcional) — arraste aqui, ou</span>
+                  <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => comprovanteInputRef.current?.click()}>
+                    <Upload size={12} /> selecionar arquivo(s)
+                  </button>
+                  <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => fotoComprovanteInputRef.current?.click()}>
+                    <Camera size={12} /> tirar foto
+                  </button>
+                </div>
+                <input ref={comprovanteInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
+                  onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+                  style={{ display: "none" }} />
+                <input ref={fotoComprovanteInputRef} type="file" accept="image/*" capture="environment"
+                  onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+                  style={{ display: "none" }} />
+                {comprovanteFiles.length > 0 && (
+                  <ul style={{ marginTop: "0.4rem", textAlign: "left", fontSize: "0.76rem" }}>
+                    {comprovanteFiles.map((f, i) => (
+                      <li key={i} className="flex items-center justify-between" style={{ padding: "0.15rem 0" }}>
+                        <span>{f.name}</span>
+                        <button type="button" className="btn-ghost" title="Remover" onClick={() => setComprovanteFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem" }}>
+                          <X size={12} style={{ color: "var(--red)" }} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           )}
         </div>

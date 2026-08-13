@@ -272,13 +272,22 @@ def ler_documento(conteudo: bytes, mime_type: str) -> dict:
 
     resposta = _client().messages.create(
         model=MODEL,
-        max_tokens=4096,
+        # 4096 estourava em nota fiscal com muitos itens ou boleto com muitas
+        # parcelas: a resposta JSON cortava no meio (stop_reason="max_tokens")
+        # e o json.loads() abaixo falhava com um erro de parse ilegível pra
+        # quem está anexando o documento ("não foi possível ler o documento").
+        max_tokens=8192,
         messages=[{"role": "user", "content": [bloco, {"type": "text", "text": _montar_prompt(paginas)}]}],
         output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
     )
 
     if resposta.stop_reason == "refusal":
         raise ValueError("A leitura automática recusou processar este documento.")
+    if resposta.stop_reason == "max_tokens":
+        raise ValueError(
+            "Este documento tem itens/páginas demais para a leitura automática processar de uma vez — "
+            "separe-o em partes menores ou preencha os campos manualmente."
+        )
 
     texto = next((b.text for b in resposta.content if b.type == "text"), None)
     if not texto:
