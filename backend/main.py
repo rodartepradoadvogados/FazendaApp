@@ -13,8 +13,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import (
     bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_contrato_ativo, exigir_modulo,
-    exigir_modulo_contratado, exigir_modulo_qualquer, get_current_user, seed_admin, seed_email_dono_backfill,
-    seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
+    exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao, get_current_user, seed_admin,
+    seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine, get_session
 from fazenda.models import IdempotenciaChave
@@ -92,7 +92,9 @@ from fazenda.api.routers.financeiro import (
     seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas,
     seed_tipos_documento_formas_pagamento, seed_centro_custo_agricultura,
 )
-from fazenda.api.routers.reproducao import deduplicar_partos, backfill_categoria_crias, backfill_numero_cria_partos
+from fazenda.api.routers.reproducao import (
+    backfill_categoria_crias, backfill_fechar_servicos_abertos, backfill_numero_cria_partos, deduplicar_partos,
+)
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_pessoa_robo_milknews,
     seed_servicos, seed_semen_categorias,
@@ -176,6 +178,9 @@ async def _loop_manual_fazenda_semanal() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Cria tabelas e garante o admin inicial e os dados padrão (idempotente)."""
+    # Antes de qualquer coisa: recusa subir em produção assinando sessões com
+    # o segredo público de desenvolvimento (ver fazenda/auth.py).
+    exigir_segredo_de_producao()
     create_db_and_tables()
     # A suíte de testes cria ~1500 TestClient(main.app) — um por teste, cada
     # um disparando este lifespan inteiro. Os ~50 seeds abaixo bootstrapam um
@@ -204,6 +209,7 @@ async def lifespan(app: FastAPI):
         seed_centro_custo_agricultura(session)
         deduplicar_partos(session)
         backfill_categoria_crias(session)
+        backfill_fechar_servicos_abertos(session)
         backfill_numero_cria_partos(session)
         seed_tipos_pessoa(session, fazenda_id=1)
         # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não

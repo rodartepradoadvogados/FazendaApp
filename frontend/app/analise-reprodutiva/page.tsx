@@ -119,7 +119,7 @@ export default function AnaliseReprodutivaPage() {
       {error && (
         <div className="alert-critico mb-4">
           <AlertTriangle size={18} />
-          <span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload do reprodutivo</a>.</span>
+          <span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span>
         </div>
       )}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}

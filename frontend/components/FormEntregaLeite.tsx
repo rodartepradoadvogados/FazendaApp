@@ -8,6 +8,10 @@ type EntregaLeite = {
   id: number;
   competencia: string;
   quantidade_litros: number;
+  // "kg" (padrão) ou "L" — o laticínio contrata por um dos dois. O controle
+  // leiteiro é sempre em kg, então o balanço Controle × Entregue converte a
+  // entrega lançada em litro (1 L = 1,029 kg) antes de subtrair.
+  unidade?: string | null;
   observacao: string | null;
   usuario_nome: string | null;
 };
@@ -22,6 +26,7 @@ export function FormEntregaLeite() {
   const admin = ehAdmin();
   const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
   const [quantidade, setQuantidade] = useState("");
+  const [unidade, setUnidade] = useState("kg");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -33,7 +38,7 @@ export function FormEntregaLeite() {
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
-  const [editVals, setEditVals] = useState({ competencia: "", quantidade: "", observacao: "" });
+  const [editVals, setEditVals] = useState({ competencia: "", quantidade: "", unidade: "kg", observacao: "" });
 
   const carregarRegistros = useCallback(() => {
     fetchEntregaLeiteMensal().then((d) => setRegistros(d.registros ?? [])).catch(() => setRegistros([]));
@@ -43,11 +48,14 @@ export function FormEntregaLeite() {
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!competencia) { setErro("Selecione o mês."); return; }
-    if (!quantidade || Number(quantidade) <= 0) { setErro("Informe a quantidade entregue (litros)."); return; }
+    if (!quantidade || Number(quantidade) <= 0) { setErro("Informe a quantidade entregue."); return; }
 
     setSalvando(true);
     try {
-      await criarEntregaLeiteMensal({ competencia, quantidade_litros: Number(quantidade.replace(",", ".")), observacao: observacao || undefined });
+      await criarEntregaLeiteMensal({
+        competencia, quantidade_litros: Number(quantidade.replace(",", ".")),
+        unidade, observacao: observacao || undefined,
+      });
       setSucesso(`Entrega de ${competencia} lançada com sucesso.`);
       setQuantidade(""); setObservacao("");
       carregarRegistros();
@@ -60,7 +68,10 @@ export function FormEntregaLeite() {
 
   const iniciarEdicao = (r: EntregaLeite) => {
     setEditId(r.id);
-    setEditVals({ competencia: r.competencia, quantidade: String(r.quantidade_litros), observacao: r.observacao || "" });
+    setEditVals({
+      competencia: r.competencia, quantidade: String(r.quantidade_litros),
+      unidade: r.unidade || "kg", observacao: r.observacao || "",
+    });
   };
 
   const salvarEdicao = async (r: EntregaLeite) => {
@@ -69,6 +80,7 @@ export function FormEntregaLeite() {
       await atualizarEntregaLeite(r.id, {
         competencia: editVals.competencia,
         quantidade_litros: Number(editVals.quantidade.replace(",", ".")),
+        unidade: editVals.unidade,
         observacao: editVals.observacao.trim() || null,
       });
       setEditId(null);
@@ -103,7 +115,14 @@ export function FormEntregaLeite() {
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Mês (competência)"><input type="month" style={inputStyle} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></Campo>
-        <Campo label="Quantidade entregue (litros)"><input type="number" inputMode="decimal" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="soma das notinhas/app do laticínio no mês" /></Campo>
+        <Campo label="Quantidade entregue"><input type="number" inputMode="decimal" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="soma das notinhas/app do laticínio no mês" /></Campo>
+        <Campo label="Unidade">
+          <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}
+                  title="Como o laticínio mede a entrega no seu contrato. O controle leiteiro é sempre em kg — lançando em litro, o sistema converte (1 L = 1,029 kg) antes de comparar.">
+            <option value="kg">Quilo (kg)</option>
+            <option value="L">Litro (L)</option>
+          </select>
+        </Campo>
         <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
       <p style={nota}>Some as notinhas de entrega (ou o total do app do laticínio) do mês inteiro e lance aqui uma vez por mês — o relatório de Produção compara com o controle leiteiro projetado e a receita recebida.</p>
@@ -129,7 +148,7 @@ export function FormEntregaLeite() {
                   <Fragment key={r.id}>
                     <tr>
                       <td style={{ fontWeight: 700 }}>{formatarCompetencia(r.competencia)}</td>
-                      <td style={{ textAlign: "right" }}>{r.quantidade_litros} L</td>
+                      <td style={{ textAlign: "right" }}>{r.quantidade_litros} {r.unidade || "kg"}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.observacao || "—"}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         {!editando && (
@@ -146,8 +165,13 @@ export function FormEntregaLeite() {
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Mês</label>
                               <input type="month" style={inp} value={editVals.competencia} onChange={(e) => setEditVals((s) => ({ ...s, competencia: e.target.value }))} /></div>
-                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Litros</label>
+                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Quantidade</label>
                               <input type="number" inputMode="decimal" style={inp} value={editVals.quantidade} onChange={(e) => setEditVals((s) => ({ ...s, quantidade: e.target.value }))} /></div>
+                            <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Unidade</label>
+                              <select style={inp} value={editVals.unidade} onChange={(e) => setEditVals((s) => ({ ...s, unidade: e.target.value }))}>
+                                <option value="kg">kg</option>
+                                <option value="L">L</option>
+                              </select></div>
                             <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Observação</label>
                               <input style={inp} value={editVals.observacao} onChange={(e) => setEditVals((s) => ({ ...s, observacao: e.target.value }))} /></div>
                           </div>

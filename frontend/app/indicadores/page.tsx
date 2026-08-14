@@ -100,7 +100,7 @@ export function IndicadoresGerais() {
         </button>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>}
       {!ind && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {ind && <>

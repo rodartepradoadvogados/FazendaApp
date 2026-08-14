@@ -13,7 +13,8 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, Doenca, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao, Sanidade, Servico,
+    Animal, ControleLeiteiro, Doenca, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao,
+    Sanidade, Servico,
 )
 from fazenda.rules.estado_reprodutivo import classificar_animal
 from fazenda.rules.indicadores import calcular_indicadores
@@ -302,9 +303,17 @@ def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data:
     if fazenda_id is not None:
         query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
     aplicacoes_iatf = [ap.model_dump() for ap in session.exec(query_iatf).all()]
+    # Controles leiteiros lançados no sistema — é deles que sai a produção
+    # do painel. Antes o número vinha só de `Animal.ult_cl_kg`, escrito
+    # exclusivamente pelo parser do CSV do Ideagri: quem lançava pelo app via
+    # a produção congelada na data do último CSV.
+    query_controles = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles = [c.model_dump() for c in session.exec(query_controles).all()]
     return calcular_indicadores(
         animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal,
-        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf,
+        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf, controles=controles,
     )
 
 
@@ -393,6 +402,7 @@ def estados_reprodutivos(
             peso_kg=peso_por.get(a.numero),
             idade_apta_dias=idade_apta,
             peso_apta_kg=peso_apta,
+            raca=a.raca,
         )
         estado["categoria"] = a.categoria_abrev or a.grupo_primario or "—"
         estado["lote"] = a.grupo_primario

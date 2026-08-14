@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
-from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_raca
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.parametros import (
     BENCHMARK_METAS,
@@ -452,6 +452,7 @@ def calcular_indicadores(
     peso_por_animal: dict[str, float] | None = None,
     lotes: list[dict] | None = None,
     aplicacoes_iatf: list[dict] | None = None,
+    controles: list[dict] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
 
@@ -572,11 +573,36 @@ def calcular_indicadores(
     ]
     del_medio = _media([float(d) for d in del_lactacao])
 
-    producoes = [
-        a.get("ult_cl_kg")
-        for a in animais
-        if a.get("ult_cl_kg") and a.get("ult_cl_kg") > 0
-    ]
+    # Produção do ÚLTIMO CONTROLE de cada animal, lida dos controles leiteiros
+    # de verdade. `Animal.ult_cl_kg` (o campo que isto usava sozinho) só era
+    # escrito pelo parser do GERAL.csv do Ideagri — quem lança pelo app via
+    # este número congelado na data do último CSV importado, enquanto o
+    # gráfico de produção ao lado já mostrava os valores novos. Com a
+    # importação do Ideagri aposentada, `ult_cl_kg` nunca mais seria escrito.
+    # Ele segue como fallback por animal, para as fazendas cujo histórico só
+    # existe no campo importado.
+    ultimo_controle_kg: dict[str, float] = {}
+    data_do_ultimo: dict[str, date] = {}
+    for c in controles or []:
+        numero = c.get("numero_matriz") or c.get("numero")
+        producao = c.get("producao_kg")
+        data_c = c.get("data")
+        if not numero or not producao or producao <= 0:
+            continue
+        anterior = data_do_ultimo.get(numero)
+        if anterior is None or (isinstance(data_c, date) and data_c >= anterior):
+            ultimo_controle_kg[numero] = float(producao)
+            if isinstance(data_c, date):
+                data_do_ultimo[numero] = data_c
+
+    producoes = []
+    for a in animais:
+        numero = a.get("numero")
+        valor = ultimo_controle_kg.get(numero) if numero else None
+        if valor is None:
+            valor = a.get("ult_cl_kg")
+        if valor and valor > 0:
+            producoes.append(valor)
     producao_media = _media([float(p) for p in producoes])
     producao_total_dia = round(sum(float(p) for p in producoes), 1) if producoes else 0.0
 
@@ -638,7 +664,12 @@ def calcular_indicadores(
         data_serv = ult_pos.get(num)
         if not data_serv:
             continue
-        parto = data_serv + timedelta(days=gestacao_prevista_dias)
+        # Gestação da RAÇA do animal (Holandês 280, Girolando 287, Gir/Zebu
+        # 295); só cai no ponto médio da faixa configurável quando a raça não
+        # é conhecida. Fixar um valor único adiantava em 7-15 dias o parto
+        # previsto de Girolando e Gir — e com ele a secagem e o pré-parto.
+        dias_ate_parto = dias_gestacao_da_raca(a.get("raca"), gestacao_prevista_dias)
+        parto = data_serv + timedelta(days=dias_ate_parto)
         dias = (parto - hoje).days
         gestantes_detalhe.append({
             "numero": num,

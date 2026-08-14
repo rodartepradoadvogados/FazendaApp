@@ -22,6 +22,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
@@ -638,10 +639,14 @@ def ficha_animal(
     ]
     if servicos_positivos:
         concepcao = servicos_positivos[-1].data_servico
-        previsao_parto = concepcao + timedelta(days=GESTACAO_DIAS)
+        # Gestação da raça DESTE animal (Holandês 280, Girolando 287,
+        # Gir/Zebu 295) — usar 280 para todos previa o parto de um Gir 15 dias
+        # antes do real, e arrastava a secagem junto.
+        gestacao_do_animal = dias_gestacao_da_raca(animal.raca, GESTACAO_DIAS)
+        previsao_parto = concepcao + timedelta(days=gestacao_do_animal)
         if (del_dias_vivo or 0) > 0:
             seco = int(get_param("periodo_seco_dias", 60) or 60)
-            previsao_secagem = concepcao + timedelta(days=GESTACAO_DIAS - seco)
+            previsao_secagem = concepcao + timedelta(days=gestacao_do_animal - seco)
             # Atraso implausível (parto/secagem que não foi lançado a tempo,
             # ver LIMITE_SECAGEM_RETROATIVA_DIAS) — mostra a data em que
             # deveria ter secado (60 dias antes do último parto) em vez da

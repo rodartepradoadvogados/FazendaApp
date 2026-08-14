@@ -1277,7 +1277,13 @@ def custo_litro_leite(
     ]
     custo_total = round(sum(i["valor_total"] or 0 for i in itens if i["codigo_conta_gerencial"] in codigos_custo), 2)
 
-    entregas = {e.competencia: e.quantidade_litros for e in session.exec(select(EntregaLeiteMensal)).all()}
+    # Mesmo escopo de fazenda do custo, logo acima — sem este filtro o custo
+    # saía dividido pelos litros entregues por TODAS as fazendas, e o custo por
+    # litro do cliente vinha diluído pela entrega dos outros clientes.
+    query_entregas = select(EntregaLeiteMensal)
+    if fazenda_id is not None:
+        query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+    entregas = {e.competencia: e.quantidade_litros for e in session.exec(query_entregas).all()}
     litros = litros_leite_no_periodo(entregas, data_inicio, data_fim)
 
     return {

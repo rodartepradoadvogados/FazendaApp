@@ -43,7 +43,13 @@ export default function ConfiguracoesPage() {
     const abas: { id: Aba; label: string; icon: any; title: string }[] = [];
     if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers, title: "Cadastros de animais, lotes, pessoas..." });
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
-    if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
+    // A aba "Upload CSV" (importação dos CSV do Ideagri) fica OCULTA: a
+    // fazenda migrou para o CowData e o local de importação passou a ser
+    // "Importar dados". A rota /upload e o backend continuam de pé de
+    // propósito — a importação do Ideagri apagava e reinseria a base inteira
+    // do domínio a cada arquivo, então tirar o botão é o jeito seguro de
+    // aposentar o fluxo sem mexer em dado nenhum. Para reativar, basta
+    // devolver esta linha.
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (podePublicarMaterias()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Publicação e aprovação de matérias do blog de notícias de pecuária leiteira" });
     if (ehAdmin()) abas.push({ id: "aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" });

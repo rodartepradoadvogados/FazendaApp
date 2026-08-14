@@ -24,7 +24,33 @@ from fazenda.models import (
 )
 from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData
 
-SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
+# Segredo que assina TODO token de sessão. O valor abaixo é público (está no
+# repositório) e serve só para desenvolvimento/teste — quem o conhece consegue
+# forjar um token de qualquer usuário de qualquer fazenda, inclusive do dono.
+# Por isso `_exigir_segredo_de_producao()` (chamado no startup, ver main.py)
+# recusa subir com ele fora de dev.
+SECRET_DEV = "fazenda-estreito-ponte-de-pedra-troque-em-producao"
+SECRET = os.environ.get("AUTH_SECRET", SECRET_DEV)
+
+
+def _rodando_em_producao() -> bool:
+    """Produção = tem banco Postgres configurado e não é execução de teste.
+    O Railway injeta DATABASE_URL; local/teste usa SQLite ou FAZENDA_TESTING."""
+    if os.environ.get("FAZENDA_TESTING"):
+        return False
+    return os.environ.get("DATABASE_URL", "").startswith(("postgres://", "postgresql://"))
+
+
+def exigir_segredo_de_producao() -> None:
+    """Falha alto e cedo se o app subir em produção com o segredo de
+    desenvolvimento. Antes o fallback era silencioso: bastava a variável
+    AUTH_SECRET sumir do ambiente para todos os tokens passarem a ser
+    assinados com uma string pública, sem nenhum sinal de que isso aconteceu."""
+    if _rodando_em_producao() and SECRET == SECRET_DEV:
+        raise RuntimeError(
+            "AUTH_SECRET não está definida em produção — o app se recusa a subir assinando "
+            "sessões com o segredo público de desenvolvimento. Defina AUTH_SECRET no ambiente."
+        )
 PBKDF2_ITER = 120_000
 TOKEN_VALIDADE_S = 60 * 60 * 12  # 12 horas
 # "Manter conectado" (checkbox no login, marcada por padrão dentro do app

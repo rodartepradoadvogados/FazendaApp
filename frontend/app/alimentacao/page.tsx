@@ -179,7 +179,7 @@ export default function AlimentacaoPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Dieta por lote cruzada com o efetivo — consumo por cabeça, por lote/dia e por lote/trato ({TRATOS} tratos/dia).</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload do DIETA.csv</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados de alimentação</a>.</span></div>}
 
       <StatusBaixa />
 

@@ -66,11 +66,18 @@ def criar_fornecedor(
 
 
 @router.put("/fornecedores/{fornecedor_id}")
-def atualizar_fornecedor(fornecedor_id: int, dados: FornecedorIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_fornecedor(
+    fornecedor_id: int, dados: FornecedorIn,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     if dados.tipo not in TIPOS_FORNECEDOR:
         raise HTTPException(status_code=400, detail="Tipo inválido")
     f = session.get(Fornecedor, fornecedor_id)
-    if not f:
+    # 404 (e não 403) para fornecedor de outra fazenda — mesma convenção dos
+    # demais IDOR já corrigidos (ver tests/test_isolamento_rotas_criticas.py):
+    # não confirma nem desmente a existência do id para quem não é dono dele.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not f or (fazenda_id is not None and f.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
     for campo, valor in dados.model_dump().items():
         setattr(f, campo, valor)

@@ -34,7 +34,7 @@ from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, anim
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
-from fazenda.rules.unidades import unidades_compativeis
+from fazenda.rules.unidades import UNIDADES_ENTREGA_LEITE, leite_para_kg, unidades_compativeis
 
 router = APIRouter(prefix="/producao", tags=["producao"])
 
@@ -822,7 +822,20 @@ async def importar_qualidade_leite_planilha(
 class EntregaLeiteMensalIn(BaseModel):
     competencia: str  # "YYYY-MM"
     quantidade_litros: float
+    # "kg" (padrão) ou "L" — o laticínio contrata por um dos dois. A conversão
+    # para kg na hora de comparar com o controle leiteiro é feita em
+    # rules/unidades.leite_para_kg.
+    unidade: str = "kg"
     observacao: str | None = None
+
+
+def _unidade_entrega(valor: str | None) -> str:
+    """Normaliza a unidade da entrega. Qualquer coisa fora de kg/L cai em kg,
+    que é o padrão do sistema e o que os lançamentos antigos representam."""
+    u = (valor or "kg").strip()
+    if u.upper() == "L":
+        return "L"
+    return "kg" if u.lower() != "kg" else "kg"
 
 
 @router.get("/entrega-leite")
@@ -856,6 +869,7 @@ def criar_entrega_leite(
     existente = session.exec(existente_query).first()
     if existente:
         existente.quantidade_litros = dados.quantidade_litros
+        existente.unidade = _unidade_entrega(dados.unidade)
         existente.observacao = dados.observacao
         session.add(existente)
         session.commit()
@@ -902,6 +916,7 @@ def atualizar_entrega_leite(
             )
     registro.competencia = dados.competencia
     registro.quantidade_litros = dados.quantidade_litros
+    registro.unidade = _unidade_entrega(dados.unidade)
     registro.observacao = dados.observacao
     session.add(registro)
     session.commit()
@@ -983,7 +998,12 @@ def relatorio_controle_entrega(
     if fazenda_id is not None:
         entrega_query = entrega_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
         conta_query = conta_query.where(ContaGerencial.fazenda_id == fazenda_id)
-    entregas = {e.competencia: e.quantidade_litros for e in session.exec(entrega_query).all()}
+    # Normaliza a entrega para kg — o controle leiteiro é sempre em kg, então
+    # subtrair litro de kg (o que acontecia antes) inflava o "não entregue".
+    entregas = {
+        e.competencia: leite_para_kg(e.quantidade_litros, e.unidade)
+        for e in session.exec(entrega_query).all()
+    }
     receita_por_mes: dict[str, float] = {}
     for c in session.exec(conta_query).all():
         if "italac" not in (c.fornecedor_cliente or "").lower():

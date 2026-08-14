@@ -122,7 +122,7 @@ function EstoqueInventario() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Saldo atual de cada item — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o ESTOQUE.csv</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os itens de estoque</a>.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {/* Hormônios IATF (necessidade vs estoque) */}

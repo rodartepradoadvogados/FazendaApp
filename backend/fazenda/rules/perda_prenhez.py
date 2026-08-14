@@ -98,6 +98,30 @@ def servico_esta_positivo_vigente(servico: Any) -> bool:
     return diagnostico == "POSITIVO" and not perdeu
 
 
+# Os dois únicos valores que RESOLVEM um serviço. Qualquer outra coisa —
+# None (todo serviço nasce assim pela API), "" , a string literal "ABERTO"
+# (vinda da importação do CSV do Ideagri, ver parsers/reprodutivo.py) ou
+# variação de caixa/espaço — significa "ainda não se sabe".
+DIAGNOSTICOS_RESOLVIDOS = {"POSITIVO", "NEGATIVO"}
+
+
+def servico_esta_em_aberto(servico: Any) -> bool:
+    """True quando este serviço nunca teve o resultado fechado.
+
+    Cuidado deliberado com as QUATRO formas que "em aberto" assume no banco:
+    `None`, `""`, a string `"ABERTO"` e variações de caixa. Um predicado que
+    olhasse só `diagnostico is None` deixaria de fora justamente os registros
+    importados do Ideagri, que trazem o texto "ABERTO" — que é o caso que
+    originou este bug.
+
+    `INDEFINIDO` NÃO é tratado como aberto aqui: ele é um julgamento explícito
+    do veterinário ("inconclusivo, reavaliar" — ver
+    routers/reproducao.py::registrar_diagnostico), e sobrescrever o que uma
+    pessoa registrou de propósito é diferente de preencher um campo em branco.
+    """
+    return (_get(servico, "diagnostico") or "").strip().upper() not in DIAGNOSTICOS_RESOLVIDOS | {"INDEFINIDO"}
+
+
 def servicos_positivos_vigentes(
     servicos: Sequence[Any], partos: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
@@ -192,3 +216,74 @@ def detectar_e_registrar_perda_por_reinseminacao(
     anterior.origem_perda_prenhez = ORIGEM_REINSEMINACAO
     session.add(anterior)
     return anterior
+
+
+def fechar_servicos_abertos_por_reinseminacao(
+    session: Any, *, numero_matriz: str, nova_data_servico: date, fazenda_id: int | None,
+) -> list[Any]:
+    """Fecha como NEGATIVO todo serviço da matriz que ainda esteja em aberto
+    na lactação corrente e seja anterior a esta nova inseminação/cobertura.
+
+    A regra, nas palavras do produtor: se a vaca foi inseminada de novo, a
+    inseminação anterior **não pegou** — é o que a nova tentativa prova. Um
+    serviço que fica em aberto para sempre some do denominador da taxa de
+    concepção (ver rules/indicadores.py e rules/reproducao_analise.py), que
+    passa a sair inflada, e polui o histórico de reprodução da matriz.
+
+    Função IRMÃ de `detectar_e_registrar_perda_por_reinseminacao`, e não uma
+    extensão dela: aquela trata o serviço anterior POSITIVO (vira perda de
+    prenhez, com pendência de motivo na Agenda) e fecha UM serviço; esta trata
+    o serviço em aberto (vira NEGATIVO, sem pendência nenhuma) e fecha TODOS
+    os abertos da lactação. Os dois são mutuamente exclusivos por construção —
+    POSITIVO não é "em aberto".
+
+    Escolhas deliberadas:
+
+    * **`data_diagnostico` fica NULA.** Nenhum toque foi feito; o resultado foi
+      inferido. Gravar uma data fabricaria um evento veterinário que não
+      aconteceu e contaminaria os relatórios "dias para diagnóstico" e "dias
+      para reinseminação" (ver rules/relatorios_gerenciais.py), que existem
+      justamente para medir quanto tempo o veterinário levou.
+    * **Só serviços ESTRITAMENTE anteriores.** Duas doses no mesmo dia são o
+      mesmo cio — uma tentativa só, do ponto de vista biológico. Mesmo
+      critério da detecção de perda, logo acima.
+    * **Só a lactação corrente.** Serviço anterior ao último parto pertence a
+      outra lactação e já foi resolvido pelo parto; sem esse recorte, o
+      primeiro lançamento reescreveria o histórico inteiro de uma vaca de
+      cinco crias.
+    * **Idempotente.** Serviço já resolvido (POSITIVO ou NEGATIVO) não é
+      tocado — inclusive um NEGATIVO que já tenha sido fechado por esta mesma
+      função numa chamada anterior.
+
+    Não dá commit — quem chama commita junto com a criação do novo serviço.
+    Devolve a lista dos serviços alterados (vazia quando não havia nada a fechar).
+    """
+    from sqlmodel import select
+
+    from fazenda.models import Parto, Servico
+
+    query_partos = select(Parto).where(
+        Parto.numero_matriz == numero_matriz, Parto.data_parto < nova_data_servico,
+    )
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(query_partos).all()
+    ultimo_parto = max((p.data_parto for p in partos if p.data_parto), default=None)
+
+    query = select(Servico).where(
+        Servico.numero_matriz == numero_matriz, Servico.data_servico < nova_data_servico,
+    )
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+
+    fechados: list[Any] = []
+    for servico in session.exec(query).all():
+        if ultimo_parto is not None and servico.data_servico <= ultimo_parto:
+            continue  # lactação anterior — resolvida pelo parto
+        if not servico_esta_em_aberto(servico):
+            continue  # já resolvido (positivo, negativo ou indefinido)
+        servico.diagnostico = "NEGATIVO"
+        servico.origem_diagnostico = ORIGEM_REINSEMINACAO
+        session.add(servico)
+        fechados.append(servico)
+    return fechados
