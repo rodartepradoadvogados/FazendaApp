@@ -624,8 +624,13 @@ def registrar_diagnostico(
         servico.diagnostico = "POSITIVO"
         servico.retoque = False
     elif dados.resultado == "indefinido":
+        # Inconclusivo NÃO é positivo, negativo nem "em aberto" — é um estado
+        # próprio, e a única saída dele é examinar de novo. Por isso já entra
+        # marcado para retoque: o lembrete de reconfirmação cai na agenda
+        # sozinho (agenda_engine.py só olha o flag, não o diagnóstico), em vez
+        # de depender de alguém lembrar de voltar nessa vaca.
         servico.diagnostico = "INDEFINIDO"
-        servico.retoque = False
+        servico.retoque = True
     else:
         servico.diagnostico = "NEGATIVO"
         servico.retoque = False

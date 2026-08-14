@@ -114,7 +114,18 @@ class TestRegistrarDiagnostico:
         })
         assert r.status_code == 200
         assert r.json()["diagnostico"] == "INDEFINIDO"
-        assert r.json()["retoque"] is False
+
+    def test_indefinido_ja_entra_marcado_para_retoque(self, client):
+        # Regra definida pelo produtor: inconclusivo não é positivo, negativo
+        # nem "em aberto" — é um estado próprio, e a única saída dele é
+        # examinar de novo. Antes o retoque ficava False e a vaca dependia de
+        # alguém lembrar de voltar nela; agora o lembrete cai na agenda
+        # sozinho (agenda_engine.py só olha o flag, não o diagnóstico).
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "indefinido",
+        })
+        assert r.status_code == 200
+        assert r.json()["retoque"] is True
 
     def test_metodo_cio_de_repasse_persistido(self, client):
         r = client.post("/reproducao/diagnostico", json={
