@@ -338,6 +338,22 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         </div>
       )}
 
+      {alvoFinal.size > 0 && (
+        <div className="mt-3" style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", alignItems: "center" }}>
+          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+            {alvoFinal.size} matriz(es) selecionada(s) para esta inseminação:
+          </span>
+          {Array.from(alvoFinal).sort().map((n) => (
+            <span key={n} style={{
+              fontSize: "0.76rem", background: "var(--surface-2)", border: "1px solid var(--border)",
+              borderRadius: "999px", padding: "0.15rem 0.6rem", fontWeight: 600,
+            }}>
+              {n}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <Campo label="Data da inseminação"><input type="date" style={inputStyle} value={dataServico} onChange={(e) => setDataServico(e.target.value)} /></Campo>
         <Campo label="Categoria do touro / sêmen">

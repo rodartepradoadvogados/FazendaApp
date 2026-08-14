@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
+from fazenda.models import CompraSemen, Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
 from fazenda.rules.visibilidade import visivel
@@ -158,6 +158,137 @@ def backfill_estoque_semen_fazenda_id(session: Session) -> None:
         if touro and touro.fazenda_id is not None:
             item.fazenda_id = touro.fazenda_id
             session.add(item)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def mesclar_estoque_semen(sobrevivente: EstoqueSemen, perdedor: EstoqueSemen, session: Session) -> None:
+    """Funde `perdedor` em `sobrevivente` — mesmo touro, duas linhas de
+    `EstoqueSemen` por engano (nome batendo, mas nunca casadas por NAAB; ver
+    o bug corrigido em `compra_semen.registrar_compra`). Não soma doses (a
+    contagem do sobrevivente já é a considerada correta por quem chama) —
+    só preserva histórico e metadados, sem inventar total:
+
+    - `CompraSemen.estoque_semen_id` do perdedor passa a apontar pro
+      sobrevivente — nenhuma compra "desaparece" do relatório de compras.
+    - O item de `Estoque` espelhado (ver `sincronizar_item_estoque_semen`) do
+      perdedor, se existir, funde no do sobrevivente: `MovimentoEstoque`
+      vinculado ao espelho do perdedor passa a apontar pro espelho do
+      sobrevivente (criando um se o sobrevivente ainda não tinha), e o
+      espelho do perdedor é removido.
+    - Metadados (`naab`, `codigo`, `central`, `local_armazenamento`,
+      `observacao`, `valor_unitario`) do sobrevivente só são completados a
+      partir do perdedor quando estão em branco — nunca sobrescreve um valor
+      já preenchido.
+    - `perdedor` é removido no final. `Servico.reprodutor` grava o nome do
+      touro como texto (não uma referência a esta tabela), então nenhum
+      histórico de inseminação/relatório reprodutivo se perde — eles casam
+      pelo nome, que permanece o mesmo.
+
+    Não dá commit — quem chama decide quando persistir."""
+    for campo in ("naab", "codigo", "central", "local_armazenamento", "observacao", "valor_unitario"):
+        if getattr(sobrevivente, campo) in (None, "") and getattr(perdedor, campo) not in (None, ""):
+            setattr(sobrevivente, campo, getattr(perdedor, campo))
+
+    for compra in session.exec(select(CompraSemen).where(CompraSemen.estoque_semen_id == perdedor.id)).all():
+        compra.estoque_semen_id = sobrevivente.id
+        session.add(compra)
+
+    espelho_perdedor = session.exec(select(Estoque).where(Estoque.estoque_semen_id == perdedor.id)).first()
+    if espelho_perdedor is not None:
+        espelho_sobrevivente = session.exec(select(Estoque).where(Estoque.estoque_semen_id == sobrevivente.id)).first()
+        if espelho_sobrevivente is not None:
+            for mov in session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == espelho_perdedor.id)).all():
+                mov.estoque_id = espelho_sobrevivente.id
+                session.add(mov)
+            session.delete(espelho_perdedor)
+        else:
+            espelho_perdedor.estoque_semen_id = sobrevivente.id
+            session.add(espelho_perdedor)
+
+    session.add(sobrevivente)
+    session.delete(perdedor)
+    session.flush()
+    sincronizar_item_estoque_semen(sobrevivente, session)
+
+
+def backfill_estoque_semen_duplicados_mesmo_tipo(session: Session) -> None:
+    """Roda uma única vez: funde linhas de `EstoqueSemen` duplicadas — mesmo
+    touro (nome, sem acento/caixa), mesmo tipo, mesma fazenda — em uma só.
+    Nenhuma fazenda cadastra de propósito duas linhas convencionais para o
+    mesmo touro; sempre que isso existe é engano (ex.: uma compra pelo
+    catálogo NAAB que devia ter somado dose numa linha já cadastrada só pelo
+    nome, e criou uma segunda por não achar o NAAB — ver `registrar_compra`).
+
+    Sobrevivente: a linha com mais doses (critério do produtor — "o correto
+    é o que tem mais doses"); empate desfeito por quem já tem compra
+    registrada (`CompraSemen`) e, por último, pela linha mais antiga (id
+    menor). Ver `mesclar_estoque_semen` para o que é preservado."""
+    chave = "estoque_semen_backfill_duplicados_mesmo_tipo_202608"
+    if session.get(SeedFlag, chave):
+        return
+    grupos: dict[tuple[int | None, str, str], list[EstoqueSemen]] = {}
+    for touro in session.exec(select(EstoqueSemen).where(EstoqueSemen.ativo == True)).all():  # noqa: E712
+        chave_grupo = (touro.fazenda_id, _sem_acento(touro.touro_nome or "").strip().lower(), touro.tipo)
+        if not chave_grupo[1]:
+            continue
+        grupos.setdefault(chave_grupo, []).append(touro)
+
+    ids_com_compra = {
+        c.estoque_semen_id for c in session.exec(select(CompraSemen)).all()
+    }
+    for linhas in grupos.values():
+        if len(linhas) < 2:
+            continue
+        linhas.sort(key=lambda t: (-(t.doses or 0), t.id not in ids_com_compra, t.id))
+        sobrevivente, *perdedores = linhas
+        for perdedor in perdedores:
+            mesclar_estoque_semen(sobrevivente, perdedor, session)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+# Nomes confirmados pelo produtor (ago/2026) como sêmen comprado — nunca
+# touro de monta natural na fazenda dele — que ficaram cadastrados também
+# como `tipo="fazenda"` por engano (provável cadastro manual anterior à
+# compra de sêmen catalogada). Lista fechada e nomeada de propósito: uma
+# fusão automática "sempre que o nome bater entre tipos diferentes" seria
+# arriscada em multi-tenant — outra fazenda pode legitimamente ter um touro
+# de monta natural com o mesmo nome popular de um touro NAAB comprado por
+# outra. Só funde quando o NOME e a FAZENDA batem — nunca entre fazendas.
+NOMES_SEMPRE_COMPRADO = {"henessy", "heineken", "halle"}
+
+
+def backfill_estoque_semen_fazenda_para_convencional_nomeados(session: Session) -> None:
+    """Roda uma única vez: para os touros em `NOMES_SEMPRE_COMPRADO`, funde a
+    linha `tipo="fazenda"` (touro de monta natural) na linha convencional/
+    sexada do mesmo nome, dentro da mesma fazenda — só quando as duas
+    existem. Sem isso, esses touros apareciam ao mesmo tempo na lista de
+    "sêmen convencional" (correto) e em "touros da fazenda"/monta natural
+    (errado), inclusive no seletor de cobertura por monta natural."""
+    chave = "estoque_semen_backfill_fazenda_para_convencional_nomeados_202608"
+    if session.get(SeedFlag, chave):
+        return
+    fazenda_rows = session.exec(select(EstoqueSemen).where(EstoqueSemen.tipo == "fazenda", EstoqueSemen.ativo == True)).all()  # noqa: E712
+    for row in fazenda_rows:
+        nome_norm = _sem_acento(row.touro_nome or "").strip().lower()
+        if nome_norm not in NOMES_SEMPRE_COMPRADO:
+            continue
+        query = select(EstoqueSemen).where(
+            EstoqueSemen.tipo.in_(["convencional", "sexado"]), EstoqueSemen.ativo == True,  # noqa: E712
+        )
+        if row.fazenda_id is not None:
+            query = query.where(EstoqueSemen.fazenda_id == row.fazenda_id)
+        else:
+            query = query.where(EstoqueSemen.fazenda_id.is_(None))  # type: ignore[union-attr]
+        candidatos = [
+            t for t in session.exec(query).all()
+            if _sem_acento(t.touro_nome or "").strip().lower() == nome_norm
+        ]
+        if len(candidatos) != 1:
+            continue  # nenhum ou mais de um candidato — não decide sozinho, evita ambiguidade
+        sobrevivente = candidatos[0]
+        mesclar_estoque_semen(sobrevivente, row, session)
     session.add(SeedFlag(chave=chave))
     session.commit()
 

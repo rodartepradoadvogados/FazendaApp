@@ -23,7 +23,7 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import CompraSemen, ContaGerencial, Estoque, EstoqueSemen, MovimentoEstoque, Touro, Usuario
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
-from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
+from fazenda.api.routers.estoque import _sem_acento, sincronizar_item_estoque_semen
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 
 router = APIRouter(prefix="/compras-semen", tags=["compras-semen"])
@@ -155,6 +155,29 @@ def registrar_compra(
             if fazenda_id is not None:
                 estoque_query = estoque_query.where(EstoqueSemen.fazenda_id == fazenda_id)
             estoque = session.exec(estoque_query).first()
+            if not estoque:
+                # Sem casamento por NAAB (a linha existente nunca teve o NAAB
+                # preenchido — cadastro manual/CSV antigo), tenta casar pelo
+                # NOME (sem acento/caixa) + tipo, dentro da mesma fazenda —
+                # sem este fallback, comprar pelo catálogo NAAB um touro já
+                # cadastrado só pelo nome criava uma 2ª linha de estoque
+                # duplicada em vez de somar a dose na já existente (bug real,
+                # ago/2026: Henessy/Heineken/Halle duplicados).
+                nome_norm = _sem_acento(item.touro_nome or touro_naab.nome or touro_naab.naab or "").strip().lower()
+                if nome_norm:
+                    query_nome = select(EstoqueSemen).where(EstoqueSemen.tipo == item.tipo)
+                    if fazenda_id is not None:
+                        query_nome = query_nome.where(EstoqueSemen.fazenda_id == fazenda_id)
+                    else:
+                        query_nome = query_nome.where(EstoqueSemen.fazenda_id.is_(None))  # type: ignore[union-attr]
+                    candidatos = [
+                        t for t in session.exec(query_nome).all()
+                        if _sem_acento(t.touro_nome or "").strip().lower() == nome_norm
+                    ]
+                    if len(candidatos) == 1:
+                        estoque = candidatos[0]
+                        if not estoque.naab:
+                            estoque.naab = touro_naab.naab
             if not estoque:
                 estoque = EstoqueSemen(
                     touro_nome=item.touro_nome or touro_naab.nome or touro_naab.naab,
