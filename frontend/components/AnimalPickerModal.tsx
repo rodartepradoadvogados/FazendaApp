@@ -76,8 +76,11 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
       </button>
 
       {aberto && (
-        <div onClick={() => setAberto(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+        // Sem fechar ao clicar fora — clique perdido no fundo enquanto se
+        // marca vários animais fechava a janela e derrubava a seleção em
+        // andamento. Só fecha pelo X ou "Concluir" abaixo.
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
+          <div className="card" style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0 }}>
                 {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({selecionados.size}/{animaisComExtras.length})</span>

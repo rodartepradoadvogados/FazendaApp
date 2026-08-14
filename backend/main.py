@@ -103,7 +103,10 @@ from fazenda.api.routers.cadastro import (
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
     seed_cadastros_estoque,
 )
-from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico, backfill_estoque_semen_fazenda_id
+from fazenda.api.routers.estoque import (
+    sindicar_estoque_semen, backfill_estoque_semen_generico, backfill_estoque_semen_fazenda_id,
+    backfill_estoque_semen_duplicados_mesmo_tipo, backfill_estoque_semen_fazenda_para_convencional_nomeados,
+)
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
@@ -306,6 +309,15 @@ async def lifespan(app: FastAPI):
         # nascia sem fazenda_id (bug em sincronizar_item_estoque_semen) —
         # preenche a partir do EstoqueSemen vinculado nos itens legados.
         backfill_estoque_semen_fazenda_id(session)
+        # Corrige o histórico: funde linhas de EstoqueSemen duplicadas (mesmo
+        # touro, mesmo tipo, mesma fazenda — nunca cadastrado assim de
+        # propósito) — precisa rodar ANTES do backfill nomeado abaixo, para
+        # este ter só um candidato convencional/sexado por nome ao fundir.
+        backfill_estoque_semen_duplicados_mesmo_tipo(session)
+        # Corrige o histórico: Henessy/Heineken/Halle (confirmado pelo
+        # produtor — só sêmen comprado, nunca touro de monta natural na
+        # fazenda dele) apareciam também como tipo="fazenda" por engano.
+        backfill_estoque_semen_fazenda_para_convencional_nomeados(session)
     # Cria (se ainda não existir) os buckets do Supabase Storage usados pelo
     # sistema — sem isso, um bucket novo (ex.: "fotos-campo") só existiria
     # depois de alguém criar manualmente pelo painel do Supabase.

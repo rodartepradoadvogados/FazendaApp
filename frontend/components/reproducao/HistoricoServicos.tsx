@@ -24,6 +24,10 @@ export type Serv = {
   // "reinseminacao" quando o NEGATIVO foi concluído pelo sistema (veio uma
   // nova tentativa para a matriz), e não porque alguém tocou a vaca.
   origem_diagnostico?: string | null;
+  // 2º exame (reconfirmação) — distinto do toque acima (campo `diagnostico`).
+  retoque?: boolean;
+  data_reconfirmacao?: string | null;
+  diagnostico_reconfirmacao?: string | null;
   data_perda: string | null; motivo_perda: string | null;
   usuario_nome?: string | null;
 };
@@ -328,6 +332,17 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                           (auto)
                         </span>
                       )}
+                      {s.diagnostico_reconfirmacao ? (
+                        <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                          Reconfirmação:{" "}
+                          <span style={{ color: DIAG_COR[s.diagnostico_reconfirmacao] || "var(--text-muted)", fontWeight: 600 }}>
+                            {s.diagnostico_reconfirmacao}
+                          </span>
+                          {s.data_reconfirmacao ? ` em ${fmtDia(s.data_reconfirmacao)}` : ""}
+                        </div>
+                      ) : s.retoque ? (
+                        <div style={{ fontSize: "0.68rem", color: "var(--amber)", marginTop: "0.15rem" }}>Aguardando retoque</div>
+                      ) : null}
                     </td>
                     <td style={{ textAlign: "right" }}>{s.ordem_parto ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>

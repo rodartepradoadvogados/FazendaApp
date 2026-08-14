@@ -148,6 +148,25 @@ class TestRegistrarCompraSemen:
             assert linhas[0].id == estoque_id
             assert linhas[0].doses == 20
 
+    def test_compra_naab_de_touro_ja_cadastrado_so_pelo_nome_sem_duplicar(self, client):
+        """Regressão (Henessy/Heineken/Halle, relato do produtor ago/2026):
+        touro já cadastrado no Estoque de Sêmen, mas SEM o NAAB preenchido
+        (cadastro manual/CSV antigo) — comprar pelo catálogo NAAB precisa
+        casar pelo NOME em vez de criar uma 2ª linha duplicada."""
+        _criar_touro_naab(client.engine)
+        estoque_id = _criar_estoque_semen(client.engine, touro_nome="Supersire", naab=None)
+        r = client.post("/compras-semen/", json={
+            "itens": [{"origem": "naab", "naab": "7HO12345", "touro_nome": "Supersire", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "ABS Brasil", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+        })
+        assert r.status_code == 200
+        with Session(client.engine) as s:
+            linhas = s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Supersire")).all()
+            assert len(linhas) == 1  # não duplicou
+            assert linhas[0].id == estoque_id
+            assert linhas[0].doses == 20  # 10 iniciais + 10 compradas
+            assert linhas[0].naab == "7HO12345"  # NAAB completado, sem sobrescrever a linha
+
     def test_compra_exige_conta_gerencial_de_semen(self, client):
         estoque_id = _criar_estoque_semen(client.engine)
         r = client.post("/compras-semen/", json={
