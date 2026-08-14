@@ -227,7 +227,7 @@ class AgendaEngine:
             result.proxima_visita_bst = proxima_visita_bst_real
 
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
-        # agenda no dia do próximo serviço (data do diagnóstico + meta de
+        # agenda no dia da próxima visita reprodutiva (data do diagnóstico + meta de
         # reinseminação; sem diagnóstico registrado, usa a data do serviço).
         for s in servicos:
             if not s.get("retoque"):

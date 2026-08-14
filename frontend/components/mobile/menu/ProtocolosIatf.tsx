@@ -2,7 +2,7 @@
 // Sub-tela: Protocolos IATF (só leitura).
 // Enquanto em andamento: lista as vacas com etapa ainda pendente (D0/D7/D9/D11).
 // Ao concluir tudo (D11 com baixa), o protocolo continua aparecendo por mais
-// um ciclo — mas a preocupação muda: mostra a data do próximo serviço
+// um ciclo — mas a preocupação muda: mostra a data da próxima visita
 // (D11 + intervalo de visita reprodutiva) e as candidatas herd-wide ao
 // próximo repasse (mesmo critério da Agenda) — ver tarefa #369.
 import { AlertTriangle, Check } from "lucide-react";
@@ -45,7 +45,7 @@ export default function ProtocolosIatf({ onVoltar }: { onVoltar: () => void }) {
                   Concluído — inseminado em {p.data_d11 ? formatDate(p.data_d11) : "—"}
                 </div>
                 <div style={{ fontSize: "0.85rem", padding: "0.3rem 0", borderTop: "1px solid var(--mob-border)" }}>
-                  Próximo serviço: <span style={{ fontWeight: 800, color: "var(--mob-acao)" }}>{p.proxima_visita ? formatDate(p.proxima_visita) : "—"}</span>
+                  Próxima visita: <span style={{ fontWeight: 800, color: "var(--mob-acao)" }}>{p.proxima_visita ? formatDate(p.proxima_visita) : "—"}</span>
                 </div>
                 {(p.candidatas_proxima_visita || []).length > 0 && (
                   <div style={{ marginTop: "0.3rem" }}>

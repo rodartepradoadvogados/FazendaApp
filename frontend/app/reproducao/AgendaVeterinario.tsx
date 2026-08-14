@@ -238,7 +238,7 @@ export default function AgendaVeterinarioPage() {
             <input type="radio" name="modoAgendaRepro" checked={modo === "atual"} onChange={() => setModo("atual")} /> Data atual
           </label>
           <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
-            <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próximo serviço agendado
+            <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próxima visita reprodutiva agendada
           </label>
           <button onClick={abrirPainelExportar} disabled={categoriasComDados.length === 0}
             title="Exportar a lista completa, escolhendo quais categorias incluir"
@@ -291,7 +291,7 @@ export default function AgendaVeterinarioPage() {
       {modo === "projecao" && !dados.proxima_visita_reprodutiva && (
         <div className="mb-3" style={{ background: "rgba(198,58,58,0.12)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.75rem 1rem", fontSize: "0.85rem" }}>
           <div className="flex items-center gap-2" style={{ color: "var(--red)" }}>
-            <AlertTriangle size={16} /><span>Não há próximo serviço agendado.</span>
+            <AlertTriangle size={16} /><span>Não há próxima visita reprodutiva agendada.</span>
           </div>
           {avisoParam ? (
             <p style={{ marginTop: "0.4rem", color: "var(--text-muted)" }}>{avisoParam}</p>
@@ -309,7 +309,7 @@ export default function AgendaVeterinarioPage() {
           <AlertTriangle size={16} />
           <span>
             Cenário projetado para {fmtDia(dados.data_referencia)} — classificação simulada com os dados já lançados
-            hoje, como se aquela fosse a data da visita (o "próximo serviço"); novos lançamentos até lá podem mudar o resultado.
+            hoje, como se aquela fosse a data da visita reprodutiva; novos lançamentos até lá podem mudar o resultado.
           </span>
         </div>
       )}
@@ -355,7 +355,7 @@ export default function AgendaVeterinarioPage() {
           <div className="card" style={{ maxWidth: "420px", width: "90%" }}>
             <div className="card-header mb-2">Agendar a próxima visita reprodutiva?</div>
             <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-              Não há um próximo serviço agendado. Deseja definir a data da próxima visita reprodutiva agora?
+              Não há uma próxima visita reprodutiva agendada. Deseja definir a data agora?
             </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Não</button>
@@ -368,7 +368,7 @@ export default function AgendaVeterinarioPage() {
       {passoAgendar === "definir" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div className="card" style={{ maxWidth: "460px", width: "90%" }}>
-            <div className="card-header mb-2">Data do próximo serviço</div>
+            <div className="card-header mb-2">Data da próxima visita reprodutiva</div>
             {!dados.ultimo_servico ? (
               <>
                 <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
@@ -382,7 +382,7 @@ export default function AgendaVeterinarioPage() {
             ) : (
               <>
                 <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "block", marginBottom: "0.75rem" }}>
-                  Escreva a data do próximo serviço
+                  Escreva a data da próxima visita reprodutiva
                   <input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} min={dados.ultimo_servico}
                     style={{ display: "block", marginTop: "0.3rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem" }} />
                 </label>

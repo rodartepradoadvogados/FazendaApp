@@ -67,7 +67,7 @@ class Servico(SQLModel, table=True):
     duracao_lactacao_anterior: Optional[int] = None
     periodo_seco_anterior: Optional[int] = None
     # Diagnóstico positivo marcado para reconfirmar (ainda não é prenhez definitiva)
-    # — gera o lembrete de retoque na agenda, na data do próximo serviço.
+    # — gera o lembrete de retoque na agenda, na data da próxima visita reprodutiva.
     retoque: Optional[bool] = None
     # Segundo exame (reconfirmação, ~60 dias do serviço) — distinto do primeiro
     # toque (data_diagnostico/diagnostico) para a agenda do veterinário.

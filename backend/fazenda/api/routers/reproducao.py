@@ -224,7 +224,7 @@ def agenda_veterinario(
 
     Aceita uma data de referência opcional (`?data=AAAA-MM-DD`, #490) para um
     cenário projetado: quando a visita do veterinário será numa data futura
-    (o "próximo serviço"), os dias inseminada/dias para parto são recalculados
+    (a próxima visita reprodutiva), os dias inseminada/dias para parto são recalculados
     como se aquela fosse "hoje" — com os dados já lançados, sem prever novos
     lançamentos que ainda vão acontecer até lá.
     """
@@ -579,7 +579,7 @@ def registrar_diagnostico(
     """
     Registra o resultado do diagnóstico de gestação no serviço mais recente da
     matriz. Se marcado "retoque", o lembrete de reconfirmação entra na agenda
-    na data do próximo serviço (agenda_engine.py). "Indefinido" (inconclusivo)
+    na data da próxima visita reprodutiva (agenda_engine.py). "Indefinido" (inconclusivo)
     é distinto de "negativo" — a matriz não vira vazia, segue para reavaliar.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
@@ -1206,7 +1206,7 @@ def listar_protocolos_iatf_ativos(
     Um protocolo com TODAS as etapas concluídas (D11/inseminação já com
     baixa) some da lista principal, mas continua aparecendo por mais um
     ciclo (intervalo_visita_reprodutiva dias, editável em Configurações >
-    Parâmetros) como "concluido": True, mostrando a data do próximo serviço
+    Parâmetros) como "concluido": True, mostrando a data da próxima visita reprodutiva
     (D11 + intervalo) e as candidatas herd-wide ao próximo repasse (mesmo
     critério de `selecionar_candidatas_iatf`, usado na Agenda) — ver #369.
     """
@@ -1400,7 +1400,7 @@ def candidatas_iatf_projetadas(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Candidatas à próxima IATF (mesmo critério de `selecionar_candidatas_iatf`
-    usado na Agenda), com projeção de aptidão na data do próximo serviço —
+    usado na Agenda), com projeção de aptidão na data da próxima visita reprodutiva —
     último serviço do rebanho + `intervalo_visita_reprodutiva` dias (Configurações
     > Parâmetros). Usado em Histórico > Reprodução > Ciclos de IATF."""
     from fazenda.rules.iatf import selecionar_candidatas_iatf
