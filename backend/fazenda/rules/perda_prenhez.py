@@ -122,6 +122,64 @@ def servico_esta_em_aberto(servico: Any) -> bool:
     return (_get(servico, "diagnostico") or "").strip().upper() not in DIAGNOSTICOS_RESOLVIDOS | {"INDEFINIDO"}
 
 
+def pariu_depois_do_servico(*, data_servico: date | None, ultimo_parto: date | None) -> bool:
+    """True quando a matriz já pariu depois deste serviço — a gestação que
+    ele originou se resolveu do jeito definitivo possível, com ou sem
+    reconfirmação formal lançada no meio do caminho."""
+    return bool(data_servico and ultimo_parto and ultimo_parto >= data_servico)
+
+
+def secou_de_rotina_depois_do_servico(*, data_servico: date | None, ultima_secagem_rotina: date | None) -> bool:
+    """True quando a matriz já foi seca por rotina (preparo pro parto, não
+    tratamento) depois deste serviço — sinal de que a fazenda já trata a
+    gestação como de pé, independente de reconfirmação formal."""
+    return bool(data_servico and ultima_secagem_rotina and ultima_secagem_rotina >= data_servico)
+
+
+def dentro_da_janela_pre_parto(
+    *, data_servico: date | None, hoje: date, dias_gestacao_referencia: float, pre_parto_max_dias: int,
+) -> bool:
+    """True quando a data provável do parto (a partir deste serviço) já caiu
+    dentro da janela de pré-parto (`pre_parto_max_dias` dias ou menos) — sem
+    piso: um pré-parto vencido continua "dentro da janela", mesmo teto usado
+    pela Agenda e pelo critério de lote `pre_parto` (ver lote_criterios.py)."""
+    if not data_servico:
+        return False
+    dpp = round(dias_gestacao_referencia - (hoje - data_servico).days)
+    return dpp <= pre_parto_max_dias
+
+
+def retoque_esta_resolvido(
+    *,
+    data_servico: date | None,
+    hoje: date,
+    ultimo_parto: date | None,
+    ultima_secagem_rotina: date | None,
+    dias_gestacao_referencia: float,
+    pre_parto_max_dias: int,
+) -> bool:
+    """True quando ALGUM evento mais definitivo que o 2º toque (retoque) já
+    resolveu esta gestação: parto, secagem de rotina (preparo pro parto) ou
+    entrada na janela de pré-parto.
+
+    Pedido do produtor: nenhum desses três precisa esperar a reconfirmação
+    formal para "contar" — uma vaca que já pariu, ou que já foi seca de
+    rotina, ou que já está na janela de pré-parto continuava sendo cobrada
+    (na Agenda do veterinário e na lista "Inseminadas 60+ dias —
+    reconfirmação") para reconfirmar uma gestação que uma dessas três coisas
+    já resolveu sozinha. Sem este critério, o parto ou a entrada em
+    pré-parto nunca desligavam a cobrança — só a reconfirmação manual
+    desligava, e ela podia nunca acontecer."""
+    return (
+        pariu_depois_do_servico(data_servico=data_servico, ultimo_parto=ultimo_parto)
+        or secou_de_rotina_depois_do_servico(data_servico=data_servico, ultima_secagem_rotina=ultima_secagem_rotina)
+        or dentro_da_janela_pre_parto(
+            data_servico=data_servico, hoje=hoje,
+            dias_gestacao_referencia=dias_gestacao_referencia, pre_parto_max_dias=pre_parto_max_dias,
+        )
+    )
+
+
 def servicos_positivos_vigentes(
     servicos: Sequence[Any], partos: Sequence[Any] | None = None,
 ) -> dict[str, Any]:

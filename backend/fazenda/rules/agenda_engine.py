@@ -28,11 +28,13 @@ from fazenda.rules.iatf import (
 from fazenda.rules.parametros import (
     dias_contas_a_pagar_agenda as _dias_contas_a_pagar_padrao,
     dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
+    gestacao_dias_referencia,
     intervalo_bst as _intervalo_bst_padrao,
     intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
     periodo_seco_dias,
     pre_parto_max,
 )
+from fazenda.rules.perda_prenhez import retoque_esta_resolvido
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
 
 
@@ -186,11 +188,14 @@ class AgendaEngine:
         # acima, alimenta o DEL AO VIVO (ver _del_dias_ao_vivo, importado do
         # topo do arquivo) usado logo abaixo no loop por animal.
         ult_secagem_por_animal: dict[str, date] = {}
+        ult_secagem_rotina_por_animal: dict[str, date] = {}
         for s in secagens or []:
             n = s.get("numero_matriz")
             d = s.get("data_secagem")
             if n and d and (n not in ult_secagem_por_animal or d > ult_secagem_por_animal[n]):
                 ult_secagem_por_animal[n] = d
+            if n and d and s.get("motivo") == "rotina" and (n not in ult_secagem_rotina_por_animal or d > ult_secagem_rotina_por_animal[n]):
+                ult_secagem_rotina_por_animal[n] = d
 
         # 1. CANDIDATAS IATF
         iatf_input = [
@@ -229,8 +234,37 @@ class AgendaEngine:
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
         # agenda no dia da próxima visita reprodutiva (data do diagnóstico + meta de
         # reinseminação; sem diagnóstico registrado, usa a data do serviço).
+        # A cobrança para assim que um evento mais definitivo já tiver
+        # resolvido a gestação sozinho — parto, secagem de rotina ou entrada
+        # na janela de pré-parto (ver perda_prenhez.retoque_esta_resolvido);
+        # sem isso, uma vaca que já pariu ou já está no pré-parto continuava
+        # recebendo o alerta de retoque para sempre, já que só a
+        # reconfirmação manual desligava o flag `retoque` do serviço.
+        gestacao_dias_ref = gestacao_dias_referencia()
+        pre_parto_max_dias = pre_parto_max()
+        grupo_por_animal = {a["numero"]: a.get("grupo_primario") or "" for a in animais}
         for s in servicos:
             if not s.get("retoque"):
+                continue
+            numero_s = s["numero_matriz"]
+            # Já está fisicamente no lote de pré-parto (grupo_primario aponta
+            # pra um Lote com pre_parto=True) — mesmo sinal que já suspende o
+            # alerta "Pré-parto" abaixo (grupos_ja_pre_parto). Verificação à
+            # parte de `retoque_esta_resolvido`: o critério do lote é
+            # race-aware (fazenda.rules.lote_criterios.dias_para_parto usa
+            # dias_gestacao(raca)), enquanto o cálculo abaixo usa a média
+            # configurável — as duas janelas podem divergir alguns dias para
+            # raças fora do Holandês.
+            if grupo_por_animal.get(numero_s) in grupos_ja_pre_parto:
+                continue
+            if retoque_esta_resolvido(
+                data_servico=s.get("data_servico"),
+                hoje=data_referencia,
+                ultimo_parto=parto_por_animal.get(numero_s, {}).get("data_parto"),
+                ultima_secagem_rotina=ult_secagem_rotina_por_animal.get(numero_s),
+                dias_gestacao_referencia=gestacao_dias_ref,
+                pre_parto_max_dias=pre_parto_max_dias,
+            ):
                 continue
             ancora = s.get("data_diagnostico") or s.get("data_servico")
             if not ancora:

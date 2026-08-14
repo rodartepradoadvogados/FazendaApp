@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, Servico
+from fazenda.models import Animal, Lote, Parto, Servico
 
 
 @pytest.fixture
@@ -285,3 +285,42 @@ class TestRetoqueNaAgenda:
         r = client.get("/agenda/", params={"data": "2026-07-01"})
         eventos = r.json()["eventos"]
         assert not any("Retoque" in e["descricao"] for e in eventos)
+
+    def test_pariu_depois_do_servico_nao_gera_retoque(self, client_com_engine):
+        """Regressão (matriz 131, relato do produtor ago/2026): vaca com
+        retoque pendente que já pariu depois do serviço não deve continuar
+        recebendo o alerta de retoque na Agenda — o parto já resolveu a
+        gestação sozinho, com ou sem reconfirmação formal."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 4, 1),
+                data_diagnostico=date(2026, 5, 1), diagnostico="POSITIVO",
+                retoque=True, ult_ocorrencia=1,
+            ))
+            s.add(Parto(numero_matriz="401", data_parto=date(2026, 6, 19), ordem_parto=1))
+            s.commit()
+        r = c.get("/agenda/", params={"data": "2026-08-14"})
+        eventos = r.json()["eventos"]
+        assert not any(e["numero_animal"] == "401" and "Retoque" in e["descricao"] for e in eventos)
+
+    def test_lote_pre_parto_nao_gera_retoque(self, client_com_engine):
+        """Regressão (matrizes 145/429/430/432/433/435, relato do produtor
+        ago/2026): vaca com retoque pendente já movida para um lote
+        cadastrado com `pre_parto=True` não deve continuar recebendo o
+        alerta de retoque — a mudança de lote já reconhece a gestação."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "401")).first()
+            animal.grupo_primario = "09 - Pré-parto"
+            s.add(animal)
+            s.add(Lote(codigo="09", nome="Pré-parto", pre_parto=True))
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 6, 1),
+                data_diagnostico=date(2026, 7, 1), diagnostico="POSITIVO",
+                retoque=True, ult_ocorrencia=1,
+            ))
+            s.commit()
+        r = c.get("/agenda/", params={"data": "2026-08-14"})
+        eventos = r.json()["eventos"]
+        assert not any(e["numero_animal"] == "401" and "Retoque" in e["descricao"] for e in eventos)

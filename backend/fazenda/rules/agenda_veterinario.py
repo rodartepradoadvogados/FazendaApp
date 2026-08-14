@@ -17,7 +17,14 @@ Parâmetros de análise (todos editáveis em Configurações > Parâmetros — v
   - Inseminada de 30 a 59 dias: dar o toque; se não tiver toque nessa fase,
     fica marcada como "toque atrasado".
   - Inseminada com 60 dias ou mais: reconfirmar; se não tiver reconfirmação
-    nessa fase, fica marcada como "atrasada para reconfirmação".
+    nessa fase, fica marcada como "atrasada para reconfirmação". A cobrança
+    por reconfirmação para de valer assim que QUALQUER evento mais definitivo
+    já tiver resolvido a gestação sozinho: a matriz pariu, foi seca de
+    rotina (preparo pro parto) ou já entrou na janela de pré-parto — ver
+    `fazenda.rules.perda_prenhez.retoque_esta_resolvido`. Pariu excluiu a
+    matriz de "gestante" (ela não está mais prenha, precisa de novo
+    serviço); os outros dois casos a mantêm como gestante confirmada, sem
+    depender do 2º toque formal (#pedido do produtor, ago/2026).
   - Observação de cio (11ª lista, só quando usa_adesivo_deteccao_cio=true):
     inseminadas entre 15 e 28 dias — subconjunto de "inseminadas 1-29" — para
     acompanhar o adesivo de detecção de cio de repasse.
@@ -41,6 +48,11 @@ from fazenda.rules.parametros import (
     pre_parto_max,
     pre_parto_min,
     usa_adesivo_deteccao_cio,
+)
+from fazenda.rules.perda_prenhez import (
+    dentro_da_janela_pre_parto,
+    pariu_depois_do_servico,
+    secou_de_rotina_depois_do_servico,
 )
 
 
@@ -72,6 +84,9 @@ def classificar_rebanho(
     servico_por_animal: dict[str, dict],
     peso_por_animal: dict[str, float],
     hoje: date,
+    ultimo_parto_por_animal: dict[str, date] | None = None,
+    ultima_secagem_rotina_por_animal: dict[str, date] | None = None,
+    grupos_pre_parto: set[str] | None = None,
 ) -> dict:
     listas: dict[str, list[dict]] = {
         "inseminadas_1_29": [], "inseminadas_30_59": [], "inseminadas_60_mais": [],
@@ -80,6 +95,7 @@ def classificar_rebanho(
         "vazias_por_diagnostico": [], "pendentes_classificacao": [],
         "observacao_cio": [],
     }
+    grupos_pre_parto = grupos_pre_parto or set()
     gestacao_dias = gestacao_dias_referencia()
     peso_apta = peso_apta_min()
     idade_apta = idade_apta_min_meses()
@@ -144,14 +160,40 @@ def classificar_rebanho(
         # mesmo POSITIVO) continuava "gestante confirmada" no roteiro do
         # veterinário.
         perda_registrada = bool((servico or {}).get("data_perda_prenhez"))
-        gestante_confirmada = (
-            tocada and diag1 == "POSITIVO" and not perda_registrada
-            and (eh_novilha or (reconfirmada and diag2 == "POSITIVO"))
+        diag_positivo_vigente = tocada and diag1 == "POSITIVO" and not perda_registrada
+
+        # Eventos mais definitivos que o 2º toque — ver
+        # fazenda.rules.perda_prenhez.retoque_esta_resolvido. Pariu resolve a
+        # gestação SEM deixar a matriz "gestante" (ela precisa de novo
+        # serviço agora); secar de rotina ou entrar na janela de pré-parto a
+        # mantêm gestante, sem exigir reconfirmação formal.
+        ultimo_parto = (ultimo_parto_por_animal or {}).get(numero)
+        ultima_secagem_rotina = (ultima_secagem_rotina_por_animal or {}).get(numero)
+        pariu_depois = diag_positivo_vigente and pariu_depois_do_servico(
+            data_servico=data_servico, ultimo_parto=ultimo_parto,
+        )
+        secou_rotina_depois = diag_positivo_vigente and secou_de_rotina_depois_do_servico(
+            data_servico=data_servico, ultima_secagem_rotina=ultima_secagem_rotina,
+        )
+        # Janela calculada (média configurável) OU já fisicamente no lote de
+        # pré-parto (critério race-aware, ver lote_criterios.dias_para_parto)
+        # — as duas podem divergir alguns dias para raças fora do Holandês,
+        # então valem como alternativas, não como E lógico.
+        entrou_pre_parto = diag_positivo_vigente and (
+            dentro_da_janela_pre_parto(
+                data_servico=data_servico, hoje=hoje,
+                dias_gestacao_referencia=gestacao_dias, pre_parto_max_dias=pre_parto_ate,
+            )
+            or (animal.get("grupo_primario") or "") in grupos_pre_parto
+        )
+
+        gestante_confirmada = diag_positivo_vigente and not pariu_depois and (
+            eh_novilha or (reconfirmada and diag2 == "POSITIVO") or entrou_pre_parto or secou_rotina_depois
         )
         perda_prenhez = perda_registrada or (reconfirmada and diag2 == "NEGATIVO")
 
         dpp = None
-        if gestante_confirmada and data_servico:
+        if diag_positivo_vigente and not pariu_depois and data_servico:
             dpp = round(gestacao_dias - (hoje - data_servico).days)
 
         classificado = False
@@ -162,7 +204,10 @@ def classificar_rebanho(
             "diagnostico": diag1, "diagnostico_reconfirmacao": diag2,
         }
 
-        em_aberto = servico is not None and dias_insem is not None and not gestante_confirmada and not negativo_toque and not perda_prenhez
+        em_aberto = (
+            servico is not None and dias_insem is not None
+            and not gestante_confirmada and not negativo_toque and not perda_prenhez and not pariu_depois
+        )
         if em_aberto:
             if 1 <= dias_insem <= 29:
                 listas["inseminadas_1_29"].append(base)
@@ -205,6 +250,9 @@ def classificar_rebanho(
                 listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
             elif perda_prenhez:
                 motivo = "Perda de prenhez confirmada na reconfirmação, aguardando novo serviço."
+                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
+            elif pariu_depois:
+                motivo = f"{categoria.capitalize()} pariu — a gestação deste serviço já se resolveu, aguardando nova inseminação."
                 listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
             elif not servico:
                 motivo = f"{categoria.capitalize()} sem histórico de serviço nem diagnóstico de gestação registrado."

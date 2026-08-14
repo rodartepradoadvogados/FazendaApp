@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ControleLeiteiro, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
+    Animal, ControleLeiteiro, EstoqueSemen, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
     ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     SeedFlag, Secagem, Servico, Usuario,
 )
@@ -253,7 +253,39 @@ def agenda_veterinario(
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
-    listas = classificar_rebanho(animais, servico_por_animal, peso_por_animal, hoje)
+    # Parto e secagem de rotina desligam a cobrança de reconfirmação sozinhos
+    # — ver fazenda.rules.perda_prenhez.retoque_esta_resolvido e o critério
+    # completo em fazenda.rules.agenda_veterinario.
+    query_partos = select(Parto)
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+    ultimo_parto_por_animal: dict[str, date] = {}
+    for p in session.exec(query_partos).all():
+        if p.data_parto and (p.numero_matriz not in ultimo_parto_por_animal or p.data_parto > ultimo_parto_por_animal[p.numero_matriz]):
+            ultimo_parto_por_animal[p.numero_matriz] = p.data_parto
+
+    query_secagens = select(Secagem).where(Secagem.motivo == "rotina")
+    if fazenda_id is not None:
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    ultima_secagem_rotina_por_animal: dict[str, date] = {}
+    for s in session.exec(query_secagens).all():
+        if s.data_secagem and (
+            s.numero_matriz not in ultima_secagem_rotina_por_animal
+            or s.data_secagem > ultima_secagem_rotina_por_animal[s.numero_matriz]
+        ):
+            ultima_secagem_rotina_por_animal[s.numero_matriz] = s.data_secagem
+
+    query_lotes_pre_parto = select(Lote).where(Lote.pre_parto == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_lotes_pre_parto = query_lotes_pre_parto.where(Lote.fazenda_id == fazenda_id)
+    grupos_pre_parto = {f"{l.codigo} - {l.nome}" for l in session.exec(query_lotes_pre_parto).all()}
+
+    listas = classificar_rebanho(
+        animais, servico_por_animal, peso_por_animal, hoje,
+        ultimo_parto_por_animal=ultimo_parto_por_animal,
+        ultima_secagem_rotina_por_animal=ultima_secagem_rotina_por_animal,
+        grupos_pre_parto=grupos_pre_parto,
+    )
 
     # Próxima visita reprodutiva sugerida (#571): último serviço do rebanho +
     # intervalo configurado em Parâmetros. Intervalo 0/vazio => nenhuma data
