@@ -613,6 +613,19 @@ def registrar_diagnostico(
     matriz. Se marcado "retoque", o lembrete de reconfirmação entra na agenda
     na data da próxima visita reprodutiva (agenda_engine.py). "Indefinido" (inconclusivo)
     é distinto de "negativo" — a matriz não vira vazia, segue para reavaliar.
+
+    "reconfirmada"/"negativo" sobre um serviço que JÁ teve o 1º toque
+    resolvido (ver `eh_2o_exame` abaixo) é o 2º exame, não um novo toque —
+    grava em `data_reconfirmacao`/`diagnostico_reconfirmacao` (os mesmos
+    campos de POST /reconfirmacao), preservando a data/resultado do 1º
+    toque. Sem essa distinção, selecionar "reconfirmada" nesta tela (ex.:
+    Lançamentos > Diagnóstico de gestação > Agenda do veterinário >
+    Inseminadas 60+ dias) sobrescrevia `data_diagnostico` com a data da
+    reconfirmação e nunca preenchia `data_reconfirmacao`/
+    `diagnostico_reconfirmacao` — a matriz nunca saía da lista de
+    reconfirmação pendente nem aparecia como reconfirmada em lugar nenhum
+    (Agenda, roteiro do veterinário, histórico), mesmo com o lançamento
+    "bem-sucedido" (relato do produtor, ago/2026).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.resultado not in ("retoque", "reconfirmada", "negativo", "indefinido"):
@@ -647,25 +660,43 @@ def registrar_diagnostico(
         resultado["aborto_detectado"] = True
         return resultado
 
-    servico.data_diagnostico = dados.data_diagnostico
-    servico.metodo_diagnostico = dados.metodo
-    if dados.resultado == "retoque":
-        servico.diagnostico = "POSITIVO"
-        servico.retoque = True
-    elif dados.resultado == "reconfirmada":
-        servico.diagnostico = "POSITIVO"
+    # 1º toque já resolvido (POSITIVO/NEGATIVO/INDEFINIDO) e ainda sem
+    # reconfirmação — "reconfirmada"/"negativo" aqui são o 2º exame, não um
+    # novo toque. "retoque"/"indefinido" continuam sempre gravando no toque
+    # (marcar/manter para reconfirmar), mesmo re-selecionados sobre um
+    # serviço já retoque=True — idempotente, não perde dado nenhum.
+    eh_2o_exame = (
+        dados.resultado in ("reconfirmada", "negativo")
+        and (servico.diagnostico or "").strip().upper() in {"POSITIVO", "NEGATIVO", "INDEFINIDO"}
+    )
+
+    if eh_2o_exame:
+        servico.data_reconfirmacao = dados.data_diagnostico
+        servico.diagnostico_reconfirmacao = "POSITIVO" if dados.resultado == "reconfirmada" else "NEGATIVO"
         servico.retoque = False
-    elif dados.resultado == "indefinido":
-        # Inconclusivo NÃO é positivo, negativo nem "em aberto" — é um estado
-        # próprio, e a única saída dele é examinar de novo. Por isso já entra
-        # marcado para retoque: o lembrete de reconfirmação cai na agenda
-        # sozinho (agenda_engine.py só olha o flag, não o diagnóstico), em vez
-        # de depender de alguém lembrar de voltar nessa vaca.
-        servico.diagnostico = "INDEFINIDO"
-        servico.retoque = True
     else:
-        servico.diagnostico = "NEGATIVO"
-        servico.retoque = False
+        servico.data_diagnostico = dados.data_diagnostico
+        servico.metodo_diagnostico = dados.metodo
+        if dados.resultado == "retoque":
+            servico.diagnostico = "POSITIVO"
+            servico.retoque = True
+        elif dados.resultado == "reconfirmada":
+            # Fluxo legado: reconfirmar direto, sem 1º toque lançado antes
+            # (servico ainda em aberto) — mesmo caso já suportado por
+            # POST /reconfirmacao.
+            servico.diagnostico = "POSITIVO"
+            servico.retoque = False
+        elif dados.resultado == "indefinido":
+            # Inconclusivo NÃO é positivo, negativo nem "em aberto" — é um estado
+            # próprio, e a única saída dele é examinar de novo. Por isso já entra
+            # marcado para retoque: o lembrete de reconfirmação cai na agenda
+            # sozinho (agenda_engine.py só olha o flag, não o diagnóstico), em vez
+            # de depender de alguém lembrar de voltar nessa vaca.
+            servico.diagnostico = "INDEFINIDO"
+            servico.retoque = True
+        else:
+            servico.diagnostico = "NEGATIVO"
+            servico.retoque = False
 
     session.add(servico)
     session.commit()
