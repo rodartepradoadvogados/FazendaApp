@@ -312,3 +312,37 @@ class TestBackfillDoHistorico:
         diags = _diagnosticos(engine)
         assert diags[0][1] == "ABERTO", "serviço da lactação anterior não deve ser reescrito"
         assert diags[1][1] == "NEGATIVO"
+
+
+class TestIndefinidoMarcaRetoque:
+    """INDEFINIDO não é positivo, negativo nem em aberto — é um estado próprio,
+    e a única saída dele é examinar de novo. Por isso já entra marcado para
+    retoque, para o lembrete cair na agenda sozinho."""
+
+    def test_indefinido_marca_retoque_e_mantem_o_diagnostico(self, client):
+        c, engine = client
+        _servico(engine, data_servico=date(2026, 7, 14), diagnostico=None)
+
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "108", "data_diagnostico": "2026-08-14",
+            "resultado": "indefinido", "metodo": "Ultrassom",
+        })
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["diagnostico"] == "INDEFINIDO"
+        assert corpo["retoque"] is True, "inconclusivo tem que voltar para reavaliação"
+
+    def test_negativo_nao_marca_retoque(self, client):
+        c, engine = client
+        _servico(engine, data_servico=date(2026, 7, 14), diagnostico=None)
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "108", "data_diagnostico": "2026-08-14", "resultado": "negativo",
+        })
+        assert r.json()["retoque"] is False
+
+    def test_indefinido_nao_e_reaberto_por_nova_inseminacao(self, client):
+        # Continua INDEFINIDO — nem vira negativo automático, nem volta a aberto.
+        c, engine = client
+        _servico(engine, data_servico=date(2026, 7, 14), diagnostico="INDEFINIDO", retoque=True)
+        _inseminar(c, "2026-08-05")
+        assert _diagnosticos(engine)[0][1] == "INDEFINIDO"

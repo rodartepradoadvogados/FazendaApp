@@ -500,7 +500,7 @@ def intervalo_entre_servicos(servicos: list[dict]) -> dict:
 
 def dias_para_reinseminacao(servicos: list[dict], partos: list[dict]) -> dict:
     """Dias desde que a vaca foi identificada VAZIA (diagnóstico negativo ou perda)
-    até a re-inseminação (próximo serviço)."""
+    até a re-inseminação (o serviço seguinte)."""
     serv_idx, _ = _indexar(servicos, partos)
     valores = []
     for num, servs in serv_idx.items():

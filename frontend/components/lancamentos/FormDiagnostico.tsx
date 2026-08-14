@@ -360,12 +360,12 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       )}
       {resultado === "negativo" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Ao confirmar, os animais ficam como <strong>vazia</strong> e serão colocados para observação no próximo serviço.
+          Ao confirmar, os animais ficam como <strong>vazia</strong> e serão colocados para observação na próxima visita reprodutiva.
         </p>
       )}
       {resultado === "retoque" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Os animais entram na <strong>agenda para retoque</strong>, no dia do próximo serviço.
+          Os animais entram na <strong>agenda para retoque</strong>, no dia da próxima visita reprodutiva.
         </p>
       )}
       {resultado === "indefinido" && (
