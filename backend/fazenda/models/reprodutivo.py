@@ -40,9 +40,25 @@ class Servico(SQLModel, table=True):
     intervalo_tentativas: Optional[int] = None
     data_diagnostico: Optional[date] = None
     diagnostico: Optional[str] = None  # POSITIVO | NEGATIVO | INDEFINIDO
+    # Como o diagnóstico chegou aqui: "reinseminacao" quando o próprio sistema
+    # o fechou como NEGATIVO ao receber um serviço mais novo para a mesma
+    # matriz na mesma lactação (ver fazenda.rules.perda_prenhez), ou None
+    # quando foi lançado por gente (POST /reproducao/diagnostico, edição do
+    # serviço, ou importação). Serve para (a) o histórico distinguir o que foi
+    # inferido do que foi tocado de verdade, e (b) poder desfazer só o que é
+    # automático sem apagar diagnóstico digitado por alguém.
+    origem_diagnostico: Optional[str] = None  # reinseminacao | None (manual)
     metodo_diagnostico: Optional[str] = None  # Palpação | Ultrassom | Cio de repasse
     data_perda_prenhez: Optional[date] = None
-    motivo_perda_prenhez: Optional[str] = None  # aborto | natimorto | outros
+    motivo_perda_prenhez: Optional[str] = None  # aborto | natimorto | outros | nao_informado
+    # Como a perda foi detectada: "reinseminacao" quando o próprio sistema
+    # gravou automaticamente (nova IA lançada sobre um serviço ainda POSITIVO
+    # sem perda — ver fazenda.rules.perda_prenhez) ou None quando foi um
+    # lançamento manual (POST /reproducao/perda-prenhez ou edição direta do
+    # serviço). Só informativo — não entra em nenhum critério de negócio;
+    # existe para a Agenda poder dizer "detectada pela nova inseminação em
+    # dd/mm" no card de pendência de motivo.
+    origem_perda_prenhez: Optional[str] = None  # reinseminacao | None (manual)
     pev_dias: Optional[int] = None
     del_servico: Optional[int] = None
     ult_ocorrencia: Optional[int] = None
@@ -51,7 +67,7 @@ class Servico(SQLModel, table=True):
     duracao_lactacao_anterior: Optional[int] = None
     periodo_seco_anterior: Optional[int] = None
     # Diagnóstico positivo marcado para reconfirmar (ainda não é prenhez definitiva)
-    # — gera o lembrete de retoque na agenda, na data do próximo serviço.
+    # — gera o lembrete de retoque na agenda, na data da próxima visita reprodutiva.
     retoque: Optional[bool] = None
     # Segundo exame (reconfirmação, ~60 dias do serviço) — distinto do primeiro
     # toque (data_diagnostico/diagnostico) para a agenda do veterinário.
@@ -106,6 +122,53 @@ class MetodoServicoReprodutivo(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Protocolo IATF cadastrado (o "molde" do cronograma hormonal — mesmo padrão
+# do protocolo de indução de lactação e do protocolo sanitário: catálogo
+# editável em Configurações/Central de Protocolos → lançamento aplica o
+# catálogo a um grupo de animais → aplicação por animal/dia). Os dias em si
+# (D0/D7/D9/D11) continuam fixos (ver PASSOS_PROTOCOLO_IATF) — o molde só
+# define QUAL hormônio/dose/via é usado em D0/D7/D9 (D11 é sempre a
+# inseminação, sem hormônio). Lançar sem escolher um molde continua possível
+# — os hormônios são digitados na hora, como sempre foi.
+# ---------------------------------------------------------------------------
+class ProtocoloIatf(SQLModel, table=True):
+    """Um protocolo IATF cadastrado (o "molde" dos hormônios de D0/D7/D9)."""
+
+    __tablename__ = "protocolo_iatf"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_protocolo_iatf_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True)
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class ProtocoloIatfEtapa(SQLModel, table=True):
+    """
+    Um hormônio do molde num dia (0, 7 ou 9 — D11 nunca entra aqui, é sempre
+    inseminação). `criterio_tipo` segue o mesmo seletor de insumo usado no
+    protocolo sanitário: por medicamento específico, por princípio ativo
+    (lista fechada dos itens de estoque daquele princípio) ou por
+    classificação/doença.
+    """
+
+    __tablename__ = "protocolo_iatf_etapa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_iatf.id", index=True)
+    dia: int  # 0, 7 ou 9
+    criterio_tipo: str = Field(default="medicamento")  # "medicamento" | "principio_ativo" | "classificacao"
+    principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
+    produto: str  # medicamento OU o valor do critério (princípio ativo / classificação)
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
 # Protocolo IATF — lançamento do protocolo hormonal (D0/D7/D9/D11) em um ou
 # vários animais de uma vez. Cada etapa de cada animal vira uma "aplicação"
 # rastreável (aparece agrupada na Agenda, marcada como realizada individualmente).
@@ -123,10 +186,24 @@ class ProtocoloIatfLancamento(SQLModel, table=True):
     data_d0: date
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
+    # Molde (ProtocoloIatf) usado para pré-preencher os hormônios, se algum
+    # foi escolhido no lançamento — None quando lançado ad-hoc (hormônios
+    # digitados na hora, como sempre foi possível).
+    protocolo_id: Optional[int] = Field(default=None, foreign_key="protocolo_iatf.id")
     # Lançado retroativamente (D0 no passado, a partir de uma inseminação IATF
     # sem protocolo). As etapas vencidas destes aparecem como PENDÊNCIA na
     # agenda; nos protocolos normais, etapas já passadas ficam escondidas.
     retroativo: bool = Field(default=False)
+    # Encerrado manualmente pela Central de Protocolos: o lote acabou antes do
+    # fim do cronograma. As etapas que sobraram continuam gravadas como NÃO
+    # realizadas — encerrar não é o mesmo que dar por feito o que não foi —,
+    # mas param de cobrar pendência na Agenda.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
+    # Cancelado: o lançamento não deveria ter existido. Diferente de encerrar —
+    # aqui as aplicações voltam a não realizadas e o estoque é estornado.
+    # Mesmo nome/semântica de ProtocoloCustomizadoLancamento.ativo.
+    ativo: bool = Field(default=True, index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

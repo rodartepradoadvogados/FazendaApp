@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 /**
  * Seletor de grupo/lote em tela cheia, no mesmo estilo visual do AnimalPicker
@@ -34,11 +35,10 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
     setRascunho(Array.from(n));
   };
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return opcoes;
-    return opcoes.filter((o) => o.toLowerCase().includes(q));
-  }, [opcoes, busca]);
+  const filtrados = useMemo(
+    () => opcoes.filter((o) => casaBusca(o, busca)),
+    [opcoes, busca]
+  );
   // `useOrdenacao` exige objetos (linhas com chaves) — como `opcoes` é uma
   // lista de strings soltas, embrulha cada uma em { valor } só pra reaproveitar
   // o mesmo padrão de ordenação por clique no cabeçalho.
@@ -56,7 +56,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: selecionados.length ? "var(--text)" : "var(--text-muted)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
     textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.3rem",
   };
 
@@ -70,7 +70,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
       </button>
 
       {aberto && (
-        <div onClick={cancelar} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "480px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0 }}>
@@ -81,7 +81,7 @@ export function GrupoLotePicker({ label = "Grupo / lote", opcoes, selecionados, 
             <div style={{ position: "relative", marginBottom: "0.6rem" }}>
               <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
               <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar grupo/lote…"
-                style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
+                style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
             </div>
             <div style={{ overflowY: "auto", flex: 1 }}>
               <table className="fazenda-table">

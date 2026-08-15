@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, Trash2, Pencil, AlertTriangle, X, Check, Clock, ThumbsUp, ThumbsDown } from "lucide-react";
 import {
   fetchTiposExclusao, buscarExclusao, impactoExclusao, confirmarExclusao,
@@ -35,6 +35,7 @@ const DESTINO_EDITAR: Record<string, string> = {
   doenca: "/configuracoes?aba=cadastro",
   evento_sanitario: "/configuracoes?aba=cadastro",
   protocolo_sanitario: "/configuracoes?aba=cadastro",
+  safra: "/configuracoes?aba=cadastro&sub=safra",
 };
 // "animal" é o único destino que precisa do id do próprio registro (número
 // do animal) anexado à URL — os demais levam à listagem do tipo, onde o
@@ -47,11 +48,14 @@ function destinoEditar(tipoReal: string, id: string): string | null {
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 
 type Candidato = { id: string; titulo: string; subtitulo: string; tipo_real?: string };
-type Tipo = { id: string; label: string };
+// `sem_filtro_data` vem do backend (GET /exclusoes/tipos) desde a Fase 0 do
+// registro extensível de tipos — antes disso era uma lista fixa duplicada
+// aqui (TIPOS_SEM_DATA), que ficava desatualizada a cada tipo novo.
+type Tipo = { id: string; label: string; sem_filtro_data: boolean };
 type Pendente = { id: number; tipo: string; id_alvo: string; titulo: string | null; solicitado_por: string | null; criado_em: string };
 
 /**
@@ -111,10 +115,10 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const TIPOS_SEM_DATA = new Set([
-    "animal", "estoque", "lote", "fornecedor", "motivo_movimentacao", "pessoa",
-    "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario",
-  ]);
+  const TIPOS_SEM_DATA = useMemo(
+    () => new Set(tipos.filter((t) => t.sem_filtro_data).map((t) => t.id)),
+    [tipos],
+  );
   const temFiltroData = tipo && !TIPOS_SEM_DATA.has(tipo);
 
   const buscar = async (t: string, q: string, ini: string, fim: string) => {
@@ -171,7 +175,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
           ) : (
             <div className="space-y-2">
               {pendentes.map((p) => (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", borderRadius: "8px" }}>
+                <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
                   <div>
                     <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{p.titulo || `${p.tipo} #${p.id_alvo}`}</div>
                     <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
@@ -276,13 +280,13 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
       )}
 
       {alvo && (
-        <div onClick={() => { setAlvo(null); setImpacto(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "460px", maxWidth: "95vw" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0, color: "var(--red)" }}>{souAdmin ? "Confirmar exclusão" : "Solicitar exclusão"}</div>
               <button onClick={() => { setAlvo(null); setImpacto(null); }} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
             </div>
-            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem", marginBottom: "0.7rem", background: "var(--surface-2)" }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem", marginBottom: "0.7rem", background: "var(--surface-2)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>Confira o lançamento</div>
               <p style={{ fontSize: "0.86rem", fontWeight: 700, marginBottom: "0.15rem" }}>{alvo.titulo}</p>
               {alvo.subtitulo && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{alvo.subtitulo}</p>}

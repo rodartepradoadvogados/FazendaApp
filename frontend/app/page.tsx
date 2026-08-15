@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
 import {
-  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, type NotaCapa,
+  fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
+  fetchNotaCapa, podeModulo, type NotaCapa,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -50,14 +50,17 @@ export default function Home() {
     setRecarregando(true);
     fetchNotaCapa().then(setNota).catch(() => {});
     Promise.allSettled([
-      fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchLancamentos(), fetchEstoque(),
-    ]).then(([ind, ag, prod, lanc, est]) => {
-      setErroCarga([ind, ag, prod, lanc, est].some((r) => r.status === "rejected"));
+      fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchResultadoMesRecente(), fetchEstoque(),
+    ]).then(([ind, ag, prod, resMes, est]) => {
+      setErroCarga([ind, ag, prod, resMes, est].some((r) => r.status === "rejected"));
       setD({
         ind: ind.status === "fulfilled" ? ind.value : null,
         ag: ag.status === "fulfilled" ? ag.value : null,
         prod: prod.status === "fulfilled" ? prod.value : null,
-        lanc: lanc.status === "fulfilled" ? lanc.value.lancamentos : null,
+        // Só {mes, resultado} — antes vinha o extrato financeiro completo
+        // (fetchLancamentos) e a Capa recalculava isso no cliente; ver
+        // GET /financeiro/resultado-mes-recente.
+        resMes: resMes.status === "fulfilled" ? resMes.value : null,
         est: est.status === "fulfilled" ? est.value.itens : null,
       });
     }).finally(() => setRecarregando(false));
@@ -80,19 +83,11 @@ export default function Home() {
   const bm = (k: string) => bench.find((b) => b.chave === k) || {};
   const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
-  // Resultado do mês mais recente (competência)
-  let resultadoMes: number | null = null, mesLabel = "";
-  if (d.lanc?.length) {
-    const meses = Array.from(new Set(d.lanc.map((l: any) => l.mes_competencia).filter(Boolean))).sort() as string[];
-    const ultimo = meses[meses.length - 1];
-    if (ultimo) {
-      mesLabel = ultimo;
-      const doMes = d.lanc.filter((l: any) => l.mes_competencia === ultimo);
-      const r = doMes.filter((l: any) => l.tipo === "receita").reduce((a: number, l: any) => a + l.valor, 0);
-      const de = doMes.filter((l: any) => l.tipo === "despesa").reduce((a: number, l: any) => a + l.valor, 0);
-      resultadoMes = r - de;
-    }
-  }
+  // Resultado do mês mais recente (competência) — já vem pronto do backend
+  // (GET /financeiro/resultado-mes-recente), sem precisar do extrato
+  // financeiro completo no cliente.
+  const resultadoMes: number | null = d.resMes?.resultado ?? null;
+  const mesLabel: string = d.resMes?.mes ?? "";
 
   const abaixoMin = d.est ? d.est.filter((i: any) => i.abaixo_minimo === true).length : null;
   const implante = d.ag?.hormonios_check?.find((h: any) => h.nome?.toLowerCase().includes("implante") || h.nome?.toLowerCase().includes("sincrogest"));
@@ -114,7 +109,7 @@ export default function Home() {
     { nome: "Vazias", v: repSel.nao_classificadas },
   ].filter((x) => x.v > 0) : [];
 
-  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 
   const KPI = ({ v, l, c, cat, onClick, podeClicar }: { v: any; l: string; c?: string; cat?: "geral" | "reprodutivo" | "producao" | "financeiro"; onClick?: () => void; podeClicar?: boolean }) => (
     <Indicador
@@ -148,7 +143,7 @@ export default function Home() {
       <OnboardingChecklist />
 
       {nota && !notaFechada && (
-        <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.7rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>
+        <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.7rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>
           <Newspaper size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
             <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{nota.titulo}</p>
@@ -163,14 +158,14 @@ export default function Home() {
       )}
 
       {semDados && (
-        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>
+        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>
       )}
 
       {/* Alertas */}
       <div className="flex flex-wrap gap-3 mb-5">
-        {implanteFalta && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.15)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Syringe size={15} style={{ color: "var(--red)" }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF</div>}
-        {contasPagar > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><TrendingDown size={15} style={{ color: "var(--amber)" }} /> {contasPagar} conta(s) a pagar (10 dias)</div>}
-        {!!abaixoMin && abaixoMin > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.12)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Package size={15} style={{ color: "var(--red)" }} /> {abaixoMin} item(ns) abaixo do mínimo</div>}
+        {implanteFalta && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.15)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Syringe size={15} style={{ color: "var(--red)" }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF</div>}
+        {contasPagar > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><TrendingDown size={15} style={{ color: "var(--amber)" }} /> {contasPagar} conta(s) a pagar (10 dias)</div>}
+        {!!abaixoMin && abaixoMin > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.12)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Package size={15} style={{ color: "var(--red)" }} /> {abaixoMin} item(ns) abaixo do mínimo</div>}
       </div>
 
       {/* KPIs executivos */}
@@ -184,7 +179,13 @@ export default function Home() {
         <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" cat="reprodutivo"
           podeClicar={candidatasList.length > 0}
           onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
-        <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+        {/* Some por completo (não só o valor) para quem não tem o módulo
+            Financeiro contratado — antes o card ficava sempre visível, com
+            "—" no lugar do valor, revelando uma métrica paga a quem nunca
+            comprou o módulo (ver auditoria de planos). */}
+        {podeModulo("financeiro") && (
+          <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+        )}
       </div>
 
       {/* Medidores reprodutivos (modelo velocímetro) */}
@@ -204,9 +205,9 @@ export default function Home() {
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} />
-          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} />
-          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} />
+          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} mediaPais={bm("taxa_servico").media_pais} maiorMelhor={bm("taxa_servico").maior_melhor ?? true} />
+          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} mediaPais={bm("taxa_concepcao").media_pais} maiorMelhor={bm("taxa_concepcao").maior_melhor ?? true} />
+          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} mediaPais={bm("taxa_prenhez_ciclo").media_pais} maiorMelhor={bm("taxa_prenhez_ciclo").maior_melhor ?? true} />
         </div>
         {/* Linha expansível: painel completo de benchmark */}
         <button onClick={() => setBenchAberto((v) => !v)}
@@ -259,7 +260,7 @@ export default function Home() {
                 <Area type="monotone" dataKey="kg" stroke="var(--green-light)" strokeWidth={2.5} fill="url(#gradProd)" dot={{ r: 3, fill: "var(--green-light)", strokeWidth: 0 }} activeDot={{ r: 5 }} />
               </AreaChart>
             </ResponsiveContainer>
-          ) : <EstadoVazio icon={MilkOff}>Sem controle leiteiro ainda — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a> para ver o gráfico aqui.</EstadoVazio>}
+          ) : <EstadoVazio icon={MilkOff}>Sem controle leiteiro ainda — <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)" }}>importe os dados</a> para ver o gráfico aqui.</EstadoVazio>}
         </div>
         <div className="card">
           <div className="card-header mb-2 flex flex-wrap items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva{animais.length ? <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span> : null}
@@ -301,7 +302,7 @@ export default function Home() {
                 <span style={{ fontSize: "0.68rem" }}>desde</span>
                 <input type="date" value={desdeDescarte} onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setDesdeDescarte(e.target.value)}
-                  style={{ fontSize: "0.68rem", padding: "0.05rem 0.25rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
+                  style={{ fontSize: "0.68rem", padding: "0.05rem 0.25rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }} />
               </p>
             </div>
           </div>

@@ -164,7 +164,7 @@ export function MultiFiltro({
         title={`Filtrar por ${label.toLowerCase()} — marque um ou vários; nenhum marcado mostra todos`}
         style={{
           background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-          borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+          borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
           textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.3rem",
         }}
       >
@@ -174,7 +174,7 @@ export function MultiFiltro({
       {aberto && posicao && typeof document !== "undefined" && createPortal(
         <div ref={painelRef} style={{
           position: "fixed", zIndex: 1000, top: posicao.top, left: posicao.left, width: posicao.width,
-          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
+          background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
           boxShadow: "0 8px 24px rgba(0,0,0,0.18)", maxHeight: "260px", overflowY: "auto", padding: "0.25rem",
         }}>
           {permitirNovo && (
@@ -213,7 +213,7 @@ export function MultiFiltro({
               <button type="button" key={o} onClick={() => toggle(o)}
                 style={{ width: "100%", textAlign: "left", background: on ? "var(--surface-2)" : "none", border: "none",
                   cursor: "pointer", fontSize: "0.8rem", color: "var(--text)", padding: "0.35rem 0.5rem",
-                  borderRadius: "5px", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  borderRadius: "var(--r-sm)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
                 <span style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0,
                   border: "1px solid " + (on ? "var(--dourado)" : "var(--border)"),
                   background: on ? "var(--dourado)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>

@@ -46,12 +46,12 @@ const rotuloEstilo: CSSProperties = {
 const selectEstilo: CSSProperties = {
   flex: "1 1 auto", minWidth: "8rem", width: "auto",
   background: "var(--mob-surface)", color: "var(--mob-text)",
-  border: "1px solid var(--mob-border)", borderRadius: 12,
+  border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)",
   padding: "0.55rem 0.7rem", fontSize: "0.88rem", fontWeight: 600,
 };
 const botaoDirEstilo = (ativo: boolean): CSSProperties => ({
   display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-  width: "2.4rem", height: "2.4rem", borderRadius: 12, cursor: ativo ? "pointer" : "default",
+  width: "2.4rem", height: "2.4rem", borderRadius: "var(--r-app)", cursor: ativo ? "pointer" : "default",
   border: `1px solid ${ativo ? "var(--mob-vinho)" : "var(--mob-border)"}`,
   background: ativo ? "color-mix(in srgb, var(--mob-vinho) 14%, var(--mob-surface))" : "var(--mob-surface)",
   color: ativo ? "var(--mob-vinho)" : "var(--mob-muted)",

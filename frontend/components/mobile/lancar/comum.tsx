@@ -6,6 +6,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { normalizarBusca } from "@/lib/busca";
 
 // ── Tipos das listas usadas nos formulários ──────────────────────────────────
 export type Animal = {
@@ -32,9 +33,10 @@ export function hoje(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Sem acento, sem caixa — para a busca ser tolerante ("joão" acha "JOAO"). */
+/** Sem acento, sem caixa, sem hífen/underscore/espaço — para a busca ser
+ * tolerante ("joão" acha "JOAO") — delega ao helper único (lib/busca.ts). */
 export function normalizar(s: string): string {
-  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  return normalizarBusca(s);
 }
 
 // `estadoDe` é opcional: quando informado (rotuloDe do hook useEstadosReprodutivos),
@@ -172,7 +174,7 @@ export function BotoesEscolha<T extends string>({ opcoes, valor, onChange }:
         return (
           <button key={o.valor} type="button" onClick={() => onChange(o.valor)}
             style={{
-              padding: "1rem 0.5rem", borderRadius: 14, fontSize: "1rem", fontWeight: 700, cursor: "pointer",
+              padding: "1rem 0.5rem", borderRadius: "var(--r-app)", fontSize: "1rem", fontWeight: 700, cursor: "pointer",
               border: `2px solid ${ativo ? cor : "var(--mob-border)"}`,
               background: ativo ? cor : "var(--mob-surface)",
               color: ativo ? "#FFFFFF" : "var(--mob-text)",

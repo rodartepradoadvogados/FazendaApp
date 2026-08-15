@@ -19,6 +19,7 @@ from fazenda.database import get_session
 from fazenda.models import ContaGerencial, Safra
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.custo_safra import calcular_custo_safra
+from fazenda.rules.vale_item import ajuste_vale_por_conta, valor_gerencial
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -43,7 +44,10 @@ def custo_por_safra(
         if c.tipo == "despesa" and c.centro_custo == safra.centro_custo
         and c.data_competencia and safra.data_inicio <= c.data_competencia <= safra.data_fim
     ]
-    despesas_total = sum(c.valor_total or 0 for c in filtradas)
+    # Vale de funcionário/empreiteiro lançado a partir de um item não é
+    # despesa da fazenda — ver rules/vale_item.py.
+    ajustes = ajuste_vale_por_conta(session, filtradas, fazenda_id)
+    despesas_total = sum(valor_gerencial(c, ajustes) for c in filtradas)
 
     # Mesmo agrupamento do DRE: nível 1 do código da conta, rótulo pela
     # primeira descrição encontrada para aquele nível.
@@ -53,7 +57,7 @@ def custo_por_safra(
         nivel1 = codigo.split(".")[0] if "." in codigo else codigo
         if nivel1 not in por_categoria:
             por_categoria[nivel1] = {"descricao": c.descricao or "", "valor": 0.0}
-        por_categoria[nivel1]["valor"] += c.valor_total or 0
+        por_categoria[nivel1]["valor"] += valor_gerencial(c, ajustes)
 
     lista_categorias = [
         {"codigo": k, "descricao": v["descricao"], "valor": round(v["valor"], 2)}

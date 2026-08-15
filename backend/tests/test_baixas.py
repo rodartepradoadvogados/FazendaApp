@@ -99,6 +99,24 @@ class TestRegistrarBaixa:
         })
         assert r.status_code == 400
 
+    def test_baixa_por_acidente_com_causa_cadastrada_marca_animal_com_a_causa(self, client):
+        r = client.post("/baixas/", json={
+            "animais": ["900"], "tipo_baixa": "morte", "motivo": "acidente",
+            "motivo_doenca": "Mastite", "data_baixa": "2026-07-08",
+        })
+        assert r.status_code == 200
+        animal = client.get("/animais/900").json()
+        assert animal["motivo_baixa"] == "Mastite"
+
+    def test_baixa_por_acidente_sem_causa_e_opcional(self, client):
+        r = client.post("/baixas/", json={
+            "animais": ["900"], "tipo_baixa": "morte", "motivo": "acidente",
+            "data_baixa": "2026-07-08",
+        })
+        assert r.status_code == 200
+        animal = client.get("/animais/900").json()
+        assert animal["motivo_baixa"] == "acidente"
+
     def test_baixa_em_lote_varios_animais(self, client):
         r = client.post("/baixas/", json={
             "animais": ["900", "901"], "tipo_baixa": "morte", "motivo": "acidente",

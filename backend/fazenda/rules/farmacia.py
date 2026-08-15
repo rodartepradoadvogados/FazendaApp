@@ -19,8 +19,10 @@ import unicodedata
 
 from sqlmodel import Session, select
 
-from fazenda.models import Doenca, Estoque, MedicamentoComercial, PrincipioAtivo, SeedFlag
+from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, PrincipioAtivo, SeedFlag
+from fazenda.rules.farmacia_indicacoes_seed import INDICACOES, MARCAS
 from fazenda.rules.farmacia_seed import PRINCIPIOS
+from fazenda.rules.visibilidade import visivel
 
 # Conversões entre unidades do mesmo eixo (fator para a unidade-base).
 _PARA_BASE = {
@@ -59,10 +61,17 @@ def seed_farmacia(session: Session) -> None:
     """Cria/enriquece os princípios ativos e as marcas comerciais do documento
     base. Idempotente: só CRIA o que falta e só PREENCHE campos vazios de
     princípios já existentes (não sobrescreve edição do usuário)."""
+    # O seed cuida SÓ do catálogo global (`fazenda_id IS NULL`). Sem o filtro,
+    # a busca por nome achava a linha de uma fazenda que já tivesse cadastrado
+    # o mesmo princípio/doença à mão: o seed enriquecia o registro DELA (dado
+    # de uma cliente alterado por rotina global) e nunca criava o global, que
+    # então faltava para todas as outras.
     for p in PRINCIPIOS:
         doenca_id = None
         if p.get("doenca"):
-            doenca = session.exec(select(Doenca).where(Doenca.nome == p["doenca"])).first()
+            doenca = session.exec(
+                select(Doenca).where(Doenca.nome == p["doenca"], Doenca.fazenda_id.is_(None))
+            ).first()
             if not doenca:
                 doenca = Doenca(nome=p["doenca"])
                 session.add(doenca)
@@ -70,7 +79,9 @@ def seed_farmacia(session: Session) -> None:
                 session.refresh(doenca)
             doenca_id = doenca.id
 
-        pa = session.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == p["nome"])).first()
+        pa = session.exec(
+            select(PrincipioAtivo).where(PrincipioAtivo.nome == p["nome"], PrincipioAtivo.fazenda_id.is_(None))
+        ).first()
         if not pa:
             pa = PrincipioAtivo(nome=p["nome"])
             session.add(pa)
@@ -103,6 +114,168 @@ def seed_farmacia(session: Session) -> None:
                     principio_ativo_id=pa.id, nome_comercial=nome_comercial, laboratorio=laboratorio,
                 ))
         session.commit()
+
+
+# ── Seed do catálogo de indicações (Doenca + IndicacaoTerapeutica) ─────────
+def seed_indicacoes(session: Session) -> None:
+    """Cria/enriquece o catálogo de INDICAÇÕES terapêuticas do documento base
+    (`farmacia_indicacoes_seed`): a lista de doenças/manejos (`Doenca`) e o
+    vínculo N-para-N com os princípios que tratam cada uma
+    (`IndicacaoTerapeutica`, com prioridade clínica), além de enriquecer as
+    marcas comerciais que `seed_farmacia` já criou (dose/via/carência/alertas
+    de bula). Precisa rodar DEPOIS de `seed_farmacia` — depende dos
+    princípios ativos já existirem.
+
+    Segue o MESMO padrão add-missing de `seed_farmacia`:
+
+      • `Doenca`: procurada por (nome, fazenda_id IS NULL). Se não existir,
+        cria com fazenda_id=None. Se existir, preenche `tipo`/`descricao` SÓ
+        se estiverem vazios. NUNCA renomeia — os 6 nomes já semeados
+        (Brucelose, Clostridiose, Leptospirose, Diarreia Neonatal,
+        Pasteurelose e Paratifo dos Bezerros, Tuberculose) são referenciados
+        por nome em `PrincipioAtivo.doenca_id`, em protocolos sanitários
+        gravados por critério "doenca" e no casamento por nome de vacina
+        pré-parto em `routers/estoque.py` — renomear quebra os três.
+
+      • `IndicacaoTerapeutica`: cria só o par (princípio, doença) que ainda
+        não existe. NUNCA sobrescreve `prioridade` de um vínculo já
+        existente — pode ter sido reordenado à mão pelo produtor
+        (substituto inteligente). `nota` só é preenchida se estiver vazia.
+
+      • Princípio referenciado por nome no documento de indicações que não
+        existir no catálogo (não deveria acontecer — os 40 nomes foram
+        conferidos contra `farmacia_seed.PRINCIPIOS`) faz o vínculo ser
+        PULADO em silêncio: quem cria princípio ativo é `seed_farmacia`,
+        nunca este seed.
+
+      • `MedicamentoComercial`: procurada por (principio_ativo_id,
+        nome_comercial, fazenda_id IS NULL). Cria a linha se faltar (mesma
+        marca que `seed_farmacia.PRINCIPIOS` já lista — na prática isso é
+        redundante hoje, mas mantém o seed correto se um dia a marca só
+        existir no documento de indicações). O ENRIQUECIMENTO dos campos de
+        bula de uma marca já existente é guardado por `SeedFlag` (chave
+        "farmacia_indicacoes_v1") — é a única parte deste seed que poderia
+        sobrescrever trabalho manual do produtor, então roda só uma vez; a
+        CRIAÇÃO da linha em si fica fora da flag, igual a `seed_farmacia`,
+        para não deixar banco antigo travado sem a marca.
+
+      • Honestidade de status (ver `farmacia_indicacoes_seed`): o valor
+        gravado NUNCA confia cegamente no campo bruto do dicionário — é
+        recalculado a partir do `status_*` correspondente. status
+        "a_preencher" grava `None` (nunca 0, nunca chute); status
+        "proibido_lactacao" grava `proibido_lactacao=True` e
+        `carencia_leite_dias=None` (é proibição, não prazo).
+    """
+    # ── Doenca + IndicacaoTerapeutica: sem flag, roda em todo start ────────
+    principios_por_nome: dict[str, PrincipioAtivo] = {
+        p.nome: p for p in session.exec(select(PrincipioAtivo).where(PrincipioAtivo.fazenda_id.is_(None))).all()
+    }
+    for ind in INDICACOES:
+        doenca = session.exec(
+            select(Doenca).where(Doenca.nome == ind["nome"], Doenca.fazenda_id.is_(None))
+        ).first()
+        if not doenca:
+            doenca = Doenca(nome=ind["nome"], tipo=ind.get("tipo"), descricao=ind.get("descricao"))
+            session.add(doenca)
+            session.commit()
+            session.refresh(doenca)
+        else:
+            doenca.tipo = doenca.tipo or ind.get("tipo")
+            doenca.descricao = doenca.descricao or ind.get("descricao")
+            session.add(doenca)
+            session.commit()
+
+        for vinculo in ind.get("principios", []):
+            pa = principios_por_nome.get(vinculo["principio"])
+            if pa is None:
+                continue  # princípio fora do catálogo — pula o vínculo, não cria princípio aqui.
+            existente = session.exec(
+                select(IndicacaoTerapeutica).where(
+                    IndicacaoTerapeutica.principio_ativo_id == pa.id,
+                    IndicacaoTerapeutica.doenca_id == doenca.id,
+                    IndicacaoTerapeutica.fazenda_id.is_(None),
+                )
+            ).first()
+            if not existente:
+                session.add(IndicacaoTerapeutica(
+                    principio_ativo_id=pa.id, doenca_id=doenca.id,
+                    prioridade=vinculo.get("prioridade", 2), nota=vinculo.get("nota"),
+                ))
+            else:
+                # NUNCA mexe em `prioridade` — só completa nota se estiver vazia.
+                existente.nota = existente.nota or vinculo.get("nota")
+                session.add(existente)
+        session.commit()
+
+    # ── MedicamentoComercial: cria a linha que faltar (sem flag) ───────────
+    for m in MARCAS:
+        pa = principios_por_nome.get(m["principio"])
+        if pa is None:
+            continue
+        marca = session.exec(
+            select(MedicamentoComercial).where(
+                MedicamentoComercial.principio_ativo_id == pa.id,
+                MedicamentoComercial.nome_comercial == m["nome_comercial"],
+                MedicamentoComercial.fazenda_id.is_(None),
+            )
+        ).first()
+        if not marca:
+            session.add(MedicamentoComercial(principio_ativo_id=pa.id, nome_comercial=m["nome_comercial"]))
+    session.commit()
+
+    # ── Enriquecimento dos campos de bula: guardado por SeedFlag ───────────
+    chave = "farmacia_indicacoes_v1"
+    if session.get(SeedFlag, chave):
+        return
+    for m in MARCAS:
+        pa = principios_por_nome.get(m["principio"])
+        if pa is None:
+            continue
+        marca = session.exec(
+            select(MedicamentoComercial).where(
+                MedicamentoComercial.principio_ativo_id == pa.id,
+                MedicamentoComercial.nome_comercial == m["nome_comercial"],
+                MedicamentoComercial.fazenda_id.is_(None),
+            )
+        ).first()
+        if not marca:
+            continue  # não deveria acontecer (acabou de ser garantida acima)
+
+        dose_confirmada = m.get("status_dose") == "referencia"
+        leite_confirmada = m.get("status_carencia_leite") == "referencia"
+        carne_confirmada = m.get("status_carencia_carne") == "referencia"
+        proibido = m.get("status_carencia_leite") == "proibido_lactacao" or bool(m.get("proibido_lactacao"))
+
+        dose_padrao = m.get("dose_padrao") if dose_confirmada else None
+        dose_referencia_kg = m.get("dose_referencia_kg") if dose_confirmada else None
+        dose_texto = m.get("dose_texto") if dose_confirmada else None
+        carencia_leite_dias = None if proibido else (m.get("carencia_leite_dias") if leite_confirmada else None)
+        carencia_carne_dias = m.get("carencia_carne_dias") if carne_confirmada else None
+
+        marca.uso_principal = marca.uso_principal or m.get("uso_principal")
+        marca.concentracao = marca.concentracao or m.get("concentracao")
+        if marca.dose_padrao is None:
+            marca.dose_padrao = dose_padrao
+        marca.unidade_dose = marca.unidade_dose or m.get("unidade_dose")
+        marca.dose_base = marca.dose_base or m.get("dose_base")
+        if marca.dose_referencia_kg is None:
+            marca.dose_referencia_kg = dose_referencia_kg
+        if marca.dose_texto is None:
+            marca.dose_texto = dose_texto
+        marca.via_padrao = marca.via_padrao or m.get("via_padrao")
+        marca.link_bula = marca.link_bula or m.get("link_bula")
+        if marca.carencia_leite_dias is None:
+            marca.carencia_leite_dias = carencia_leite_dias
+        if marca.carencia_carne_dias is None:
+            marca.carencia_carne_dias = carencia_carne_dias
+        if marca.proibido_lactacao is None and proibido:
+            marca.proibido_lactacao = True
+        if marca.alerta_gestacao is None:
+            marca.alerta_gestacao = m.get("alerta_gestacao")
+        marca.alerta = marca.alerta or m.get("alerta")
+        session.add(marca)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 
 # ── Compatibilização do estoque já existente ────────────────────────────────
@@ -190,6 +363,7 @@ def bootstrap_farmacia(session: Session) -> None:
     base entram sem depender de flag de versão — corrige bancos que semearam antes
     do catálogo estar completo. A compatibilização do estoque legado roda uma vez."""
     seed_farmacia(session)
+    seed_indicacoes(session)
     _limpar_principio_legado(session)
     chave = "farmacia_compat_v2"
     if not session.get(SeedFlag, chave):
@@ -199,6 +373,7 @@ def bootstrap_farmacia(session: Session) -> None:
     backfill_finalidade_estoque(session)
     normalizar_unidades_estoque(session)
     seed_boostin(session)
+    vincular_bst_ao_principio(session)
 
 
 # Sinônimos/abreviações legadas (import de planilha, cadastro antigo) da
@@ -239,6 +414,51 @@ def seed_boostin(session: Session) -> None:
         estoque_inicializado=False,
         quantidade=0,
     ))
+    session.commit()
+
+
+NOME_PRINCIPIO_BST = "Somatotropina Bovina Recombinante (bST)"
+
+
+def vincular_bst_ao_principio(session: Session) -> None:
+    """Liga os itens de estoque de bST (Lactotropin, Boostin) ao princípio
+    ativo "Somatotropina Bovina Recombinante (bST)".
+
+    Os dois itens nasceram no cadastro ANTES de o princípio existir no
+    catálogo da farmácia (ver `seed_boostin` acima e o item Lactotropin, mais
+    antigo ainda), então ficaram com `principio_ativo_id` nulo. Quem faria o
+    vínculo por nome de marca é `compatibilizar_estoque`, mas ela é guardada
+    por SeedFlag e já rodou — um princípio novo no catálogo nunca alcançaria
+    esses itens legados.
+
+    Sem o vínculo, o item não aparece como opção de frasco na hora de
+    confirmar uma aplicação (o seletor "qual medicamento/frasco?" agrupa por
+    princípio ativo — ver `estoque_baixa.opcoes_medicamento`).
+
+    Add-missing e idempotente: só preenche o que está vazio, nunca sobrescreve
+    um vínculo que o usuário já tenha feito à mão.
+    """
+    principio = session.exec(
+        select(PrincipioAtivo).where(PrincipioAtivo.nome == NOME_PRINCIPIO_BST)
+    ).first()
+    if not principio:
+        return  # catálogo ainda não semeado nesta sessão — roda no próximo start
+    for item in session.exec(select(Estoque)).all():
+        nome = (item.nome or "").strip().lower()
+        # "lactotropim" (com M) é erro de grafia frequente na digitação — o
+        # produto da Elanco é Lactotropin, com N. Casa as duas formas para o
+        # item mal digitado não ficar de fora do vínculo, e corrige a grafia
+        # do cadastro. Renomear é seguro: MovimentoEstoque aponta para o item
+        # por `estoque_id` (FK), não pelo texto do nome, então o histórico de
+        # baixas/entradas continua ligado.
+        if "lactotropim" in nome:
+            item.nome = (item.nome or "").replace("Lactotropim", "Lactotropin").replace("lactotropim", "lactotropin")
+            session.add(item)
+            nome = item.nome.strip().lower()
+        if item.principio_ativo_id is None and ("lactotropin" in nome or "boostin" in nome):
+            item.principio_ativo_id = principio.id
+            item.principio_ativo = item.principio_ativo or principio.nome
+            session.add(item)
     session.commit()
 
 
@@ -290,9 +510,7 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
     `fazenda_id` filtra os princípios ativos pela fazenda atual — os itens de
     Estoque em si ainda não têm fazenda_id (migração pendente), então o saldo
     agregado por princípio permanece global até essa etapa seguinte."""
-    query = select(PrincipioAtivo).order_by(PrincipioAtivo.nome)
-    if fazenda_id is not None:
-        query = query.where(PrincipioAtivo.fazenda_id == fazenda_id)
+    query = visivel(select(PrincipioAtivo).order_by(PrincipioAtivo.nome), PrincipioAtivo, fazenda_id)
     principios = session.exec(query).all()
     itens = session.exec(select(Estoque)).all()
     por_pa: dict[int, list[Estoque]] = {}

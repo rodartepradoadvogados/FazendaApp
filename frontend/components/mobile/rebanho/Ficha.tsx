@@ -46,6 +46,8 @@ const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "qualidade_leite", titulo: "Qualidade do leite", campos: [["data_coleta", "Data", true], ["ccs", "CCS"], ["cbt", "CBT"]] },
   { chave: "aplicacoes_sanitarias", titulo: "Sanidade — aplicações", campos: [["data_aplicacao", "Data", true], ["produto", "Produto"], ["dose", "Dose"], ["unidade", "Un."]] },
   { chave: "protocolos_sanitarios", titulo: "Protocolos sanitários", campos: [["data_inicio", "Data", true], ["protocolo_nome", "Protocolo"], ["classificacao_mastite", "Mastite"]] },
+  { chave: "inducao_lactacao", titulo: "Indução de lactação", campos: [["data_prevista", "Prevista", true], ["nome_protocolo", "Protocolo"], ["descricao", "Etapa"], ["realizada", "Feito"]] },
+  { chave: "protocolos_customizados", titulo: "Protocolo personalizado", campos: [["data_prevista", "Prevista", true], ["nome_protocolo", "Protocolo"], ["descricao", "Etapa"], ["realizada", "Feito"]] },
   { chave: "secagens", titulo: "Secagens", campos: [["data_secagem", "Data", true], ["motivo", "Motivo"]] },
   { chave: "eventos_agenda", titulo: "Agenda — eventos", campos: [["data_evento", "Data", true], ["descricao", "Descrição"], ["categoria", "Categoria"]] },
   { chave: "exames_resultados", titulo: "Rastreabilidade — Exames", campos: [["data_exame", "Data", true], ["evento_sanitario_nome", "Exame"], ["resultado", "Resultado"]] },
@@ -78,7 +80,7 @@ function Secao({ chave, titulo, linhas, campos, altInicio }: { chave: string; ti
   if (!linhas.length) return null;
   return (
     <details style={{ marginBottom: "0.7rem" }}>
-      <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+      <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
         <span>{titulo}</span>
         <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{linhas.length}</span>
       </summary>
@@ -137,6 +139,13 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
   const baixa = ficha?.baixa as Record<string, unknown> | null;
   const compra = ficha?.compra as Record<string, unknown> | null;
   const pai = ficha?.pai;
+  // "Última produção" precisa vir do histórico ao vivo (controles_leiteiros,
+  // já ordenado ascendente por data_controle pelo backend), não de
+  // Animal.ult_cl_kg/data_ult_leite — essas duas colunas só avançam no
+  // próximo reimport de GERAL.csv (Ideagri), então logo após um controle
+  // leiteiro novo lançado no app elas ainda mostram o penúltimo controle.
+  const controlesLeiteiros = (ficha?.controles_leiteiros as Record<string, unknown>[] | undefined) || [];
+  const ultimoControle = controlesLeiteiros.length ? controlesLeiteiros[controlesLeiteiros.length - 1] : null;
 
   function abrirEditColostro() {
     const c: Record<string, unknown> = colostragem || {};
@@ -236,7 +245,8 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
               <ParDado label="DEL" valor={a.del_dias != null ? String(a.del_dias) : "—"} />
               <ParDado label="Pai" valor={pai?.nome ? `${pai.nome}${pai.naab ? ` (${pai.naab})` : ""}` : "—"} />
               <ParDado label="Grau de sangue" valor={String(a.grau_sangue || "—")} />
-              <ParDado label="Última produção" valor={a.ult_cl_kg != null ? `${Number(a.ult_cl_kg).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg${a.data_ult_leite ? ` (${formatDate(String(a.data_ult_leite))})` : ""}` : "—"} />
+              <ParDado label="Última produção" valor={ultimoControle?.producao_kg != null ? `${Number(ultimoControle.producao_kg).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg${ultimoControle.data_controle ? ` (${formatDate(String(ultimoControle.data_controle))})` : ""}` : "—"} />
+              <ParDado label="Dias de gestação" valor={(ficha?.precisao_parto as Record<string, unknown> | null)?.dias_gestacao != null ? String((ficha!.precisao_parto as Record<string, unknown>).dias_gestacao) : "—"} />
               <ParDado label="Previsão de secagem" valor={ficha?.previsao_secagem ? formatDate(ficha.previsao_secagem) : "—"} />
               <ParDado label="Previsão de parto" valor={ficha?.previsao_parto ? formatDate(ficha.previsao_parto) : "—"} />
             </Grade>

@@ -67,7 +67,14 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "dieta_lancamento": [("base_quantidade", "VARCHAR"), ("leite_bezerros_kg_dia", "FLOAT"), ("usuario_id", "INTEGER")],
     "dieta_item_programado": [("base", "VARCHAR"), ("ms_pct", "FLOAT"), ("alimento_id", "INTEGER")],
     "dieta_registro_real": [("usuario_id", "INTEGER")],
-    "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN"), ("usuario_id", "INTEGER")],
+    # ATENÇÃO: chave única por tabela — este dict é um literal, e uma segunda
+    # entrada com o mesmo nome de tabela APAGA esta em silêncio (foi o que
+    # aconteceu com `retroativo`/`usuario_id` até 08/2026, quando a Central de
+    # Protocolos abriu uma segunda entrada lá embaixo).
+    "protocolo_iatf_lancamento": [
+        ("retroativo", "BOOLEAN"), ("usuario_id", "INTEGER"),
+        ("protocolo_id", "INTEGER"),
+    ],
     "sanidade": [
         ("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR"), ("usuario_id", "INTEGER"),
         ("protocolo_sanitario_lancamento_id", "INTEGER"), ("protocolo_iatf_lancamento_id", "INTEGER"),
@@ -82,7 +89,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("usuario_id", "INTEGER"), ("gta", "VARCHAR"), ("icms_incide", "BOOLEAN"),
         ("icms_tipo", "VARCHAR"), ("icms_valor", "FLOAT"),
     ],
-    "ocorrencia_clinica": [("usuario_id", "INTEGER")],
+    "ocorrencia_clinica": [("usuario_id", "INTEGER"), ("doenca_id", "INTEGER")],
+    # Vínculo com o catálogo Doenca (ver alembic b3c4d5e6f7a1) — `doenca`
+    # (texto) segue intacto como histórico/fallback.
+    "janela_ponto_critico": [("doenca_id", "INTEGER")],
     "registro_cocho": [("usuario_id", "INTEGER")],
     "animal": [
         ("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN"), ("grupo_manual", "BOOLEAN"),
@@ -123,6 +133,22 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("unidade_base", "VARCHAR"), ("unidade_apresentacao", "VARCHAR"),
         ("estoque_minimo_apresentacoes", "FLOAT DEFAULT 1"),
     ],
+    # Catálogo da Farmácia: `doenca` é a INDICAÇÃO (doença ou manejo) e
+    # `medicamento_comercial` guarda a bula — dose, via e carência separada em
+    # leite e carne. Nulo em carência = "não informada", nunca zero.
+    "doenca": [
+        ("tipo", "VARCHAR DEFAULT 'doenca'"), ("descricao", "VARCHAR"), ("origem_id", "INTEGER"),
+    ],
+    "medicamento_comercial": [
+        ("uso_principal", "VARCHAR"), ("concentracao", "VARCHAR"),
+        ("dose_padrao", "FLOAT"), ("unidade_dose", "VARCHAR"), ("dose_base", "VARCHAR"),
+        ("dose_referencia_kg", "FLOAT"), ("dose_texto", "VARCHAR"), ("via_padrao", "VARCHAR"),
+        ("link_bula", "VARCHAR"),
+        ("carencia_leite_dias", "INTEGER"), ("carencia_carne_dias", "INTEGER"),
+        ("proibido_lactacao", "BOOLEAN"), ("alerta_gestacao", "BOOLEAN"), ("alerta", "VARCHAR"),
+        ("origem_id", "INTEGER"),
+    ],
+    "indicacao_terapeutica": [("nota", "VARCHAR"), ("origem_id", "INTEGER")],
     "estoque_semen": [
         ("naab", "VARCHAR"),
         ("valor_unitario", "FLOAT"), ("local_armazenamento", "VARCHAR"),
@@ -178,7 +204,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("rmca_custo_alimentacao", "BOOLEAN"),
         ("natureza", "VARCHAR"),
     ],
-    "lancamento_item": [("tipo_item", "VARCHAR")],
+    "lancamento_item": [
+        ("tipo_item", "VARCHAR"),
+        ("vale_funcionario_id", "INTEGER"), ("vale_avulso_id", "INTEGER"),
+    ],
     "folha_pagamento": [
         ("recorrente", "BOOLEAN"),
         ("dia_vencimento", "INTEGER"),
@@ -241,6 +270,20 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("link", "VARCHAR"),
         ("usuario_id", "INTEGER"),
     ],
+    # Central de Protocolos (Cadastro/Lançamento/Acompanhamento/Histórico):
+    # classificação macro do protocolo customizado. (As colunas de
+    # `protocolo_iatf_lancamento` ficam na entrada única lá em cima.)
+    "protocolo_customizado": [("tipo", "VARCHAR")],
+    # Curativo x preventivo no protocolo sanitário de etapas. Nulo = curativo
+    # (todo protocolo cadastrado antes desta distinção), resolvido na leitura.
+    "protocolo_sanitario": [("finalidade", "VARCHAR")],
+    # Redundante com a revisão Alembic 20dc777765f9 (mesma coluna) — rede de
+    # segurança para bancos que já tinham a tabela `lancamento_pendente`
+    # criada por `create_all`/`_migrar_colunas` antes de existir Alembic, cujo
+    # `alembic_version` pode ficar carimbado numa revisão futura sem ter
+    # passado por esta em particular (ver `_aplicar_alembic` acima). Usada só
+    # pelo G17 (Configurações › Aprovações › Desfazer aprovação).
+    "lancamento_pendente": [("registro_criado", "TEXT")],
 }
 
 

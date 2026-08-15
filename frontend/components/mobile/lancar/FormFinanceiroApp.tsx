@@ -59,7 +59,7 @@ export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { 
     <div>
       <MobVoltar titulo={TITULOS[tipo]} onVoltar={() => setTipo(null)} />
       <div className="mob-form-embutido">
-        {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={RESPONSAVEIS} />}
+        {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={RESPONSAVEIS} apresentacaoModais="tela" />}
         {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} />}
         {tipo === "venda_animal" && <CompraVendaAnimalForm key="venda_animal" modo="venda" animais={animais} />}
         {tipo === "compra_semen" && <CompraSemenForm key="compra_semen" />}

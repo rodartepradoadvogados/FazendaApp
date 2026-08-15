@@ -1,31 +1,27 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase, Download, PenLine, QrCode, Receipt, Repeat } from "lucide-react";
+import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Download, PenLine, QrCode, Receipt, Repeat, Pencil, X as XIcon } from "lucide-react";
 import {
   fetchFazendas, criarFazenda, atualizarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
-  baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
-  fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
+  baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda, editarVinculoUsuarioFazenda,
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
+  fetchConsultoresCowData,
   type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin, type CicloPagamento, type AssinaturaZapSign,
+  type AnexoContrato, type UsuarioVinculado, type AssinaturaZapSign, type ConsultorCowData,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
 import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
 
-const NOME_CICLO: Record<CicloPagamento, string> = {
-  mensal: "Mensal (sem desconto)", trimestral: "Trimestral (5% off)",
-  semestral: "Semestral — Pix Automático QR dinâmico (20% off)",
-};
-
-const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
+const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 const NOME_MODULO: Record<ModuloComercial, string> = {
   rebanho: "Rebanho", reprodutivo: "Reprodutivo", produtivo: "Produtivo", sanitario: "Sanitário",
   financeiro: "Financeiro (básico)", planejamento: "Planejamento", pedidos: "Pedidos", estoque: "Estoque",
   alimentacao: "Alimentação", agricultura: "Agricultura/Plantio", consultor: "Consultor (Diamond)",
+  formulacao_dietas: "Formulação de Dietas",
 };
 
 function formatarBytes(n: number): string {
@@ -63,7 +59,6 @@ export default function FazendasAdmin() {
 
   const [planoEscolhido, setPlanoEscolhido] = useState<PlanoNome | "custom">("standard");
   const [modulosCustom, setModulosCustom] = useState<Record<ModuloComercial, number | null>>({} as any);
-  const [cicloEscolhido, setCicloEscolhido] = useState<CicloPagamento>("mensal");
   const [salvando, setSalvando] = useState(false);
   const [aprovando, setAprovando] = useState(false);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
@@ -88,43 +83,52 @@ export default function FazendasAdmin() {
   const [novoUsername, setNovoUsername] = useState("");
   const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
   const [vinculando, setVinculando] = useState(false);
+  const [editandoVinculoId, setEditandoVinculoId] = useState<number | null>(null);
+  const [papelEditando, setPapelEditando] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
+  const [salvandoVinculo, setSalvandoVinculo] = useState(false);
 
-  // Assinaturas do produto de Consultor independente (Fase 2C) — fora de
-  // qualquer fazenda-tenant, ver fazenda/models/consultores.py.
-  const [consultores, setConsultores] = useState<ContratoConsultorAdmin[] | null>(null);
-  const [processandoConsultor, setProcessandoConsultor] = useState<number | null>(null);
-
-  function carregarConsultores() {
-    fetchContratosConsultor().then(setConsultores).catch((e) => setErro(e.message));
-  }
-  useEffect(carregarConsultores, []);
-
-  async function aprovarConsultor(usuarioId: number) {
-    setProcessandoConsultor(usuarioId); setErro(null);
-    try { await aprovarContratoConsultor(usuarioId); carregarConsultores(); }
-    catch (e: any) { setErro(e.message); } finally { setProcessandoConsultor(null); }
-  }
-  async function suspenderConsultor(usuarioId: number) {
-    setProcessandoConsultor(usuarioId); setErro(null);
-    try { await suspenderContratoConsultor(usuarioId); carregarConsultores(); }
-    catch (e: any) { setErro(e.message); } finally { setProcessandoConsultor(null); }
-  }
+  // Consultor CowData do plano Diamond/sob medida (backlog #126) — a lista
+  // vem da Equipe CowData (cargo Consultor + login ativo) e o vínculo em si
+  // reusa UsuarioFazenda.consultor, o mesmo do consultor externo.
+  const [consultoresCowData, setConsultoresCowData] = useState<ConsultorCowData[] | null>(null);
+  const [consultorEscolhido, setConsultorEscolhido] = useState<number | "">("");
+  const [vinculandoConsultor, setVinculandoConsultor] = useState(false);
 
   function carregarFazendas() {
     fetchFazendas().then(setFazendas).catch((e) => setErro(e.message));
   }
   useEffect(carregarFazendas, []);
   useEffect(() => { fetchPlanosCatalogo().then(setCatalogo).catch((e) => setErro(e.message)); }, []);
+  useEffect(() => { fetchConsultoresCowData().then(setConsultoresCowData).catch((e) => setErro(e.message)); }, []);
+
+  // Pré-seleciona o Consultor CowData já vinculado à fazenda aberta. Fica
+  // num efeito (e não dentro de carregarContrato) porque depende de DUAS
+  // cargas assíncronas independentes — a lista da Equipe e os vínculos da
+  // fazenda — e a ordem entre elas não é garantida. As dependências mudam só
+  // ao trocar de fazenda ou recarregar as listas, então isso não atropela a
+  // escolha manual do usuário no <select>.
+  useEffect(() => {
+    if (selecionada == null || usuarios == null || consultoresCowData == null) return;
+    // O vínculo mora em UsuarioFazenda.consultor, compartilhado com o
+    // consultor externo do cliente — cruzar com a lista da Equipe CowData é
+    // o que separa um do outro.
+    const ids = new Set(consultoresCowData.map((c) => c.usuario_id));
+    const atual = usuarios.find((u) => u.consultor && ids.has(u.usuario_id));
+    setConsultorEscolhido(atual ? atual.usuario_id : "");
+  }, [selecionada, usuarios, consultoresCowData]);
 
   function carregarContrato(fazendaId: number) {
     fetchContratoFazenda(fazendaId).then((ct) => {
       setContrato(ct);
-      setCicloEscolhido(ct.ciclo_pagamento || "mensal");
       if (ct.plano) setPlanoEscolhido(ct.plano);
       else {
         setPlanoEscolhido("custom");
         const mapa: Record<string, number> = {};
-        ct.modulos.forEach((m) => { mapa[m.modulo] = m.preco; });
+        // Só os ATIVOS — a lista inclui também módulos já desativados no
+        // passado (ct.modulos guarda todo o histórico, ver _publico_contrato
+        // no backend); marcar esses de novo na tela seria reativar sem querer.
+        ct.modulos.filter((m) => m.ativo).forEach((m) => { mapa[m.modulo] = m.preco; });
+        if (mapa.rebanho == null) mapa.rebanho = 0; // sempre obrigatório
         setModulosCustom(mapa as any);
       }
     }).catch((e) => setErro(e.message));
@@ -164,6 +168,28 @@ export default function FazendasAdmin() {
   }
 
   const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
+  // Diferente de `temModuloConsultor` (que lê o contrato JÁ SALVO), este olha
+  // o rascunho na tela — é o que decide mostrar o seletor de Consultor
+  // CowData no mesmo clique em que o usuário escolhe Diamond/sob medida,
+  // sem exigir salvar antes para o campo aparecer.
+  const consultorNoRascunho = planoEscolhido === "diamond"
+    || (planoEscolhido === "custom" && modulosCustom["consultor" as ModuloComercial] != null);
+
+  // Trocar de um plano fechado (ex.: Diamond) para "Sob medida" NÃO herdava
+  // os módulos que a fazenda já tinha — modulosCustom ficava vazio, e como o
+  // checkbox de Rebanho é sempre `disabled` (é obrigatório, não dá pra
+  // desmarcar), ele nascia desmarcado e IMPOSSÍVEL de marcar na tela — ao
+  // salvar, o backend recusava com "Rebanho é obrigatório em todo contrato"
+  // sem nenhuma saída visível. Agora, ao entrar em "Sob medida", pré-marca
+  // com os módulos ATIVOS do contrato atual (preço herdado, ajustável) —
+  // Rebanho sempre entra, mesmo que por algum motivo não estivesse na lista.
+  function selecionarSobMedida() {
+    const semente: Record<string, number> = {};
+    (contrato?.modulos || []).filter((m) => m.ativo).forEach((m) => { semente[m.modulo] = m.preco; });
+    if (semente.rebanho == null) semente.rebanho = 0;
+    setModulosCustom(semente as any);
+    setPlanoEscolhido("custom");
+  }
 
   async function vincular() {
     if (selecionada == null || !novoUsername.trim()) { setErro("Informe o usuário (username)."); return; }
@@ -181,6 +207,38 @@ export default function FazendasAdmin() {
     } catch (e: any) { setErro(e.message); } finally { setVinculando(false); }
   }
 
+  // Vincula (ou troca) o Consultor CowData desta fazenda. O backend só
+  // aceita `consultor: true` se o módulo "consultor" já estiver ATIVO e o
+  // contrato APROVADO (ver fazendas.py::_tem_modulo_consultor_ativo) — por
+  // isso o botão avisa em vez de falhar silenciosamente quando o plano ainda
+  // não foi salvo/aprovado.
+  async function vincularConsultorCowData() {
+    if (selecionada == null) return;
+    const anterior = (usuarios || []).find(
+      (u) => u.consultor && (consultoresCowData || []).some((c) => c.usuario_id === u.usuario_id),
+    );
+    setVinculandoConsultor(true); setErro(null); setMsg(null);
+    try {
+      // Trocar de consultor: desvincula o anterior antes (só existe um
+      // Consultor CowData por fazenda por desenho).
+      if (anterior && anterior.usuario_id !== consultorEscolhido) {
+        await desvincularUsuarioFazenda(selecionada, anterior.usuario_id);
+      }
+      if (consultorEscolhido !== "") {
+        const alvo = Number(consultorEscolhido);
+        // O backend recusa um SEGUNDO vínculo do mesmo usuário na mesma
+        // fazenda (400), então quem já está na lista por outro papel é
+        // PROMOVIDO pelo editar-vínculo em vez de vinculado de novo.
+        const jaVinculado = (usuarios || []).some((u) => u.usuario_id === alvo);
+        if (jaVinculado) await editarVinculoUsuarioFazenda(selecionada, alvo, { consultor: true });
+        else await vincularUsuarioFazenda(selecionada, { usuario_id: alvo, consultor: true });
+      }
+      const us = await fetchUsuariosVinculados(selecionada);
+      setUsuarios(us);
+      setMsg(consultorEscolhido === "" ? "Consultor CowData desvinculado." : "Consultor CowData vinculado a esta fazenda.");
+    } catch (e: any) { setErro(e.message); } finally { setVinculandoConsultor(false); }
+  }
+
   async function desvincular(usuarioId: number) {
     if (selecionada == null) return;
     setErro(null);
@@ -188,6 +246,33 @@ export default function FazendasAdmin() {
       await desvincularUsuarioFazenda(selecionada, usuarioId);
       fetchUsuariosVinculados(selecionada).then(setUsuarios);
     } catch (e: any) { setErro(e.message); }
+  }
+
+  function papelDoVinculo(u: UsuarioVinculado): "funcionario" | "contratante" | "consultor" | "contador" {
+    if (u.contratante) return "contratante";
+    if (u.consultor) return "consultor";
+    if (u.contador) return "contador";
+    return "funcionario";
+  }
+
+  function abrirEdicaoVinculo(u: UsuarioVinculado) {
+    setEditandoVinculoId(u.usuario_id);
+    setPapelEditando(papelDoVinculo(u));
+    setErro(null);
+  }
+
+  async function salvarEdicaoVinculo(usuarioId: number) {
+    if (selecionada == null) return;
+    setSalvandoVinculo(true); setErro(null);
+    try {
+      await editarVinculoUsuarioFazenda(selecionada, usuarioId, {
+        contratante: papelEditando === "contratante",
+        consultor: papelEditando === "consultor",
+        contador: papelEditando === "contador",
+      });
+      setEditandoVinculoId(null);
+      fetchUsuariosVinculados(selecionada).then(setUsuarios);
+    } catch (e: any) { setErro(e.message); } finally { setSalvandoVinculo(false); }
   }
 
   async function criarNovaFazenda() {
@@ -207,8 +292,8 @@ export default function FazendasAdmin() {
     setSalvando(true); setErro(null); setMsg(null);
     try {
       const dados = planoEscolhido === "custom"
-        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: cicloEscolhido }
-        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: cicloEscolhido };
+        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: "mensal" as const }
+        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: "mensal" as const };
       const ct = await definirContratoFazenda(selecionada, dados);
       setContrato(ct);
       setMsg("Contrato atualizado. Lembre de aprovar/fechar para liberar os módulos.");
@@ -298,7 +383,7 @@ export default function FazendasAdmin() {
 
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
       {msg && (
-        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45,138,86,0.15)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.82rem" }}>
           <Check size={15} /><span>{msg}</span>
         </div>
       )}
@@ -325,7 +410,7 @@ export default function FazendasAdmin() {
             <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
               {fazendas.map((f) => (
                 <button key={f.id} onClick={() => selecionar(f.id)}
-                  style={{ textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "6px", cursor: "pointer",
+                  style={{ textAlign: "left", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
                     border: "1px solid " + (selecionada === f.id ? "var(--dourado)" : "var(--border)"),
                     background: selecionada === f.id ? "rgba(212,160,23,0.12)" : "transparent", color: "var(--text)", fontSize: "0.83rem" }}>
                   <div style={{ fontWeight: 600 }}>{f.nome}</div>
@@ -402,17 +487,24 @@ export default function FazendasAdmin() {
             <label style={lbl}>Plano</label>
             <div className="flex flex-wrap gap-2 mb-3">
               {(["standard", "silver", "gold", "diamond"] as const).map((p) => (
-                <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", cursor: "pointer",
-                  border: "1px solid " + (planoEscolhido === p ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.35rem 0.6rem",
-                  background: planoEscolhido === p ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === p ? 700 : 400, cursor: "pointer",
+                  border: "1px solid " + (planoEscolhido === p ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem",
+                  // Fundo sólido + cor de texto explícita (não hardcoded): --pill-active-bg/--pill-active-fg
+                  // já seguem tema (claro/misto/escuro) E paleta (vinho/verde/azul) — o tom âmbar fixo
+                  // que estava aqui antes não acompanhava a paleta escolhida e deixava a opção
+                  // selecionada com contraste ruim em claro/misto (texto herdado sobre fundo quase
+                  // branco). Mesmo padrão de SeletorTipoProtocolo (app/protocolos/page.tsx).
+                  background: planoEscolhido === p ? "var(--pill-active-bg)" : "transparent",
+                  color: planoEscolhido === p ? "var(--pill-active-fg)" : "var(--text)" }}>
                   <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => setPlanoEscolhido(p)} />
                   {catalogo?.[p]?.nome || p} — R$ {catalogo?.[p]?.preco.toFixed(2) ?? "—"}/mês
                 </label>
               ))}
-              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", cursor: "pointer",
-                border: "1px solid " + (planoEscolhido === "custom" ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.35rem 0.6rem",
-                background: planoEscolhido === "custom" ? "rgba(212,160,23,0.12)" : "transparent" }}>
-                <input type="radio" name="plano" checked={planoEscolhido === "custom"} onChange={() => setPlanoEscolhido("custom")} />
+              <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === "custom" ? 700 : 400, cursor: "pointer",
+                border: "1px solid " + (planoEscolhido === "custom" ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem",
+                background: planoEscolhido === "custom" ? "var(--pill-active-bg)" : "transparent",
+                color: planoEscolhido === "custom" ? "var(--pill-active-fg)" : "var(--text)" }}>
+                <input type="radio" name="plano" checked={planoEscolhido === "custom"} onChange={selecionarSobMedida} />
                 Sob medida
               </label>
             </div>
@@ -423,22 +515,12 @@ export default function FazendasAdmin() {
               </p>
             ) : null}
 
-            <label style={lbl}>Ciclo de pagamento (desconto por adiantamento)</label>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {(["mensal", "trimestral", "semestral"] as const).map((c) => (
-                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", cursor: "pointer",
-                  border: "1px solid " + (cicloEscolhido === c ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.3rem 0.55rem",
-                  background: cicloEscolhido === c ? "rgba(212,160,23,0.12)" : "transparent" }}>
-                  <input type="radio" name="ciclo" checked={cicloEscolhido === c} onChange={() => setCicloEscolhido(c)} />
-                  {NOME_CICLO[c]}
-                </label>
-              ))}
-            </div>
+            {/* Trimestral/semestral saíram do catálogo (pedido explícito do
+                usuário, ago/2026) — assinatura é só mensal agora, sem
+                desconto por adiantamento; não há mais o que escolher aqui. */}
             {contrato.preco_mensal != null && (
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-                {cicloEscolhido === "mensal"
-                  ? <>R$ {contrato.preco_mensal.toFixed(2)}/mês.</>
-                  : <>R$ {contrato.preco_mensal.toFixed(2)}/mês — total do ciclo com desconto: <b style={{ color: "var(--text)" }}>R$ {contrato.valor_total_ciclo?.toFixed(2)}</b>.</>}
+                Ciclo de pagamento: Mensal — R$ {contrato.preco_mensal.toFixed(2)}/mês.
               </p>
             )}
 
@@ -459,18 +541,55 @@ export default function FazendasAdmin() {
               </div>
             )}
 
+            {/* Consultor CowData — só faz sentido no Diamond (que já inclui o
+                módulo) ou no sob medida com o módulo "consultor" marcado. O
+                vínculo em si exige o contrato APROVADO, então o aviso abaixo
+                explica a ordem em vez de deixar o botão falhar. */}
+            {consultorNoRascunho && (
+              <div className="mb-4" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
+                <label style={lbl}>Consultor CowData desta fazenda</label>
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <select style={{ ...inp, maxWidth: "18rem" }} value={consultorEscolhido}
+                    onChange={(e) => setConsultorEscolhido(e.target.value === "" ? "" : Number(e.target.value))}>
+                    <option value="">— sem consultor vinculado —</option>
+                    {(consultoresCowData || []).map((c) => (
+                      <option key={c.usuario_id} value={c.usuario_id}>{c.nome} (@{c.username})</option>
+                    ))}
+                  </select>
+                  <button onClick={vincularConsultorCowData} disabled={vinculandoConsultor || !temModuloConsultor}
+                    style={{ fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado)", cursor: temModuloConsultor ? "pointer" : "not-allowed", opacity: temModuloConsultor ? 1 : 0.5 }}>
+                    {vinculandoConsultor ? "Salvando…" : "Vincular consultor"}
+                  </button>
+                </div>
+                {consultoresCowData?.length === 0 && (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                    Nenhum Consultor CowData disponível — cadastre um membro da Equipe CowData com cargo
+                    &ldquo;Consultor&rdquo; e crie o login dele em Equipe.
+                  </p>
+                )}
+                {!temModuloConsultor && (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                    Salve o plano e aprove o contrato primeiro — o vínculo só é aceito com o módulo Consultor ativo.
+                  </p>
+                )}
+                <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                  É o consultor que atende esta fazenda pela CowData — só ele (e a CowData) acessa a Formulação de Dietas.
+                </p>
+              </div>
+            )}
+
             <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
               <button onClick={salvarContrato} disabled={salvando} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
                 {salvando ? "Salvando…" : "Salvar módulos/plano"}
               </button>
               {contrato.status !== "ativo" ? (
                 <button onClick={aprovar} disabled={aprovando}
-                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                   <ShieldCheck size={14} /> {aprovando ? "Aprovando…" : "Aprovar/Fechar contrato"}
                 </button>
               ) : (
                 <button onClick={suspender} disabled={aprovando}
-                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                   <Ban size={14} /> {aprovando ? "Suspendendo…" : "Suspender"}
                 </button>
               )}
@@ -479,16 +598,16 @@ export default function FazendasAdmin() {
             <div className="card-header mb-2">Contrato assinado</div>
             <div className="flex flex-wrap gap-2 mb-2">
               <button onClick={baixarContrato} disabled={baixandoModelo}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
                 <Download size={13} /> {baixandoModelo ? "Gerando…" : "Baixar contrato"}
               </button>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
                 <Upload size={13} /> {enviandoAnexo ? "Enviando…" : "Anexar contrato assinado"}
                 <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={enviandoAnexo}
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ""; }} />
               </label>
               <button onClick={assinarZapSign} disabled={assinandoZapSign}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
                 <PenLine size={13} /> {assinandoZapSign ? "Enviando ao ZapSign…" : "Assinar contrato (ZapSign)"}
               </button>
             </div>
@@ -505,7 +624,7 @@ export default function FazendasAdmin() {
             {anexos && anexos.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {anexos.map((a) => (
-                  <li key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                  <li key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <button onClick={() => baixarAnexoContrato(a.id, a.nome_arquivo).catch((e: any) => setErro(e.message))}
                       style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text)", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
                       <FileText size={14} /> {a.nome_arquivo} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>({formatarBytes(a.tamanho_bytes)} — {formatarData(a.criado_em)})</span>
@@ -529,22 +648,22 @@ export default function FazendasAdmin() {
             </div>
             <div className="flex flex-wrap gap-2 mb-2">
               <button onClick={() => gerarCobranca("assinatura")} disabled={gerandoCobranca !== null}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
                 <Repeat size={13} /> {gerandoCobranca === "assinatura" ? "Criando…" : "Assinatura mensal (Pix)"}
               </button>
               <button onClick={() => gerarCobranca("semestral")} disabled={gerandoCobranca !== null}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
                 <QrCode size={13} /> {gerandoCobranca === "semestral" ? "Gerando…" : "QR semestral (-20%)"}
               </button>
               <button onClick={() => gerarCobranca("boleto")} disabled={gerandoCobranca !== null}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
                 <Receipt size={13} /> {gerandoCobranca === "boleto" ? "Gerando…" : "Boleto"}
               </button>
             </div>
             {cobrancas && cobrancas.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "0.5rem" }}>
                 {cobrancas.map((c) => (
-                  <li key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                  <li key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <span>{c.tipo.replace("_", " ")} — R$ {c.valor.toFixed(2)} <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({formatarData(c.criado_em)})</span></span>
                     <span style={{ fontWeight: 700, color: c.status === "paga" ? "var(--green-light)" : "var(--dourado)" }}>{c.status === "paga" ? "paga" : "aguardando"}</span>
                   </li>
@@ -571,57 +690,54 @@ export default function FazendasAdmin() {
             {usuarios && usuarios.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {usuarios.map((u) => (
-                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem" }}>
                     <span>
                       {u.nome || u.username} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>(@{u.username})</span>
                       {u.contratante && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--dourado)", fontWeight: 700 }}>Contratante</span>}
                       {u.consultor && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--green-light)", fontWeight: 700 }}>Consultor</span>}
                       {u.contador && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--blue-light, #6fa8dc)", fontWeight: 700 }}>Contador</span>}
+                      {/* Sem nenhuma flag = funcionário comum — antes ficava mudo (nem
+                          dava pra saber se era funcionário ou se o dado nunca carregou);
+                          agora mostra explícito, num tom neutro. */}
+                      {!u.contratante && !u.consultor && !u.contador && (
+                        <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 700 }}>Funcionário</span>
+                      )}
                     </span>
-                    <button onClick={() => desvincular(u.usuario_id)} title="Desvincular" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
-                      <Trash2 size={14} />
-                    </button>
+                    {editandoVinculoId === u.usuario_id ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                        <select style={{ ...inp, width: "auto", padding: "0.25rem 0.4rem", fontSize: "0.75rem" }}
+                          value={papelEditando} onChange={(e) => setPapelEditando(e.target.value as any)}>
+                          <option value="funcionario">Funcionário (acesso normal)</option>
+                          <option value="contratante">Contratante (administra a fazenda)</option>
+                          <option value="consultor" disabled={!temModuloConsultor}>
+                            Consultor externo{!temModuloConsultor ? " — requer plano Diamond" : ""}
+                          </option>
+                          <option value="contador">Contador (Financeiro, só leitura)</option>
+                        </select>
+                        <button onClick={() => salvarEdicaoVinculo(u.usuario_id)} disabled={salvandoVinculo} title="Salvar"
+                          style={{ background: "transparent", border: "none", color: "var(--green-light)", cursor: "pointer" }}>
+                          <Check size={15} />
+                        </button>
+                        <button onClick={() => setEditandoVinculoId(null)} title="Cancelar"
+                          style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}>
+                          <XIcon size={15} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                        <button onClick={() => abrirEdicaoVinculo(u)} title="Editar tipo de acesso" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}>
+                          <Pencil size={14} />
+                        </button>
+                        <button onClick={() => desvincular(u.usuario_id)} title="Desvincular" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
           </div>
-        )}
-      </div>
-
-      <div className="card mt-4">
-        <div className="card-header mb-2 flex items-center gap-2"><Briefcase size={16} style={{ color: "var(--dourado)" }} /> Assinaturas de consultor</div>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-          Produto independente do consultor (fora de qualquer fazenda) — fazendas gerenciadas por importação de
-          planilha. Nada libera até você aprovar o plano solicitado.
-        </p>
-        {!consultores ? <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Carregando…</p> : consultores.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma solicitação de plano de consultor ainda.</p>
-        ) : (
-          <ul style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-            {consultores.map((c) => (
-              <li key={c.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap", fontSize: "0.82rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 0.7rem" }}>
-                <span>
-                  <strong>@{c.username}</strong>{" "}
-                  <span style={{ color: "var(--text-muted)" }}>— {c.plano || "sem plano"} (até {c.limite_fazendas ?? "—"} fazenda(s))</span>
-                </span>
-                <span className="flex items-center gap-2">
-                  <StatusBadge status={c.status} />
-                  {c.status !== "ativo" ? (
-                    <button onClick={() => aprovarConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
-                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                      <ShieldCheck size={13} /> {processandoConsultor === c.usuario_id ? "Aprovando…" : "Aprovar"}
-                    </button>
-                  ) : (
-                    <button onClick={() => suspenderConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
-                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                      <Ban size={13} /> {processandoConsultor === c.usuario_id ? "Suspendendo…" : "Suspender"}
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
         )}
       </div>
     </div>

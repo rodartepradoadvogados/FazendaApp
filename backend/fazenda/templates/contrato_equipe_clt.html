@@ -1,0 +1,227 @@
+{% extends "contrato_equipe_base.html" %}
+
+{% block titulo_aba %}Contrato Individual de Trabalho — CowData{% endblock %}
+{% block titulo %}CONTRATO INDIVIDUAL DE TRABALHO POR PRAZO INDETERMINADO{% endblock %}
+{% block subtitulo %}Regido pela Consolidação das Leis do Trabalho — Decreto-Lei nº 5.452/1943{% endblock %}
+
+{% block partes %}
+<p class="qualificacao">Pelo presente instrumento particular, de um lado:</p>
+
+<p class="qualificacao">
+<b>{{ empresa_nome }}</b>, pessoa jurídica de direito privado, inscrita no CNPJ sob o nº
+<span class="preencher">{{ empresa_cnpj or "[PREENCHER — CNPJ da CowData]" }}</span>,
+com sede em <span class="preencher">{{ empresa_endereco or "[PREENCHER — endereço da sede]" }}</span>,
+neste ato representada na forma de seus atos constitutivos, doravante denominada simplesmente
+<b>EMPREGADORA</b>;
+</p>
+
+<p class="qualificacao">e de outro lado:</p>
+
+<p class="qualificacao">
+<b>{{ pessoa_nome }}</b>, {{ flexao_nacionalidade }}, {{ estado_civil or "[PREENCHER — estado civil]" }},
+{{ flexao_portador }} da Cédula de Identidade RG nº <span class="preencher">{{ rg or "[PREENCHER — RG]" }}</span>
+e {{ flexao_inscrito }} no CPF sob o nº <span class="preencher">{{ cpf or "[PREENCHER — CPF]" }}</span>,
+{{ flexao_residente }} em <span class="preencher">{{ endereco_completo or "[PREENCHER — endereço completo]" }}</span>,
+doravante {{ flexao_denominado }} simplesmente <b>{{ rotulo_empregado }}</b>;
+</p>
+
+<p class="qualificacao">
+têm entre si justo e contratado o presente <b>Contrato Individual de Trabalho por Prazo Indeterminado</b>,
+regido pela Consolidação das Leis do Trabalho (CLT) e pela legislação trabalhista e previdenciária
+aplicável, mediante as cláusulas e condições seguintes.
+</p>
+{% endblock %}
+
+{% block clausulas %}
+<h2>1. OBJETO, FUNÇÃO E ADMISSÃO</h2>
+<p class="clausula"><b>1.1.</b> A EMPREGADORA admite {{ artigo_o }} {{ rotulo_empregado }} para exercer a função de
+<b>{{ funcao }}</b>, com início da prestação de serviços em
+<span class="preencher">{{ data_admissao or "[PREENCHER — data de admissão]" }}</span>.</p>
+<p class="clausula"><b>1.2.</b> {{ artigo_o|capitalize }} {{ rotulo_empregado }} obriga-se a executar as atribuições próprias
+da função contratada, bem como outras compatíveis com sua condição pessoal e com a atividade econômica da
+EMPREGADORA — desenvolvimento, comercialização e suporte de sistema de gestão para pecuária leiteira —,
+observadas as ordens e diretrizes legítimas emanadas da EMPREGADORA, nos termos do art. 2º da CLT.</p>
+<p class="clausula"><b>1.3.</b> A alteração de função por interesse da EMPREGADORA observará o art. 468 da CLT,
+dependendo de mútuo consentimento e não podendo resultar, direta ou indiretamente, em prejuízo
+{{ artigo_ao }} {{ rotulo_empregado }}.</p>
+<p class="clausula"><b>1.4.</b> A admissão será anotada na Carteira de Trabalho e Previdência Social (CTPS),
+em meio digital, e registrada no eSocial, nos termos dos arts. 29 e seguintes da CLT.</p>
+
+<h2>2. CONTRATO DE EXPERIÊNCIA</h2>
+<p class="clausula"><b>2.1.</b> As partes ajustam período inicial de experiência de <b>{{ experiencia_dias }}
+({{ experiencia_dias_extenso }}) dias</b>, contados da data de início da prestação de serviços, nos termos do
+art. 443, § 2º, alínea "c", e do art. 445, parágrafo único, da CLT.</p>
+<p class="clausula"><b>2.2.</b> O período de experiência não poderá exceder 90 (noventa) dias, admitida uma única
+prorrogação dentro desse limite (Súmula nº 188 do Tribunal Superior do Trabalho). Findo o prazo sem
+denúncia de qualquer das partes, o contrato passa automaticamente a vigorar por prazo indeterminado,
+na forma do art. 445, parágrafo único, e do art. 451 da CLT.</p>
+<p class="clausula"><b>2.3.</b> A rescisão antecipada durante a experiência observará os arts. 479 e 480 da CLT,
+salvo se pactuada a cláusula assecuratória do direito recíproco de rescisão prevista no art. 481 da CLT,
+hipótese em que se aplicam os princípios da rescisão do contrato por prazo indeterminado.</p>
+<p class="nota">[NOTA DO ADVOGADO] Se a contratação não passar por experiência (ex.: sócio ou cargo de
+confiança admitido diretamente por prazo indeterminado), esta Cláusula 2 deve ser suprimida por inteiro
+antes da assinatura — manter cláusula de experiência não utilizada gera prova contra a própria empresa
+na discussão sobre a natureza do contrato.</p>
+
+<h2>3. LOCAL DE PRESTAÇÃO DOS SERVIÇOS E TELETRABALHO</h2>
+<p class="clausula"><b>3.1.</b> Os serviços serão prestados em <b>{{ local_prestacao }}</b>, podendo a
+EMPREGADORA determinar a prestação em regime de teletrabalho, total ou parcial, nos termos dos arts. 75-A a
+75-F da CLT, com a redação dada pela Lei nº 14.442/2022.</p>
+<p class="clausula"><b>3.2.</b> A alteração entre o regime presencial e o de teletrabalho dependerá de mútuo
+acordo registrado em aditivo contratual; a alteração do teletrabalho para o presencial poderá ser
+determinada pela EMPREGADORA, garantido prazo de transição mínimo de 15 (quinze) dias, na forma do
+art. 75-C, §§ 1º e 2º, da CLT.</p>
+<p class="clausula"><b>3.3.</b> A responsabilidade pela aquisição, manutenção e fornecimento dos equipamentos e
+da infraestrutura necessária ao teletrabalho, bem como pelo reembolso de despesas dele decorrentes, será
+disciplinada em aditivo escrito, na forma do art. 75-D da CLT. As utilidades assim fornecidas não integram
+a remuneração {{ artigo_do }} {{ rotulo_empregado }}, por expressa disposição do parágrafo único do
+art. 75-D da CLT.</p>
+<p class="clausula"><b>3.4.</b> Eventuais viagens a fazendas-clientes, feiras, treinamentos e visitas técnicas
+inerentes à função não caracterizam transferência, aplicando-se o art. 469 da CLT.</p>
+
+<h2>4. JORNADA DE TRABALHO</h2>
+<p class="clausula"><b>4.1.</b> A jornada de trabalho será de <b>{{ jornada_semanal }}
+({{ jornada_semanal_extenso }}) horas semanais</b>, distribuídas conforme escala fixada pela EMPREGADORA e
+respeitados os limites do art. 7º, XIII, da Constituição Federal e do art. 58 da CLT, com intervalo
+intrajornada e repouso semanal remunerado na forma da lei.</p>
+<p class="clausula"><b>4.2.</b> O controle de jornada será realizado por registro de ponto, nos termos do
+art. 74, § 2º, da CLT, salvo se {{ artigo_o }} {{ rotulo_empregado }} vier a enquadrar-se em uma das hipóteses
+de exclusão do controle de jornada do art. 62 da CLT, o que dependerá de registro expresso em aditivo.</p>
+<p class="clausula"><b>4.3.</b> As horas extraordinárias eventualmente prestadas serão remuneradas com o
+adicional legal ou compensadas mediante banco de horas, este último desde que pactuado por acordo
+individual escrito, com compensação no período máximo de 6 (seis) meses, na forma do art. 59, § 5º, da CLT.</p>
+<p class="clausula"><b>4.4.</b> No regime de teletrabalho por produção ou tarefa, não se aplica o controle de
+jornada nem o Capítulo II do Título II da CLT, conforme o art. 62, III, c/c o art. 75-B, § 1º, da CLT.</p>
+<p class="nota">[NOTA DO ADVOGADO] Cláusula 4.4 é a que mais gera passivo. Só mantê-la se o contrato for
+efetivamente por produção/tarefa e a rotina real do empregado comportar isso; se houver reuniões com
+horário fixo, escala de atendimento de suporte ou cobrança de disponibilidade, o controle de jornada
+existe de fato e a cláusula será desconsiderada, com condenação em horas extras de todo o período.</p>
+
+<h2>5. REMUNERAÇÃO</h2>
+<p class="clausula"><b>5.1.</b> Pela prestação dos serviços, a EMPREGADORA pagará {{ artigo_ao }}
+{{ rotulo_empregado }} o salário mensal de <b>R$ {{ salario }}</b>, com pagamento até o 5º (quinto) dia útil
+do mês subsequente ao vencido, na forma do art. 459, § 1º, da CLT, mediante depósito em conta bancária de
+sua titularidade.</p>
+<p class="clausula"><b>5.2.</b> Sobre a remuneração incidirão os descontos legais, notadamente contribuição
+previdenciária e imposto de renda retido na fonte, além dos demais descontos autorizados pelo art. 462 da
+CLT e por norma coletiva aplicável.</p>
+<p class="clausula"><b>5.3.</b> {{ artigo_o|capitalize }} {{ rotulo_empregado }} fará jus, ainda, ao 13º (décimo
+terceiro) salário (Lei nº 4.090/1962), às férias anuais remuneradas acrescidas do terço constitucional
+(art. 7º, XVII, da Constituição Federal e arts. 129 e seguintes da CLT) e ao recolhimento mensal do Fundo
+de Garantia do Tempo de Serviço — FGTS (Lei nº 8.036/1990).</p>
+<p class="clausula"><b>5.4.</b> Prêmios, abonos e demais parcelas de natureza indenizatória eventualmente
+concedidos observarão o art. 457, §§ 2º e 4º, da CLT, não integrando a remuneração para nenhum efeito,
+desde que efetivamente revestidos dessa natureza.</p>
+<p class="clausula"><b>5.5.</b> O vale-transporte será fornecido na forma da Lei nº 7.418/1985, mediante
+requerimento {{ artigo_do }} {{ rotulo_empregado }}, com desconto de até 6% (seis por cento) do salário
+básico, ressalvado o regime de teletrabalho, em que não é devido por ausência de deslocamento.</p>
+
+<h2>6. SIGILO, CONFIDENCIALIDADE E DADOS DOS PRODUTORES</h2>
+<p class="clausula"><b>6.1.</b> {{ artigo_o|capitalize }} {{ rotulo_empregado }} reconhece que, no exercício da
+função, terá ou poderá ter acesso a informações confidenciais da EMPREGADORA e, sobretudo, a
+<b>dados operacionais, zootécnicos, genéticos, produtivos, sanitários e financeiros de fazendas-clientes</b>,
+os quais constituem segredo de empresa protegido pelo art. 195, incisos XI e XII, da Lei nº 9.279/1996.</p>
+<p class="clausula"><b>6.2.</b> {{ artigo_o|capitalize }} {{ rotulo_empregado }} obriga-se a não divulgar, copiar,
+exportar, reproduzir, comercializar ou utilizar, em proveito próprio ou de terceiros, quaisquer dados de
+fazendas-clientes ou informações da EMPREGADORA, durante a vigência do contrato e após a sua extinção, por
+prazo indeterminado, enquanto a informação mantiver caráter confidencial.</p>
+<p class="clausula"><b>6.3. Proteção de dados pessoais.</b> No tratamento de dados pessoais a que tiver acesso,
+{{ artigo_o }} {{ rotulo_empregado }} atuará exclusivamente sob as instruções da EMPREGADORA e nos limites
+da finalidade do serviço, observando a Lei nº 13.709/2018 (LGPD) e as políticas internas de segurança da
+informação, sendo-lhe vedado o acesso a dados fora da necessidade concreta da tarefa que estiver executando.</p>
+<p class="clausula"><b>6.4.</b> O acesso a ambiente de fazenda-cliente em sessão de suporte é registrado em log
+de auditoria, do que {{ artigo_o }} {{ rotulo_empregado }} declara ciência inequívoca, nos termos da política
+de acesso da EMPREGADORA.</p>
+<p class="clausula"><b>6.5.</b> A violação desta cláusula constitui falta grave, autorizando a rescisão por justa
+causa nos termos do art. 482, alíneas "g" e "h", da CLT, sem prejuízo da responsabilização civil pelos danos
+causados e das sanções penais cabíveis.</p>
+
+<h2>7. PROPRIEDADE INTELECTUAL</h2>
+<p class="clausula"><b>7.1.</b> Os direitos relativos a programa de computador desenvolvido
+{{ artigo_pelo }} {{ rotulo_empregado }} durante a vigência deste contrato, decorrentes da natureza dos
+serviços contratados ou resultantes do uso de recursos, informações, materiais ou equipamentos da
+EMPREGADORA, pertencem <b>exclusivamente à EMPREGADORA</b>, nos termos do art. 4º da Lei nº 9.609/1998
+(Lei do Software).</p>
+<p class="clausula"><b>7.2.</b> Invenções, modelos de utilidade e demais criações industriais desenvolvidas na
+vigência do contrato observarão o regime dos arts. 88 a 93 da Lei nº 9.279/1996.</p>
+<p class="clausula"><b>7.3.</b> A cessão prevista nesta cláusula é integral, definitiva e independe de qualquer
+pagamento adicional, estando remunerada pelo salário ajustado na Cláusula 5.</p>
+
+<h2>8. FERRAMENTAS DE TRABALHO E CONDUTA</h2>
+<p class="clausula"><b>8.1.</b> Os equipamentos, sistemas, credenciais de acesso e demais bens disponibilizados
+pela EMPREGADORA são de sua exclusiva propriedade, destinam-se ao uso profissional e devem ser devolvidos
+imediatamente ao término do contrato, em estado de conservação compatível com o uso regular.</p>
+<p class="clausula"><b>8.2.</b> As credenciais de acesso são pessoais e intransferíveis, sendo vedado seu
+compartilhamento com terceiros, ainda que integrantes da própria equipe.</p>
+<p class="clausula"><b>8.3.</b> {{ artigo_o|capitalize }} {{ rotulo_empregado }} obriga-se a observar as normas
+internas, o código de conduta e as políticas de segurança da informação da EMPREGADORA, cujo descumprimento
+sujeita-o às sanções disciplinares cabíveis.</p>
+
+<h2>9. EXCLUSIVIDADE E CONCORRÊNCIA</h2>
+<p class="clausula"><b>9.1.</b> Durante a vigência do contrato, é vedado {{ artigo_ao }} {{ rotulo_empregado }}
+prestar serviços, direta ou indiretamente, a empresa concorrente da EMPREGADORA no ramo de software de
+gestão para pecuária, bem como negociar por conta própria em concorrência com a EMPREGADORA, sob pena de
+caracterização da falta grave prevista no art. 482, alínea "c", da CLT.</p>
+<p class="nota">[NOTA DO ADVOGADO] Não foi inserida cláusula de não concorrência PÓS-contratual. No
+entendimento predominante, a restrição posterior ao contrato só é admitida se limitada no tempo e no
+espaço e, principalmente, <b>mediante indenização compensatória</b> pelo período de restrição; cláusula
+gratuita costuma ser declarada nula. Se houver interesse real em restringir o pós-contrato, redigir
+cláusula própria com prazo, área geográfica e valor da compensação — e revalidar a jurisprudência do TST
+e do TRT da 18ª Região antes de assinar.</p>
+
+<h2>10. RESCISÃO</h2>
+<p class="clausula"><b>10.1.</b> O contrato poderá ser rescindido por iniciativa de qualquer das partes,
+observado o aviso prévio previsto no art. 487 da CLT e na Lei nº 12.506/2011 — 30 (trinta) dias, acrescidos
+de 3 (três) dias por ano completo de serviço prestado à mesma empregadora, até o máximo de 90 (noventa) dias.</p>
+<p class="clausula"><b>10.2.</b> Aplicam-se as hipóteses de rescisão por justa causa do art. 482 da CLT e de
+rescisão indireta do art. 483 da CLT, bem como a extinção por acordo entre as partes prevista no
+art. 484-A da CLT.</p>
+<p class="clausula"><b>10.3.</b> As verbas rescisórias serão pagas no prazo do art. 477, § 6º, da CLT — até
+10 (dez) dias contados do término do contrato —, sob pena da multa prevista no § 8º do mesmo artigo.</p>
+<p class="clausula"><b>10.4.</b> Extinto o contrato, {{ artigo_o }} {{ rotulo_empregado }} devolverá, no ato,
+todos os equipamentos, documentos, arquivos e credenciais da EMPREGADORA, permanecendo íntegras as
+obrigações de sigilo da Cláusula 6.</p>
+
+<h2>11. DISPOSIÇÕES GERAIS</h2>
+<p class="clausula"><b>11.1.</b> Aplica-se subsidiariamente a este contrato a legislação trabalhista vigente e,
+no que couber, a norma coletiva da categoria profissional {{ artigo_do }} {{ rotulo_empregado }}, prevalecendo
+sempre a condição mais benéfica legalmente admitida.</p>
+<p class="clausula"><b>11.2.</b> A tolerância de qualquer das partes quanto ao descumprimento de cláusula deste
+contrato não implica novação, renúncia ou alteração tácita das condições ajustadas.</p>
+<p class="clausula"><b>11.3.</b> A eventual nulidade de uma cláusula não contamina as demais, que permanecerão
+em pleno vigor.</p>
+<p class="clausula"><b>11.4.</b> As comunicações entre as partes serão válidas quando realizadas por escrito,
+inclusive por meio eletrônico, aos endereços informados neste instrumento ou no cadastro funcional.</p>
+
+<h2>12. COMPETÊNCIA</h2>
+<p class="clausula"><b>12.1.</b> As controvérsias decorrentes deste contrato serão dirimidas pela Justiça do
+Trabalho, sendo competente a Vara do Trabalho da localidade da prestação dos serviços, na forma do
+art. 651 da CLT.</p>
+<p class="nota">[NOTA DO ADVOGADO] Não se elege foro em contrato de trabalho: a competência territorial
+trabalhista é definida por lei (art. 651 da CLT, como regra pelo local da prestação de serviços) e não pela
+vontade das partes. Cláusula de eleição de foro aqui seria inócua — por isso o texto apenas declara a regra
+legal, em vez de tentar afastá-la.</p>
+
+<p class="clausula" style="margin-top: 1.4rem;">E por estarem assim justas e contratadas, as partes firmam o
+presente instrumento em 2 (duas) vias de igual teor e forma, na presença das testemunhas abaixo.</p>
+{% endblock %}
+
+{% block assinaturas %}
+<div class="assinaturas">
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">{{ empresa_nome }} — EMPREGADORA</div>
+  </div>
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">{{ pessoa_nome }} — {{ rotulo_empregado }}</div>
+  </div>
+</div>
+
+<div class="testemunhas">
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">Testemunha 1 — Nome e CPF</div>
+  </div>
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">Testemunha 2 — Nome e CPF</div>
+  </div>
+</div>
+{% endblock %}

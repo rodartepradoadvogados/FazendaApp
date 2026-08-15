@@ -105,6 +105,16 @@ class LancamentoPendente(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     decidido_em: Optional[datetime] = None
     decidido_por: Optional[str] = None   # username de quem aprovou/rejeitou
+    # JSON com o que a aprovação materializou de fato — só usado pelo fluxo
+    # "Desfazer aprovação" (G17, Configurações > Aprovações). Formato:
+    # `[{"tipo": "<id no motor de exclusões>", "id": <pk>}, ...]` quando o
+    # tipo cria entidade(s) com id, ou `{"reversivel": false, "motivo": "..."}`
+    # quando o fluxo só muta algo existente ou está fora de escopo (ver
+    # fazenda.rules.telegram_fluxos.criar_registro). None em pendentes
+    # decididos ANTES deste campo existir (ou nunca aprovados) — nesse caso
+    # não é possível desfazer automaticamente. Coluna aditiva/nula, já
+    # existente no banco via a migração 20dc777765f9.
+    registro_criado: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -214,12 +224,6 @@ class Usuario(SQLModel, table=True):
     # em andamento; limpo assim que a senha é redefinida ou o token expira.
     reset_senha_token: Optional[str] = Field(default=None, index=True)
     reset_senha_expira: Optional[datetime] = None
-    # Próximo passo do Cofre de acesso (ver fazenda/models/cofre_acesso.py):
-    # nível de sigilo máximo que esta conta poderia alcançar em fazendas de
-    # terceiros. Aditivo e ainda dormente — nenhuma rota lê este campo hoje;
-    # existe só para já ter o dado quando esse controle mais fino entrar em
-    # vigor (ninguém, nem o dono, ganha mais visibilidade por causa dele).
-    nivel_sigilo_maximo: Optional[str] = None
 
 
 class LoginAcesso(SQLModel, table=True):

@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Estoque, Fazenda, MovimentoEstoque
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Estoque, EstoqueSemen, Fazenda, MovimentoEstoque
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
@@ -88,9 +88,39 @@ class TestEntradaAutomaticaCompra:
         c, engine = client
         r = _lancar(c, itens=[{"produto": "Item inexistente", "tipo_item": "produto", "quantidade": 5, "valor_total": 100.0}])
         assert r.status_code == 201
-        assert r.json()["avisos_estoque"] == []
+        # Não dá erro nem cria movimento — mas, diferente de antes, agora avisa
+        # (era um `continue` silencioso: a nota salvava e ninguém percebia que
+        # o item nunca deu entrada no estoque).
+        assert r.json()["avisos_estoque"] == ['"Item inexistente" não está no estoque desta fazenda — lançamento registrado sem baixa.']
         with Session(engine) as s:
             assert s.exec(select(MovimentoEstoque)).first() is None
+
+    def test_compra_de_item_espelhado_de_semen_sincroniza_doses(self, client):
+        # Regressão do caso real: sêmen comprado com o produto já cadastrado
+        # em Estoque (espelhado de EstoqueSemen via estoque_semen_id) dava
+        # entrada só no lado genérico — `movimentar()` nunca tocava
+        # EstoqueSemen.doses, então o touro continuava sumido do Inventário
+        # de Sêmen e do "touro em estoque" da inseminação.
+        c, engine = client
+        with Session(engine) as s:
+            touro = EstoqueSemen(touro_nome="Halle", tipo="convencional", doses=0, fazenda_id=1)
+            s.add(touro)
+            s.commit()
+            s.refresh(touro)
+            item = Estoque(nome="Halle", quantidade=0, unidade="dose", fazenda_id=1,
+                            categoria="Sêmen e genética", estoque_semen_id=touro.id)
+            s.add(item)
+            s.commit()
+
+        r = _lancar(c, itens=[{"produto": "Halle", "tipo_item": "produto", "quantidade": 10, "valor_total": 800.0}])
+        assert r.status_code == 201
+        assert r.json()["avisos_estoque"] == []
+
+        with Session(engine) as s:
+            touro = s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Halle", EstoqueSemen.fazenda_id == 1)).first()
+            assert touro.doses == 10
+            item = s.exec(select(Estoque).where(Estoque.nome == "Halle", Estoque.fazenda_id == 1)).first()
+            assert item.quantidade == 10
 
     def test_item_servico_nunca_mexe_no_estoque(self, client):
         c, engine = client

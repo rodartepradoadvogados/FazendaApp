@@ -84,7 +84,7 @@ export default function RelatorioBezerras() {
     classe_colostragemFmt: l.classe_colostragem ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].txt : (l.apenas_colostro_po ? "Só colostro em pó" : l.sem_mensuracao ? "Sem mensuração" : "—"),
   }));
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
   const ord = useOrdenacao(dados || []);
 
   return (

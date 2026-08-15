@@ -7,26 +7,35 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
+from fazenda.ordenacao import chave_numero
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
-    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica,
-    Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
+    Doenca, Estoque, EventoRealizado,
+    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial,
+    Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
-from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _estoque_devolver, resolver_item as _resolver_item_estoque
+from fazenda.rules.calendario_visao import montar_calendario_visual
+from fazenda.rules.cronograma_sanitario import cronograma_aberto
+from fazenda.rules.cura_protocolo import protocolo_terminado
+from fazenda.rules.estoque_baixa import (
+    baixar as _estoque_baixar, carencia_para_item, devolver as _estoque_devolver,
+    resolver_item as _resolver_item_estoque, resolver_marca_comercial,
+)
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
 from fazenda.rules.unidades import unidades_compativeis
+from fazenda.rules.visibilidade import visivel
 
 RESULTADOS_EXAME = ["positivo", "negativo", "indefinido"]
 
@@ -49,6 +58,12 @@ DIAS_RECIDIVA_MASTITE = 20
 
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
 
+
+def _data_br(iso: str) -> str:
+    """`"2026-08-10"` -> `"10/08/2026"` — formato que o operador lê no campo,
+    não o ISO que só serve pra máquina."""
+    return date.fromisoformat(iso).strftime("%d/%m/%Y")
+
 FREQUENCIAS = ["dias", "meses", "anos"]
 
 STATUS_ESTOQUE_RANK = {"ok": 0, "low": 1, "out": 2}
@@ -62,11 +77,17 @@ def indicacoes_por_doenca(
     estoque ao vivo — alimenta a consulta "Remédios por doença" e o banner de
     substituto no lançamento (quando o 1º colocado está sem estoque)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Doença do CATÁLOGO GLOBAL tem fazenda_id nulo — o `!=` estrito dava 404
+    # em toda doença semeada assim que a fazenda passou a ter `fid` no token.
+    # Tolera nulo (é de todo mundo), rejeita a de OUTRA fazenda.
     doenca = session.get(Doenca, doenca_id)
-    if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
+    if not doenca or (fazenda_id is not None and doenca.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Doença não encontrada")
     indicacoes = session.exec(
-        select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca_id).order_by(IndicacaoTerapeutica.prioridade)
+        visivel(
+            select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == doenca_id),
+            IndicacaoTerapeutica, fazenda_id,
+        ).order_by(IndicacaoTerapeutica.prioridade)
     ).all()
     resumo_por_pa = {r["id"]: r for r in resumo_principios(session, fazenda_id)}
     opcoes = []
@@ -111,10 +132,33 @@ def listar_aplicacoes(
         query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
     sanidades = session.exec(query_sanidades).all()
     nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
+
+    # Item de Estoque por nome do produto (mesma fazenda) — usado para casar
+    # cada aplicação com a marca comercial que carrega a carência. Cacheado
+    # por nome (memoizado abaixo) porque o mesmo produto se repete em muitas
+    # linhas e não vale a pena resolver a marca de novo a cada uma.
+    query_estoque_prod = select(Estoque)
+    if fazenda_id is not None:
+        query_estoque_prod = query_estoque_prod.where(Estoque.fazenda_id == fazenda_id)
+    estoque_por_nome = {(e.nome or "").strip().lower(): e for e in session.exec(query_estoque_prod).all()}
+    resolvido_por_produto: dict[str, tuple[Estoque | None, MedicamentoComercial | None]] = {}
+
+    def _item_e_marca(produto: str | None) -> tuple[Estoque | None, MedicamentoComercial | None]:
+        chave = (produto or "").strip().lower()
+        if chave not in resolvido_por_produto:
+            item = estoque_por_nome.get(chave)
+            marca = resolver_marca_comercial(
+                session, item=item, nome=produto,
+                principio_ativo_id=item.principio_ativo_id if item else None,
+            )
+            resolvido_por_produto[chave] = (item, marca)
+        return resolvido_por_produto[chave]
+
     registros = []
     for s in sanidades:
         d = s.data_aplicacao
         animal = animais_por_numero.get(s.numero_matriz)
+        item_produto, marca_produto = _item_e_marca(s.produto)
         registros.append({
             "id": s.id,
             "numero": s.numero_matriz,
@@ -135,6 +179,7 @@ def listar_aplicacoes(
             "ano": d.year if d else None,
             "mes": f"{d.year}-{d.month:02d}" if d else None,
             "usuario_nome": nomes.get(s.usuario_id),
+            "carencia": carencia_para_item(item_produto, marca_produto, data_aplicacao=d),
         })
     return {"aplicacoes": registros, "total": len(registros)}
 
@@ -182,9 +227,8 @@ def registrar_aplicacao(
     dados: AplicacaoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
@@ -222,6 +266,32 @@ def registrar_aplicacao(
                 status_code=400,
                 detail=f'Unidade "{item.unidade}" não é compatível com o produto "{item.produto}" (aceitas: {", ".join(compativeis)})',
             )
+
+        # Aviso de carência — uma vez por produto lançado (não por animal: é a
+        # mesma informação repetida). O que o ordenhador/tratador precisa não é
+        # o número de dias, é ATÉ QUANDO descartar — por isso o aviso carrega a
+        # data de liberação já calculada a partir de `data_aplicacao`, não só o
+        # prazo cru. Sem carência informada, NENHUM aviso é emitido: inventar
+        # "sem carência" seria pior que não avisar nada (ver rules/carencia.py).
+        marca_item = resolver_marca_comercial(
+            session, item=estoque_item, nome=item.produto,
+            principio_ativo_id=estoque_item.principio_ativo_id if estoque_item else None,
+        )
+        carencia = carencia_para_item(estoque_item, marca_item, data_aplicacao=dados.data_aplicacao)
+        if carencia["leite_dias"] is not None or carencia["carne_dias"] is not None or carencia["proibido_lactacao"]:
+            frase = carencia["texto"]
+            complementos = []
+            if carencia["proibido_lactacao"]:
+                complementos.append(
+                    "Produto NÃO PODE ser usado em vaca em lactação — não aplique em animal em produção."
+                )
+            if carencia.get("liberacao_leite"):
+                complementos.append(f'Descarte o leite até {_data_br(carencia["liberacao_leite"])}.')
+            if carencia.get("liberacao_carne"):
+                complementos.append(f'Aguarde até {_data_br(carencia["liberacao_carne"])} para abater.')
+            if complementos:
+                frase = frase + " " + " ".join(complementos)
+            avisos.append(f'{item.produto}: {frase}')
 
         for numero in dados.animais:
             sanidade = Sanidade(
@@ -385,12 +455,16 @@ class MarcarCuraAplicacaoIn(BaseModel):
 
 
 @router.post("/aplicacoes/{aplicacao_id}/cura")
-def marcar_cura_aplicacao(aplicacao_id: int, dados: MarcarCuraAplicacaoIn, session: Session = Depends(get_session)) -> dict:
+def marcar_cura_aplicacao(
+    aplicacao_id: int, dados: MarcarCuraAplicacaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Marca, no dia seguinte a uma aplicação curativa avulsa, se o animal foi
     curado ou não — mesma ideia do /mastite/cura, mas para aplicação avulsa
     (não um protocolo multi-dia). Alimenta o relatório Taxa de cura."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     s = session.get(Sanidade, aplicacao_id)
-    if not s:
+    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     s.curada = dados.curada
     session.add(s)
@@ -426,18 +500,41 @@ def _status_lactacao(animal: Animal | None) -> str:
 
 
 @router.get("/taxa-cura")
-def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
+def relatorio_taxa_cura(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
-    Casos de cura já avaliados (aplicação avulsa curativa + protocolo
-    sanitário), achatados para o dashboard interativo — filtra no cliente por
-    período, lote, lactação/seca e categoria, e permite comparar o mesmo
-    animal ao longo da vida (vários casos por número).
+    Casos de cura (aplicação avulsa curativa + protocolo sanitário),
+    achatados para o dashboard interativo — filtra no cliente por período,
+    lote, lactação/seca e categoria, e permite comparar o mesmo animal ao
+    longo da vida (vários casos por número).
+
+    Traz tanto os casos JÁ AVALIADOS (`avaliado=True`, `curada` true/false)
+    quanto os que já poderiam ter sido avaliados mas ninguém respondeu
+    (`avaliado=False`, `curada=None`) — um protocolo só vira "não avaliado"
+    quando já TERMINOU (todas as aplicações do último dia realizadas, mesma
+    regra de `agenda.py`); protocolo em andamento não é pendência, ainda não
+    chegou a hora de perguntar. Sem isso, quem nunca responde "curado?" fica
+    invisível no relatório e a taxa de cura mostrada fica artificialmente
+    boa — daí a taxa (`taxa_cura_pct`) ser calculada só sobre os avaliados, e
+    o campo `cobertura_avaliacao_pct` existir para denunciar se ela é
+    confiável (poucos casos avaliados = número pouco confiável mesmo que
+    bonito).
     """
-    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+
+    query_animais = select(Animal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
     protocolos_nomes = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
 
     casos = []
-    for s in session.exec(select(Sanidade).where(Sanidade.curada != None)).all():  # noqa: E711
+
+    query_sanidade = select(Sanidade).where(Sanidade.curada != None)  # noqa: E711
+    if fazenda_id is not None:
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+    for s in session.exec(query_sanidade).all():
         animal = animais_por_numero.get(s.numero_matriz)
         casos.append({
             "origem": "aplicacao",
@@ -446,11 +543,32 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
             "tratamento": s.produto,
             "data": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
             "curada": s.curada,
+            "avaliado": True,
             "lote": s.lote or (animal.grupo_primario if animal else None),
             "categoria": _categoria_animal(animal),
             "status_lactacao": _status_lactacao(animal),
         })
-    for lanc in session.exec(select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.curada != None)).all():  # noqa: E711
+
+    query_lancamentos = select(ProtocoloSanitarioLancamento)
+    if fazenda_id is not None:
+        query_lancamentos = query_lancamentos.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query_lancamentos).all()
+
+    query_aplicacoes_protocolo = select(ProtocoloSanitarioAplicacao)
+    if fazenda_id is not None:
+        query_aplicacoes_protocolo = query_aplicacoes_protocolo.where(ProtocoloSanitarioAplicacao.fazenda_id == fazenda_id)
+    aplicacoes_por_lancamento: dict[int, list] = {}
+    for a in session.exec(query_aplicacoes_protocolo).all():
+        aplicacoes_por_lancamento.setdefault(a.lancamento_id, []).append(a)
+
+    for lanc in lancamentos:
+        if lanc.curada is not None:
+            avaliado = True
+        else:
+            terminou, _ = protocolo_terminado(aplicacoes_por_lancamento.get(lanc.id, []))
+            if not terminou:
+                continue  # protocolo em andamento — ainda não é caso pendente de avaliação
+            avaliado = False
         animal = animais_por_numero.get(lanc.numero_matriz)
         casos.append({
             "origem": "protocolo",
@@ -459,19 +577,28 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
             "tratamento": protocolos_nomes.get(lanc.protocolo_id, "—"),
             "data": lanc.data_inicio.isoformat() if lanc.data_inicio else None,
             "curada": lanc.curada,
+            "avaliado": avaliado,
             "lote": animal.grupo_primario if animal else None,
             "categoria": _categoria_animal(animal),
             "status_lactacao": _status_lactacao(animal),
         })
 
     casos.sort(key=lambda c: (c["numero"], c["data"] or ""))
-    total = len(casos)
-    curados = sum(1 for c in casos if c["curada"])
+    total_avaliados = sum(1 for c in casos if c["avaliado"])
+    total_nao_avaliados = len(casos) - total_avaliados
+    curados = sum(1 for c in casos if c["avaliado"] and c["curada"])
+    nao_curados = total_avaliados - curados
     return {
         "casos": casos,
-        "total": total,
+        "total": total_avaliados,  # retrocompatibilidade (era o total de avaliados antes do defeito 3)
+        "total_avaliados": total_avaliados,
         "curados": curados,
-        "taxa_cura_pct": round(100 * curados / total, 1) if total else None,
+        "nao_curados": nao_curados,
+        "total_nao_avaliados": total_nao_avaliados,
+        "taxa_cura_pct": round(100 * curados / total_avaliados, 1) if total_avaliados else None,
+        "cobertura_avaliacao_pct": (
+            round(100 * total_avaliados / len(casos), 1) if casos else None
+        ),
     }
 
 
@@ -479,13 +606,14 @@ def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
 # ---------------------------------------------------------------------------
-def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None]]:
+def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None], dict[int, str | None]]:
     evs = session.exec(select(EventoSanitario)).all()
     eventos = {e.id: e.nome for e in evs}
     categorias = {e.id: e.categoria_preventiva for e in evs}
+    servicos_financeiro = {e.id: e.servico_financeiro for e in evs}
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
-    return eventos, doencas, principios, categorias
+    return eventos, doencas, principios, categorias, servicos_financeiro
 
 
 def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
@@ -511,14 +639,17 @@ def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
 def _serializar(
     c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
     categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
+    servicos_financeiro: dict | None = None,
 ) -> dict:
     categorias = categorias or {}
     ultimos_por_produto = ultimos_por_produto or {}
+    servicos_financeiro = servicos_financeiro or {}
     ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
         "categoria_preventiva": categorias.get(c.evento_sanitario_id),
+        "servico_financeiro": servicos_financeiro.get(c.evento_sanitario_id),
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
@@ -539,13 +670,13 @@ def listar_calendario(
     (esse fica em /sanidade/aplicacoes).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
     regras = session.exec(query).all()
-    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos) for c in regras]
+    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro) for c in regras]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -570,6 +701,12 @@ class CalendarioSanitarioIn(BaseModel):
     data_evento: date
     observacao: str | None = None
     ativo: bool = True
+    # Liga esta regra ao workflow de Cronograma (ver
+    # fazenda.rules.cronograma_sanitario) — animal que bate o critério entra
+    # numa lista de espera em vez de virar pendência de aplicar na hora, e a
+    # aplicação em si exige veterinário agendado ou aplicação própria
+    # confirmada. Ver fazenda/models/sanidade.py::CalendarioSanitario.
+    usa_cronograma: bool = False
     # "Já foi realizado?" — quando a 1ª ocorrência é hoje/passada e já aconteceu,
     # marca o evento como realizado (some da Agenda). Não é campo do modelo.
     realizado: bool = False
@@ -618,9 +755,9 @@ def criar_calendario(
     # seguintes continuam pendentes normalmente.
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -640,9 +777,9 @@ def atualizar_calendario(
     session.refresh(c)
     if dados.realizado:
         _marcar_calendario_realizado(session, c)
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos, servicos_financeiro)
 
 
 @router.delete("/calendario/{calendario_id}")
@@ -657,6 +794,89 @@ def excluir_calendario(
     session.delete(c)
     session.commit()
     return {"excluido": True, "id": calendario_id}
+
+
+@router.get("/calendario/visao")
+def calendario_visao(
+    data_inicio: str = "", data_fim: str = "",
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Card CALENDÁRIO (Sanidade > Preventiva > Calendário Sanitário): projeta
+    as próximas ocorrências das regras num intervalo, com estimativa de
+    animais e agrupamento (ver fazenda.rules.calendario_visao) para sugerir
+    quando vale chamar o veterinário."""
+    hoje = date.today()
+    ini = date.fromisoformat(data_inicio) if data_inicio else hoje
+    fim = date.fromisoformat(data_fim) if data_fim else hoje + timedelta(days=90)
+    return montar_calendario_visual(session, fazenda_id, ini, fim)
+
+
+def _serializar_cronograma(session: Session, cron: CronogramaSanitario, calendarios: dict, eventos: dict, pessoas: dict) -> dict:
+    calendario = calendarios.get(cron.calendario_sanitario_id)
+    animais = session.exec(
+        select(CronogramaSanitarioAnimal).where(CronogramaSanitarioAnimal.cronograma_id == cron.id)
+    ).all()
+    contagem = {"sugerido": 0, "incluido": 0, "excluido": 0, "aplicado": 0}
+    for a in animais:
+        contagem[a.status] = contagem.get(a.status, 0) + 1
+    return {
+        **cron.model_dump(),
+        "evento_sanitario_nome": eventos.get(calendario.evento_sanitario_id, "—") if calendario else "—",
+        "categoria_alvo": calendario.categoria_alvo if calendario else None,
+        "veterinario_nome": pessoas.get(cron.veterinario_pessoa_id) if cron.veterinario_pessoa_id else None,
+        "animais_contagem": contagem,
+        "animais": [{"numero_matriz": a.numero_matriz, "status": a.status, "id": a.id} for a in animais],
+    }
+
+
+@router.get("/cronogramas")
+def listar_cronogramas(
+    calendario_id: int | None = None, status: str | None = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Cronogramas sanitários (workflow de acompanhamento das regras do
+    calendário marcadas usa_cronograma=True) — lista de animais + decisão de
+    execução (veterinário/própria/em branco) por ocorrência. Usado pela tela
+    Sanidade > Preventivo > Cronogramas/Agendamentos."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CronogramaSanitario)
+    if fazenda_id is not None:
+        query = query.where(CronogramaSanitario.fazenda_id == fazenda_id)
+    if calendario_id is not None:
+        query = query.where(CronogramaSanitario.calendario_sanitario_id == calendario_id)
+    if status is not None:
+        query = query.where(CronogramaSanitario.status == status)
+    cronogramas = session.exec(query.order_by(CronogramaSanitario.data_evento.desc())).all()
+
+    calendarios = {c.id: c for c in session.exec(select(CalendarioSanitario)).all()}
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return [_serializar_cronograma(session, cron, calendarios, eventos, pessoas) for cron in cronogramas]
+
+
+class NovoCronogramaIn(BaseModel):
+    calendario_sanitario_id: int
+
+
+@router.post("/cronogramas")
+def criar_cronograma_manual(
+    dados: NovoCronogramaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cria (ou devolve, se já existir) o cronograma em aberto de uma regra —
+    para o card Cronogramas > "Novo cronograma", quando o usuário quer
+    adiantar o 1º ciclo sem esperar a Agenda criar sozinha. Sempre vinculado a
+    uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
+    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    if not calendario.usa_cronograma:
+        raise HTTPException(status_code=400, detail="Esta regra não está marcada para usar cronograma sanitário — ative em Regras cadastradas antes de criar um cronograma.")
+    cron = cronograma_aberto(session, calendario)
+    calendarios = {calendario.id: calendario}
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    return _serializar_cronograma(session, cron, calendarios, eventos, pessoas)
 
 
 @router.get("/calendario/eventos-vida")
@@ -688,6 +908,7 @@ def relatorio_eventos_vida(
     cadastrar o evento sanitário antes).
     """
     nome_evento = None
+    sexo_alvo = None
     if evento_sanitario_id is not None:
         ev = session.get(EventoSanitario, evento_sanitario_id)
         if not ev:
@@ -696,13 +917,14 @@ def relatorio_eventos_vida(
             raise HTTPException(status_code=400, detail="Este evento sanitário não está agendado por evento de vida")
         gatilho, gatilho_lote, gatilho_idade_meses = ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses
         nome_evento = ev.nome
+        sexo_alvo = ev.sexo_alvo
     if not gatilho or gatilho not in GATILHOS_EVENTO:
         raise HTTPException(status_code=400, detail=f"Gatilho inválido (use: {', '.join(GATILHOS_EVENTO)})")
 
     animais = {a.numero: a for a in session.exec(select(Animal)).all()}
     hoje = date.today()
     linhas = []
-    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses):
+    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses, 0, sexo_alvo):
         if data_inicio and quando.isoformat() < data_inicio:
             continue
         if data_fim and quando.isoformat() > data_fim:
@@ -781,7 +1003,7 @@ def cadastrar_preventivo(
     dados: CadastrarPreventivoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
     if not ev:
@@ -849,6 +1071,10 @@ def cadastrar_preventivo(
                 veterinario=dados.veterinario,
                 frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
                 data_evento=dados.data_evento, observacao=dados.observacao,
+                # Faltava aqui — a regra nascia sem fazenda_id mesmo com a
+                # rota já resolvendo `fazenda_id` (usado logo abaixo só para
+                # a aplicação, nunca carimbado na própria regra).
+                fazenda_id=fazenda_id,
             )
             session.add(regra)
             session.commit()
@@ -889,6 +1115,7 @@ def cadastrar_preventivo(
                 data_exame=dados.data_evento, resultado=dados.resultado_exame,
                 valor_numerico=dados.resultado_numerico, banda=banda,
                 veterinario=dados.veterinario, observacao=dados.observacao,
+                fazenda_id=fazenda_id,
             )
             session.add(exame_resultado)
             session.flush()
@@ -902,9 +1129,9 @@ def cadastrar_preventivo(
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
-    eventos, doencas, principios, categorias = _nomes(session)
+    eventos, doencas, principios, categorias, servicos_financeiro = _nomes(session)
     return {
-        "regra": _serializar(regra, eventos, doencas, principios, categorias) if regra else None,
+        "regra": _serializar(regra, eventos, doencas, principios, categorias, servicos_financeiro=servicos_financeiro) if regra else None,
         "aplicacao": aplicacao,
         "resultado_exame": resultado_exame,
     }
@@ -1005,10 +1232,9 @@ def listar_lancamentos_protocolo(
 
 @router.post("/protocolos/lancamentos", status_code=201)
 def lancar_protocolo(
-    dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloLancamentoIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
@@ -1049,10 +1275,43 @@ def lancar_protocolo(
     if dados.grau_mastite is not None and dados.grau_mastite not in GRAUS_MASTITE:
         raise HTTPException(status_code=400, detail="Grau de mastite inválido (aceitos: 1, 2 ou 3)")
 
+    # Idempotência (mesmo padrão de producao.lancar_inducao_lactacao — ver o
+    # comentário "Idempotência:" lá): duplo clique ou retry da fila offline
+    # não pode duplicar. Mas ProtocoloSanitarioLancamento é POR ANIMAL, não
+    # tem "cabeçalho" de lote como as outras 4 famílias — e, diferente
+    # delas, também não tem `ativo`/`encerrado_em` (a Central de Protocolos
+    # nem oferece cancelar/encerrar sanitário, "se resolve pela Agenda", ver
+    # `_lancamento_ou_404`). Por isso a proteção aqui é diferente das outras:
+    # em vez de recusar a chamada inteira quando encontra QUALQUER lançamento
+    # igual, ela é PARCIAL — passa animal por animal e pula só quem já tem
+    # (protocolo_id, data_inicio, numero_matriz) idêntico, criando
+    # normalmente os que faltam. Isso cobre tanto o duplo clique puro (todos
+    # os animais já existem, nada é criado) quanto o caso comum de "relançar
+    # os mesmos N + 1 animal novo" (ex.: usuário lembrou de incluir mais uma
+    # vaca no mesmo lote) — sem essa proteção parcial, os N repetidos
+    # duplicariam de novo, mesmo a chamada sendo "quase" um retry.
+    existentes_query = (
+        select(ProtocoloSanitarioLancamento.numero_matriz)
+        .where(ProtocoloSanitarioLancamento.protocolo_id == dados.protocolo_id)
+        .where(ProtocoloSanitarioLancamento.data_inicio == dados.data_inicio)
+        .where(ProtocoloSanitarioLancamento.numero_matriz.in_(numeros))
+    )
+    if fazenda_id is not None:
+        # Estrito (== , não tolera fazenda_id nulo do candidato) — mesmo
+        # motivo do bloco equivalente em producao.lancar_inducao_lactacao:
+        # pular um animal como "já lançado" com base num registro órfão de
+        # outra fazenda cruzaria tenant, contra o filtro do PR #488.
+        existentes_query = existentes_query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    numeros_existentes = set(session.exec(existentes_query).all())
+
     protocolos = {protocolo.id: protocolo}
     lancamentos_criados = []
     avisos: list[str] = []
+    pulados: list[str] = []
     for numero in numeros:
+        if numero in numeros_existentes:
+            pulados.append(numero)
+            continue
         del_no_caso = None
         ccs_ultima = None
         recidiva = None
@@ -1109,7 +1368,19 @@ def lancar_protocolo(
         session.commit()
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
 
-    return {"criados": len(lancamentos_criados), "lancamentos": lancamentos_criados, "avisos": avisos}
+    if pulados:
+        avisos.append(
+            f"{len(pulados)} animal(is) já tinha(m) este protocolo lançado nesta data e "
+            f"foi(ram) ignorado(s) para não duplicar: {', '.join(sorted(pulados, key=chave_numero))}."
+        )
+    if not lancamentos_criados and numeros:
+        # Nada novo foi criado (todo mundo já existia) — mesma convenção de
+        # status das outras famílias: 200 em vez do 201 padrão da rota.
+        response.status_code = 200
+    return {
+        "criados": len(lancamentos_criados), "pulados": len(pulados), "lancamentos": lancamentos_criados,
+        "avisos": avisos,
+    }
 
 
 @router.get("/mastite/opcoes")
@@ -1152,18 +1423,43 @@ class MarcarCuraIn(BaseModel):
     curada: bool
 
 
-@router.post("/mastite/cura")
-def marcar_cura_mastite(dados: MarcarCuraIn, session: Session = Depends(get_session)) -> dict:
-    """Marca, no último dia do protocolo, se o caso de mastite foi curado ou não.
-    Se não curado, sinaliza a necessidade do próximo tratamento."""
-    lanc = session.get(ProtocoloSanitarioLancamento, dados.lancamento_id)
-    if not lanc:
-        raise HTTPException(status_code=404, detail="Lançamento de mastite não encontrado")
-    lanc.curada = dados.curada
+def _marcar_cura_protocolo(lancamento_id: int, curada: bool, session: Session, fazenda_id: int | None) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lanc = session.get(ProtocoloSanitarioLancamento, lancamento_id)
+    if not lanc or (fazenda_id is not None and lanc.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento de protocolo sanitário não encontrado")
+    lanc.curada = curada
     session.add(lanc)
     session.commit()
-    proximo = None if dados.curada else "Caso não curado — inicie o próximo tratamento (protocolo seguinte)."
+    proximo = None if curada else "Caso não curado — inicie o próximo tratamento (protocolo seguinte)."
     return {"lancamento_id": lanc.id, "curada": lanc.curada, "proximo_tratamento": proximo}
+
+
+@router.post("/protocolos/lancamentos/{lancamento_id}/cura")
+def marcar_cura_protocolo(
+    lancamento_id: int, dados: MarcarCuraIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Marca, no último dia do protocolo, se o caso foi curado ou não — para
+    QUALQUER protocolo sanitário (mastite, vermifugação, etc.), não só
+    mastite. Se não curado, sinaliza a necessidade do próximo tratamento."""
+    if dados.lancamento_id != lancamento_id:
+        raise HTTPException(status_code=400, detail="lancamento_id do corpo diverge da URL")
+    return _marcar_cura_protocolo(lancamento_id, dados.curada, session, fazenda_id)
+
+
+@router.post("/mastite/cura")
+def marcar_cura_mastite(
+    dados: MarcarCuraIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """RETROCOMPATIBILIDADE — o app em produção ainda chama esta rota. Apesar
+    do nome ("mastite"), sempre serviu para marcar a cura de QUALQUER
+    protocolo sanitário lançado, não só mastite. Mantida funcionando com a
+    mesma lógica de `POST /protocolos/lancamentos/{id}/cura` (a rota nova,
+    com nome correto, para a qual o frontend atual já aponta) — não remova
+    sem migrar quem ainda chama esta."""
+    return _marcar_cura_protocolo(dados.lancamento_id, dados.curada, session, fazenda_id)
 
 
 # ---------------------------------------------------------------------------

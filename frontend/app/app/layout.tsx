@@ -1,5 +1,5 @@
 "use client";
-// Casca do APP MÓVEL (/app): cabeçalho (vinho ou verde) com status online/offline,
+// Casca do APP MÓVEL (/app): cabeçalho marinho institucional com status online/offline,
 // alternador claro/escuro, badge de pendências e navegação inferior fixa
 // (Agenda · Lançar · Rebanho · Menu). Registra o service worker (abre sem
 // internet) e liga a sincronização automática da fila offline.
@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { fetchAgenda, today } from "@/lib/api";
-import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
+import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes } from "@/lib/offline";
 import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -18,11 +18,15 @@ import { NewsIcon } from "@/components/mobile/NewsIcon";
 import { CalendarColorfulIcon, MenuTricolorIcon } from "@/components/mobile/AppIcons";
 import { CowIcon } from "@/components/CowIcon";
 
+// `cor`: identidade própria de cada aba (ver --mob-nav-* em globals.css) —
+// exposta como var(--aba) no <Link> (abaixo) e usada pelo CSS (.mob-nav
+// a.ativo) e pelos ícones via prop `color`, em vez de todo mundo compartilhar
+// um único --mob-acao dourado.
 const ABAS = [
-  { href: "/app", label: "Agenda", icon: CalendarColorfulIcon },
-  { href: "/app/lancar", label: "Lançar", icon: PlusCircle },
-  { href: "/app/rebanho", label: "Rebanho", icon: CowIcon },
-  { href: "/app/menu", label: "Menu", icon: MenuTricolorIcon },
+  { href: "/app", label: "Agenda", cor: "var(--mob-nav-agenda)" },
+  { href: "/app/lancar", label: "Lançar", cor: "var(--mob-nav-lancar)" },
+  { href: "/app/rebanho", label: "Rebanho", cor: "var(--mob-nav-rebanho)" },
+  { href: "/app/menu", label: "Menu", cor: "var(--mob-nav-menu)" },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -30,7 +34,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathRef = useRef(path);
   pathRef.current = path;
-  const online = useOnline();
+  // Ping real ao servidor (não só a rádio do aparelho, que pode dizer
+  // "conectado" mesmo com nosso servidor inalcançável — ver lib/offline.ts).
+  const online = useConectividadeReal();
   const fila = usePendentes();
   const [escuro, setEscuro] = useState(false);
   // Cabeçalho FIXO (não some ao rolar). Medimos a altura real — que varia com a
@@ -120,16 +126,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mob">
-      {/* Cabeçalho (vinho ou verde, conforme a paleta) — FIXO no topo (não some ao rolar no celular). */}
-      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "0 0 18px 18px", position: "fixed", top: 0, left: 0, right: 0, zIndex: 40 }}>
+      {/* Cabeçalho marinho institucional — FIXO no topo (não some ao rolar no celular). */}
+      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "var(--r-app)", position: "fixed", top: "var(--suporte-banner-h, 0px)", left: 0, right: 0, zIndex: 40 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
               <CowDataMark size={22} />
               <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
-              {/* Bolinha de conexão: verde luminoso online, vermelha offline */}
+              {/* Bolinha de conexão: verde luminoso quando o SERVIDOR responde de
+                  verdade (ping real, não só a rádio do aparelho — ver
+                  useConectividadeReal em lib/offline.ts), vermelha quando não. */}
               <span
-                title={online ? "Conectado à internet" : "Sem internet — os lançamentos ficam guardados e serão enviados quando conectar"}
+                title={online ? "Servidor CowData respondendo" : "Servidor CowData inalcançável agora — os lançamentos ficam guardados e serão enviados quando voltar"}
                 style={{
                   width: 9, height: 9, borderRadius: "50%", display: "inline-block",
                   background: online ? "var(--mob-verde-neon)" : "#FF4D4D",
@@ -142,7 +150,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
             {fila.length > 0 && (
               <Link href="/app/menu#pendentes" title={`${fila.length} lançamento(s) aguardando internet para enviar`}
-                style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.72rem", fontWeight: 700, color: "#F8E9B0", background: "rgba(255,255,255,0.12)", borderRadius: 999, padding: "0.3rem 0.6rem", textDecoration: "none" }}>
+                style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.72rem", fontWeight: 700, color: "var(--mob-dourado-pale)", background: "rgba(255,255,255,0.12)", borderRadius: 999, padding: "0.3rem 0.6rem", textDecoration: "none" }}>
                 <CloudUpload size={14} /> {fila.length}
               </Link>
             )}
@@ -158,11 +166,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   window.dispatchEvent(new CustomEvent("app-abrir-news"));
                 }
               }}
-              style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+              style={{ width: 48, height: 48, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
               <NewsIcon size={19} color="var(--mob-header-fg)" />
             </Link>
             <button type="button" onClick={alternarTema} aria-label={escuro ? "Mudar para tema claro" : "Mudar para tema escuro"}
-              style={{ width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              style={{ width: 48, height: 48, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {escuro ? <Sun size={17} /> : <Moon size={17} />}
             </button>
           </div>
@@ -180,13 +188,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Navegação inferior (zona do polegar) */}
       <nav className="mob-nav">
-        {ABAS.map(({ href, label, icon: Icon }) => {
+        {ABAS.map(({ href, label, cor }) => {
           const ativo = href === "/app" ? path === "/app" : path.startsWith(href);
           const ehLancar = href === "/app/lancar";
+          // Cor da aba inativa vem do token neutro --mob-nav-inativa; ativa usa
+          // a cor própria da aba (var(--aba), exposta no <Link> abaixo). O ícone
+          // de "Lançar" fica de fora: o pill elevado (.mob-nav-lancar) já define
+          // `color:#fff` incondicionalmente via CSS (contraste sobre o círculo
+          // dourado em qualquer estado) — passar uma cor explícita aqui
+          // sobrescreveria esse branco com a própria cor de fundo do pill.
+          const corIcone = ativo ? cor : "var(--mob-nav-inativa)";
           return (
-            <Link key={href} href={href} className={ativo ? "ativo" : ""}>
+            <Link key={href} href={href} className={ativo ? "ativo" : ""} style={{ "--aba": cor } as React.CSSProperties}>
               <span className={ehLancar ? "mob-nav-icone mob-nav-lancar" : "mob-nav-icone"}>
-                <Icon size={ehLancar ? 27 : 21} strokeWidth={ativo ? 2.4 : 1.8} />
+                {href === "/app" && <CalendarColorfulIcon size={21} color={corIcone} strokeWidth={ativo ? 1.6 : 1.2} />}
+                {href === "/app/lancar" && <PlusCircle size={27} strokeWidth={ativo ? 2.4 : 1.8} />}
+                {href === "/app/rebanho" && <CowIcon size={21} color={corIcone} strokeWidth={ativo ? 1.4 : 1.1} />}
+                {href === "/app/menu" && <MenuTricolorIcon size={21} color={corIcone} />}
               </span>
               {label}
             </Link>

@@ -334,12 +334,17 @@ class TestIndicadores:
         animais = [
             # prenhe, serviço positivo há 260 dias -> parto em ~20 dias (em_30)
             {"numero": "10", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},
-            # vazia no PEV: não pode entrar em partos previstos
+            # vazia no PEV: perdeu a prenhez (diagnóstico NEGATIVO mais recente
+            # que o POSITIVO) e não pode entrar em partos previstos. Precisa do
+            # 2º serviço para o estado AO VIVO (não só o sit_rep congelado)
+            # também dar vazia — ver comentário de numeros_gestantes_vivo em
+            # rules/indicadores.py.
             {"numero": "20", "grupo_primario": "03 - MÉDIA", "sit_rep": "Vaz. pev"},
         ]
         servicos = [
             {"numero_matriz": "10", "data_servico": hoje - timedelta(days=260), "diagnostico": "POSITIVO", "raca_matriz": "Girolando"},
             {"numero_matriz": "20", "data_servico": hoje - timedelta(days=260), "diagnostico": "POSITIVO", "raca_matriz": "Girolando"},
+            {"numero_matriz": "20", "data_servico": hoje - timedelta(days=200), "diagnostico": "NEGATIVO", "raca_matriz": "Girolando"},
         ]
         r = calcular_indicadores(animais, servicos, [], data_ref=hoje)
         rep = r["reproducao"]
@@ -370,6 +375,32 @@ class TestIndicadores:
         assert detalhe["30"]["dias_gestacao"] == 20
         # "30" não aparece em partos_previstos (fora dos 90 dias) mas está no detalhe
         assert "30" not in r["reproducao"]["partos_previstos_nums"]["em_90_dias"]
+
+    def test_gestantes_detalhe_bate_com_card_apos_parto(self):
+        # B7 da auditoria: o card "Gestantes" (rep["prenhes"], estado AO VIVO)
+        # e a lista que abre ao clicar nele (gestantes_detalhe) usavam
+        # critérios diferentes — uma matriz cujo sit_rep ainda dizia "Ges."
+        # (não atualizado desde o último import do CSV) mas que JÁ PARIU
+        # (há Parto lançado depois do serviço) sumia do card mas continuava
+        # aparecendo na lista, porque a lista só olhava o texto sit_rep.
+        hoje = date(2026, 7, 7)
+        animais = [
+            {"numero": "10", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},  # prenhe de verdade
+            # sit_rep desatualizado ("Ges." de antes do parto), mas já pariu há 20 dias
+            {"numero": "40", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},
+        ]
+        servicos = [
+            {"numero_matriz": "10", "data_servico": hoje - timedelta(days=260), "diagnostico": "POSITIVO"},
+            {"numero_matriz": "40", "data_servico": hoje - timedelta(days=300), "diagnostico": "POSITIVO"},
+        ]
+        partos = [{"numero_matriz": "40", "data_parto": hoje - timedelta(days=20), "ordem_parto": 2}]
+        r = calcular_indicadores(animais, servicos, partos, data_ref=hoje)
+        rep = r["reproducao"]
+        detalhe_numeros = {d["numero"] for d in rep["gestantes_detalhe"]}
+        assert detalhe_numeros == {"10"}
+        # Card ("prenhes") e lista (gestantes_detalhe) concordam: só "10" é
+        # gestante de verdade — "40" já pariu e não entra em nenhum dos dois.
+        assert rep["prenhes"] == 1
 
     def test_iep_so_duplicidades_fica_none(self):
         animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]
@@ -515,6 +546,25 @@ class TestBenchmarkCategorias:
         assert val(cats["novilha"], "taxa_concepcao") == 100.0
         # Novilhas não têm parto → IEP fica indefinido.
         assert val(cats["novilha"], "iep_meses") is None
+
+    def test_metas_vem_dos_parametros_e_novilha_tem_meta_propria(self):
+        """taxa_servico/taxa_prenhez_ciclo/taxa_concepcao passam a ler
+        Configurações > Parâmetros (meta_taxa_servico/meta_taxa_prenhez/
+        meta_taxa_concepcao/meta_concepcao_novilha) em vez do valor fixo de
+        BENCHMARK_METAS — e novilha usa sua própria meta de concepção,
+        diferente da meta de vacas."""
+        animais, servicos, partos = self._dados()
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 7))
+        cats = r["benchmark_categorias"]
+
+        def meta(lista, chave):
+            return next(b["meta"] for b in lista if b["chave"] == chave)
+
+        assert meta(cats["todas"], "taxa_servico") == 50.0
+        assert meta(cats["todas"], "taxa_prenhez_ciclo") == 18.0
+        assert meta(cats["vaca"], "taxa_concepcao") == 35.0
+        assert meta(cats["todas"], "taxa_concepcao") == 35.0
+        assert meta(cats["novilha"], "taxa_concepcao") == 60.0
 
 
 # ============================================================

@@ -71,6 +71,13 @@ class ContaGerencial(SQLModel, table=True):
     # Vínculo opcional ao Pedido que esta nota fiscal/recibo está atendendo —
     # é só quando esse vínculo existe que o Pedido passa a refletir em Financeiro.
     pedido_id: Optional[int] = Field(default=None, foreign_key="pedido.id")
+    # Vínculo opcional a um item de Patrimônio (ver Patrimonio, mais abaixo
+    # neste arquivo) — esta compra/venda representa uma entrada/saída de
+    # patrimônio. FK de verdade (não string), editável dos dois lados: aqui
+    # (POST/PUT /financeiro/lancamentos) e do lado do Patrimônio (POST
+    # /financeiro/patrimonio, campo `criar_patrimonio` na criação do
+    # lançamento, ou vínculo posterior via PUT /financeiro/patrimonio/{id}).
+    patrimonio_id: Optional[int] = Field(default=None, foreign_key="patrimonio.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -97,12 +104,29 @@ class LancamentoItem(SQLModel, table=True):
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
     valor_total: float
+    # ── Item que na verdade é gasto pessoal de um funcionário/empreiteiro/
+    # diarista (checkbox "É vale de funcionário?" na linha do item, ver
+    # FormFinanceiro.tsx). O dinheiro saiu de verdade na compra — o caixa da
+    # fazenda continua batendo —, mas gerencialmente isso não é despesa da
+    # fazenda e sim adiantamento A RECEBER da pessoa: por isso o item passa a
+    # ser ignorado por todo relatório gerencial (ver rules/vale_item.py).
+    # Exatamente UM dos dois é preenchido, nunca os dois: o vale gerado é um
+    # ValeFuncionario (desconto na folha) OU um ValeAvulso (abatimento de
+    # empreitada/contrato/diária) de verdade — não há sistema paralelo de vale.
+    # Ambos nullable: item sem vale (a esmagadora maioria) tem os dois nulos.
+    vale_funcionario_id: Optional[int] = Field(default=None, foreign_key="vale_funcionario.id", index=True)
+    vale_avulso_id: Optional[int] = Field(default=None, foreign_key="vale_avulso.id", index=True)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
-# Anexo de lançamento financeiro (ex.: boleto de um parcelamento) — o conteúdo
-# fica no próprio banco (bytes), sem depender de disco persistente no deploy.
+# Anexo de lançamento financeiro (ex.: boleto, nota fiscal, comprovante de um
+# parcelamento) — o conteúdo vive no Supabase Storage (ver
+# fazenda/rules/supabase_storage.py), igual ao Arquivo fiscal-contábil
+# (DocumentoArquivado, ver fazenda/models/documentos.py); aqui só ficam os
+# metadados e o caminho. `conteudo` (bytes direto no Postgres) é o formato
+# ANTIGO, mantido só para ler anexos já existentes — todo anexo novo usa
+# `caminho_storage`, nunca os dois ao mesmo tempo.
 # ---------------------------------------------------------------------------
 class LancamentoAnexo(SQLModel, table=True):
     __tablename__ = "lancamento_anexo"
@@ -114,7 +138,18 @@ class LancamentoAnexo(SQLModel, table=True):
     nome_arquivo: str
     mime_type: str
     tamanho_bytes: int
-    conteudo: bytes
+    conteudo: Optional[bytes] = None  # formato antigo (legado) — ver docstring acima
+    categoria: Optional[str] = None  # nome de um tipo de documento cadastrado (TIPOS_DOCUMENTO)
+    # Número impresso no próprio documento (nº da nota fiscal, do boleto, da
+    # OS, do orçamento/pedido...) e a data dele — diferentes de `criado_em`
+    # (quando o arquivo foi enviado). É por aqui que a Central de Documentos
+    # (fazenda.api.routers.central_documentos) permite achar, por exemplo,
+    # "o boleto número X" ou "tudo com data de documento em julho", mesmo
+    # sabendo só um dos vários documentos que um lançamento reúne (orçamento,
+    # pedido, nota fiscal, boleto, comprovante — cada um com seu próprio número).
+    numero_documento: Optional[str] = Field(default=None, index=True)
+    data_documento: Optional[date] = None
+    caminho_storage: Optional[str] = None  # Supabase Storage — formato atual
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
@@ -369,6 +404,19 @@ class Patrimonio(SQLModel, table=True):
     data_baixa: Optional[date] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # True (padrão) = deprecia normalmente (calcular_depreciacao). False =
+    # patrimônio que só valoriza (ex.: terra/fazenda) — não deprecia, e em vez
+    # disso acompanha `valor_mercado_atual`, atualizado periodicamente (ver
+    # campos abaixo e o card "Atualizar valor de mercado" na Agenda).
+    depreciavel: bool = True
+    valor_mercado_atual: Optional[float] = None
+    data_ultima_atualizacao_valor_mercado: Optional[date] = None
+    # Frequência de atualização do valor de mercado, só para depreciavel=False:
+    # None = usa o padrão do sistema (Configurações > Parâmetros, ver
+    # fazenda.rules.parametros.patrimonio_atualizacao_valor_mercado_meses); 0 =
+    # nunca (não gera pendência); N = a cada N meses (override deste item).
+    atualizacao_valor_mercado_frequencia_meses: Optional[int] = None
+
     # Plano de manutenção preventiva (opcional) — periodicidade só por DATA
     # (ex.: "a cada 6 meses"). O sistema hoje não rastreia horímetro/horas de
     # uso de nenhum equipamento, então manutenção por uso fica fora de escopo
@@ -462,6 +510,81 @@ class LancamentoRecorrente(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Cartão de crédito (Financeiro > Controle Financeiro > Cartão de crédito) —
+# extrato próprio por fatura, fechamento por competência e pagamento
+# reaproveitando o mesmo fluxo de baixa do Financeiro (ver
+# fazenda/api/routers/cartao_credito.py). Não substitui o campo solto
+# `ContaGerencial.data_vencimento_cartao` (forma_pagamento="credito") já
+# existente — aquele continua servindo pagamentos avulsos no cartão sem
+# cadastro; este módulo é para quem quer extrato/fatura/milhas de verdade.
+# ---------------------------------------------------------------------------
+class CartaoCredito(SQLModel, table=True):
+    __tablename__ = "cartao_credito"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    apelido: str
+    bandeira: Optional[str] = None
+    banco_emissor: Optional[str] = None
+    conta_bancaria_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+    dia_fechamento: int  # 1-31
+    dia_vencimento: int  # 1-31
+    limite: Optional[float] = None
+    controla_milhas: bool = False
+    milhas_por_real: Optional[float] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FaturaCartao(SQLModel, table=True):
+    """Uma competência (mês) do cartão — nasce "aberta" na hora do 1º
+    lançamento daquele mês (mesmo padrão de `cronograma_aberto()`, ver
+    fazenda/rules/cronograma_sanitario.py: lida sempre cria se faltar).
+    `valor_total`/`milhas_acumuladas` só são gravados (congelados) no
+    fechamento — enquanto aberta, o extrato soma os LancamentoCartao ao vivo."""
+
+    __tablename__ = "fatura_cartao"
+    __table_args__ = (UniqueConstraint("cartao_id", "competencia", name="uq_fatura_cartao_competencia"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cartao_id: int = Field(foreign_key="cartao_credito.id", index=True)
+    competencia: str = Field(index=True)  # "2026-08"
+    data_fechamento: date
+    data_vencimento: date
+    valor_total: Optional[float] = None  # só preenchido no fechamento
+    milhas_acumuladas: Optional[int] = None
+    status: str = "aberta"  # "aberta" | "fechada" | "paga"
+    numero_lancamento: Optional[str] = None  # → ContaGerencial, só quando paga
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LancamentoCartao(SQLModel, table=True):
+    """Uma compra no cartão. `fatura_id` é atribuído na hora da criação,
+    resolvendo a competência pela data da compra x dia de fechamento do
+    cartão (ver `_resolver_fatura` no router)."""
+
+    __tablename__ = "lancamento_cartao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cartao_id: int = Field(foreign_key="cartao_credito.id", index=True)
+    fatura_id: int = Field(foreign_key="fatura_cartao.id", index=True)
+    data_compra: date
+    descricao: str
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    centro_custo: Optional[str] = None
+    valor: float
+    parcela_num: Optional[int] = None
+    parcela_total: Optional[int] = None
+    observacao: Optional[str] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

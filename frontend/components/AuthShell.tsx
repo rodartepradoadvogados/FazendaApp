@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { getToken, podeModulo, ehDono, ehContador, ROTA_MODULO } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { getToken, podeModulo, ehDono, ehContador, ehMembroEquipeCowData, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -11,6 +11,8 @@ import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
+import { SubNavTabs } from "@/components/SubNavTabs";
+import { SuporteBanner } from "@/components/SuporteBanner";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
@@ -67,6 +69,23 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // contador (Financeiro somente leitura/exportação, sem app móvel) — casca
   // própria (ver frontend/app/contador/layout.tsx), nunca a Sidebar da fazenda.
   const ehPainelContador = path.startsWith("/contador");
+  // Portais "Insights" (Indicadores, Listas, Relatórios) e "Administração"
+  // (Controle de Acesso, Portal, Configurações): casca compartilhada (ver
+  // components/insights/InsightsLayout.tsx, aplicada via layout.tsx dessas
+  // 6 rotas — o próprio InsightsLayout decide qual dos dois grupos de abas
+  // mostrar, conforme a rota), nunca a Sidebar da fazenda — cada um aberto
+  // pelo próprio atalho na Sidebar, numa aba nova de verdade do navegador
+  // (ver Sidebar.tsx). Painel CowData e Painel do Contador são checados à
+  // parte acima: têm a própria casca bespoke, não a desta.
+  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes"];
+  const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
+  // Portal "Formulação de Dietas" (/dietas): casca própria
+  // (components/dietas/DietasLayout.tsx via app/dietas/layout.tsx), nunca a
+  // Sidebar da fazenda — aberto pela Sidebar numa aba nova de verdade do
+  // navegador. Mesmo padrão dos portais Insights/Administração, com gate de
+  // acesso próprio (admin desta fazenda OU consultor desta fazenda — ver
+  // podeFormularDietas em lib/api.ts).
+  const ehDietasPortal = path === "/dietas" || path.startsWith("/dietas/");
 
   useEffect(() => {
     if (!hidratado) return; // aguarda a tentativa de restaurar a sessão nativa (ver acima)
@@ -88,7 +107,8 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace(destinoRaiz); return; }
-    if (ehPainelCowData && !ehDono()) { router.replace(destinoRaiz); return; }
+    if (ehPainelCowData && !ehDono() && !ehMembroEquipeCowData()) { router.replace(destinoRaiz); return; }
+    if (ehDietasPortal && !podeFormularDietas()) { router.replace(destinoRaiz); return; }
     // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
     // duas (a página em si esconde a sub-aba sem permissão).
     if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace(destinoRaiz); return; }
@@ -105,6 +125,21 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     if (estado !== "logado") return;
     return iniciarMonitorInatividade();
   }, [estado]);
+
+  // Largura real da faixa fixa News/Tema/Sino (.site-top-actions) — varia
+  // (o Manual da Fazenda só aparece na Capa) e SubNavTabs precisa saber esse
+  // valor para reservar espaço à direita e nunca desenhar abas por baixo dos
+  // botões (ver --top-actions-width usado em SubNavTabs.tsx). Mesma técnica
+  // de "medir e reservar" do cabeçalho fixo do app móvel (ver headerRef em
+  // app/app/layout.tsx) — só que aqui é a LARGURA, não a altura.
+  const topActionsRef = useRef<HTMLDivElement | null>(null);
+  const [larguraTopActions, setLarguraTopActions] = useState(240);
+  useEffect(() => {
+    const medir = () => { if (topActionsRef.current) setLarguraTopActions(topActionsRef.current.offsetWidth); };
+    medir();
+    window.addEventListener("resize", medir);
+    return () => window.removeEventListener("resize", medir);
+  }, [path]); // path: Manual da Fazenda só em "/", muda a largura da faixa
 
   // /sobre/* já vem com a própria casca pública (PublicPage) — igual /login,
   // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
@@ -129,37 +164,80 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     return <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>Carregando…</div>;
   }
 
-  // App móvel: o layout de /app cuida de cabeçalho e navegação inferior.
-  if (ehApp) return <>{children}</>;
-
   // Painel CowData: casca própria (PainelCowDataLayout), nunca a Sidebar da
-  // fazenda — ver comentário no topo deste componente.
+  // fazenda — ver comentário no topo deste componente. Sem SuporteBanner
+  // aqui: modo suporte é "estar dentro de uma fazenda-cliente como se fosse
+  // o admin dela" — o Painel CowData é a base da própria CowData, não faz
+  // sentido a faixa aparecer nele (quem quer ver sessões ativas usa a
+  // própria tela de Suporte, ver painel-cowdata/cofre/page.tsx).
   if (ehPainelCowData) return <>{children}</>;
 
+  // Todas as demais cascas logadas (app móvel, Painel do Contador, portais
+  // Insights e Dietas, e a casca padrão da fazenda montada abaixo) recebem a
+  // faixa de suporte quando ativa — pedido explícito do usuário: antes ela
+  // só existia dentro da casca padrão, e sumia ao entrar em Insights e
+  // Administração ou Formulação de Dietas (cascas próprias, que nem
+  // chegavam a este ponto do componente). SuporteBanner é `position: fixed`
+  // e mede a própria altura para publicar --suporte-banner-h (ver
+  // SuporteBanner.tsx) — todo elemento fixo no topo do resto do app
+  // (.site-top-actions, barra mobile da Sidebar, cabeçalho do app móvel)
+  // soma essa variável ao próprio "top" para nunca ficar por baixo dela;
+  // o restante do conteúdo (fluxo normal) desce sozinho via padding-top no
+  // <body> (ver globals.css).
+  let conteudo: React.ReactNode;
+
+  // App móvel: o layout de /app cuida de cabeçalho e navegação inferior.
+  if (ehApp) {
+    conteudo = children;
   // Painel do Contador: casca própria (frontend/app/contador/layout.tsx),
   // nunca a Sidebar da fazenda nem a casca do app móvel — ver comentário
   // no topo deste componente.
-  if (ehPainelContador) return <>{children}</>;
+  } else if (ehPainelContador) {
+    conteudo = children;
+  // Portal Insights e Administração: casca própria (InsightsLayout via
+  // layout.tsx da rota) — ver comentário no topo deste componente.
+  } else if (ehInsightsPortal) {
+    conteudo = children;
+  // Portal Formulação de Dietas: casca própria (DietasLayout via
+  // app/dietas/layout.tsx) — ver comentário no topo deste componente.
+  } else if (ehDietasPortal) {
+    conteudo = children;
+  } else {
+    conteudo = (
+      <div
+        className="md:flex farm-shell-h bg-fazenda-bg md:overflow-hidden"
+        // --top-actions-width: exposta aqui (ancestral comum) porque
+        // .site-top-actions e <main>/SubNavTabs são IRMÃOS — uma custom
+        // property só herda para descendentes, nunca entre irmãos, então
+        // declarar isso dentro de .site-top-actions nunca chegaria à SubNavTabs.
+        style={{ ["--top-actions-width" as any]: `${larguraTopActions}px` }}
+      >
+        <Sidebar />
+        {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
+            sino de notificações também moram aqui — os quatro num único
+            container fixed com gap (.site-top-actions, ver globals.css) em vez
+            de cada um calcular sua própria posição (era assim que ficavam
+            sobrepostos, ver comentário em globals.css). */}
+        <div className="site-top-actions" ref={topActionsRef}>
+          {path === "/" && <ManualFazendaButton />}
+          <NewsButton />
+          <ThemeSwitcher />
+          <NotificationBell />
+        </div>
+        <AssistenteClaude />
+        <main className="flex-1 md:overflow-y-auto app-main">
+          <SubNavTabs />
+          <SectionBackground />
+          <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
+        </main>
+      </div>
+    );
+  }
 
   return (
-    <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
-      <Sidebar />
-      <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
-        <ThemeSwitcher />
-      </div>
-      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/") — os
-          dois num único container fixed com gap (.site-top-actions, ver
-          globals.css) em vez de cada um calcular sua própria posição. */}
-      <div className="site-top-actions">
-        {path === "/" && <ManualFazendaButton />}
-        <NewsButton />
-      </div>
-      <NotificationBell />
-      <AssistenteClaude />
-      <main className="flex-1 md:overflow-y-auto app-main">
-        <SectionBackground />
-        <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
-      </main>
-    </div>
+    <>
+      <SuporteBanner />
+      {conteudo}
+    </>
   );
 }

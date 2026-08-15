@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     ContaGerencial, LancamentoItem, OrcamentoItem, Pedido, PedidoItem,
@@ -31,6 +31,7 @@ from fazenda.models import (
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
+from fazenda.rules.vale_item import sem_itens_de_vale
 from fazenda.api.routers.pedidos import _proximo_numero_pedido
 
 router = APIRouter(prefix="/planejamento", tags=["planejamento"])
@@ -74,9 +75,8 @@ def criar_item_orcamento(
     dados: OrcamentoItemIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("receita", "despesa"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
     if not 1 <= dados.mes <= 12:
@@ -171,7 +171,9 @@ def comparativo_orcado_realizado(
     # Último dia real do mes_fim (evita cortar lançamentos do dia 29-31).
     data_fim = date(ano, mes_fim, calendar.monthrange(ano, mes_fim)[1])
 
-    query_itens = select(LancamentoItem).where(LancamentoItem.data_competencia >= data_ini, LancamentoItem.data_competencia <= data_fim)
+    query_itens = sem_itens_de_vale(
+        select(LancamentoItem).where(LancamentoItem.data_competencia >= data_ini, LancamentoItem.data_competencia <= data_fim)
+    )
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = session.exec(query_itens).all()
@@ -237,9 +239,8 @@ def criar_cenario(
     dados: CenarioIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("otimista", "realista", "pessimista", "personalizado"):
         raise HTTPException(status_code=400, detail="tipo de cenário inválido")
     cenario = PlanejamentoCenario(
@@ -321,9 +322,8 @@ def criar_item_cenario(
     cenario_id: int,
     dados: PlanejamentoItemIn,
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     cenario = session.get(PlanejamentoCenario, cenario_id)
     if not cenario or (fazenda_id is not None and cenario.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Cenário não encontrado")
@@ -425,12 +425,11 @@ def importar_para_pedido(
     dados: ImportarParaPedidoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Cria um Pedido (rascunho) a partir de uma linha de Orçamento ou de
     Planejamento financeiro — só copia os dados, não lança nada em
     Financeiro/Estoque. O usuário completa e salva o pedido normalmente."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.origem_tipo not in ("orcamento", "planejamento_financeiro"):
         raise HTTPException(status_code=400, detail="origem_tipo inválido")
     if dados.tipo_pedido not in ("compra", "venda"):

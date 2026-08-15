@@ -54,7 +54,7 @@ export function IconeCategoria({ chave, size = 48 }: { chave: string; size?: num
  * esquerda do cartão via IconeCategoria) usado na Agenda acima do título. */
 export function RotuloCategoria({ chave, rotulo }: { chave: string; rotulo: string }) {
   return (
-    <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
+    <div style={{ fontSize: "var(--mob-fs-rotulo)", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
       {rotulo}
     </div>
   );
@@ -64,9 +64,9 @@ export function RotuloCategoria({ chave, rotulo }: { chave: string; rotulo: stri
  * no claro, branco vs. um tom leve da paleta ativa; no escuro, preto contornado
  * de vinho vs. preto contornado de verde (fixos, sem seguir a paleta). Usado na
  * Agenda e na Ficha do animal para diferenciar cartões em sequência. */
-export function MobCard({ children, style, onClick, alt, className }: { children: ReactNode; style?: CSSProperties; onClick?: () => void; alt?: 0 | 1; className?: string }) {
+export function MobCard({ children, style, onClick, alt, className, estado }: { children: ReactNode; style?: CSSProperties; onClick?: () => void; alt?: 0 | 1; className?: string; estado?: "normal" | "atrasado" | "feito" }) {
   const classe = [alt == null ? "mob-card" : `mob-card ${alt === 0 ? "mob-card-a" : "mob-card-b"}`, className].filter(Boolean).join(" ");
-  return <div className={classe} style={{ padding: "0.95rem 1rem", ...style }} onClick={onClick}>{children}</div>;
+  return <div className={classe} style={{ padding: "0.95rem 1rem", ...style }} onClick={onClick} data-estado={estado ?? "normal"}>{children}</div>;
 }
 
 /** Título de tela (ex.: "Hoje, 10 de Julho") com espaço para um badge à direita. */
@@ -114,7 +114,7 @@ export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; lab
 export function MobLinha({ icone, titulo, subtitulo, href, onClick, alt, categoria }: { icone?: ReactNode; titulo: ReactNode; subtitulo?: ReactNode; href?: string; onClick?: () => void; alt?: 0 | 1; categoria?: string }) {
   const classe = ["mob-linha", alt === 0 ? "mob-card-a" : alt === 1 ? "mob-card-b" : ""].filter(Boolean).join(" ");
   const corIcone = categoria ? corCategoria(categoria) : "var(--mob-dourado-2)";
-  const fundoIcone = categoria ? `color-mix(in srgb, ${corIcone} 14%, transparent)` : "rgba(184,134,11,0.12)";
+  const fundoIcone = categoria ? `color-mix(in srgb, ${corIcone} 14%, transparent)` : "color-mix(in srgb, var(--mob-dourado-2) 14%, transparent)";
   const conteudo = (
     <>
       {icone && <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: fundoIcone, color: corIcone, flexShrink: 0 }}>{icone}</span>}
@@ -144,7 +144,7 @@ export function MobVoltar({ titulo, onVoltar }: { titulo: string; onVoltar: () =
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.25rem 0 1rem" }}>
       <button type="button" onClick={onVoltar} aria-label="Voltar"
-        style={{ width: 40, height: 40, borderRadius: 12, border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+        style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
         <ChevronLeft size={20} />
       </button>
       <h1 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{titulo}</h1>
@@ -156,7 +156,7 @@ export function MobVoltar({ titulo, onVoltar }: { titulo: string; onVoltar: () =
 export function MobAviso({ tipo, children }: { tipo: "ok" | "offline" | "erro"; children: ReactNode }) {
   const cor = tipo === "ok" ? "var(--mob-verde)" : tipo === "offline" ? "var(--mob-ambar)" : "var(--mob-vermelho)";
   return (
-    <p style={{ margin: "0.7rem 0 0", padding: "0.7rem 0.8rem", borderRadius: 12, fontSize: "0.88rem", fontWeight: 600, color: cor, background: "color-mix(in srgb, currentColor 10%, transparent)", border: `1px solid ${cor}` }}>
+    <p style={{ margin: "0.7rem 0 0", padding: "0.7rem 0.8rem", borderRadius: "var(--r-app)", fontSize: "0.88rem", fontWeight: 600, color: cor, background: "color-mix(in srgb, currentColor 10%, transparent)", border: `1px solid ${cor}` }}>
       {children}
     </p>
   );
@@ -166,17 +166,17 @@ export function MobAviso({ tipo, children }: { tipo: "ok" | "offline" | "erro"; 
  * Pop-up de confirmação no padrão visual do app (overlay + cartão --mob-*,
  * botões Confirmar/Cancelar grandes) — usado quando uma ação sugere um efeito
  * colateral (ex.: mover um animal de lote) que precisa de "sim" explícito do
- * usuário antes de acontecer. Clique fora do cartão equivale a Cancelar.
+ * usuário antes de acontecer. Fecha só pelos botões Confirmar/Cancelar.
  */
 export function MobConfirmModal({ titulo, children, onConfirmar, onCancelar, confirmando, textoConfirmar = "Confirmar", textoCancelar = "Cancelar" }: {
   titulo: string; children: ReactNode; onConfirmar: () => void; onCancelar: () => void;
   confirmando?: boolean; textoConfirmar?: string; textoCancelar?: string;
 }) {
   return (
-    <div role="presentation" onClick={onCancelar}
+    <div role="presentation"
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "1rem" }}>
       <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 440, background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 18, padding: "1.1rem 1.1rem 1.2rem", boxShadow: "var(--mob-sombra)" }}>
+        style={{ width: "100%", maxWidth: 440, background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "1.1rem 1.1rem 1.2rem", boxShadow: "var(--mob-sombra)" }}>
         <h2 style={{ fontSize: "1.02rem", fontWeight: 800, margin: "0 0 0.5rem", color: "var(--mob-text)" }}>{titulo}</h2>
         <div style={{ fontSize: "0.9rem", color: "var(--mob-text)", lineHeight: 1.45, marginBottom: "1.1rem" }}>{children}</div>
         <div style={{ display: "flex", gap: "0.6rem" }}>

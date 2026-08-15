@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search, X } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
+import { normalizarBusca } from "@/lib/busca";
 
 export type AnimalMob = {
   numero: string;
@@ -15,9 +16,10 @@ export type AnimalMob = {
   ativo?: boolean;
 };
 
-/** minúsculas + sem acento, para busca tolerante. */
+/** minúsculas, sem acento e sem hífen/underscore/espaço, para busca
+ * tolerante — delega ao helper único (lib/busca.ts). */
 export function normalizar(s: unknown): string {
-  return (s == null ? "" : String(s)).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+  return normalizarBusca(s == null ? "" : String(s));
 }
 
 export function subtituloAnimal(a: { categoria_abrev?: string | null; grupo_primario?: string | null }): string {
@@ -60,7 +62,7 @@ export function BuscaAnimal({
           {selecionado && <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)" }}>{subtituloAnimal(selecionado)}</span>}
         </span>
         <button type="button" onClick={() => { onEscolher(""); setBusca(""); }} aria-label="Trocar animal"
-          style={{ width: 36, height: 36, borderRadius: 10, border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+          style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
           <X size={18} />
         </button>
       </div>

@@ -16,7 +16,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import EMAIL_DONO, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id
+from fazenda.auth import (
+    eh_email_dono_equivalente, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id,
+)
 from fazenda.database import get_session
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContratoAnexo, ContratoAssinaturaZapSign, ContratoFazenda, ContratoFazendaModulo,
@@ -96,7 +98,7 @@ def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token
     dono passa sempre) — evita que um contratante da fazenda A manipule
     vínculos da fazenda B só porque exigir_contratante_ou_dono validou seu
     vínculo de contratante contra o token, sem saber qual fazenda a URL pede."""
-    if (user.email or "").strip().lower() == EMAIL_DONO:
+    if eh_email_dono_equivalente(user.email):
         return
     if fazenda_id_token != fazenda_id:
         raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
@@ -261,6 +263,47 @@ def vincular_usuario(
     ))
     session.commit()
     return {"vinculado": True, "usuario_id": usuario.id, "username": usuario.username}
+
+
+class EditarVinculoIn(BaseModel):
+    contratante: bool = False
+    consultor: bool = False
+    contador: bool = False
+
+
+@router.put("/{fazenda_id}/vincular-usuario/{usuario_id}")
+def editar_vinculo_usuario(
+    fazenda_id: int, usuario_id: int, dados: EditarVinculoIn,
+    user: Usuario = Depends(exigir_contratante_ou_dono), fazenda_id_token: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Troca o papel (funcionário/contratante/consultor/contador) de um
+    vínculo já existente, sem precisar desvincular e vincular de novo (o que
+    perderia o histórico do ID da linha). Mesmas regras de vincular_usuario:
+    papéis mutuamente exclusivos e consultor exige o módulo comercial ativo."""
+    _validar_escopo_contratante(user, fazenda_id, fazenda_id_token)
+    if sum([dados.contratante, dados.consultor, dados.contador]) > 1:
+        raise HTTPException(status_code=400, detail="Um vínculo só pode ser um papel por vez: contratante, consultor ou contador")
+    vinculo = session.exec(
+        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
+    ).first()
+    if not vinculo:
+        raise HTTPException(status_code=404, detail="Vínculo não encontrado")
+    if dados.consultor and not _tem_modulo_consultor_ativo(session, fazenda_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Esta fazenda não tem o módulo Consultor contratado (disponível no plano Diamond)",
+        )
+    vinculo.contratante = dados.contratante
+    vinculo.consultor = dados.consultor
+    vinculo.contador = dados.contador
+    session.add(vinculo)
+    session.commit()
+    usuario = session.get(Usuario, usuario_id)
+    return {
+        "usuario_id": usuario_id, "username": usuario.username if usuario else None,
+        "contratante": vinculo.contratante, "consultor": vinculo.consultor, "contador": vinculo.contador,
+    }
 
 
 @router.get("/{fazenda_id}/usuarios")

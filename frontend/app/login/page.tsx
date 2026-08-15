@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
+import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X, ShieldCheck } from "lucide-react";
 import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type NoticiaNews, type FazendaAtual } from "@/lib/api";
 import { ehAppOuPwa } from "@/lib/nativo";
 import { Building2 } from "lucide-react";
@@ -44,7 +44,7 @@ function EsqueciSenhaModal({
   if (!etapa) return null;
   const input: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
   };
   return (
     <div style={{
@@ -176,10 +176,17 @@ function Hero() {
     }
   };
 
-  const escolherFazenda = async (fazendaId: number) => {
+  const escolherFazenda = async (f: FazendaAtual) => {
     setEscolhendoFazenda(true); setErro(null);
     try {
-      await selecionarFazenda(fazendaId);
+      if (f.cowdata) {
+        // "Painel CowData" é uma entrada sintética (id=0, sem fazenda de
+        // verdade por trás) — o token do login() já serve (sem "fid"), só
+        // falta navegar. Nada de /auth/selecionar-fazenda aqui.
+        router.replace("/painel-cowdata");
+        return;
+      }
+      await selecionarFazenda(f.id);
       await irParaDestino();
     } catch (err: any) {
       setErro(err.message || "Não foi possível selecionar a fazenda");
@@ -231,7 +238,7 @@ function Hero() {
 
   const input: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: "var(--text)",
-    border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.95rem",
   };
 
   return (
@@ -257,16 +264,22 @@ function Hero() {
           {fazendasParaEscolher ? (
             <>
               <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
-                Você tem acesso a mais de uma fazenda — qual delas?
+                {fazendasParaEscolher.some((f) => f.cowdata)
+                  ? "Entrar como administrador de uma fazenda, ou no Painel CowData?"
+                  : "Você tem acesso a mais de uma fazenda — qual delas?"}
               </p>
               <div className="space-y-2">
                 {fazendasParaEscolher.map((f) => (
-                  <button key={f.id} type="button" disabled={escolhendoFazenda} onClick={() => escolherFazenda(f.id)}
+                  <button key={f.id} type="button" disabled={escolhendoFazenda} onClick={() => escolherFazenda(f)}
                     className="btn-ghost" style={{ width: "100%", justifyContent: "flex-start", gap: "0.6rem", border: "1px solid var(--border)", padding: "0.7rem 0.9rem" }}>
-                    <Building2 size={16} style={{ color: "var(--dourado-light)" }} />
+                    {f.cowdata
+                      ? <ShieldCheck size={16} style={{ color: "var(--dourado-light)" }} />
+                      : <Building2 size={16} style={{ color: "var(--dourado-light)" }} />}
                     <span style={{ textAlign: "left" }}>
                       <strong style={{ display: "block" }}>{f.nome}</strong>
-                      {(f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
+                      {f.cowdata
+                        ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Administração da CowData — acesso de suporte às fazendas-clientes</span>
+                        : (f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
                     </span>
                   </button>
                 ))}
@@ -355,26 +368,26 @@ function MilkNewsCallout() {
       <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
         <Link href="/news" style={{
           display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1.2rem", textDecoration: "none",
-          padding: "1.6rem 1.8rem", borderRadius: "16px",
+          padding: "1.6rem 1.8rem", borderRadius: "var(--r-sm)",
           background: "linear-gradient(135deg, var(--vinho), var(--vinho-dark))",
           border: "1px solid var(--vinho-light)", boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
         }}>
           <span style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             width: "3.2rem", height: "3.2rem", borderRadius: "999px",
-            background: "rgba(255,224,102,0.15)", flexShrink: 0,
+            background: "rgba(201,164,76,0.15)", flexShrink: 0,
           }}>
-            <Newspaper size={26} style={{ color: "#FFE066" }} />
+            <Newspaper size={26} style={{ color: "#C9A44C" }} />
           </span>
           <span style={{ flex: 1, minWidth: "16rem" }}>
-            <span style={{ display: "block", color: "#FFE066", fontWeight: 800, fontSize: "1.15rem" }}>Milk News — nosso blog de pecuária leiteira</span>
+            <span style={{ display: "block", color: "#C9A44C", fontWeight: 800, fontSize: "1.15rem" }}>Milk News — nosso blog de pecuária leiteira</span>
             <span style={{ display: "block", color: "rgba(255,255,255,0.8)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
               {noticia === undefined && "Carregando a última matéria…"}
               {noticia === null && "Cotação do leite, mercado, genética e manejo — aberto a qualquer visitante, sem precisar de login."}
               {noticia && <>Última matéria: <strong>{noticia.manchete}</strong></>}
             </span>
           </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", color: "#FFE066", fontWeight: 700, fontSize: "0.9rem", flexShrink: 0 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", color: "#C9A44C", fontWeight: 700, fontSize: "0.9rem", flexShrink: 0 }}>
             Ler o blog <ArrowRight size={18} />
           </span>
         </Link>

@@ -11,6 +11,11 @@ backend/.env
 # Configuração local do Claude Code (pessoal, específica da máquina)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Checkouts temporários que o Claude Code cria para rodar agentes em paralelo.
+# São worktrees do PRÓPRIO repositório: commitá-los aninharia uma cópia do
+# projeto dentro dele mesmo. Aparecem como não rastreados a cada sessão com
+# agentes, então precisam estar aqui para não entrarem num `git add -A`.
+.claude/worktrees/
 
 # Python
 __pycache__/

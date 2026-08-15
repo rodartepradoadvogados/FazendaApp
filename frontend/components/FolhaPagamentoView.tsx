@@ -5,19 +5,22 @@ import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
   atualizarParcelaEmpreitada, atualizarParcelaContrato,
-  fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirVale, ehAdmin, formatBRL,
+  fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirParcelaVale, excluirVale, ehAdmin, formatBRL,
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
-  fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
+  lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, type GuiaFolhaEncargo,
+  lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
-import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
+import { Dropzone } from "@/components/Dropzone";
+import { SecaoRecolhivel, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { RESPONSAVEIS } from "@/lib/constants";
 import EmpreitadaView from "@/components/EmpreitadaView";
@@ -25,7 +28,13 @@ import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
 import FeriasDecimoTerceiroView from "@/components/FeriasDecimoTerceiroView";
 
-const LABEL_TIPO: Record<string, string> = { funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
+const LABEL_TIPO: Record<string, string> = {
+  funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária", ferias_decimo: "Férias / 13º",
+};
+// Acentos emprestados da paleta CowData (navy+dourado+verde+vermelho do
+// painel do dono do software) — usados só nos 3 cards de "Lançar" desta
+// tela, não como fundo/base (que continua o tema normal da fazenda).
+const COR_LANCAR = { folha: "#E8C256", vale: "#3ECF8E", guia: "#E05C5C" };
 // Fundo vinho translúcido para destacar lançamentos vencidos e não pagos.
 const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
 
@@ -43,7 +52,7 @@ function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
 
 const selStyleLote: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
@@ -64,6 +73,7 @@ type RegistroFolha = {
   valor_liquido: number;
   data_pagamento: string | null; data_vencimento?: string | null; status: string; observacao: string | null;
   recorrente: boolean; dia_vencimento: number | null;
+  conta_corrente_id?: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
   detalhe: { label: string; valor: number }[];
   usuario_nome?: string | null;
@@ -88,7 +98,7 @@ function CampoRetencao({
       <div><label style={labelStyleLote}>{label} (%)</label>
         <input type="number" inputMode="decimal" style={selStyleLote} value={percentual} onChange={(e) => onChangePercentual(e.target.value)} /></div>
       <div><label style={labelStyleLote}>{label} (R$)</label>
-        <input type="number" inputMode="decimal" style={selStyleLote} value={valor} onChange={(e) => onChangeValor(e.target.value)} /></div>
+        <CampoMoeda style={selStyleLote} value={Number(valor) || 0} onChange={(v) => onChangeValor(v ? String(v) : "")} /></div>
     </>
   );
 }
@@ -110,15 +120,10 @@ export default function FolhaPagamentoView() {
   const [valorIr, setValorIr] = useState("");
   const [irManual, setIrManual] = useState(false);
   // FGTS/DCTF — opcionais; em branco, não entram na projeção da guia mensal.
-  const [percentualFgts, setPercentualFgts] = useState("");
-  const [valorFgts, setValorFgts] = useState("");
-  const [fgtsManual, setFgtsManual] = useState(false);
-  const [percentualDctf, setPercentualDctf] = useState("");
-  const [valorDctf, setValorDctf] = useState("");
-  const [dctfManual, setDctfManual] = useState(false);
   const [observacao, setObservacao] = useState("");
   const [recorrente, setRecorrente] = useState(false);
   const [diaVencimento, setDiaVencimento] = useState("5");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -128,7 +133,10 @@ export default function FolhaPagamentoView() {
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
-  const [subaba, setSubaba] = useState<"funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("funcionario");
+  // Seletor único de categoria — antes era uma TabBar que só navegava entre
+  // telas (sem filtrar nada); agora governa TANTO o que aparece em "Lançar"
+  // quanto o filtro de "Consultar" logo abaixo (ver `tipoUnificado`).
+  const [categoria, setCategoria] = useState<"todos" | "funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("todos");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
@@ -152,22 +160,45 @@ export default function FolhaPagamentoView() {
   const [editObservacao, setEditObservacao] = useState("");
   const [editRecorrente, setEditRecorrente] = useState(false);
   const [editDiaVencimento, setEditDiaVencimento] = useState("5");
+  const [editContaCorrenteId, setEditContaCorrenteId] = useState("");
   const [editSalvando, setEditSalvando] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [editValorVale, setEditValorVale] = useState(0);
   const [editValorLiquidoOriginal, setEditValorLiquidoOriginal] = useState(0);
   const [confirmarDivergenciaFolha, setConfirmarDivergenciaFolha] = useState<RegistroFolha | null>(null);
 
-  // Folha de pagamento unificada — funcionário + empreita + contrato + diária.
+  // Folha de pagamento unificada — funcionário + empreita + contrato + diária + férias/13º.
   const [unificada, setUnificada] = useState<LinhaFolhaUnificada[] | null>(null);
   const [erroUnificada, setErroUnificada] = useState<string | null>(null);
   const [fUniVencDe, setFUniVencDe] = useState("");
   const [fUniVencAte, setFUniVencAte] = useState("");
   const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
   const [fUniPessoa, setFUniPessoa] = useState("");
-  const [fUniTipo, setFUniTipo] = useState<"" | "funcionario" | "empreita" | "contrato" | "diaria">("");
+  // Deriva o filtro de tipo do seletor de categoria do topo — não é mais um
+  // controle à parte, senão o usuário tinha 2 lugares pra "escolher a
+  // categoria" que podiam divergir (o motivo de "não funcionar de verdade").
+  const tipoUnificado = categoria === "todos" ? "" : categoria === "diarias" ? "diaria" : categoria;
   const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
   const [excluirErro, setExcluirErro] = useState<string | null>(null);
+
+  // Deep-link vindo do card "diária de hoje" da Agenda (?ir=folha&categoria=
+  // diarias&diaria=<id>&calendario=ultimo_periodo, ver app/financeiro/page.tsx
+  // e app/agenda/page.tsx) — abre direto na sub-aba Diária e, se veio um id,
+  // já abre o calendário "Dias trabalhados" daquela diarista, sem o usuário
+  // ter que caçar a linha na tabela de Controle de diárias.
+  const [deepLinkDiaria, setDeepLinkDiaria] = useState<{ id: number; modo: "ultimo_periodo" | "completo" } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const cat = params.get("categoria");
+    if (cat && ["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"].includes(cat)) {
+      setCategoria(cat as typeof categoria);
+    }
+    const diariaId = params.get("diaria");
+    if (diariaId && !Number.isNaN(Number(diariaId))) {
+      const modo = params.get("calendario") === "completo" ? "completo" : "ultimo_periodo";
+      setDeepLinkDiaria({ id: Number(diariaId), modo });
+    }
+  }, []);
 
   // Contas correntes (id + rótulo) — para o campo "Conta bancária" dos vales,
   // que precisa gravar o id (o backend agora espera conta_corrente_id, não
@@ -213,6 +244,16 @@ export default function FolhaPagamentoView() {
     vale: any; parcela: any; valoresItens: Record<number, number>; valorVale: number; valorLancado: number;
   } | null>(null);
 
+  // G15 — exclusão de UMA parcela do vale (endpoint próprio, com
+  // reconciliação da folha). Primeiro chamamos sem `confirmar` para colher o
+  // payload de divergência do 409 (mesmo padrão de `salvarParcela`/409
+  // acima) e só então perguntamos "conceder" ou "redistribuir_igual".
+  const [excluindoParcela, setExcluindoParcela] = useState<{
+    vale: any; parcela: any; valor_parcela: number; valor_vale: number; soma_apos: number; parcelas_pendentes_posteriores: number;
+  } | null>(null);
+  const [excluirParcelaSalvando, setExcluirParcelaSalvando] = useState(false);
+  const [excluirParcelaErro, setExcluirParcelaErro] = useState<string | null>(null);
+
   // Vale avulso (Empreitada/Contrato/Diária) — mesma seção de relatório, tabela própria.
   const [valesAvulsos, setValesAvulsos] = useState<any[] | null>(null);
   const [expandedValeAvulsoId, setExpandedValeAvulsoId] = useState<number | null>(null);
@@ -230,12 +271,14 @@ export default function FolhaPagamentoView() {
     v: any; valorCalculado: number; valorInformado: number;
   } | null>(null);
 
+  const [guias, setGuias] = useState<GuiaFolhaEncargo[] | null>(null);
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
   const carregarVales = () => fetchVales().then(setVales).catch(() => {});
   const carregarValesAvulsos = () => fetchValesAvulsos().then(setValesAvulsos).catch(() => {});
+  const carregarGuias = () => fetchGuiasFolhaEncargo().then(setGuias).catch(() => {});
   useEffect(() => {
-    carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos();
+    carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos(); carregarGuias();
     fetchPessoas().then(setPessoas).catch(() => {});
     fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
   }, []);
@@ -304,8 +347,8 @@ export default function FolhaPagamentoView() {
     (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
     (!fUniStatus || l.status === fUniStatus) &&
     (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
-    (!fUniTipo || l.tipo === fUniTipo)
-  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, fUniTipo]);
+    (!tipoUnificado || l.tipo === tipoUnificado)
+  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, tipoUnificado]);
   const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
   const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
   const somaUniPendente = unificadaFiltrada.filter((l) => l.status === "pendente").reduce((a, l) => a + l.valor, 0);
@@ -423,6 +466,36 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  async function pedirExcluirParcela(vale: any, parcela: any) {
+    setExcluirParcelaErro(null);
+    try {
+      // Sem `confirmar`: o backend sempre responde 409 (payload de
+      // divergência) — nunca apaga direto daqui.
+      await excluirParcelaVale(vale.id, parcela.id);
+    } catch (e: any) {
+      if (e.status === 409 && e.detail?.valor_parcela !== undefined) {
+        setExcluindoParcela({ vale, parcela, ...e.detail });
+      } else {
+        setExcluirParcelaErro(e.message || "Erro ao excluir parcela");
+      }
+    }
+  }
+
+  async function confirmarExcluirParcela(acao: "conceder" | "redistribuir_igual") {
+    if (!excluindoParcela) return;
+    setExcluirParcelaSalvando(true);
+    setExcluirParcelaErro(null);
+    try {
+      await excluirParcelaVale(excluindoParcela.vale.id, excluindoParcela.parcela.id, { acao, confirmar: true });
+      setExcluindoParcela(null);
+      carregarVales(); carregar(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirParcelaErro(e.message || "Erro ao excluir parcela");
+    } finally {
+      setExcluirParcelaSalvando(false);
+    }
+  }
+
   async function excluirValeHandler(v: any) {
     if (!window.confirm("Excluir este vale? Os descontos já refletidos em folhas ainda não pagas serão revertidos.")) return;
     setExcluirValeErro(null);
@@ -523,19 +596,6 @@ export default function FolhaPagamentoView() {
     const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualIr) || 0) / 100);
     setEditValorIr(novo ? String(novo) : "");
   }, [editValorBruto, editPercentualIr, editIrManual]);
-  // FGTS/DCTF — mesmo recálculo automático (percentual × bruto) do INSS/IR,
-  // mas em branco por padrão: sem percentual nem edição manual, o campo
-  // fica vazio e não é enviado (backend recebe None e ignora na projeção).
-  useEffect(() => {
-    if (fgtsManual) return;
-    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualFgts) || 0) / 100);
-    setValorFgts(novo ? String(novo) : "");
-  }, [valorBruto, percentualFgts, fgtsManual]);
-  useEffect(() => {
-    if (dctfManual) return;
-    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualDctf) || 0) / 100);
-    setValorDctf(novo ? String(novo) : "");
-  }, [valorBruto, percentualDctf, dctfManual]);
   useEffect(() => {
     if (editFgtsManual) return;
     const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualFgts) || 0) / 100);
@@ -571,12 +631,9 @@ export default function FolhaPagamentoView() {
         descontos: parseFloat(descontos) || 0,
         percentual_inss: parseFloat(percentualInss) || 0, percentual_ir: parseFloat(percentualIr) || 0,
         valor_inss: parseFloat(valorInss) || 0, valor_ir: parseFloat(valorIr) || 0,
-        percentual_fgts: percentualFgts ? parseFloat(percentualFgts) : undefined,
-        valor_fgts: valorFgts ? parseFloat(valorFgts) : undefined,
-        percentual_dctf: percentualDctf ? parseFloat(percentualDctf) : undefined,
-        valor_dctf: valorDctf ? parseFloat(valorDctf) : undefined,
         observacao: observacao || undefined,
         recorrente, dia_vencimento: recorrente ? Number(diaVencimento) : null,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({
         tipo: "sucesso",
@@ -584,11 +641,9 @@ export default function FolhaPagamentoView() {
           ? "Lançamento de folha criado — as próximas competências serão geradas automaticamente em Contas a Pagar."
           : "Lançamento de folha criado.",
       });
-      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5");
+      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5"); setContaCorrenteId("");
       setPercentualInss(""); setValorInss(""); setInssManual(false);
       setPercentualIr(""); setValorIr(""); setIrManual(false);
-      setPercentualFgts(""); setValorFgts(""); setFgtsManual(false);
-      setPercentualDctf(""); setValorDctf(""); setDctfManual(false);
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
@@ -608,6 +663,7 @@ export default function FolhaPagamentoView() {
         percentual_dctf: r.percentual_dctf, valor_dctf: r.valor_dctf,
         data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
         recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
+        conta_corrente_id: r.conta_corrente_id,
       });
       setPagandoId(null);
       carregar();
@@ -638,6 +694,7 @@ export default function FolhaPagamentoView() {
     setEditObservacao(r.observacao || "");
     setEditRecorrente(r.recorrente);
     setEditDiaVencimento(r.dia_vencimento ? String(r.dia_vencimento) : "5");
+    setEditContaCorrenteId(r.conta_corrente_id ? String(r.conta_corrente_id) : "");
     setEditValorVale(arredonda2(r.valor_vale || 0));
     setEditValorLiquidoOriginal(r.valor_liquido);
     setEditMsg(null);
@@ -670,6 +727,7 @@ export default function FolhaPagamentoView() {
         valor_dctf: editValorDctf ? parseFloat(editValorDctf) : undefined,
         observacao: editObservacao || undefined,
         recorrente: editRecorrente, dia_vencimento: editRecorrente ? Number(editDiaVencimento) : null,
+        conta_corrente_id: editContaCorrenteId ? Number(editContaCorrenteId) : undefined,
         status: r.status, data_pagamento: r.data_pagamento || undefined,
       });
       setEditingId(null);
@@ -689,25 +747,33 @@ export default function FolhaPagamentoView() {
     return m;
   }, [regs]);
 
-  // Imprimir holerite (folha completa do mês, todos os funcionários daquela
-  // competência) — em PDF (identidade visual de relatórios) ou Excel.
+  // Imprimir holerite — em PDF (identidade visual de relatórios) ou Excel.
+  // Base comum: monta 1 seção por funcionário (usada tanto pelo botão por
+  // linha — 1 funcionário só — quanto pelo botão de lote "do mês filtrado").
   const [imprimindoHoleriteChave, setImprimindoHoleriteChave] = useState<string | null>(null);
+  const [imprimindoHoleriteMes, setImprimindoHoleriteMes] = useState(false);
   const [holeriteExportando, setHoleriteExportando] = useState(false);
-  async function imprimirHolerites(r: RegistroFolha, formato: "pdf" | "excel") {
+
+  async function gerarHolerites(lista: RegistroFolha[], subtitulo: string, base: string, formato: "pdf" | "excel") {
+    const secoes: SecaoFicha[] = lista.map((x) => ({
+      titulo: x.pessoa_nome,
+      colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
+      linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
+    }));
+    if (formato === "pdf") {
+      await exportarFichaPDF("Holerite — Folha de pagamento", subtitulo, secoes, base);
+    } else {
+      await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
+    }
+  }
+
+  // Botão POR LINHA — imprime o holerite só daquele funcionário (antes,
+  // apesar de ficar dentro da linha, ele juntava todo mundo da competência).
+  async function imprimirHoleriteLinha(r: RegistroFolha, formato: "pdf" | "excel") {
     setHoleriteExportando(true);
     try {
-      const doMes = (regs || []).filter((x) => x.competencia === r.competencia);
-      const secoes: SecaoFicha[] = doMes.map((x) => ({
-        titulo: x.pessoa_nome,
-        colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
-        linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
-      }));
-      const base = `holerite_${r.competencia}`;
-      if (formato === "pdf") {
-        await exportarFichaPDF("Holerite — Folha de pagamento", mesCompLabel(r.competencia), secoes, base);
-      } else {
-        await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
-      }
+      const base = `holerite_${r.pessoa_nome.replace(/\s+/g, "_")}_${r.competencia}`;
+      await gerarHolerites([r], mesCompLabel(r.competencia), base, formato);
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
     } finally {
@@ -716,30 +782,72 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  // Todos os funcionários que aparecem na tabela com os filtros atuais
+  // (Vencimento/Status/Pessoa/Tipo) — base do botão de lote "do mês filtrado".
+  const funcionariosFolhaFiltrados = useMemo(() => {
+    const vistos = new Set<number>();
+    const lista: RegistroFolha[] = [];
+    unificadaFiltrada.forEach((l) => {
+      if (l.tipo !== "funcionario") return;
+      const r = regsPorId[l.origem_id];
+      if (r && !vistos.has(r.id)) { vistos.add(r.id); lista.push(r); }
+    });
+    return lista;
+  }, [unificadaFiltrada, regsPorId]);
+
+  // Botão de LOTE — imprime de uma vez o holerite de todos os funcionários
+  // que estão passando pelo filtro atual da tabela (ex.: um mês específico).
+  async function imprimirHoleritesDoMes(formato: "pdf" | "excel") {
+    if (!funcionariosFolhaFiltrados.length) return;
+    setHoleriteExportando(true);
+    try {
+      const competencias = Array.from(new Set(funcionariosFolhaFiltrados.map((x) => x.competencia))).sort();
+      const subtitulo = competencias.length === 1
+        ? mesCompLabel(competencias[0])
+        : `${competencias.map(mesCompLabel).join(", ")} — filtro atual`;
+      const base = `holerites_${competencias.length === 1 ? competencias[0] : "filtro"}`;
+      await gerarHolerites(funcionariosFolhaFiltrados, subtitulo, base, formato);
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
+    } finally {
+      setHoleriteExportando(false);
+      setImprimindoHoleriteMes(false);
+    }
+  }
+
   // Imprimir recibo de pagamento (empreitada/contrato/diária) — reaproveita o
   // ReciboModal já usado no financeiro.
   const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
+  const mostraFormasGerais = categoria === "todos" || categoria === "funcionario";
+
   return (
     <div>
-      <TabBar
-        abas={[
-          { id: "funcionario" as const, label: "Funcionário" },
-          { id: "empreita" as const, label: "Empreita" },
-          { id: "contrato" as const, label: "Contrato" },
-          { id: "diarias" as const, label: "Diárias" },
-          { id: "ferias_decimo" as const, label: "Férias / 13º" },
-        ]}
-        ativa={subaba}
-        onChange={setSubaba}
-      />
+      {/* Seletor único de categoria — troca o que "Lançar" mostra E filtra
+          "Consultar" logo abaixo. "Todos" é a 1ª opção (item aprovado da
+          proposta): antes não existia nenhuma visão que juntasse as 5. */}
+      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+        {(["todos", "funcionario", "empreita", "contrato", "diarias", "ferias_decimo"] as const).map((cat) => (
+          <button key={cat} type="button" onClick={() => setCategoria(cat)}
+            style={{ fontSize: "0.82rem", fontWeight: 600, padding: "0.45rem 0.9rem", borderRadius: "999px",
+              border: `1px solid ${categoria === cat ? "var(--dourado)" : "var(--border)"}`,
+              background: categoria === cat ? "var(--dourado)" : "var(--surface)",
+              color: categoria === cat ? "var(--vinho-dark, #0A1F36)" : "var(--text-muted)", cursor: "pointer" }}>
+            {cat === "todos" ? "Todos" : LABEL_TIPO[cat === "diarias" ? "diaria" : cat]}
+          </button>
+        ))}
+      </div>
 
-      {subaba === "empreita" && <EmpreitadaView />}
-      {subaba === "contrato" && <ContratoView />}
-      {subaba === "diarias" && <DiariaView />}
-      {subaba === "ferias_decimo" && <FeriasDecimoTerceiroView />}
+      <div className="flex items-center gap-2 mb-2" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
+        Lançar
+      </div>
 
-      {subaba === "funcionario" && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
+      {categoria === "empreita" && <EmpreitadaView />}
+      {categoria === "contrato" && <ContratoView />}
+      {categoria === "diarias" && <DiariaView deepLinkDiariaId={deepLinkDiaria?.id} deepLinkModo={deepLinkDiaria?.modo} />}
+      {categoria === "ferias_decimo" && <FeriasDecimoTerceiroView />}
+
+      {mostraFormasGerais && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
       <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
       {anexarAberto && (
         <ModalDivididoDocumento title="Anexar comprovante — leitura automática (despesa)" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
@@ -748,8 +856,9 @@ export default function FolhaPagamentoView() {
         </ModalDivididoDocumento>
       )}
 
-      {/* 1) Novo lançamento de folha */}
-      <SecaoRecolhivel titulo="Novo lançamento de folha" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
+      {/* 1) Novo lançamento de folha — acento dourado */}
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.folha}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
+      <SecaoRecolhivel titulo="Nova folha — Funcionário" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
         <div className="mb-3" style={{ textAlign: "right" }}>
           <button className="btn-ghost" title="Anexar recibo ou comprovante e preencher por leitura automática" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
             <Paperclip size={13} /> Anexar recibo/comprovante
@@ -763,9 +872,9 @@ export default function FolhaPagamentoView() {
           <div><label style={labelStyleLote}>Competência (mês)</label>
             <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Valor bruto (R$)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={valorBruto} onChange={(e) => setValorBruto(e.target.value)} /></div>
+            <CampoMoeda style={selStyleLote} value={Number(valorBruto) || 0} onChange={(v) => setValorBruto(v ? String(v) : "")} /></div>
           <div><label style={labelStyleLote}>Outros descontos (R$)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
+            <CampoMoeda style={selStyleLote} value={Number(descontos) || 0} onChange={(v) => setDescontos(v ? String(v) : "")} /></div>
         </div>
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
           Competência = mês trabalhado. O pagamento (conta a pagar) é lançado no dia 5 do mês seguinte
@@ -783,27 +892,17 @@ export default function FolhaPagamentoView() {
             onChangeValor={(v) => { setValorIr(v); setIrManual(true); }}
           />
         </div>
-        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
-          FGTS/DCTF (abaixo) são opcionais — deixe em branco para lançar só o pagamento do funcionário. Preenchidos,
-          eles não alteram o valor líquido: servem para projetar as guias mensais consolidadas (todos os
-          funcionários) em "Gerar guias de FGTS/DCTF", mais abaixo.
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <CampoRetencao
-            label="FGTS" percentual={percentualFgts} valor={valorFgts}
-            onChangePercentual={(v) => { setPercentualFgts(v); setFgtsManual(false); }}
-            onChangeValor={(v) => { setValorFgts(v); setFgtsManual(true); }}
-          />
-          <CampoRetencao
-            label="DCTF" percentual={percentualDctf} valor={valorDctf}
-            onChangePercentual={(v) => { setPercentualDctf(v); setDctfManual(false); }}
-            onChangeValor={(v) => { setValorDctf(v); setDctfManual(true); }}
-          />
-        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div><label style={labelStyleLote}>Observação</label>
             <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
           <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong></span></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Conta bancária (opcional)</label>
+            <select style={selStyleLote} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+              <option value="">Não informar</option>
+              {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+            </select></div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
           <div className="flex items-center gap-2" style={{ paddingBottom: "0.4rem" }}>
@@ -826,33 +925,43 @@ export default function FolhaPagamentoView() {
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
         </button>
       </SecaoRecolhivel>
+      </div>
 
-      {/* 2) Vale de funcionário */}
-      <SecaoRecolhivel titulo="Vale de funcionário" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
+      {/* 2) Vale de funcionário — acento verde */}
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.vale}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
+      <SecaoRecolhivel titulo="Novo vale" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
         <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
+      </div>
 
-      {/* 3) Guias consolidadas de FGTS/DCTF — projeção de contas a pagar somando o
-          FGTS/DCTF lançado em todos os funcionários da competência escolhida. */}
+      {/* 3) Lançar guia de FGTS/DCTF — acento vermelho — manual ou por leitura
+          automática do PDF/foto da guia real. */}
+      <div style={{ borderLeft: `4px solid ${COR_LANCAR.guia}`, borderRadius: "var(--r-sm)", marginBottom: "0.9rem" }}>
       <SecaoRecolhivel
-        titulo="Gerar guias de FGTS/DCTF" icon={Plus} defaultAberta={false}
-        descricao="Projeta a guia mensal consolidada de FGTS e de DCTF (todos os funcionários) em Contas a Pagar"
+        titulo="Lançar guia de FGTS/DCTF" icon={Plus} defaultAberta={false}
+        descricao="Manual ou por leitura automática do PDF/foto da guia — cria a conta a pagar e guarda os dados para relatório"
       >
-        <GerarGuiasFgtsDctfSection />
+        <LancarGuiaFgtsDctfSection onLancado={() => { carregarUnificada(); carregarGuias(); }} />
       </SecaoRecolhivel>
+      </div>
       </>)}
 
-      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária), refletindo os filtros abaixo */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4 mt-4">
+      <div className="flex items-center gap-2 mb-2 mt-4" style={{ fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700, color: "var(--text-muted)" }}>
+        Consultar
+      </div>
+
+      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º), refletindo os filtros abaixo */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
         <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
         <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
         <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
       </div>
 
-      {/* Filtro da folha de pagamento unificada */}
+      {/* Filtro da folha de pagamento unificada — a categoria já vem do
+          seletor do topo; aqui só os filtros complementares. */}
       <div className="card mb-3">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha de pagamento</div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={labelStyleLote}>Vencimento — de</label>
             <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — até</label>
@@ -865,20 +974,35 @@ export default function FolhaPagamentoView() {
             <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
               <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
-          <div><label style={labelStyleLote}>Tipo</label>
-            <select style={selStyleLote} value={fUniTipo} onChange={(e) => setFUniTipo(e.target.value as any)}>
-              <option value="">Todos</option>
-              {Object.entries(LABEL_TIPO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select></div>
         </div>
       </div>
 
-      {/* Folha de pagamento — funcionário, empreita, contrato e diária num único ledger; recolhida por
-          padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
+      {/* Total filtrado + ação em lote de holerites — fora do cabeçalho clicável
+          da SecaoRecolhivel abaixo (não dá pra aninhar um <button> dentro do
+          <button> do cabeçalho), mas visualmente bem ao lado um do outro. */}
+      <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>
+        <span style={{ position: "relative" }}>
+          <button className="btn-ghost" type="button" title="Imprimir o holerite de todos os funcionários que estão passando pelo filtro atual (ex.: um mês específico)"
+            style={{ fontSize: "0.75rem" }} disabled={!funcionariosFolhaFiltrados.length}
+            onClick={() => setImprimindoHoleriteMes((v) => !v)}>
+            <Printer size={13} /> Imprimir holerite do mês
+          </button>
+          {imprimindoHoleriteMes && (
+            <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 6, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem", whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
+              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleritesDoMes("pdf")}>PDF</button>
+              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleritesDoMes("excel")}>Excel</button>
+            </span>
+          )}
+        </span>
+      </div>
+
+      {/* Folha de pagamento — funcionário, empreita, contrato, diária e férias/13º num único ledger;
+          recolhida por padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
       <SecaoRecolhivel
         titulo="Folha de pagamento" icon={Filter} defaultAberta={false}
-        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato e diária"
-        badge={<span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>}
+        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato, diária e férias/13º"
       >
         {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
         <div className="overflow-x-auto">
@@ -956,7 +1080,7 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Vencimento</label>
                               <input type="date" style={selStyleLote} value={editLinhaData} onChange={(e) => setEditLinhaData(e.target.value)} /></div>
                             <div><label style={labelStyleLote}>Valor (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editLinhaValor} onChange={(e) => setEditLinhaValor(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editLinhaValor) || 0} onChange={(v) => setEditLinhaValor(v ? String(v) : "")} /></div>
                           </div>
                           {editLinhaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editLinhaMsg}</p>}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -1018,15 +1142,15 @@ export default function FolhaPagamentoView() {
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
                           <span style={{ position: "relative" }}>
-                            <button className="btn-ghost" title="Imprimir holerite da folha completa deste mês" style={{ fontSize: "0.72rem" }}
+                            <button className="btn-ghost" title={`Imprimir holerite de ${r.pessoa_nome} (${mesCompLabel(r.competencia)})`} style={{ fontSize: "0.72rem" }}
                               onClick={() => setImprimindoHoleriteChave(imprimindoHoleriteChave === chave ? null : chave)}>
                               <Printer size={13} />
                             </button>
                             {imprimindoHoleriteChave === chave && (
-                              <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", whiteSpace: "nowrap" }}>
+                              <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem", whiteSpace: "nowrap" }}>
                                 <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
-                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHolerites(r, "pdf")}>PDF</button>
-                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHolerites(r, "excel")}>Excel</button>
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleriteLinha(r, "pdf")}>PDF</button>
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHoleriteLinha(r, "excel")}>Excel</button>
                               </span>
                             )}
                           </span>
@@ -1123,9 +1247,9 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Competência (mês)</label>
                               <input type="month" style={selStyleLote} value={editCompetencia} onChange={(e) => setEditCompetencia(e.target.value)} /></div>
                             <div><label style={labelStyleLote}>Valor bruto (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValorBruto} onChange={(e) => setEditValorBruto(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editValorBruto) || 0} onChange={(v) => setEditValorBruto(v ? String(v) : "")} /></div>
                             <div><label style={labelStyleLote}>Outros descontos (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editDescontos} onChange={(e) => setEditDescontos(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editDescontos) || 0} onChange={(v) => setEditDescontos(v ? String(v) : "")} /></div>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <CampoRetencao
@@ -1155,6 +1279,13 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Observação</label>
                               <input style={selStyleLote} value={editObservacao} onChange={(e) => setEditObservacao(e.target.value)} /></div>
                             <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Conta bancária (opcional)</label>
+                              <select style={selStyleLote} value={editContaCorrenteId} onChange={(e) => setEditContaCorrenteId(e.target.value)}>
+                                <option value="">Não informar</option>
+                                {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+                              </select></div>
                           </div>
                           {editValorVale > 0 && (
                             <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
@@ -1192,6 +1323,35 @@ export default function FolhaPagamentoView() {
         )}
       </SecaoRecolhivel>
 
+      {/* Relatório de guias de FGTS/DCTF já lançadas — dados estruturados
+          (não só o PDF anexado), para acompanhar competência a competência. */}
+      <SecaoRecolhivel titulo="Guias de FGTS/DCTF lançadas" icon={Filter} defaultAberta={false} descricao="Competência, valores e origem (manual ou leitura automática) de cada guia">
+        {!guias || !guias.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma guia lançada ainda.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Tipo</th><th>Competência</th><th>Cód. receita</th><th style={{ textAlign: "right" }}>Principal</th><th style={{ textAlign: "right" }}>Multa</th><th style={{ textAlign: "right" }}>Juros</th><th style={{ textAlign: "right" }}>Total</th><th>Vencimento</th><th>Origem</th></tr></thead>
+              <tbody>
+                {guias.map((g) => (
+                  <tr key={g.id}>
+                    <td>{g.tipo === "fgts" ? "FGTS" : "DCTF"}</td>
+                    <td>{mesCompLabel(g.competencia)}</td>
+                    <td>{g.codigo_receita || "—"}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(g.valor_principal)}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(g.valor_multa)}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(g.valor_juros)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(g.valor_total)}</td>
+                    <td>{formatDate(g.data_vencimento)}</td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{g.origem === "leitura_automatica" ? "Leitura automática" : "Manual"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SecaoRecolhivel>
+
       {/* Relatório de vales e descontos — vale de funcionário, filtrável e ordenável */}
       <SecaoRecolhivel titulo="Relatório de vales e descontos" icon={Filter} defaultAberta={false} descricao="Vales de funcionário lançados, com parcelamento e status de aplicação">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1218,6 +1378,7 @@ export default function FolhaPagamentoView() {
               <ThOrdenavel label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
               <th>Documento</th>
               <th>Conta bancária</th>
+              <th>Origem</th>
               <th>Ações</th>
             </tr></thead>
             <tbody>
@@ -1234,6 +1395,12 @@ export default function FolhaPagamentoView() {
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor_pago)}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.numero_documento_pagamento || "—"}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{rotuloContaVale(v.conta_corrente_id)}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}
+                      title={v.origem_lancamento ? `${v.origem_lancamento.produto} — nota ${v.origem_lancamento.numero_documento ?? "s/ nº"} — ${v.origem_lancamento.fornecedor_cliente ?? ""}` : undefined}>
+                    {v.origem_lancamento
+                      ? `${v.origem_lancamento.numero_lancamento} — ${v.origem_lancamento.produto}`
+                      : "Lançamento avulso"}
+                  </td>
                   <td>
                     <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                       disabled={excluindoValeId === v.id}
@@ -1244,7 +1411,7 @@ export default function FolhaPagamentoView() {
                 </tr>
                 {expandedValeId === v.id && (
                   <tr>
-                    <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                    <td colSpan={12} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                       {editingValeId === v.id ? (
                         <div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1253,7 +1420,7 @@ export default function FolhaPagamentoView() {
                                 {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
                               </select></div>
                             <div><label style={labelStyleLote}>Valor total (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValeValorTotal} onChange={(e) => setEditValeValorTotal(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editValeValorTotal) || 0} onChange={(v) => setEditValeValorTotal(v ? String(v) : "")} /></div>
                             <div><label style={labelStyleLote}>Forma de pagamento</label>
                               <select style={selStyleLote} value={editValeFormaPagamento} onChange={(e) => setEditValeFormaPagamento(e.target.value)}>
                                 {FORMAS_VALE.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1299,9 +1466,9 @@ export default function FolhaPagamentoView() {
                                   <td style={{ fontSize: "0.78rem" }}>{mesCompLabel(p.competencia)}</td>
                                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
                                     {editandoParcela?.parcelaId === p.id ? (
-                                      <input type="number" inputMode="decimal" autoFocus
+                                      <CampoMoeda autoFocus
                                         style={{ ...selStyleLote, width: "7rem", textAlign: "right", display: "inline-block" }}
-                                        value={editParcelaValor} onChange={(e) => setEditParcelaValor(e.target.value)} />
+                                        value={Number(editParcelaValor) || 0} onChange={(v) => setEditParcelaValor(v ? String(v) : "")} />
                                     ) : formatBRL(p.valor)}
                                   </td>
                                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{p.aplicada ? "Aplicada na folha" : "Pendente"}</td>
@@ -1316,10 +1483,17 @@ export default function FolhaPagamentoView() {
                                           onClick={() => { setEditandoParcela(null); setParcelaErro(null); }}>Cancelar</button>
                                       </div>
                                     ) : (
-                                      <button className="btn-ghost" title="Editar esta parcela" style={{ fontSize: "0.72rem" }}
-                                        onClick={() => abrirEdicaoParcela(v, p)}>
-                                        <Pencil size={12} />
-                                      </button>
+                                      <div style={{ display: "flex", gap: "0.3rem" }}>
+                                        <button className="btn-ghost" title="Editar esta parcela" style={{ fontSize: "0.72rem" }}
+                                          onClick={() => abrirEdicaoParcela(v, p)}>
+                                          <Pencil size={12} />
+                                        </button>
+                                        <button className="btn-ghost" title={p.aplicada ? "Parcela já aplicada na folha — não pode ser excluída" : "Excluir esta parcela"}
+                                          style={{ fontSize: "0.72rem", color: p.aplicada ? undefined : "var(--red)" }}
+                                          disabled={p.aplicada} onClick={() => pedirExcluirParcela(v, p)}>
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
                                     )}
                                   </td>
                                 </tr>
@@ -1328,6 +1502,9 @@ export default function FolhaPagamentoView() {
                           </table>
                           {parcelaErro && editandoParcela?.valeId === v.id && (
                             <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{parcelaErro}</p>
+                          )}
+                          {excluirParcelaErro && excluindoParcela === null && (
+                            <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{excluirParcelaErro}</p>
                           )}
                           {v.observacao && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Observação: {v.observacao}</p>}
                           <button className="btn-ghost" onClick={() => iniciarEdicaoVale(v)}>
@@ -1340,7 +1517,7 @@ export default function FolhaPagamentoView() {
                 )}
                 </Fragment>
               ))}
-              {vales && !valesOrdenados.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
+              {vales && !valesOrdenados.length && <tr><td colSpan={12} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1353,11 +1530,12 @@ export default function FolhaPagamentoView() {
               <th style={{ width: "1.5rem" }} />
               <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
-              <ThOrdenavel label="Origem" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdenavel label="Abatido de" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <th>Parcela</th>
               <ThOrdenavel label="Valor" campo="valor" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} alinhar="right" />
               <ThOrdenavel label="Forma de pagamento" campo="forma_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
               <th>Conta bancária</th>
+              <th>Origem</th>
               <th>Ações</th>
             </tr></thead>
             <tbody>
@@ -1377,6 +1555,12 @@ export default function FolhaPagamentoView() {
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor)}</td>
                   <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE_AVULSO.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{rotuloContaVale(v.conta_corrente_id)}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}
+                      title={v.origem_lancamento ? `${v.origem_lancamento.produto} — nota ${v.origem_lancamento.numero_documento ?? "s/ nº"} — ${v.origem_lancamento.fornecedor_cliente ?? ""}` : undefined}>
+                    {v.origem_lancamento
+                      ? `${v.origem_lancamento.numero_lancamento} — ${v.origem_lancamento.produto}`
+                      : "Lançamento avulso"}
+                  </td>
                   <td>
                     <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                       disabled={excluindoValeAvulsoId === v.id}
@@ -1387,14 +1571,14 @@ export default function FolhaPagamentoView() {
                 </tr>
                 {expandedValeAvulsoId === v.id && (
                   <tr>
-                    <td colSpan={9} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                    <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                       {editingValeAvulsoId === v.id ? (
                         <div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-                            <div><label style={labelStyleLote}>Origem</label>
+                            <div><label style={labelStyleLote}>Abatido de</label>
                               <input style={selStyleLote} value={v.origem_descricao} disabled /></div>
                             <div><label style={labelStyleLote}>Valor (R$)</label>
-                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValeAvulsoValor} onChange={(e) => setEditValeAvulsoValor(e.target.value)} /></div>
+                              <CampoMoeda style={selStyleLote} value={Number(editValeAvulsoValor) || 0} onChange={(v) => setEditValeAvulsoValor(v ? String(v) : "")} /></div>
                             <div><label style={labelStyleLote}>Forma de pagamento</label>
                               <select style={selStyleLote} value={editValeAvulsoFormaPagamento} onChange={(e) => setEditValeAvulsoFormaPagamento(e.target.value)}>
                                 {FORMAS_VALE_AVULSO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1436,7 +1620,7 @@ export default function FolhaPagamentoView() {
                 )}
                 </Fragment>
               ))}
-              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
+              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1478,6 +1662,38 @@ export default function FolhaPagamentoView() {
           onCancelar={() => setDivergenciaValeAvulso(null)}
           onConfirmar={(acao) => salvarEdicaoValeAvulso(divergenciaValeAvulso.v, acao)}
         />
+      )}
+      {excluindoParcela && (
+        <Modal title="Excluir parcela do vale" onClose={() => setExcluindoParcela(null)} width="460px">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.85rem" }}>
+            <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
+              <p style={{ marginBottom: "0.3rem" }}>Excluir esta parcela muda o valor total lançado do vale.</p>
+              <p>Valor da parcela: <b>{formatBRL(excluindoParcela.valor_parcela)}</b></p>
+              <p>Valor do vale: <b>{formatBRL(excluindoParcela.valor_vale)}</b></p>
+              <p>Soma das parcelas após excluir (concedendo): <b>{formatBRL(excluindoParcela.soma_apos)}</b></p>
+            </div>
+            {excluirParcelaErro && <p style={{ color: "var(--red)" }}>{excluirParcelaErro}</p>}
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.3rem" }}>
+              <button className="btn-ghost" style={{ textAlign: "left", padding: "0.6rem 0.8rem" }}
+                disabled={excluirParcelaSalvando} onClick={() => confirmarExcluirParcela("conceder")}>
+                <b>Conceder</b>
+                <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                  Só esta parcela some — o valor total do vale não muda, a soma das parcelas fica menor.
+                </div>
+              </button>
+              {excluindoParcela.parcelas_pendentes_posteriores > 0 && (
+                <button className="btn-ghost" style={{ textAlign: "left", padding: "0.6rem 0.8rem" }}
+                  disabled={excluirParcelaSalvando} onClick={() => confirmarExcluirParcela("redistribuir_igual")}>
+                  <b>Redistribuir igualmente</b>
+                  <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                    Divide o valor desta parcela entre as {excluindoParcela.parcelas_pendentes_posteriores} parcela(s) pendente(s) posteriores — a soma se mantém.
+                  </div>
+                </button>
+              )}
+              <button className="btn-ghost" disabled={excluirParcelaSalvando} onClick={() => setExcluindoParcela(null)}>Cancelar</button>
+            </div>
+          </div>
+        </Modal>
       )}
       {confirmarDivergenciaFolha && (
         <Modal title="Valor líquido diferente do lançado" onClose={() => setConfirmarDivergenciaFolha(null)} width="440px">
@@ -1596,7 +1812,7 @@ function ValeFuncionarioSection({
             <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipos.join(", ")})</option>)}
           </select></div>
         <div><label style={labelStyleLote}>Valor total (R$)</label>
-          <input type="number" inputMode="decimal" style={selStyleLote} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valorTotal) || 0} onChange={(v) => setValorTotal(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Forma de pagamento</label>
           <select style={selStyleLote} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
             {FORMAS_VALE.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1636,107 +1852,133 @@ function ValeFuncionarioSection({
 }
 
 /*
- * Guias consolidadas de FGTS/DCTF — só PROJEÇÃO interna de fluxo de caixa:
- * soma o valor_fgts/valor_dctf de TODOS os lançamentos de folha de uma
- * competência e cria duas contas a pagar (Guia FGTS / Guia DCTF), com
- * vencimento no dia 20 do mês seguinte (editável, assim como o valor). Sem
- * fórmula legal real de FGTS/DCTF e sem qualquer integração com sistemas do
- * governo — os valores vêm só do que o usuário/contador lançou na folha.
- * Mostra a soma calculada ANTES de confirmar, e permite ajustar valor/
- * vencimento na hora (o backend também aceita reajuste depois, pela edição
- * normal em Contas a Pagar).
+ * Lançar guia de FGTS/DCTF — manual ou por leitura automática do PDF/foto da
+ * guia real (mesmo leitor que já reconhece boleto, ver POST /financeiro/
+ * ler-documento). Cria a conta a pagar (mesmo padrão de sempre) e grava os
+ * campos estruturados numa tabela própria (GuiaFolhaEncargo), para dar pra
+ * montar relatório em cima disso depois. Substitui o antigo "Gerar guias de
+ * FGTS/DCTF" (soma projetada dos lançamentos de folha, sem vínculo com uma
+ * guia real, sem cálculo de fórmula legal) — decisão do usuário.
  */
-function GerarGuiasFgtsDctfSection() {
+function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
+  const [tipo, setTipo] = useState<"fgts" | "dctf">("fgts");
   const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
-  const [preview, setPreview] = useState<PreviewGuiasFgtsDctf | null>(null);
-  const [valorFgts, setValorFgts] = useState("");
-  const [valorDctf, setValorDctf] = useState("");
+  const [codigoReceita, setCodigoReceita] = useState("");
+  const [valorPrincipal, setValorPrincipal] = useState("");
+  const [valorMulta, setValorMulta] = useState("0");
+  const [valorJuros, setValorJuros] = useState("0");
   const [dataVencimento, setDataVencimento] = useState("");
-  const [buscando, setBuscando] = useState(false);
-  const [gerando, setGerando] = useState(false);
+  const [linhaDigitavel, setLinhaDigitavel] = useState("");
+  const [origem, setOrigem] = useState<"manual" | "leitura_automatica">("manual");
+  const [arquivoLido, setArquivoLido] = useState<File | null>(null);
+  const [lendo, setLendo] = useState(false);
+  const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
-  async function calcularProjecao() {
-    setMsg(null);
-    setPreview(null);
-    if (!competencia) { setMsg({ tipo: "erro", texto: "Informe a competência." }); return; }
-    setBuscando(true);
+  const valorTotal = (parseFloat(valorPrincipal) || 0) + (parseFloat(valorMulta) || 0) + (parseFloat(valorJuros) || 0);
+
+  async function lerGuia(file: File) {
+    setLendo(true); setMsg(null);
     try {
-      const p = await fetchPreviewGuiasFgtsDctf(competencia);
-      setPreview(p);
-      setValorFgts(String(p.valor_fgts));
-      setValorDctf(String(p.valor_dctf));
-      setDataVencimento(p.data_vencimento_sugerida);
-      if (p.quantidade_lancamentos === 0) {
-        setMsg({ tipo: "erro", texto: "Nenhum lançamento de folha encontrado para essa competência." });
-      } else if (p.ja_gerado) {
-        setMsg({ tipo: "erro", texto: "As guias dessa competência já foram geradas — edite os lançamentos existentes em Contas a Pagar em vez de gerar de novo." });
+      const d = await lerDocumentoFinanceiro(file);
+      if (d.tipo_documento === "guia_dctf") setTipo("dctf");
+      else if (d.tipo_documento === "guia_fgts") setTipo("fgts");
+      if (d.competencia) setCompetencia(d.competencia);
+      if (d.codigo_receita) setCodigoReceita(d.codigo_receita);
+      if (d.valor_principal != null) setValorPrincipal(String(d.valor_principal));
+      if (d.valor_multa != null) setValorMulta(String(d.valor_multa));
+      if (d.valor_juros != null) setValorJuros(String(d.valor_juros));
+      if (d.data_vencimento) setDataVencimento(d.data_vencimento);
+      if (d.linha_digitavel) setLinhaDigitavel(d.linha_digitavel);
+      setOrigem("leitura_automatica");
+      setArquivoLido(file);
+      if (d.tipo_documento !== "guia_fgts" && d.tipo_documento !== "guia_dctf") {
+        setMsg({ tipo: "erro", texto: "Este documento não parece uma guia de FGTS/DCTF — confira os campos preenchidos antes de lançar." });
       }
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao calcular a projeção" });
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao ler o documento" });
     } finally {
-      setBuscando(false);
+      setLendo(false);
     }
   }
 
-  async function confirmarGeracao() {
-    if (!preview) return;
+  async function lancar() {
     setMsg(null);
-    setGerando(true);
+    if (!competencia || !dataVencimento || !valorPrincipal) {
+      setMsg({ tipo: "erro", texto: "Informe competência, valor principal e vencimento." });
+      return;
+    }
+    setSalvando(true);
     try {
-      await gerarGuiasFgtsDctf({
-        competencia,
-        valor_fgts: valorFgts ? parseFloat(valorFgts) : undefined,
-        valor_dctf: valorDctf ? parseFloat(valorDctf) : undefined,
-        data_vencimento: dataVencimento || undefined,
+      const guia = await lancarGuiaFolhaEncargo({
+        tipo, competencia, codigo_receita: tipo === "dctf" ? (codigoReceita || undefined) : undefined,
+        valor_principal: parseFloat(valorPrincipal) || 0,
+        valor_multa: parseFloat(valorMulta) || 0, valor_juros: parseFloat(valorJuros) || 0,
+        data_vencimento: dataVencimento, linha_digitavel: linhaDigitavel || undefined, origem,
       });
-      setMsg({ tipo: "sucesso", texto: "Guias de FGTS e DCTF criadas em Contas a Pagar — valor e vencimento continuam editáveis por lá." });
-      setPreview(null);
+      if (arquivoLido && guia.numero_lancamento) {
+        await anexarArquivoLancamento(guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF").catch(() => {});
+      }
+      setMsg({ tipo: "sucesso", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar.` });
+      setValorPrincipal(""); setValorMulta("0"); setValorJuros("0"); setDataVencimento(""); setLinhaDigitavel(""); setCodigoReceita("");
+      setArquivoLido(null); setOrigem("manual");
+      onLancado();
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao gerar as guias" });
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar a guia" });
     } finally {
-      setGerando(false);
+      setSalvando(false);
     }
   }
 
   return (
     <div>
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-        Soma o FGTS e o DCTF lançados (opcionalmente) em CADA lançamento de folha da competência escolhida e cria
-        duas contas a pagar — "Guia FGTS" e "Guia DCTF" — com vencimento sugerido no dia 20 do mês seguinte. É só
-        uma projeção para o fluxo de caixa: ajuste o valor/vencimento antes de confirmar (ou depois, em Contas a
-        Pagar). Só é possível gerar uma vez por competência.
+        Lance a guia de verdade — arraste o PDF ou foto da guia (leitura automática preenche os campos abaixo) ou
+        digite manualmente. Cria a conta a pagar e guarda os dados da guia para relatório.
       </p>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
-        <div><label style={labelStyleLote}>Competência (mês)</label>
-          <input type="month" style={selStyleLote} value={competencia} onChange={(e) => { setCompetencia(e.target.value); setPreview(null); setMsg(null); }} /></div>
-        <button className="btn-ghost" title="Calcular a soma projetada de FGTS/DCTF dessa competência" style={{ fontSize: "0.8rem" }} onClick={calcularProjecao} disabled={buscando}>
-          <RefreshCw size={13} /> {buscando ? "Calculando…" : "Calcular projeção"}
-        </button>
+      <div className="flex items-center gap-2 mb-3">
+        {(["fgts", "dctf"] as const).map((t) => (
+          <button key={t} type="button" onClick={() => setTipo(t)}
+            style={{ fontSize: "0.78rem", fontWeight: 700, padding: "0.35rem 0.9rem", borderRadius: "999px",
+              border: `1px solid ${tipo === t ? COR_LANCAR.guia : "var(--border)"}`,
+              background: tipo === t ? "rgba(224,92,92,0.12)" : "transparent",
+              color: tipo === t ? COR_LANCAR.guia : "var(--text-muted)" }}>
+            {t === "fgts" ? "FGTS" : "DCTF"}
+          </button>
+        ))}
       </div>
-
-      {preview && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label style={labelStyleLote}>Guia FGTS projetada (R$) — {preview.quantidade_lancamentos} lançamento(s)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={valorFgts} onChange={(e) => setValorFgts(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Guia DCTF projetada (R$) — {preview.quantidade_lancamentos} lançamento(s)</label>
-            <input type="number" inputMode="decimal" style={selStyleLote} value={valorDctf} onChange={(e) => setValorDctf(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Vencimento das guias</label>
-            <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
-        </div>
-      )}
-
+      <Dropzone
+        compact
+        accept="application/pdf,image/jpeg,image/png"
+        disabled={lendo}
+        label={lendo ? "Lendo…" : "Arraste a guia aqui (PDF ou foto), ou"}
+        onFiles={(files) => lerGuia(files[0])}
+      />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 mb-3">
+        <div><label style={labelStyleLote}>Competência</label>
+          <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
+        {tipo === "dctf" && (
+          <div><label style={labelStyleLote}>Código da receita</label>
+            <input style={selStyleLote} value={codigoReceita} onChange={(e) => setCodigoReceita(e.target.value)} /></div>
+        )}
+        <div><label style={labelStyleLote}>Valor principal (R$)</label>
+          <CampoMoeda style={selStyleLote} value={Number(valorPrincipal) || 0} onChange={(v) => setValorPrincipal(v ? String(v) : "")} /></div>
+        <div><label style={labelStyleLote}>Multa (R$)</label>
+          <CampoMoeda style={selStyleLote} value={Number(valorMulta) || 0} onChange={(v) => setValorMulta(v ? String(v) : "")} /></div>
+        <div><label style={labelStyleLote}>Juros (R$)</label>
+          <CampoMoeda style={selStyleLote} value={Number(valorJuros) || 0} onChange={(v) => setValorJuros(v ? String(v) : "")} /></div>
+        <div><label style={labelStyleLote}>Vencimento</label>
+          <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
+      </div>
+      <p style={{ fontSize: "0.8rem", marginBottom: "0.75rem" }}>Valor total: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorTotal)}</strong></p>
       {msg?.tipo === "erro" ? (
         <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
       ) : (
-        <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para gerar guias de outra competência." />
+        <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para lançar outra guia." />
       )}
-
-      {preview && !preview.ja_gerado && preview.quantidade_lancamentos > 0 && (
-        <button className="btn-primary" title="Criar as duas contas a pagar (Guia FGTS e Guia DCTF)" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={confirmarGeracao} disabled={gerando}>
-          <Check size={14} /> {gerando ? "Gerando…" : "Gerar guias de FGTS/DCTF"}
-        </button>
-      )}
+      <button className="btn-primary" title="Lançar a guia" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={lancar} disabled={salvando}>
+        <Check size={14} /> {salvando ? "Salvando…" : "Lançar guia"}
+      </button>
     </div>
   );
 }

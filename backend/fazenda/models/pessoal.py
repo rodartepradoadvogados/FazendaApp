@@ -52,7 +52,7 @@ class Pessoa(SQLModel, table=True):
     # etc.) ainda enxergam todas as pessoas, independente da fazenda.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
-    tipo: str  # Funcionário | Veterinário | Zootecnista | Vet/Zootec. | Diarista | Prestador de serviços | ... (CSV de TipoPessoa.nome)
+    tipo: str  # Funcionário | Veterinário | Zootecnista | Diarista | Prestador de serviços | ... (CSV de TipoPessoa.nome)
     telefone: Optional[str] = None  # legado — sempre o 1º item de `telefones`, mantido para quem lê Pessoa.email/telefone direto (ex.: destinatario_recibo)
     email: Optional[str] = None  # legado — sempre o 1º item de `emails`
     telefones: Optional[str] = None  # JSON: lista de strings — 0 a N telefones (mesmo padrão de NoticiaNews.fontes)
@@ -88,6 +88,16 @@ class Pessoa(SQLModel, table=True):
     endereco_bairro: Optional[str] = None
     endereco_cidade: Optional[str] = None
     endereco_uf: Optional[str] = None
+
+    # Tipo de vínculo (ago/2026) — hoje só coletado/usado pelo cadastro de
+    # Equipe CowData (ver painel_cowdata.py), mas mora aqui (não num modelo
+    # à parte) pelo mesmo motivo dos campos civis acima: Pessoa já é o
+    # cadastro reaproveitado por Equipe CowData, e nada impede uma
+    # fazenda-cliente usar os mesmos campos no futuro. "funcionario" usa
+    # salario_base (acima); "pj" usa pagamento_mensal + subtipo_pj.
+    tipo_vinculo: Optional[str] = None  # "funcionario" | "pj"
+    subtipo_pj: Optional[str] = None  # "MEI" | "ME" | "EPP" | "Outros" — só quando tipo_vinculo="pj"
+    pagamento_mensal: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +159,12 @@ class FolhaPagamento(SQLModel, table=True):
     # Centro de custo de TODAS as contas a pagar geradas por esta folha —
     # nasce em "Pecuária Leiteira" (perfil típico da folha), mas é editável.
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente da fazenda de onde sai o pagamento — vínculo RELACIONAL
+    # (não string), mesmo padrão de ValeFuncionario.conta_corrente_id: OPCIONAL
+    # (ao contrário do vale, aqui nunca é obrigatória), preenche
+    # ContaGerencial.conta_bancaria (o que os relatórios gerenciais filtram) e
+    # permite a um formulário de edição pré-selecionar a conta já escolhida.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -191,6 +207,8 @@ class FeriasFuncionario(SQLModel, table=True):
     # Centro de custo da conta a pagar gerada — nasce em "Pecuária Leiteira",
     # mas é editável (mesmo padrão de FolhaPagamento).
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -217,6 +235,83 @@ class DecimoTerceiro(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     numero_lancamento_gerado: Optional[str] = None
     centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Rescisão contratual (CLT) — mesma família de férias/13º acima, mas com um
+# passo a mais: nasce como `simulacao` (livre para editar/recalcular, nada
+# lançado em Financeiro) e só vira lançamento real ao `fechar` (status muda
+# para `fechada`, gera 1 ou N ContaGerencial conforme `forma_lancamento`).
+# ---------------------------------------------------------------------------
+class RescisaoFuncionario(SQLModel, table=True):
+    """Uma rescisão contratual (CLT) de uma pessoa — verbas calculadas
+    (saldo de salário, aviso prévio, férias vencidas/proporcionais, 13º
+    proporcional, multa do FGTS estimada), com deduções (INSS/IR/vale em
+    aberto) e o fluxo `simulacao` → `fechada`. Diferente de férias/13º, o
+    lançamento em Contas a Pagar só é criado ao FECHAR (a simulação é livre
+    para editar/excluir sem gerar nada em Financeiro) — ver
+    `_aplicar_calculo_rescisao`/`POST /cadastro/rescisoes/{id}/fechar` em
+    `routers/cadastro/rh_folha.py`. Substitui o antigo par
+    `GET/POST /cadastro/rescisao` (removido), que só gravava a conta a pagar,
+    sem tabela de acompanhamento própria — rescisões criadas por aquele
+    endpoint legado continuam visíveis, como registro somente-leitura, na
+    listagem nova (ver `legado` no retorno de `GET /cadastro/rescisoes`)."""
+
+    __tablename__ = "rescisao_funcionario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    tipo_rescisao: str  # sem_justa_causa | pedido_demissao | justa_causa | acordo_mutuo
+    data_desligamento: date
+    dias_ferias_vencidas: int = 0
+    aviso_previo_trabalhado: bool = False
+    # Snapshot do salário/admissão da Pessoa no momento do cálculo — para a
+    # simulação/registro fechado não mudar de valor se a Pessoa for editada
+    # depois (mesmo motivo de qualquer outro snapshot deste arquivo).
+    salario_base: float
+    data_admissao: date
+    # Seis verbas — cada uma é `override do usuário if informado else valor
+    # calculado por calcular_rescisao()` (ver _aplicar_calculo_rescisao).
+    valor_saldo_salario: float = 0.0
+    valor_aviso_previo: float = 0.0
+    valor_ferias_vencidas: float = 0.0
+    valor_ferias_proporcionais: float = 0.0
+    valor_decimo_terceiro_proporcional: float = 0.0
+    valor_multa_fgts: float = 0.0
+    # Deduções — sempre informadas pelo usuário (nunca calculadas automaticamente).
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
+    valor_vale_em_aberto: float = 0.0
+    # valor_bruto = soma das 6 verbas; valor_total = bruto - deduções — ambos
+    # SEMPRE recomputados pelo servidor (nunca aceitos do cliente).
+    valor_bruto: float = 0.0
+    valor_total: float = 0.0
+    # Metadados de exibição (dias/meses/percentual por trás de cada verba,
+    # devolvidos por calcular_rescisao) — guardados para não recalcular ao
+    # montar `_detalhe_rescisao`.
+    dias_saldo_salario: int = 0
+    dias_aviso_previo: int = 0
+    dias_aviso_previo_indenizados: int = 0
+    meses_ferias_proporcionais: int = 0
+    meses_decimo_terceiro: int = 0
+    percentual_multa_fgts: float = 0.0
+    status: str = "simulacao"  # simulacao | fechada
+    forma_lancamento: Optional[str] = None  # unico | detalhado — só definido ao fechar
+    data_fechamento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    inativou_pessoa: bool = False
+    observacao: Optional[str] = None
+    # nº do lançamento (LC-...) criado em Contas a Pagar ao fechar — mesmo
+    # padrão de FeriasFuncionario/DecimoTerceiro.numero_lancamento_gerado.
+    numero_lancamento_gerado: Optional[str] = None
+    centro_custo: str = "Pecuária Leiteira"
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -469,6 +564,13 @@ class Diaria(SQLModel, table=True):
     dia_semana_auditoria: Optional[int] = None  # 0=segunda ... 6=domingo (frequencia == semanal)
     intervalo_dias_auditoria: Optional[int] = None  # frequencia == intervalo_dias
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Marco do controle por calendário: NULL = esta diária nunca passou pelo
+    # calendário de dias trabalhados e continua 100% na regra antiga
+    # (auditorias agregadas + ajuste manual + contagem cega). Quando o usuário
+    # salva o calendário pela primeira vez, vira a data mais antiga já coberta
+    # por um envio — a partir dela quem manda é DiariaDia; antes dela, o
+    # histórico legado permanece intacto. Só anda para trás, nunca para frente.
+    controle_por_dia_desde: Optional[date] = None
 
 
 class DiariaPagamento(SQLModel, table=True):
@@ -482,6 +584,8 @@ class DiariaPagamento(SQLModel, table=True):
     valor: float
     observacao: Optional[str] = None
     numero_lancamento_gerado: Optional[str] = None
+    # Conta corrente de onde sai o pagamento — ver FolhaPagamento.conta_corrente_id.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
@@ -507,6 +611,23 @@ class DiariaAuditoria(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class DiariaDia(SQLModel, table=True):
+    """Exceção do dia a dia de uma diária — só existe linha para o dia que
+    FOGE do padrão. Sem linha = dia trabalhado (o calendário nasce todo
+    marcado, e o usuário só toca no dia em que o diarista não veio)."""
+    __tablename__ = "diaria_dia"
+    __table_args__ = (UniqueConstraint("diaria_id", "data", name="uq_diaria_dia_diaria_data"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    diaria_id: int = Field(foreign_key="diaria.id", index=True)
+    data: date = Field(index=True)
+    trabalhado: bool = False
+    observacao: Optional[str] = None
+    registrado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
 class ParametroDiariaPadrao(SQLModel, table=True):
     """Configuração-padrão da auditoria periódica de diárias, definida em
     Configurações > Parâmetros > Folha de pagamento/RH. Copiada para os campos
@@ -528,3 +649,35 @@ class ParametroDiariaPadrao(SQLModel, table=True):
     intervalo_dias_auditoria: int = 7
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class GuiaFolhaEncargo(SQLModel, table=True):
+    """Guia de FGTS ou DCTF lançada em Folha de Pagamento > Ações > "Lançar
+    guia de FGTS/DCTF" — manual ou pré-preenchida por leitura automática do
+    PDF/foto da guia (ver fazenda.rules.leitura_documento, tipo_documento
+    'guia_fgts'/'guia_dctf'). Guarda os campos estruturados da guia (não só
+    o PDF anexado), para dar pra montar relatório em cima disso depois — o
+    PDF original, se enviado, fica vinculado ao mesmo numero_lancamento via
+    LancamentoAnexo (mesmo mecanismo de qualquer outro anexo financeiro).
+    Substitui o antigo "Gerar guias de FGTS/DCTF" (soma automática projetada
+    dos lançamentos de folha, sem vínculo com uma guia real)."""
+
+    __tablename__ = "guia_folha_encargo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    tipo: str  # "fgts" | "dctf"
+    competencia: str  # "AAAA-MM"
+    codigo_receita: Optional[str] = None  # só DCTF (código da receita do DARF)
+    valor_principal: float
+    valor_multa: float = 0.0
+    valor_juros: float = 0.0
+    valor_total: float
+    data_vencimento: date
+    linha_digitavel: Optional[str] = None
+    # Vínculo com a conta a pagar criada junto (mesmo padrão de LancamentoAnexo)
+    # e, por tabela, com qualquer anexo do PDF/foto da guia original.
+    numero_lancamento: Optional[str] = Field(default=None, index=True)
+    origem: str = "manual"  # "manual" | "leitura_automatica"
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)

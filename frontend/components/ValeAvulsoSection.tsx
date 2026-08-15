@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { criarValeAvulso, fetchContasCorrentes, type ContaCorrenteCadastro } from "@/lib/api";
 import { lbl, inputSm } from "@/components/estiloCampoAvulso";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 const FORMAS_VALE_AVULSO = [
   { id: "dinheiro", label: "Dinheiro" },
@@ -72,7 +73,7 @@ export default function ValeAvulsoSection({
       </div>
       <div>
         <label style={lbl}>Valor do vale (R$)</label>
-        <input type="number" step="0.01" style={inputSm} value={valor} onChange={(e) => setValor(e.target.value)} />
+        <CampoMoeda style={inputSm} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} />
       </div>
       <div>
         <label style={lbl}>Forma de pagamento</label>

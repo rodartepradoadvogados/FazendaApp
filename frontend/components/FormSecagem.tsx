@@ -260,7 +260,7 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
           const estoqueItem = estoque.find((e) => e.nome === item.produto);
           const compativeis = unidadesCompativeis(estoqueItem?.unidade);
           return (
-            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem", position: "relative" }}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Campo label={`Medicamento ${idx + 1}`}>
                   <select style={inputStyle} value={item.produto} onChange={(e) => escolherProduto(idx, e.target.value)}>
@@ -308,7 +308,7 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         </label>
       </div>
       {aplicarVacinaPreParto && (
-        <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.75rem" }}>
           <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
             <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
             Incluir itens sem estoque

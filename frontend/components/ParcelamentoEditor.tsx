@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { CampoMoeda } from "@/components/CampoMoeda";
 
 export type Parcela = { data_vencimento: string; valor: string };
 
@@ -49,7 +50,7 @@ export function dividirParcelasPorFrequencia(valorTotal: number, qtd: number, pr
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 const inputSm: React.CSSProperties = {
   fontSize: "0.8rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem",
 };
 
 /**
@@ -128,7 +129,7 @@ export function ParcelamentoEditor({
               {parcelas.map((p, i) => (
                 <tr key={i}>
                   <td><input type="date" value={p.data_vencimento} onChange={(e) => atualizarParcela(i, "data_vencimento", e.target.value)} style={inputSm} /></td>
-                  <td><input type="number" step="0.01" value={p.valor} onChange={(e) => atualizarParcela(i, "valor", e.target.value)} style={{ ...inputSm, width: "110px" }} /></td>
+                  <td><CampoMoeda value={Number(p.valor) || 0} onChange={(v) => atualizarParcela(i, "valor", v ? String(v) : "")} style={{ ...inputSm, width: "110px" }} /></td>
                   <td><button type="button" className="btn-ghost" onClick={() => removerParcela(i)} aria-label="Remover parcela"><Trash2 size={13} /></button></td>
                 </tr>
               ))}

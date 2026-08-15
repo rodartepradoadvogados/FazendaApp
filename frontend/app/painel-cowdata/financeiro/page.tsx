@@ -7,12 +7,9 @@ import {
   type LancamentoCowData, type ResumoFinanceiroCowData, type MovimentoCowData, type FluxoCaixaCowDataMes, type DreCowData,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
+import { usePainelCowDataCor, usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
-const inputStyle: React.CSSProperties = {
-  background: "#0a0e1a", border: `1px solid ${COR.borda}`, borderRadius: "6px", padding: "0.45rem 0.6rem", color: COR.texto, fontSize: "0.82rem",
-};
-const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
 const ABAS = ["lancamentos", "dre", "fluxo", "livro"] as const;
 type Aba = typeof ABAS[number];
 const LABEL_ABA: Record<Aba, string> = { lancamentos: "Lançamentos", dre: "DRE", fluxo: "Fluxo de Caixa", livro: "Livro Caixa" };
@@ -27,6 +24,7 @@ function ultimoDiaMes(ano: number, mes: number): string {
 }
 
 export default function FinanceiroCowData() {
+  const { cor: COR } = usePainelCowDataEstilos();
   const hoje = new Date();
   const [ano, setAno] = useState(hoje.getFullYear());
   const [mes, setMes] = useState(hoje.getMonth());
@@ -60,9 +58,9 @@ export default function FinanceiroCowData() {
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
-        <button onClick={() => mudarMes(-1)} style={{ background: "transparent", border: `1px solid ${COR.borda}`, borderRadius: "6px", color: COR.mudo, cursor: "pointer", padding: "0.3rem" }}><ChevronLeft size={16} /></button>
+        <button onClick={() => mudarMes(-1)} style={{ background: "transparent", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", color: COR.mudo, cursor: "pointer", padding: "0.3rem" }}><ChevronLeft size={16} /></button>
         <span style={{ fontSize: "0.85rem", fontWeight: 700, textTransform: "capitalize", minWidth: "9rem", textAlign: "center" }}>{nomeMes}</span>
-        <button onClick={() => mudarMes(1)} style={{ background: "transparent", border: `1px solid ${COR.borda}`, borderRadius: "6px", color: COR.mudo, cursor: "pointer", padding: "0.3rem" }}><ChevronRight size={16} /></button>
+        <button onClick={() => mudarMes(1)} style={{ background: "transparent", border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", color: COR.mudo, cursor: "pointer", padding: "0.3rem" }}><ChevronRight size={16} /></button>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginBottom: "1.8rem" }}>
@@ -93,8 +91,9 @@ export default function FinanceiroCowData() {
 }
 
 function Kpi({ icone, label, valor, cor }: { icone: React.ReactNode; label: string; valor: string; cor: string }) {
+  const COR = usePainelCowDataCor();
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.1rem 1.3rem", flex: "1 1 12rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, marginBottom: "0.5rem" }}>
         {icone} {label}
       </div>
@@ -104,6 +103,7 @@ function Kpi({ icone, label, valor, cor }: { icone: React.ReactNode; label: stri
 }
 
 function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou: () => void }) {
+  const { cor: COR, inputStyle, labelStyle } = usePainelCowDataEstilos();
   const [lancamentos, setLancamentos] = useState<LancamentoCowData[] | null>(null);
   const [categorias, setCategorias] = useState<{ receita: string[]; despesa: string[] }>({ receita: [], despesa: [] });
   const [erro, setErro] = useState<string | null>(null);
@@ -146,21 +146,21 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
     <div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.8rem" }}>
         <button onClick={() => setMostrarForm((v) => !v)}
-          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: `1px solid ${COR.dourado}`, background: "transparent", color: COR.dourado, cursor: "pointer" }}>
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.dourado}`, background: "transparent", color: COR.dourado, cursor: "pointer" }}>
           <Plus size={14} /> Novo lançamento
         </button>
       </div>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "0.8rem" }}>{erro}</p>}
 
       {mostrarForm && (
-        <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "12px", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
+        <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
           <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.7rem" }}>
             <button onClick={() => mudarTipo("receita")}
-              style={{ flex: 1, padding: "0.4rem", borderRadius: "6px", border: `1px solid ${novo.tipo === "receita" ? COR.verde : COR.borda}`, background: novo.tipo === "receita" ? "rgba(62,207,142,0.12)" : "transparent", color: novo.tipo === "receita" ? COR.verde : COR.mudo, cursor: "pointer", fontSize: "0.8rem", fontWeight: 700 }}>
+              style={{ flex: 1, padding: "0.4rem", borderRadius: "var(--r-sm)", border: `1px solid ${novo.tipo === "receita" ? COR.verde : COR.borda}`, background: novo.tipo === "receita" ? "rgba(62,207,142,0.12)" : "transparent", color: novo.tipo === "receita" ? COR.verde : COR.mudo, cursor: "pointer", fontSize: "0.8rem", fontWeight: 700 }}>
               Receita
             </button>
             <button onClick={() => mudarTipo("despesa")}
-              style={{ flex: 1, padding: "0.4rem", borderRadius: "6px", border: `1px solid ${novo.tipo === "despesa" ? COR.vermelho : COR.borda}`, background: novo.tipo === "despesa" ? "rgba(224,92,92,0.12)" : "transparent", color: novo.tipo === "despesa" ? COR.vermelho : COR.mudo, cursor: "pointer", fontSize: "0.8rem", fontWeight: 700 }}>
+              style={{ flex: 1, padding: "0.4rem", borderRadius: "var(--r-sm)", border: `1px solid ${novo.tipo === "despesa" ? COR.vermelho : COR.borda}`, background: novo.tipo === "despesa" ? "rgba(224,92,92,0.12)" : "transparent", color: novo.tipo === "despesa" ? COR.vermelho : COR.mudo, cursor: "pointer", fontSize: "0.8rem", fontWeight: 700 }}>
               Despesa
             </button>
           </div>
@@ -181,7 +181,7 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
             </div>
             <div>
               <label style={labelStyle}>Valor (R$)</label>
-              <input style={{ ...inputStyle, width: "100%" }} type="number" value={novo.valor} onChange={(e) => setNovo({ ...novo, valor: e.target.value })} />
+              <CampoMoeda style={{ ...inputStyle, width: "100%" }} value={Number(novo.valor) || 0} onChange={(v) => setNovo({ ...novo, valor: v ? String(v) : "" })} />
             </div>
             <div>
               <label style={labelStyle}>Data</label>
@@ -190,18 +190,18 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
           </div>
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvar}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: "none", background: COR.dourado, color: "#0a0e1a", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
               Lançar
             </button>
             <button onClick={() => setMostrarForm(false)}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
               Cancelar
             </button>
           </div>
         </div>
       )}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflowX: "auto", overflowY: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
@@ -238,12 +238,13 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
 }
 
 function AbaDre({ ano }: { ano: number }) {
+  const COR = usePainelCowDataCor();
   const [dre, setDre] = useState<DreCowData | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => { fetchDreCowData(ano).then(setDre).catch((e) => setErro(e.message)); }, [ano]);
 
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.2rem 1.4rem" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.2rem 1.4rem" }}>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem" }}>{erro}</p>}
       {!dre && !erro && <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Carregando…</p>}
       {dre && (
@@ -267,6 +268,7 @@ function AbaDre({ ano }: { ano: number }) {
 }
 
 function AbaFluxoCaixa({ de, ate }: { de: string; ate: string }) {
+  const COR = usePainelCowDataCor();
   const [linhas, setLinhas] = useState<FluxoCaixaCowDataMes[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => {
@@ -275,7 +277,7 @@ function AbaFluxoCaixa({ de, ate }: { de: string; ate: string }) {
   }, [de, ate]);
 
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflowX: "auto", overflowY: "hidden" }}>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", padding: "1rem" }}>{erro}</p>}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
         <thead>
@@ -306,12 +308,13 @@ function AbaFluxoCaixa({ de, ate }: { de: string; ate: string }) {
 }
 
 function AbaLivroCaixa({ de, ate }: { de: string; ate: string }) {
+  const COR = usePainelCowDataCor();
   const [linhas, setLinhas] = useState<MovimentoCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => { fetchLivroCaixaCowData(de, ate).then(setLinhas).catch((e) => setErro(e.message)); }, [de, ate]);
 
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflowX: "auto", overflowY: "hidden" }}>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", padding: "1rem" }}>{erro}</p>}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
         <thead>

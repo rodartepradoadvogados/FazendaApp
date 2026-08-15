@@ -3,11 +3,13 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo) + motivo,
 // análogo ao MultiFiltro de Diagnóstico/Motivo das outras abas.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
-import { fetchSecagensHistorico, atualizarSecagem } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { fetchSecagensHistorico, atualizarSecagem, fetchAnimais, confirmarExclusao, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import type { AnimalRow } from "@/components/AnimalModal";
 
 type SecagemReg = {
   id: number;
@@ -24,18 +26,21 @@ const MOTIVO_LABEL: Record<string, string> = {
 const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const ddmm = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
 export default function HistoricoSecagens() {
   const [regs, setRegs] = useState<SecagemReg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [animal, setAnimal] = useState("");
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [motivo, setMotivo] = useState<string[]>([]);
   const [modo, setModo] = useState<"data" | "ciclo">("data");
   const [cicloSel, setCicloSel] = useState<"1" | "2" | "3" | "esp">("1");
   const [cicloIdx, setCicloIdx] = useState(0);
+  const admin = ehAdmin();
 
   const carregar = () => fetchSecagensHistorico().then((d) => setRegs(d.secagens)).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -44,6 +49,7 @@ export default function HistoricoSecagens() {
   const [editVals, setEditVals] = useState({ data: "", motivo: "rotina", escore: "", observacao: "" });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
 
   const abrirEdicao = (s: SecagemReg) => {
     setEditando(s);
@@ -63,6 +69,32 @@ export default function HistoricoSecagens() {
       carregar();
     } catch (e: any) {
       setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
+
+  // Mesmo padrão de frontend/app/sanidade/page.tsx: passa pelo fluxo central
+  // e auditado de exclusão (POST /exclusoes/confirmar) — excluir uma secagem
+  // também devolve ao estoque o(s) produto(s) de secagem/vacina pré-parto já
+  // aplicados e remove aplicações ainda programadas na Agenda (ver
+  // rules/exclusao_tipos/rebanho.py::_alvos_secagem).
+  const excluirSecagem = async (s: SecagemReg) => {
+    const msg = admin
+      ? `Excluir a secagem de "${s.numero}" em ${fmtDia(s.data)}? Isso também devolve ao estoque o(s) produto(s) já aplicados e remove aplicações programadas na Agenda. Não pode ser desfeito.`
+      : `Solicitar a exclusão da secagem de "${s.numero}" em ${fmtDia(s.data)}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setSalvandoEdicao(true); setErroEdicao(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("secagem", String(s.id));
+      if (r.status === "excluido") {
+        setEditando(null);
+        carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao excluir");
     } finally {
       setSalvandoEdicao(false);
     }
@@ -100,13 +132,13 @@ export default function HistoricoSecagens() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((s) =>
-      (!animal || s.numero.toLowerCase().includes(animal.toLowerCase())) &&
+      (animaisSel.size === 0 || animaisSel.has(s.numero)) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
       (!motivo.length || motivo.includes(s.motivo))
     );
-  }, [regs, animal, ini, fim, motivo, modo, janelas]);
+  }, [regs, animaisSel, ini, fim, motivo, modo, janelas]);
 
   const ordSecagens = useOrdenacao(filtrados);
   const pagSecagens = usePaginacao(ordSecagens.linhasOrdenadas);
@@ -119,6 +151,7 @@ export default function HistoricoSecagens() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && <>
@@ -133,8 +166,17 @@ export default function HistoricoSecagens() {
             onChange={setModo}
           />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={animal} onChange={(e) => setAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
+              <AnimalPickerModal
+                animais={animais} selecionados={animaisSel}
+                onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                placeholder="Todos" titulo="Filtrar por animal(is) — inclui seleção por lote"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                ]}
+              /></div>
             {modo === "data" ? (
               <>
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label><input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
@@ -189,7 +231,7 @@ export default function HistoricoSecagens() {
       </>}
 
       {editando && (
-        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "400px", maxWidth: "95vw" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar secagem — matriz {editando.numero}</div>
@@ -208,9 +250,19 @@ export default function HistoricoSecagens() {
                 <input style={selStyle} value={editVals.observacao} onChange={(e) => setEditVals((v) => ({ ...v, observacao: e.target.value }))} /></div>
             </div>
             {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
-            <div className="flex items-center gap-3 mt-4">
-              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
-              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            <div className="flex items-center justify-between gap-3 mt-4">
+              <div className="flex items-center gap-3">
+                <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+                <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => excluirSecagem(editando)}
+                disabled={salvandoEdicao}
+              >
+                <Trash2 size={14} /> Excluir secagem
+              </button>
             </div>
           </div>
         </div>

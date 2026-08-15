@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
+from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
 from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -240,6 +241,14 @@ def criar_estoque_semen(
     session.add(item)
     session.commit()
     session.refresh(item)
+    # Espelha em Estoque (categoria "Sêmen e genética") — mesmo que a compra
+    # via /compras-semen já faz, senão um touro cadastrado por aqui aparece
+    # no Inventário de Sêmen mas fica invisível no módulo Estoque genérico.
+    sincronizar_item_estoque_semen(item, session)
+    session.commit()
+    # 2º commit expira os atributos de `item` de novo — sem este refresh,
+    # `model_dump()` devolvia {} (nenhum campo, nem "id") em vez do item.
+    session.refresh(item)
     return item.model_dump()
 
 
@@ -260,6 +269,9 @@ def atualizar_estoque_semen(
         setattr(item, campo, valor)
     item.atualizado_em = datetime.utcnow()
     session.add(item)
+    session.commit()
+    session.refresh(item)
+    sincronizar_item_estoque_semen(item, session)
     session.commit()
     session.refresh(item)
     return item.model_dump()

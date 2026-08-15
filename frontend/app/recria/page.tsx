@@ -220,7 +220,7 @@ function CurvaBarras({ curva, janela }: { curva: { dia: number; casos: number }[
         const dentro = janela && p.dia >= janela[0] && p.dia <= janela[1];
         return (
           <div key={p.dia} title={`${p.dia} dias: ${p.casos} caso(s)`}
-            style={{ flex: 1, minWidth: 1, height: `${(100 * p.casos) / max}%`, background: dentro ? "var(--red)" : "var(--dourado)", borderRadius: "2px 2px 0 0", opacity: dentro ? 0.95 : 0.8 }} />
+            style={{ flex: 1, minWidth: 1, height: `${(100 * p.casos) / max}%`, background: dentro ? "var(--red)" : "var(--dourado)", borderRadius: "var(--r-sm) var(--r-sm) 0 0", opacity: dentro ? 0.95 : 0.8 }} />
         );
       })}
       <span style={{ position: "absolute", left: 2, bottom: -18, fontSize: "0.65rem", color: "var(--text-muted)" }}>{diaMin} d</span>
@@ -351,7 +351,7 @@ function AbaReproducao() {
             {[
               { rot: "Novilhas", v: st.n, sub: "" },
               { rot: "Idade média ao parto", v: `${st.media} m`, cor: metaOk(st.media, d!.meta_idade_parto, 1) ? "var(--green-light)" : "var(--amber)", sub: `meta ${d!.meta_idade_parto}m` },
-              { rot: "Desvio-padrão", v: `${st.desvio_padrao} m`, cor: st.desvio_padrao <= 1.7 ? "var(--green-light)" : "var(--red)", sub: "meta < 1,7" },
+              { rot: "Desvio-padrão", v: `${st.desvio_padrao} m`, cor: st.desvio_padrao <= d!.meta_desvio_padrao ? "var(--green-light)" : "var(--red)", sub: `meta < ${d!.meta_desvio_padrao}` },
               { rot: "Assimetria", v: st.assimetria, sub: "cauda de tardias" },
               { rot: "Mais nova / mais velha", v: `${st.idade_tipica_min}–${st.idade_tipica_max}`, sub: "meses (típico)" },
               { rot: "Amplitude típica", v: `${st.amplitude_tipica} m`, cor: st.amplitude_tipica < 6 ? "var(--green-light)" : "var(--amber)", sub: "meta < 6" },
@@ -376,7 +376,7 @@ function AbaReproducao() {
               const naMeta = Math.round(d.meta_idade_parto) === x.mes;
               return (
                 <div key={x.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${x.mes} meses: ${x.n} (${x.pct}%)`}>
-                  <div style={{ width: "100%", height: `${(100 * x.pct) / max}%`, background: naMeta ? "var(--green-light)" : "var(--dourado)", borderRadius: "2px 2px 0 0", opacity: 0.85 }} />
+                  <div style={{ width: "100%", height: `${(100 * x.pct) / max}%`, background: naMeta ? "var(--green-light)" : "var(--dourado)", borderRadius: "var(--r-sm) var(--r-sm) 0 0", opacity: 0.85 }} />
                   <span style={{ fontSize: "0.6rem", color: "var(--text-muted)", marginTop: 2 }}>{x.mes}</span>
                 </div>
               );
@@ -415,7 +415,7 @@ function AbaReproducao() {
         ) : (
           <>
             {ciclos.taxa_prenhez_media != null && (
-              <p style={{ fontSize: "0.9rem", marginBottom: "0.6rem" }}>Taxa de prenhez média do período: <strong style={{ fontSize: "1.1rem", color: ciclos.taxa_prenhez_media >= 42.5 ? "var(--green-light)" : "var(--amber)" }}>{ciclos.taxa_prenhez_media}%</strong> <span style={{ color: "var(--text-muted)" }}>(meta &gt; 42,5%)</span></p>
+              <p style={{ fontSize: "0.9rem", marginBottom: "0.6rem" }}>Taxa de prenhez média do período: <strong style={{ fontSize: "1.1rem", color: ciclos.taxa_prenhez_media >= ciclos.meta_taxa_prenhez ? "var(--green-light)" : "var(--amber)" }}>{ciclos.taxa_prenhez_media}%</strong> <span style={{ color: "var(--text-muted)" }}>(meta &gt; {ciclos.meta_taxa_prenhez}%)</span></p>
             )}
             <div style={{ overflowX: "auto" }}>
               <table className="fazenda-table">
@@ -494,7 +494,7 @@ function AbaNutricao() {
               const max = Math.max(...serie.map((x) => Math.max(x.ims_consumida_animal || 0, x.ims_formulada_animal || 0)), 1);
               return (
                 <div key={r.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${r.data.split("-").reverse().join("/")} — consumida ${r.ims_consumida_animal} kg`}>
-                  <div style={{ width: "100%", position: "relative", height: `${(100 * (r.ims_consumida_animal || 0)) / max}%`, background: "var(--green-light)", borderRadius: "2px 2px 0 0", minHeight: 2 }}>
+                  <div style={{ width: "100%", position: "relative", height: `${(100 * (r.ims_consumida_animal || 0)) / max}%`, background: "var(--green-light)", borderRadius: "var(--r-sm) var(--r-sm) 0 0", minHeight: 2 }}>
                     {r.ims_formulada_animal ? <div style={{ position: "absolute", left: 0, right: 0, top: `${100 - (100 * (r.ims_formulada_animal) / (r.ims_consumida_animal || r.ims_formulada_animal))}%`, borderTop: "2px dashed var(--dourado)" }} /> : null}
                   </div>
                   <span style={{ fontSize: "0.55rem", color: "var(--text-muted)", marginTop: 2 }}>{r.data.slice(8, 10)}/{r.data.slice(5, 7)}</span>
@@ -548,9 +548,10 @@ function AbaNutricao() {
 // ─────────────────────────── REGISTRAR ───────────────────────────
 function AbaRegistrar() {
   const [numeros, setNumeros] = useState<string[]>([]);
-  const [doencasCadastro, setDoencasCadastro] = useState<string[]>([]);
+  const [doencasCadastro, setDoencasCadastro] = useState<{ id: number; nome: string }[]>([]);
   const [numero, setNumero] = useState("");
   const [doenca, setDoenca] = useState("");
+  const [doencaId, setDoencaId] = useState<number | null>(null);
   const [data, setData] = useState(hoje());
   const [obs, setObs] = useState("");
   const [lista, setLista] = useState<RecriaOcorrencia[] | null>(null);
@@ -562,7 +563,7 @@ function AbaRegistrar() {
   const carregar = () => fetchRecriaOcorrencias().then(setLista).catch(() => setLista([]));
   useEffect(() => {
     fetchAnimais({ incluirMachos: true }).then((d: any) => setNumeros((d.animais || d || []).map((a: any) => a.numero).filter(Boolean))).catch(() => {});
-    fetchDoencas().then((d: any[]) => setDoencasCadastro(d.map((x) => x.nome))).catch(() => setDoencasCadastro([]));
+    fetchDoencas().then((d: any[]) => setDoencasCadastro(d.map((x) => ({ id: x.id, nome: x.nome })))).catch(() => setDoencasCadastro([]));
     carregar();
   }, []);
 
@@ -572,7 +573,10 @@ function AbaRegistrar() {
     if (!doenca.trim()) { setMsg({ tipo: "erro", txt: "Informe a doença." }); return; }
     setSalvando(true);
     try {
-      await criarRecriaOcorrencia({ numero_matriz: numero.trim(), doenca: doenca.trim(), data_ocorrencia: data, observacao: obs.trim() || undefined });
+      await criarRecriaOcorrencia({
+        numero_matriz: numero.trim(), doenca: doenca.trim(), doenca_id: doencaId ?? undefined,
+        data_ocorrencia: data, observacao: obs.trim() || undefined,
+      });
       setMsg({ tipo: "ok", txt: `Caso de ${doenca} no animal ${numero} registrado.` });
       setNumero(""); setObs(""); carregar();
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); } finally { setSalvando(false); }
@@ -591,9 +595,13 @@ function AbaRegistrar() {
             <input style={input} list="recria-animais" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex.: 145" />
             <datalist id="recria-animais">{numeros.map((n) => <option key={n} value={n} />)}</datalist></div>
           <div><label style={lbl}>Doença</label>
-            <select style={input} value={doenca} onChange={(e) => setDoenca(e.target.value)}>
+            <select style={input} value={doenca} onChange={(e) => {
+              const nome = e.target.value;
+              setDoenca(nome);
+              setDoencaId(doencasCadastro.find((d) => d.nome === nome)?.id ?? null);
+            }}>
               <option value="">Selecione...</option>
-              {doencasCadastro.map((d) => <option key={d} value={d}>{d}</option>)}
+              {doencasCadastro.map((d) => <option key={d.id} value={d.nome}>{d.nome}</option>)}
             </select></div>
           <div><label style={lbl}>Data do caso</label><input type="date" style={input} value={data} onChange={(e) => setData(e.target.value)} /></div>
           <div><label style={lbl}>Observação (opcional)</label><input style={input} value={obs} onChange={(e) => setObs(e.target.value)} /></div>

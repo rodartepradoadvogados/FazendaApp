@@ -127,7 +127,7 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
 
   const metricaPorKey = (key: string) => METRICAS.find((m) => m.key === key)!;
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="card mb-4">
@@ -148,7 +148,7 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3" style={{ maxHeight: "6.5rem", overflowY: "auto", padding: "0.4rem", border: "1px solid var(--border)", borderRadius: "8px" }}>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3" style={{ maxHeight: "6.5rem", overflowY: "auto", padding: "0.4rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
         {METRICAS.map((m) => (
           <label key={m.key} className="flex items-center gap-1" style={{ fontSize: "0.75rem" }}>
             <input type="checkbox" checked={selecionadas.includes(m.key)} onChange={() => toggle(m.key)} /> {m.label}

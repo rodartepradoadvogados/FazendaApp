@@ -26,7 +26,7 @@ from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque,
@@ -254,7 +254,10 @@ def listar_modelos() -> dict:
 
 
 @router.post("/pesagem")
-async def importar_pesagem(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_pesagem(
+    file: UploadFile, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     content = await file.read()
     por_data: dict[date, list[PesoIn]] = {}
     erros: list[str] = []
@@ -270,7 +273,12 @@ async def importar_pesagem(file: UploadFile, session: Session = Depends(get_sess
 
     criados = 0
     for data, entradas in por_data.items():
-        resultado = criar_pesagens(PesagensIn(data_pesagem=data, entradas=entradas), session)
+        # `user`/`fazenda_id` SEMPRE por keyword — chamada direta (fora do
+        # ciclo HTTP) igual ao bug original do telegram_fluxos.py: sem isso,
+        # `criar_pesagens` recebe os `Depends(...)` não resolvidos como
+        # `user`/`fazenda_id` e `_usuario_id_seguro`/`fazenda_id_seguro`
+        # caem pra None — toda pesagem importada nascia órfã e sem autor.
+        resultado = criar_pesagens(PesagensIn(data_pesagem=data, entradas=entradas), session=session, user=user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
     return {"categoria": "pesagem", "criados": criados, "erros": erros}
 
@@ -280,6 +288,8 @@ async def importar_controle_leiteiro_simples(
     file: UploadFile,
     data_controle: date = Form(...),
     session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     CSV enxuto (só nº da matriz + 1ª/2ª ordenha) para quando não se quer
@@ -305,7 +315,7 @@ async def importar_controle_leiteiro_simples(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session)
+        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session=session, user=user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
     return {"categoria": "controle_leiteiro_simples", "criados": criados, "erros": erros}
 
@@ -313,9 +323,8 @@ async def importar_controle_leiteiro_simples(
 @router.post("/financeiro")
 async def importar_financeiro(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -338,7 +347,7 @@ async def importar_financeiro(
                 data_competencia=data,
                 parcelas=[ParcelaIn(data_vencimento=data, valor=valor)],
             )
-            criar_lancamento(dados, session, fazenda_id=fazenda_id)
+            criar_lancamento(dados, session=session, user=user, fazenda_id=fazenda_id)
             criados += 1
         except HTTPException as exc:
             erros.append(f"Linha {i}: {exc.detail}")
@@ -349,9 +358,8 @@ async def importar_financeiro(
 @router.post("/estoque_movimento")
 async def importar_estoque_movimento(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -382,9 +390,8 @@ async def importar_estoque_movimento(
 @router.post("/produtos_estoque")
 async def importar_produtos_estoque(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados, atualizados = 0, 0
     erros: list[str] = []
@@ -438,9 +445,8 @@ async def importar_produtos_estoque(
 @router.post("/fornecedores")
 async def importar_fornecedores(
     file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados, atualizados = 0, 0
     erros: list[str] = []
@@ -811,7 +817,7 @@ def _ocorrencia_valida(base: date | None, valor: int | None, unidade: str | None
 @router.post("/baixas_pendencias_agenda")
 async def importar_baixas_pendencias_agenda(
     file: UploadFile, data_corte: str = Form(""), session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Baixa em massa de pendências antigas da Agenda (sanitário) — uma linha por
@@ -868,7 +874,7 @@ async def importar_baixas_pendencias_agenda(
                     if len(numeros) != 1:
                         raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
                     numero = numeros[0]
-                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0)
+                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo)
                     if not any(n == numero and d == data_pendencia for n, d in candidatos):
                         raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
                     eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
@@ -904,7 +910,7 @@ async def importar_baixas_pendencias_agenda(
                                 responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {ev.nome}",
                                 aplicado=True, natureza="preventivo",
                             ),
-                            session, user,
+                            session=session, user=user, fazenda_id=fazenda_id,
                         )
                         criados += len(alvo_animais)
                     dispensados += 1
@@ -944,7 +950,7 @@ async def importar_baixas_pendencias_agenda(
                                     responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {nome_evento}",
                                     aplicado=True, natureza="preventivo",
                                 ),
-                                session, user,
+                                session=session, user=user, fazenda_id=fazenda_id,
                             )
                             criados += len(numeros)
                         dispensados += 1
@@ -1020,7 +1026,7 @@ async def importar_touros_naab(
 @router.post("/backfill")
 def backfill_fornecedores_e_estoque(
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Varre os dados já importados (financeiro, curva ABC, dieta, sanidade) e
@@ -1028,8 +1034,6 @@ def backfill_fornecedores_e_estoque(
     que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
     Não sobrescreve nada que já existe, só preenche o que falta.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-
     fornecedor_query = select(Fornecedor.nome)
     conta_query = select(ContaGerencial.fornecedor_cliente)
     if fazenda_id is not None:
@@ -1045,6 +1049,9 @@ def backfill_fornecedores_e_estoque(
 
     estoque_query = select(Estoque.nome)
     curva_query = select(CurvaABC.produto)
+    # NÃO aplicar sem_itens_de_vale aqui — são candidatos a cadastro de
+    # estoque a partir de nomes de produto já usados; excluir os itens de
+    # vale só empobreceria a lista de sugestões (ver rules/vale_item.py).
     lancamento_query = select(LancamentoItem.produto)
     sanidade_query = select(Sanidade.produto)
     if fazenda_id is not None:

@@ -7,22 +7,24 @@
 // isolada visualmente do app da fazenda (paleta própria, ver
 // app/painel-cowdata/layout.tsx, agora responsivo), não uma tela de campo.
 //
-// Navegação em grade de 2 níveis (mesmo padrão lúdico já usado em Lançar e
-// Rebanho > Lotes, via GradeAcoes): 1º nível = sessões (quadrados grandes e
-// coloridos); ao tocar numa sessão, abre um 2º nível com os itens daquela
-// sessão (também em quadrados); ao tocar num item, abre a sub-tela real.
+// Fase 5 do redesign mobile ("1B"): lista plana, um toque só, em seções —
+// substitui a antiga grade de 2 níveis (sessão → item, ambos em quadrados
+// coloridos). Cada seção é um título discreto (.mob-secao) seguido de linhas
+// de lista (LinhaMenu, abaixo). O ícone de cada linha mantém a cor CHEIA da
+// categoria — "discreto" aqui é o tamanho contido do ícone e o espaço em
+// branco generoso, não a cor apagada (confirmado com o stakeholder que
+// aprovou a proposta 1B).
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
-  Milk, FlaskConical, Droplet, Droplets, Scale,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
-import { usePendentes, sincronizar, descartarPendente } from "@/lib/offline";
-import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
-import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
+import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
+import { usePendentes, sincronizar, descartarPendente, lerCache } from "@/lib/offline";
+import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
@@ -46,6 +48,7 @@ import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
+import Protocolos from "@/components/mobile/menu/Protocolos";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
@@ -57,39 +60,42 @@ type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
 
+// Inventário autoritativo dos itens do Menu, por seção — não alterar chave/
+// rota/permissão daqui (só restilizar). Tamanho do ícone reduzido (20, antes
+// 26) porque agora ilustra uma linha de lista, não mais um quadrado grande.
 const GRUPOS: Grupo[] = [
   { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
-    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={26} /> },
-    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={26} /> },
+    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={20} /> },
+    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
-    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={26} /> },
-    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={26} />, soAdmin: true },
-    { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={26} /> },
+    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={20} /> },
+    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={20} />, soAdmin: true },
+    { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
   { secao: "alimentacao", titulo: "Alimentação", cor: "var(--cat-alimentacao)", iconeSecao: <Wheat size={26} />, itens: [
-    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={26} />, cor: "var(--mob-laranja)" },
-    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={26} />, cor: "var(--mob-verde)" },
-    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={26} />, cor: "var(--mob-azul)" },
-    { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={26} />, cor: "var(--mob-roxo)" },
+    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={20} />, cor: "var(--mob-laranja)" },
+    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={20} />, cor: "var(--mob-verde)" },
+    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={20} />, cor: "var(--mob-azul)" },
+    { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={20} />, cor: "var(--mob-roxo)" },
   ] },
   { secao: "producao", titulo: "Produção", cor: "var(--mob-azul)", iconeSecao: <Milk size={26} />, itens: [
-    { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={26} /> },
-    { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={26} /> },
-    { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={26} /> },
-    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Histórico de aplicações de BST", rota: "/producao", icone: <Droplets size={26} /> },
-    { chave: "pesagemHistorico", titulo: "Pesagens", subtitulo: "Crescimento (GMD/GPD) por animal, lote ou rebanho", rota: "/producao", icone: <Scale size={26} /> },
+    { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={20} /> },
+    { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={20} /> },
+    { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={20} /> },
+    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Histórico de aplicações de BST", rota: "/producao", icone: <Droplets size={20} /> },
+    { chave: "pesagemHistorico", titulo: "Pesagens", subtitulo: "Crescimento (GMD/GPD) por animal, lote ou rebanho", rota: "/producao", icone: <Scale size={20} /> },
   ] },
   { secao: "gestao", titulo: "Gestão", cor: "var(--cat-gestao)", iconeSecao: <FileBarChart size={26} />, itens: [
-    { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={26} /> },
-    { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={26} /> },
-    { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={26} />, soAdmin: true },
+    { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={20} /> },
+    { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={20} /> },
+    { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={20} />, soAdmin: true },
   ] },
   { secao: "financeiro", titulo: "Financeiro", cor: "var(--cat-financeiro)", iconeSecao: <Landmark size={26} />, itens: [
-    { chave: "fluxoCaixa", titulo: "Fluxo de caixa", subtitulo: "Entradas e saídas por mês", rota: "/financeiro", icone: <Wallet size={26} /> },
-    { chave: "dre", titulo: "DRE", subtitulo: "Receita, despesa e resultado por conta", rota: "/financeiro", icone: <FileText size={26} /> },
-    { chave: "rmca", titulo: "RMCA", subtitulo: "Receita menos custo com alimentação", rota: "/financeiro", icone: <BarChart3 size={26} /> },
-    { chave: "extrato", titulo: "Extrato completo", subtitulo: "Todos os lançamentos, pagos e em aberto", rota: "/financeiro", icone: <Receipt size={26} /> },
+    { chave: "fluxoCaixa", titulo: "Fluxo de caixa", subtitulo: "Entradas e saídas por mês", rota: "/financeiro", icone: <Wallet size={20} /> },
+    { chave: "dre", titulo: "DRE", subtitulo: "Receita, despesa e resultado por conta", rota: "/financeiro", icone: <FileText size={20} /> },
+    { chave: "rmca", titulo: "RMCA", subtitulo: "Receita menos custo com alimentação", rota: "/financeiro", icone: <BarChart3 size={20} /> },
+    { chave: "extrato", titulo: "Extrato completo", subtitulo: "Todos os lançamentos, pagos e em aberto", rota: "/financeiro", icone: <Receipt size={20} /> },
   ] },
 ];
 
@@ -117,21 +123,149 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   extrato: ExtratoCompleto,
 };
 
+// Chaves de cache (mob_cache_<chave>, ver lib/offline.ts) reaproveitadas para
+// mostrar uma estatística ao vivo no lugar do subtítulo estático — cada uma é
+// escrita pela PRÓPRIA sub-tela na 1ª visita (useCarregar, em
+// components/mobile/menu/comum.tsx); aqui só LEMOS o que já está salvo (via
+// lerCache), nunca buscamos de novo — contrato implícito entre arquivos,
+// documentado aqui para não apodrecer em silêncio se o formato mudar lá.
+const CHAVES_STAT = {
+  iatf: "menu_iatf_ativos", // components/mobile/menu/ProtocolosIatf.tsx — Protocolo[] (protocolos IATF ativos)
+  ultimosControles: "menu_producao_controles", // components/mobile/menu/UltimosControles.tsx — { controles: ControleRow[] }
+  calendario: "menu_calendario_sanitario_visao", // components/mobile/menu/CalendarioSanitario.tsx — { janelas: JanelaCalendario[] }
+  indicadores: "menu_indicadores_animais", // components/mobile/menu/Indicadores.tsx — Animal[] (fetchAnimais, usado no drill-down)
+  estoque: "menu_estoque", // components/mobile/menu/Estoque.tsx — { itens: ItemEstoque[] }
+} as const;
+
+function statIatf(): string | null {
+  const dados = lerCache<{ animais: unknown[] }[]>(CHAVES_STAT.iatf);
+  if (!dados) return null;
+  return `${dados.length} em andamento`;
+}
+
+function statUltimosControles(): string | null {
+  const dados = lerCache<{ controles: { data: string | null; producao_kg: number | null }[] }>(CHAVES_STAT.ultimosControles);
+  const linhas = dados?.controles;
+  if (!linhas || linhas.length === 0) return null;
+  const maisRecente = [...linhas].sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1))[0];
+  if (maisRecente.producao_kg == null) return null;
+  return `${maisRecente.producao_kg.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg no último`;
+}
+
+function statCalendario(): string | null {
+  const dados = lerCache<{ janelas: { eventos: unknown[] }[] }>(CHAVES_STAT.calendario);
+  if (!dados) return null;
+  const total = dados.janelas.reduce((soma, j) => soma + (j.eventos?.length || 0), 0);
+  return `${total} evento${total !== 1 ? "s" : ""} nos próx. 90 dias`;
+}
+
+function statIndicadores(): string | null {
+  const dados = lerCache<unknown[]>(CHAVES_STAT.indicadores);
+  if (!dados) return null;
+  return `${dados.length} animais`;
+}
+
+function statEstoque(): string | null {
+  const dados = lerCache<{ itens: unknown[] }>(CHAVES_STAT.estoque);
+  if (!dados) return null;
+  return `${dados.itens.length} itens`;
+}
+
+/** Linha de lista do Menu (layout "1B" — plano, um toque só). O ícone leva a
+ *  cor CHEIA da categoria (só o fundo do círculo é tingido/translúcido; o
+ *  próprio ícone NUNCA é apagado/dessaturado — instrução explícita do
+ *  stakeholder). min-height 60px (acima do piso geral de 48px do app) foi a
+ *  condição do próprio stakeholder para aprovar esta lista mais densa,
+ *  mantendo o uso a uma mão no curral. A linha inteira é o alvo de toque. */
+function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
+  icone: React.ReactNode; titulo: string; subtitulo?: string; cor?: string; onClick: () => void;
+}) {
+  const corIcone = cor || "var(--mob-dourado-2)";
+  return (
+    <button type="button" onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: "0.85rem", width: "100%",
+        minHeight: 60, padding: "0.6rem 1rem", marginBottom: "0.55rem",
+        background: "var(--mob-surface)", border: "1px solid var(--mob-border)",
+        borderRadius: "var(--r-app)", boxShadow: "var(--mob-sombra)",
+        color: "var(--mob-text)", textAlign: "left", cursor: "pointer",
+      }}>
+      <span style={{
+        width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: `color-mix(in srgb, ${corIcone} 16%, transparent)`, color: corIcone,
+      }}>
+        {icone}
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontWeight: 700, fontSize: "var(--mob-fs-body)" }}>{titulo}</span>
+        {subtitulo && (
+          <span style={{ display: "block", fontSize: "var(--mob-fs-apoio)", color: "var(--mob-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {subtitulo}
+          </span>
+        )}
+      </span>
+      <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
+    </button>
+  );
+}
+
+const CHAVE_SECOES_COLAPSADAS = "mob_menu_secoes_colapsadas";
+
+/** Título de seção clicável (retrátil) — mesmo rótulo do .mob-secao de sempre,
+ *  agora com seta de estado; lembra a escolha do usuário entre visitas
+ *  (localStorage, chave CHAVE_SECOES_COLAPSADAS). */
+function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
+  chave: string; titulo: string; colapsada: boolean; onAlternar: (chave: string) => void; children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <button type="button" className="mob-secao-retratil" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}>
+        <span>{titulo}</span>
+        {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+      </button>
+      {!colapsada && children}
+    </div>
+  );
+}
+
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | "sincronizacao" | null>(null);
+  const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(new Set());
+  // Telas de tela cheia fora do inventário SUBTELAS (módulos, administração,
+  // Aparência, News, sincronização) — mesmo mecanismo de estado interno
+  // (sem navegar de rota), só que sem passar pelo mapa SUBTELAS/SubKey.
+  const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | "sincronizacao" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const [sincronizando, setSincronizando] = useState(false);
+  const [resultadoEnvio, setResultadoEnvio] = useState<{ tipo: "ok" | "parcial"; msg: string } | null>(null);
+  const [confirmarSair, setConfirmarSair] = useState(false);
+  const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
 
-  useEffect(() => { setMontado(true); }, []);
+  useEffect(() => {
+    setMontado(true);
+    try {
+      const salvo = localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
+      if (salvo) setSecoesColapsadas(new Set(JSON.parse(salvo)));
+    } catch { /* localStorage indisponível ou valor corrompido — segue com tudo expandido */ }
+  }, []);
+
+  function alternarSecao(chave: string) {
+    setSecoesColapsadas((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+      try { localStorage.setItem(CHAVE_SECOES_COLAPSADAS, JSON.stringify([...novo])); } catch { /* melhor esforço — não impede o uso */ }
+      return novo;
+    });
+  }
 
   // Botão News do cabeçalho (app/layout.tsx) navega para /app/menu#news —
   // como é a mesma rota, o Next não remonta a página, então escutamos o hash
   // (no load e em hashchange) e abrimos a sub-tela por estado.
   useEffect(() => {
-    const abrirSeHashNews = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
+    const abrirSeHashNews = () => { if (window.location.hash === "#news") setTela("news"); };
     abrirSeHashNews();
     window.addEventListener("hashchange", abrirSeHashNews);
     // Clique no botão News do cabeçalho enquanto já se está em /app/menu —
@@ -144,9 +278,33 @@ export default function Pagina() {
     };
   }, []);
 
+  // Atalho pós-salvar de Lançar > Sanidade (regra com "Registrar cronograma"
+  // marcado): navega para /app/menu#calendario-sanitario. Vindo de outra
+  // rota a página monta do zero, então o hash já está certo no 1º render;
+  // sem 'hashchange' aqui porque não há como cair já em /app/menu antes.
+  useEffect(() => {
+    if (window.location.hash === "#calendario-sanitario") setSub("calendario");
+  }, []);
+
   async function enviarAgora() {
     setSincronizando(true);
-    try { await sincronizar(); } finally { setSincronizando(false); }
+    setResultadoEnvio(null);
+    try {
+      const { enviados, restantes } = await sincronizar();
+      if (restantes === 0) {
+        setResultadoEnvio({ tipo: "ok", msg: enviados > 0 ? `Tudo enviado (${enviados}).` : "Tudo já estava enviado." });
+      } else if (enviados > 0) {
+        setResultadoEnvio({ tipo: "parcial", msg: `${enviados} enviado(s) — ${restantes} ainda aguardando.` });
+      } else {
+        // Nenhum item saiu — provavelmente ainda sem conexão de verdade com
+        // o servidor (mesmo caso do card "Última falha" de cada item, mas
+        // muita gente só olha o botão, não os cards). Sem isso, tocar
+        // "Enviar agora" e falhar parecia não fazer nada (relato recorrente).
+        setResultadoEnvio({ tipo: "parcial", msg: "Não conseguiu enviar agora — sem conexão com o servidor. Vai tentar de novo sozinho." });
+      }
+    } finally {
+      setSincronizando(false);
+    }
   }
 
   const usuario = montado ? getUsuario() : null;
@@ -157,152 +315,185 @@ export default function Pagina() {
     return <Sub onVoltar={() => setSub(null)} />;
   }
 
+  // Operador vinculado a uma Pessoa do tipo empreiteiro/prestador/diarista/
+  // funcionário (ver ehOperadorRestrito, lib/api.ts) — menu restrito do app
+  // de campo: sem Financeiro, sem "Lançar nova dieta", e Protocolos vira a
+  // 1ª seção do menu. Admin e operador não vinculado (ou vinculado a outro
+  // tipo de Pessoa) não são afetados por nenhuma checagem `restrito` abaixo.
+  const restrito = montado && ehOperadorRestrito();
+
   // No servidor / antes de montar não sabemos as permissões — só renderiza os
   // grupos após montar para não vazar itens sem permissão.
   const grupos = montado
-    ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
+    ? GRUPOS
+        // Financeiro fica de fora do menu restrito mesmo que o módulo esteja
+        // liberado para o usuário (restrição do TIPO de Pessoa, adicional à
+        // permissão de módulo — não substitui a checagem de podeModulo abaixo).
+        .filter((g) => !(restrito && g.secao === "financeiro"))
+        .map((g) => ({
+          ...g,
+          itens: g.itens
+            .filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota)))
+            .filter((i) => !(restrito && i.chave === "lancarDieta")),
+        }))
+        .filter((g) => g.itens.length)
     : [];
 
-  if (secaoAberta === "news") {
+  // Estatísticas ao vivo (cache já escrito pela própria sub-tela) — só depois
+  // de montar (localStorage não existe no servidor); null = ainda sem cache
+  // (1ª visita) → cai no subtítulo estático de cada item, mais abaixo.
+  const statsSub: Partial<Record<SubKey, string>> = montado ? {
+    ...(statIatf() ? { iatf: statIatf()! } : {}),
+    ...(statUltimosControles() ? { ultimosControles: statUltimosControles()! } : {}),
+    ...(statCalendario() ? { calendario: statCalendario()! } : {}),
+    ...(statIndicadores() ? { indicadores: statIndicadores()! } : {}),
+  } : {};
+  const statEstoqueValor = montado ? statEstoque() : null;
+
+  if (tela === "news") {
     return <News onVoltar={() => {
-      setSecaoAberta(null);
+      setTela(null);
       if (window.location.hash === "#news") history.replaceState(null, "", window.location.pathname + window.location.search);
     }} />;
   }
 
-  if (secaoAberta === "estoque") {
-    return <Estoque onVoltar={() => setSecaoAberta(null)} />;
-  }
-
-  if (secaoAberta === "recria") {
-    return <Recria onVoltar={() => setSecaoAberta(null)} />;
-  }
+  if (tela === "estoque") return <Estoque onVoltar={() => setTela(null)} />;
+  if (tela === "recria") return <Recria onVoltar={() => setTela(null)} />;
+  if (tela === "protocolos") return <Protocolos onVoltar={() => setTela(null)} />;
 
   // Qualquer admin (ver ehAdmin()) — mesmo gate do site (/usuarios via AuthShell).
-  if (secaoAberta === "controleAcesso") {
-    return <ControleAcesso onVoltar={() => setSecaoAberta(null)} />;
-  }
+  if (tela === "controleAcesso") return <ControleAcesso onVoltar={() => setTela(null)} />;
 
   // Portal (comunicação interna + Fotos do campo) — sem gate de módulo, igual
   // ao site (qualquer usuário logado pode mandar mensagem/e-mail/foto;
   // "Exportar" já é admin-only dentro do próprio PortalView).
-  if (secaoAberta === "portal") {
-    return <Portal onVoltar={() => setSecaoAberta(null)} />;
+  if (tela === "portal") return <Portal onVoltar={() => setTela(null)} />;
+
+  if (tela === "assistente") return <Assistente onVoltar={() => setTela(null)} />;
+
+  if (tela === "sincronizacao") {
+    return <Sincronizacao onVoltar={() => setTela(null)} />;
   }
 
-  if (secaoAberta === "assistente") {
-    return <Assistente onVoltar={() => setSecaoAberta(null)} />;
-  }
-
-  if (secaoAberta === "sincronizacao") {
-    return <Sincronizacao onVoltar={() => setSecaoAberta(null)} />;
-  }
-
-  // 2º nível: itens da sessão escolhida, em quadrados.
-  if (secaoAberta === "aparencia") {
+  if (tela === "aparencia") {
     return (
       <div>
-        <MobVoltar titulo="Aparência" onVoltar={() => setSecaoAberta(null)} />
+        <MobVoltar titulo="Aparência" onVoltar={() => setTela(null)} />
         <AparenciaSelector variant="app" />
       </div>
     );
   }
-  const grupoAberto = grupos.find((g) => g.secao === secaoAberta);
-  if (grupoAberto) {
-    const opcoes: OpcaoAcao[] = grupoAberto.itens.map((i) => ({ id: i.chave, label: i.titulo, icone: i.icone, cor: i.cor || grupoAberto.cor }));
-    return (
-      <div>
-        <MobVoltar titulo={grupoAberto.titulo} onVoltar={() => setSecaoAberta(null)} />
-        <GradeAcoes opcoes={opcoes} onEscolher={(id) => setSub(id as SubKey)} />
-      </div>
-    );
-  }
 
-  // 1º nível: sessões, em quadrados coloridos. "Estoque" fica ao lado de
-  // "Financeiro" (mesma permissão do módulo /estoque do site). "Controle de
-  // Acesso" só aparece para o proprietário (ver ehDono()) — já reúne últimos
-  // acessos + auditoria de atividade, então não há uma aba separada para isso.
-  const secoesOpcoes: OpcaoAcao[] = [
-    ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
-    ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
-    ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
-    ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
-    ...(montado && ehDono() ? [{ id: "painelCowData", label: "Painel CowData", icone: <Building2 size={26} />, cor: "var(--mob-dourado)" }] : []),
-    ...(montado && ehAdmin() ? [{ id: "assistente", label: "Assistente Virtual", icone: <Sparkles size={26} />, cor: "var(--mob-dourado)" }] : []),
-    { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
-    { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
-    { id: "sincronizacao", label: "Sincronização", icone: <WifiOff size={26} />, cor: fila.length > 0 ? "var(--mob-ambar)" : "var(--mob-dourado)" },
-    // Escape hatch para as áreas que só existem no site (Configurações,
-    // Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios
-    // avançados etc.) — mesma sessão (localStorage é da mesma origem), sem
-    // precisar logar de novo. Sai da casca do app (header/nav de baixo) e
-    // mostra a navegação normal do site, em "modo desktop" espremido na
-    // tela do celular — aceitável para uso ocasional/administrativo.
-    { id: "siteCompleto", label: "Site completo", icone: <Monitor size={26} />, cor: "var(--mob-azul)" },
-    { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
+  // Módulos — mesmo gate de permissão do site ("Estoque" ao lado de
+  // "Financeiro" segue a permissão do módulo /estoque; Recria idem).
+  // Item "Protocolos" definido à parte porque, para o operador restrito (ver
+  // `restrito` acima), ele sai daqui e vira a 1ª seção do menu inteiro —
+  // para todo mundo mais, fica exatamente onde sempre esteve, dentro de Módulos.
+  const itemProtocolos = { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-roxo)" };
+  const modulosOpcoes = [
+    ...(montado && podeModulo("estoque") ? [{ id: "estoque" as const, titulo: "Estoque", subtitulo: statEstoqueValor || "Alimentação, medicamentos, sêmen…", icone: <Boxes size={20} />, cor: "var(--cat-estoque)" }] : []),
+    ...(montado && podeModulo("recria") ? [{ id: "recria" as const, titulo: "Recria", subtitulo: "Bezerras e novilhas em recria", icone: <Baby size={20} />, cor: "var(--cat-recria)" }] : []),
+    ...(!restrito ? [itemProtocolos] : []),
+    { id: "portal" as const, titulo: "Portal", subtitulo: "Comunicação interna e fotos do campo", icone: <MessageSquare size={20} />, cor: "var(--mob-roxo)" },
   ];
+
+  // Administração — "Controle de Acesso" só para o proprietário (ver
+  // ehDono()); já reúne últimos acessos + auditoria de atividade, então não
+  // há uma aba separada para isso. "Painel CowData" é a exceção que navega
+  // de verdade (ver comentário no topo do arquivo).
+  const administracaoOpcoes = [
+    ...(montado && ehDono() ? [{ id: "controleAcesso" as const, titulo: "Controle de Acesso", subtitulo: "Usuários, acessos e auditoria", icone: <Users size={20} />, cor: "var(--cat-acesso)" }] : []),
+    ...(montado && ehDono() ? [{ id: "painelCowData" as const, titulo: "Painel CowData", subtitulo: "Administração da CowData (proprietário)", icone: <Building2 size={20} />, cor: "var(--mob-dourado)" }] : []),
+    ...(montado && ehAdmin() ? [{ id: "assistente" as const, titulo: "Assistente Virtual", subtitulo: "Assistente com IA para dúvidas rápidas", icone: <Sparkles size={20} />, cor: "var(--mob-dourado)" }] : []),
+  ];
+
+  function aoEscolherModulo(id: (typeof modulosOpcoes)[number]["id"] | (typeof administracaoOpcoes)[number]["id"]) {
+    if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
+    setTela(id as "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente");
+  }
 
   return (
     <div>
       <MobTitulo>Menu</MobTitulo>
 
-      <GradeAcoes
-        opcoes={secoesOpcoes}
-        onEscolher={(id) => {
-          if (id === "sair") { logout(); return; }
-          if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
-          if (id === "siteCompleto") { router.push("/"); return; }
-          if (id === "sincronizacao") { setSecaoAberta("sincronizacao"); return; }
-          setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso");
-        }}
-      />
+      {/* Operador restrito (ver `restrito` acima): Protocolos vira a 1ª seção
+          do menu, antes até de Reprodução — para todo mundo mais, o item
+          continua dentro de Módulos, mais abaixo, sem nenhuma mudança. */}
+      {restrito && (
+        <SecaoRetratil chave="protocolos-restrito" titulo={itemProtocolos.titulo} colapsada={secoesColapsadas.has("protocolos-restrito")} onAlternar={alternarSecao}>
+          <LinhaMenu icone={itemProtocolos.icone} titulo={itemProtocolos.titulo} subtitulo={itemProtocolos.subtitulo}
+            cor={itemProtocolos.cor} onClick={() => aoEscolherModulo(itemProtocolos.id)} />
+        </SecaoRetratil>
+      )}
 
-      {/* Sincronização offline — sempre visível, independente das sessões acima. */}
-      <div id="pendentes" style={{ scrollMarginTop: "5rem", marginTop: "1.2rem" }}>
-        <div className="mob-secao">Sincronização</div>
-        {fila.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>Nada aguardando envio ✓</p>}
+      {grupos.map((g) => (
+        <SecaoRetratil key={g.secao} chave={g.secao} titulo={g.titulo} colapsada={secoesColapsadas.has(g.secao)} onAlternar={alternarSecao}>
+          {g.itens.map((i) => (
+            <LinhaMenu key={i.chave} icone={i.icone} titulo={i.titulo} subtitulo={statsSub[i.chave] || i.subtitulo}
+              cor={i.cor || g.cor} onClick={() => setSub(i.chave)} />
+          ))}
+        </SecaoRetratil>
+      ))}
 
-        {fila.map((item) => (
-          <div key={item.id} className="mob-card" style={{ padding: "0.85rem 1rem", marginBottom: "0.6rem" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.92rem" }}>{item.descricao}</div>
-            <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)" }}>{new Date(item.criadoEm).toLocaleString("pt-BR")}</div>
-            {!item.erro && (
-              <div style={{ marginTop: "0.35rem", fontSize: "0.78rem", color: "var(--mob-muted)" }}>
-                {(item.tentativas || 0) > 0 ? `Aguardando envio (tentativa ${item.tentativas})…` : "Aguardando envio…"}
-                {item.debugUltimoErro && (
-                  <div style={{ marginTop: "0.2rem", color: "var(--mob-ambar)", fontSize: "0.72rem" }}>
-                    Última falha: {item.debugUltimoErro}
-                  </div>
-                )}
-              </div>
-            )}
-            {item.erro && (
-              <div style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-                <span style={{ color: "var(--mob-vermelho)", fontSize: "0.8rem", fontWeight: 600, flex: 1, minWidth: 0 }}>{item.erro}</span>
-                <button type="button" onClick={() => descartarPendente(item.id)}
-                  style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 600, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: 10, padding: "0.35rem 0.6rem", cursor: "pointer", flexShrink: 0 }}>
-                  <Trash2 size={14} /> Descartar
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+      {modulosOpcoes.length > 0 && (
+        <SecaoRetratil chave="modulos" titulo="Módulos" colapsada={secoesColapsadas.has("modulos")} onAlternar={alternarSecao}>
+          {modulosOpcoes.map((o) => (
+            <LinhaMenu key={o.id} icone={o.icone} titulo={o.titulo} subtitulo={o.subtitulo} cor={o.cor} onClick={() => aoEscolherModulo(o.id)} />
+          ))}
+        </SecaoRetratil>
+      )}
 
-        {fila.length > 0 && (
-          // Não trava no estado `online` (React, só atualiza via evento
-          // 'online'/'offline' — pode ficar desatualizado se o WebView não
-          // disparar o evento) — sempre permite tentar; sincronizar() já
-          // lida bem com estar realmente offline (falha rápido, tenta depois).
-          <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={sincronizando} style={{ marginTop: "0.2rem" }}>
-            <CloudUpload size={17} /> {sincronizando ? "Enviando…" : "Enviar agora"}
-          </button>
-        )}
-      </div>
+      {administracaoOpcoes.length > 0 && (
+        <SecaoRetratil chave="administracao" titulo="Administração" colapsada={secoesColapsadas.has("administracao")} onAlternar={alternarSecao}>
+          {administracaoOpcoes.map((o) => (
+            <LinhaMenu key={o.id} icone={o.icone} titulo={o.titulo} subtitulo={o.subtitulo} cor={o.cor} onClick={() => aoEscolherModulo(o.id)} />
+          ))}
+        </SecaoRetratil>
+      )}
+
+      <SecaoRetratil chave="app" titulo="App" colapsada={secoesColapsadas.has("app")} onAlternar={alternarSecao}>
+        <LinhaMenu icone={<Palette size={20} />} titulo="Aparência" subtitulo="Tema claro ou escuro" cor="var(--mob-dourado)" onClick={() => setTela("aparencia")} />
+        <LinhaMenu icone={<WifiOff size={20} />} titulo="Sincronização" subtitulo={fila.length > 0 ? `${fila.length} pendente${fila.length > 1 ? "s" : ""}` : "Fila em dia"} cor={fila.length > 0 ? "var(--mob-ambar)" : "var(--mob-dourado)"} onClick={() => setTela("sincronizacao")} />
+        {/* Escape hatch para as áreas que só existem no site (Configurações,
+            Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios
+            avançados etc.) — mesma sessão (localStorage é da mesma origem), sem
+            precisar logar de novo. Sai da casca do app (header/nav de baixo) e
+            mostra a navegação normal do site, em "modo desktop" espremido na
+            tela do celular — aceitável para uso ocasional/administrativo. */}
+        <LinhaMenu icone={<Monitor size={20} />} titulo="Site completo" subtitulo="Abrir a versão completa do site" cor="var(--mob-azul)" onClick={() => router.push("/")} />
+        <LinhaMenu icone={<LogOut size={20} />} titulo="Sair / trocar de usuário" subtitulo="Encerrar a sessão neste aparelho" cor="var(--mob-vermelho)" onClick={() => setConfirmarSair(true)} />
+      </SecaoRetratil>
 
       {/* Rodapé */}
       <p style={{ textAlign: "center", color: "var(--mob-muted)", fontSize: "0.78rem", margin: "1.6rem 0 0.5rem" }}>
         {montado && usuario ? `${usuario.nome || usuario.username || "Usuário"} · ` : ""}v1.0 · App de campo
       </p>
+
+      {/* Descartar pendência — ação destrutiva e permanente (perde um
+          lançamento de campo ainda não enviado), exige confirmação explícita. */}
+      {confirmarDescartarId && (
+        <MobConfirmModal
+          titulo="Descartar pendência?"
+          textoConfirmar="Descartar"
+          onCancelar={() => setConfirmarDescartarId(null)}
+          onConfirmar={() => { descartarPendente(confirmarDescartarId); setConfirmarDescartarId(null); }}
+        >
+          Este lançamento ainda não foi enviado ao servidor. Descartar apaga o registro para sempre — não é possível desfazer.
+        </MobConfirmModal>
+      )}
+
+      {/* Sair — também destrutivo o bastante (encerra a sessão no aparelho)
+          para pedir confirmação antes de agir. */}
+      {confirmarSair && (
+        <MobConfirmModal
+          titulo="Sair do app?"
+          textoConfirmar="Sair"
+          onCancelar={() => setConfirmarSair(false)}
+          onConfirmar={() => logout()}
+        >
+          Você vai precisar entrar de novo para continuar usando o app neste aparelho.
+        </MobConfirmModal>
+      )}
     </div>
   );
 }

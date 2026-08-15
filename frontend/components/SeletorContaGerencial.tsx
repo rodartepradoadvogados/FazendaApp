@@ -152,7 +152,7 @@ export function SeletorContaGerencial({
   const rowBase: React.CSSProperties = {
     display: "flex", alignItems: "center", gap: "0.4rem", width: "100%",
     padding: "0.35rem 0.5rem", background: "none", border: "none", cursor: "pointer",
-    textAlign: "left", fontSize: "0.82rem", color: "var(--text)", borderRadius: "6px",
+    textAlign: "left", fontSize: "0.82rem", color: "var(--text)", borderRadius: "var(--r-sm)",
   };
 
   function Linha({ c }: { c: ContaPlano }) {
@@ -197,7 +197,7 @@ export function SeletorContaGerencial({
       ref={popupRef}
       style={{
         position: "fixed", zIndex: 1000, top: pos.top, left: pos.left, width: pos.width,
-        background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
+        background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
         boxShadow: "0 8px 28px rgba(0,0,0,0.28)", padding: "0.5rem", maxHeight: pos.maxHeight, overflowY: "auto",
       }}
     >
@@ -259,7 +259,7 @@ export function SeletorContaGerencial({
         style={{
           width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.4rem",
           background: "var(--surface-2)", color: rotulo ? "var(--text)" : "var(--text-muted)",
-          border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem",
+          border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem",
           fontSize: "0.85rem", cursor: "pointer", textAlign: "left",
         }}
       >

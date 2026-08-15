@@ -207,7 +207,7 @@ export default function ImportarDados() {
                       Data do controle (uma só para todo o arquivo)
                     </label>
                     <input type="date" value={datasControle[id] || ""} onChange={(e) => setDatasControle((p) => ({ ...p, [id]: e.target.value }))}
-                      style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                      style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
                   </div>
                 )}
                 {m.precisa_data_corte && (
@@ -216,7 +216,7 @@ export default function ImportarDados() {
                       Data de corte (linhas com data_pendencia igual ou depois dela são ignoradas)
                     </label>
                     <input type="date" value={datasCorte[id] || ""} onChange={(e) => setDatasCorte((p) => ({ ...p, [id]: e.target.value }))}
-                      style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                      style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
                   </div>
                 )}
                 {m.aceita_excel && (
@@ -225,13 +225,13 @@ export default function ImportarDados() {
                       <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Central (fonte)</label>
                       <input value={extras[id]?.fonte || ""} placeholder="Ex.: Select Sires"
                         onChange={(e) => setExtras((p) => ({ ...p, [id]: { ...(p[id] || {}), fonte: e.target.value } }))}
-                        style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                        style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
                     </div>
                     <div>
                       <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Rodada da prova</label>
                       <input value={extras[id]?.rodada || ""} placeholder="Ex.: Abr/2026"
                         onChange={(e) => setExtras((p) => ({ ...p, [id]: { ...(p[id] || {}), rodada: e.target.value } }))}
-                        style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                        style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
                     </div>
                   </div>
                 )}

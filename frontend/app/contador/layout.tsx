@@ -3,24 +3,28 @@
 // UsuarioFazenda.contador, ver backend/fazenda/models/multitenant.py e
 // AuthShell.tsx::ehPainelContador). Deliberadamente "soa diferente" do resto
 // do sistema (nem a paleta vinho/verde/azul da fazenda, nem o navy+dourado
-// do Painel CowData): tipografia serifada de livro-caixa sobre grafite quente,
-// com friso duplo no cabeçalho — a intenção é que nunca pareça "mais uma tela
-// da fazenda". Não tem equivalente no app móvel (ver AuthShell.tsx).
+// do Painel CowData): tipografia serifada de livro-caixa sobre grafite
+// neutro-azulado (paleta cinza-azulada do redesign, sem o cobre/marrom da
+// versão anterior), com friso duplo no cabeçalho — a intenção é que nunca
+// pareça "mais uma tela da fazenda". Não tem equivalente no app móvel (ver
+// AuthShell.tsx).
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { ehContador, getFazendaAtual, getUsuario, logout } from "@/lib/api";
+import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 
 export const CORES_CONTADOR = {
-  bg: "#1c1a17",
-  painel: "#242019",
-  painelAlt: "#2c2620",
-  borda: "#463c2e",
-  bordaClara: "#5a4d3a",
-  texto: "#ede4d3",
-  mudo: "#a3947a",
-  cobre: "#c1682f",
-  cobreClaro: "#e0985c",
+  bg: "#1A2028",
+  painel: "#212832",
+  painelAlt: "#262E39",
+  borda: "#39424F",
+  bordaClara: "#4B5563",
+  texto: "#F1F3F5",
+  mudo: "#9CA6B4",
+  cobre: "#6B7F99",
+  cobreClaro: "#8FA0B5",
   positivo: "#8faa7b",
   negativo: "#b5544a",
 };
@@ -34,6 +38,18 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
   const usuario = getUsuario();
   const C = CORES_CONTADOR;
 
+  // Quem chega aqui pelo portal Administração (aba "Painel do Contador",
+  // ver InsightsLayout.tsx) precisa voltar para lá, não para a Capa da
+  // fazenda — ver lib/portalAdministracao.ts.
+  const [voltarHref, setVoltarHref] = useState("/");
+  const [voltarLabel, setVoltarLabel] = useState("Voltar à fazenda");
+  useEffect(() => {
+    if (consumirVeioDaAdministracao()) {
+      setVoltarHref("/usuarios");
+      setVoltarLabel("Voltar à Administração");
+    }
+  }, []);
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.texto, fontFamily: FONTE_BASE }}>
       <header style={{ borderBottom: `1px solid ${C.borda}`, background: C.painel }}>
@@ -42,8 +58,8 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
               aparece para o proprietário espiando esta tela pela Sidebar >
               Administração (ver AuthShell.tsx). */}
           {!ehContador() && (
-            <Link href="/" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: C.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
-              <ArrowLeft size={13} /> Voltar à fazenda
+            <Link href={voltarHref} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: C.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
+              <ArrowLeft size={13} /> {voltarLabel}
             </Link>
           )}
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: "0.6rem" }}>
@@ -58,7 +74,7 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
             <div style={{ display: "flex", alignItems: "center", gap: "0.9rem" }}>
               <span style={{
                 fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
-                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "3px", padding: "0.2rem 0.5rem",
+                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "var(--r-sm)", padding: "0.2rem 0.5rem",
               }}>
                 Somente leitura
               </span>

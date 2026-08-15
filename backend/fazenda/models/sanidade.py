@@ -8,7 +8,7 @@ o re-export consolidado usado pelo resto do código.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+from typing import ClassVar, Optional
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -46,6 +46,12 @@ class Sanidade(SQLModel, table=True):
     # permite excluir o lançamento inteiro (protocolo + agenda + Sanidade) de uma vez.
     protocolo_sanitario_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_sanitario_lancamento.id")
     protocolo_iatf_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_iatf_lancamento.id")
+    # Espelha protocolo_iatf_lancamento_id acima, mas para a indução de
+    # lactação — vínculo relacional com o ProtocoloInducaoLancamento que
+    # originou esta Sanidade (antes só existia como texto livre em `obs`).
+    protocolo_inducao_lancamento_id: Optional[int] = Field(
+        default=None, foreign_key="protocolo_inducao_lancamento.id", index=True
+    )
     # Avaliação de cura, pedida na Agenda no dia seguinte a uma aplicação
     # curativa (None = ainda não respondida). Alimenta o relatório Taxa de cura.
     curada: Optional[bool] = None
@@ -124,7 +130,13 @@ class PrincipioAtivo(SQLModel, table=True):
 class MedicamentoComercial(SQLModel, table=True):
     """Marca comercial + laboratório de um princípio ativo (tabela filha). Ex.:
     Maxicam 2%/Ourofino → Meloxicam. Catálogo relacional; um item de estoque
-    físico referencia uma marca (ou pelo menos o princípio)."""
+    físico referencia uma marca (ou pelo menos o princípio).
+
+    É AQUI que moram dose, via e carência — não no princípio ativo: duas marcas
+    da mesma molécula têm concentrações diferentes (ivermectina 1% e 3,15% são
+    volumes completamente diferentes) e carências diferentes. Herdar carência
+    de "marca irmã" do mesmo princípio é justamente o erro que contamina tanque.
+    """
 
     __tablename__ = "medicamento_comercial"
 
@@ -136,16 +148,57 @@ class MedicamentoComercial(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
+    # ── Bula (o "norte" do catálogo padrão, editável por fazenda) ──
+    uso_principal: Optional[str] = None
+    concentracao: Optional[str] = None            # ex.: "50 mg/mL", "1%"
+    dose_padrao: Optional[float] = None
+    unidade_dose: Optional[str] = None            # ml | dose | seringa | unidade
+    dose_base: Optional[str] = None               # por_kg_pv | por_animal | por_teto | por_litro_agua
+    dose_referencia_kg: Optional[float] = None    # ex.: 1 mL/50 kg → 50
+    dose_texto: Optional[str] = None              # texto pronto ("1 mL/50 kg SC")
+    via_padrao: Optional[str] = None
+    link_bula: Optional[str] = None
+
+    # ── Carência: guardada SEPARADA (leite × carne), exibida num campo único
+    #    (ver rules/carencia.formatar_carencia). Nulo = NÃO INFORMADA, nunca
+    #    zero: a UI precisa dizer "não informada" em vez de induzir a "liberado".
+    carencia_leite_dias: Optional[int] = None
+    carencia_carne_dias: Optional[int] = None
+    proibido_lactacao: Optional[bool] = None      # não usar em vaca em ordenha
+    alerta_gestacao: Optional[bool] = None        # risco de aborto (corticoide, PGF2α)
+    alerta: Optional[str] = None                  # texto livre de alerta clínico
+
+    # Linha global que esta é cópia de — preenchido só quando a fazenda
+    # personaliza o padrão (ver POST /farmacia/indicacoes/{id}/personalizar).
+    origem_id: Optional[int] = Field(default=None, foreign_key="medicamento_comercial.id", index=True)
+
 
 class Doenca(SQLModel, table=True):
+    """INDICAÇÃO: o motivo pelo qual se aplica alguma coisa.
+
+    Nasceu como "doença" (mastite, pneumonia) e continua sendo isso por padrão,
+    mas `tipo` generaliza para MANEJO — sincronização/IATF, indução de lactação,
+    secagem. É o que permite um seletor único de "por que estou aplicando":
+    protocolo de indução de lactação mistura hormônio e medicamento, e o
+    operador não pode ser obrigado a escolher a categoria antes de achar o que
+    usou. O nome da tabela continua `doenca` de propósito — renomear quebraria
+    `PrincipioAtivo.doenca_id`, `ProtocoloSanitarioEtapa` gravada por critério
+    e o casamento por nome de vacina pré-parto em routers/estoque.py.
+    """
+
     __tablename__ = "doenca"
     __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_doenca_nome_fazenda"),)
+
+    TIPOS: ClassVar[tuple[str, ...]] = ("doenca", "reprodutivo", "produtivo", "preventivo", "suporte")
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    tipo: Optional[str] = Field(default="doenca", index=True)  # ver TIPOS
+    descricao: Optional[str] = None
+    origem_id: Optional[int] = Field(default=None, foreign_key="doenca.id", index=True)
 
 
 class IndicacaoTerapeutica(SQLModel, table=True):
@@ -157,7 +210,11 @@ class IndicacaoTerapeutica(SQLModel, table=True):
     aparecem automaticamente no lançamento."""
 
     __tablename__ = "indicacao_terapeutica"
-    __table_args__ = (UniqueConstraint("principio_ativo_id", "doenca_id", name="uq_indicacao_principio_doenca"),)
+    # `fazenda_id` entra na unique: sem ele, a 2ª fazenda que personalizasse a
+    # mesma indicação batia em IntegrityError (500) na hora de clonar o padrão.
+    __table_args__ = (
+        UniqueConstraint("principio_ativo_id", "doenca_id", "fazenda_id", name="uq_indicacao_principio_doenca"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
@@ -165,6 +222,8 @@ class IndicacaoTerapeutica(SQLModel, table=True):
     prioridade: int = 2  # 1 = 1ª escolha, 2 = 2ª opção, 3 = 3ª opção...
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nota: Optional[str] = None  # ressalva clínica ("só com corpo lúteo", etc.)
+    origem_id: Optional[int] = Field(default=None, foreign_key="indicacao_terapeutica.id", index=True)
 
 
 class ExameDefinicao(SQLModel, table=True):
@@ -248,6 +307,10 @@ class EventoSanitario(SQLModel, table=True):
     # Agendamento: "nenhum" (só o nome, retrocompatível) | "epoca" | "evento".
     tipo_agendamento: str = Field(default="nenhum")
     categoria_alvo: Optional[str] = None  # ex.: "Bezerras (3 a 8 meses)"
+    # Restringe o evento a um sexo (ex.: Brucelose B19 é só para fêmeas) —
+    # None = ambos os sexos (retrocompatível). Só filtra quando preenchido;
+    # nunca inferido do nome/categoria_alvo (texto livre não é confiável).
+    sexo_alvo: Optional[str] = None  # "F" | "M" | None
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     # Tipo do manejo preventivo: "vacina" | "exame" | "tratamento".
     categoria_preventiva: Optional[str] = None
@@ -276,6 +339,11 @@ class EventoSanitario(SQLModel, table=True):
     # Só para exame: avisa na Agenda N dias antes da data prevista, para
     # confirmar o exame com o veterinário (pendência distinta da do próprio dia).
     agenda_dias_antes: Optional[int] = None
+
+    # Serviço financeiro (nome de um ServicoCadastro) para o botão "Lançar
+    # financeiro" no calendário sanitário — explícito em vez de adivinhar pelo
+    # nome do evento, para funcionar tanto em vacina quanto em exame.
+    servico_financeiro: Optional[str] = None
 
     # Condição de exclusão mútua — ex.: alternativas de vacina para a mesma
     # doença (Brucelose B19 × Brucelose RB51): só agenda ESTE evento se o
@@ -319,7 +387,73 @@ class CalendarioSanitario(SQLModel, table=True):
     data_evento: date  # data de referência do evento (base da recorrência)
     observacao: Optional[str] = None
     ativo: bool = True
+    # Liga esta regra ao workflow de Cronograma (ver CronogramaSanitario
+    # abaixo): em vez de virar pendência de "aplicar agora" direto, o animal
+    # que bate o critério entra numa lista de espera, e a aplicação em si só
+    # acontece quando um veterinário for agendado (ou a equipe própria
+    # confirmar que vai aplicar) — decisão pedida na Agenda a cada ocorrência.
+    # False (padrão) preserva 100% o comportamento antigo — nenhuma regra já
+    # cadastrada muda de comportamento sozinha.
+    usa_cronograma: bool = False
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Cronograma sanitário — workflow dinâmico de acompanhamento de UMA ocorrência
+# de uma regra do calendário sanitário marcada `usa_cronograma=True` (ver
+# CalendarioSanitario acima). Existe no máximo 1 cronograma "em aberto" (não
+# concluído/cancelado) por regra a qualquer momento — cada evento sanitário
+# "toca" nesse cronograma aberto por duas trilhas independentes:
+#   (1) trilha do animal — CronogramaSanitarioAnimal, alimentada todo dia
+#       conforme animais batem o critério do EventoSanitario (idade/gatilho);
+#   (2) trilha do agendamento — os campos abaixo, decidindo COM QUEM e
+#       QUANDO a aplicação de fato acontece (veterinário/própria/em branco,
+#       com lembrete obrigatório N dias antes se ninguém decidiu nada).
+# Ver fazenda.rules.cronograma_sanitario para o motor de estado completo.
+# ---------------------------------------------------------------------------
+class CronogramaSanitario(SQLModel, table=True):
+    __tablename__ = "cronograma_sanitario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    calendario_sanitario_id: int = Field(foreign_key="calendario_sanitario.id", index=True)
+    # Data prevista desta ocorrência — nasce igual à próxima ocorrência
+    # projetada da regra (ver rules.calendario_sanitario.proxima_ocorrencia),
+    # mas pode ser adiada (ver "adiar" abaixo) sem alterar a regra em si.
+    data_evento: date
+    data_original: Optional[date] = None  # 1ª data prevista, preenchida só se já foi adiado 1x
+    # None = "em branco" (ainda não decidido) | "veterinario" | "propria".
+    modo_execucao: Optional[str] = None
+    veterinario_pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
+    # "aberto" (recém-criado, aceitando inclusão de animais e aguardando
+    #   decisão de modo) | "agendado" (modo definido, aguardando a data) |
+    #   "aguardando_confirmacao" (passou o aviso de N dias antes sem decisão,
+    #   Agenda cobrando confirmar/adiar) | "concluido" (aplicado) |
+    #   "cancelado".
+    status: str = Field(default="aberto", index=True)
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    concluido_em: Optional[datetime] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class CronogramaSanitarioAnimal(SQLModel, table=True):
+    """Um animal dentro de um CronogramaSanitario — trilha (1) acima. Nasce
+    "sugerido" assim que o animal bate o critério do evento sanitário
+    (idade/gatilho); o funcionário aprova ("incluido") ou recusa ("excluido")
+    pela Agenda. "aplicado" é marcado quando o cronograma é executado."""
+
+    __tablename__ = "cronograma_sanitario_animal"
+    __table_args__ = (UniqueConstraint("cronograma_id", "numero_matriz", name="uq_cronograma_animal"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cronograma_id: int = Field(foreign_key="cronograma_sanitario.id", index=True)
+    numero_matriz: str = Field(index=True)
+    status: str = Field(default="sugerido", index=True)  # sugerido | incluido | excluido | aplicado
+    data_sugestao: date
+    data_decisao: Optional[date] = None
+    data_aplicacao: Optional[date] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
@@ -356,6 +490,14 @@ class ProtocoloSanitario(SQLModel, table=True):
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     eh_mastite: bool = False  # liga o fluxo diferenciado: CMT, teto afetado, classificação
     dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma (etapas já existentes usam 1)
+    # Curativo (trata um animal já doente — mastite, diarreia, pneumonia…) ou
+    # preventivo (cronograma de várias doses aplicado sem doença instalada,
+    # ex.: vacinação em 2 doses). None = curativo, que é o que todo protocolo
+    # cadastrado antes desta distinção é — nenhum muda de comportamento.
+    # NÃO substitui o Calendário Sanitário (EventoSanitario/CalendarioSanitario),
+    # que continua sendo o lugar da recorrência ("a cada 4 meses"): aqui é
+    # cronograma de dias fixos (D0/D1/D2…), lá é regra que se repete.
+    finalidade: Optional[str] = None  # "curativo" | "preventivo"
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -490,6 +632,10 @@ class ProtocoloInducaoLancamento(SQLModel, table=True):
     data_d0: date  # data do dia_inicial do protocolo (D0 ou D1)
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
+    # Ver ProtocoloIatfLancamento.encerrado_em / .ativo — mesma semântica.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
+    ativo: bool = Field(default=True, index=True)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

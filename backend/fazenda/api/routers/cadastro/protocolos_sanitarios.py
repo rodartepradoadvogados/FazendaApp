@@ -16,10 +16,11 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Doenca, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario,
+    Doenca, PrincipioAtivo, ProtocoloIatf, ProtocoloIatfEtapa, ProtocoloIatfLancamento,
+    ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloInducaoLancamento, ProtocoloSanitario,
     ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -36,9 +37,16 @@ router = APIRouter()
 # Igual à lista usada no restante do site (frontend/lib/constants.ts) — as
 # duas listas divergiam (esta faltava Subcutânea/Intrauterina), o que rejeitava
 # no backend vias que o formulário deixava escolher.
-VIAS_APLICACAO = ["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]
+VIAS_APLICACAO = [
+    "Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina",
+    "Intravaginal", "Intradérmica", "Pour-on",
+]
 CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao", "doenca"]
 CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
+# Finalidade do protocolo sanitário de etapas. None (protocolo cadastrado
+# antes desta distinção) é lido como "curativo" — ver FINALIDADE_PADRAO.
+FINALIDADES_PROTOCOLO_SANITARIO = ["curativo", "preventivo"]
+FINALIDADE_PADRAO = "curativo"
 
 
 class ProtocoloEtapaIn(BaseModel):
@@ -56,8 +64,20 @@ class ProtocoloSanitarioIn(BaseModel):
     doenca_id: int | None = None
     eh_mastite: bool = False
     dia_inicial: int = 0
+    finalidade: str | None = None  # curativo | preventivo — None vira "curativo"
     ativo: bool = True
     etapas: list[ProtocoloEtapaIn]
+
+
+def _validar_finalidade(finalidade: str | None) -> str:
+    if finalidade is None:
+        return FINALIDADE_PADRAO
+    if finalidade not in FINALIDADES_PROTOCOLO_SANITARIO:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Finalidade inválida — use uma de: {', '.join(FINALIDADES_PROTOCOLO_SANITARIO)}",
+        )
+    return finalidade
 
 
 def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
@@ -85,6 +105,10 @@ def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict
     ).all()
     return {
         **p.model_dump(),
+        # Protocolo cadastrado antes da distinção curativo/preventivo não tem
+        # finalidade gravada — é curativo por definição, e a tela precisa ver
+        # isso resolvido em vez de um campo vazio.
+        "finalidade": p.finalidade or FINALIDADE_PADRAO,
         "doenca_nome": doencas.get(p.doenca_id) if p.doenca_id else None,
         "etapas": [e.model_dump() for e in etapas],
     }
@@ -105,9 +129,8 @@ def listar_protocolos_sanitarios(
 
 @router.post("/protocolos-sanitarios")
 def criar_protocolo_sanitario(
-    dados: ProtocoloSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -120,13 +143,14 @@ def criar_protocolo_sanitario(
 
     protocolo = ProtocoloSanitario(
         nome=nome, doenca_id=dados.doenca_id, eh_mastite=dados.eh_mastite,
-        dia_inicial=dados.dia_inicial, ativo=dados.ativo, fazenda_id=fazenda_id,
+        dia_inicial=dados.dia_inicial, finalidade=_validar_finalidade(dados.finalidade),
+        ativo=dados.ativo, fazenda_id=fazenda_id,
     )
     session.add(protocolo)
     session.commit()
     session.refresh(protocolo)
     for etapa in dados.etapas:
-        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, fazenda_id=protocolo.fazenda_id, **etapa.model_dump()))
     session.commit()
 
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
@@ -151,6 +175,7 @@ def atualizar_protocolo_sanitario(
     protocolo.doenca_id = dados.doenca_id
     protocolo.eh_mastite = dados.eh_mastite
     protocolo.dia_inicial = dados.dia_inicial
+    protocolo.finalidade = _validar_finalidade(dados.finalidade)
     protocolo.ativo = dados.ativo
     session.add(protocolo)
 
@@ -228,7 +253,14 @@ def _upsert_protocolo_sanitario(
         session.commit()
 
     for etapa in etapas_in:
-        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+        # Carimba a MESMA fazenda_id do protocolo-pai (None nos seeds
+        # padrão, que são dado legado/compartilhado de propósito — ver
+        # docstring acima). Antes disto a etapa nunca gravava fazenda_id
+        # (nem quando o protocolo-pai tinha uma), daí o comentário em
+        # agenda.py sobre não filtrar esta tabela direto por fazenda_id —
+        # ainda vale para o histórico, mas a partir daqui pelo menos as
+        # etapas novas nascem consistentes com o protocolo que as criou.
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, fazenda_id=protocolo.fazenda_id, **etapa.model_dump()))
     session.commit()
     return protocolo
 
@@ -373,9 +405,8 @@ def ler_planilha_protocolos_sanitarios(content: bytes, filename: str | None) -> 
 @router.post("/protocolos-sanitarios/importar")
 async def importar_protocolos_sanitarios(
     file: UploadFile = File(...), session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     conteudo = await file.read()
     protocolos = ler_planilha_protocolos_sanitarios(conteudo, file.filename)
     if not protocolos:
@@ -465,9 +496,8 @@ def listar_protocolos_inducao(
 
 @router.post("/protocolos-inducao-lactacao")
 def criar_protocolo_inducao(
-    dados: ProtocoloInducaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ProtocoloInducaoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -486,7 +516,7 @@ def criar_protocolo_inducao(
     session.commit()
     session.refresh(protocolo)
     for etapa in dados.etapas:
-        session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+        session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, fazenda_id=protocolo.fazenda_id, **etapa.model_dump()))
     session.commit()
     return _serializar_protocolo_inducao(session, protocolo)
 
@@ -521,6 +551,176 @@ def atualizar_protocolo_inducao(
         session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
     session.commit()
     return _serializar_protocolo_inducao(session, protocolo)
+
+
+@router.delete("/protocolos-inducao-lactacao/{protocolo_id}")
+def excluir_protocolo_inducao(
+    protocolo_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cópia estrutural de `excluir_protocolo_sanitario`/`excluir_protocolo_iatf_cadastrado`
+    (G8) — mesmo padrão de bloqueio quando já houve lançamento: aqui o
+    caminho recomendado é desativar (`ativo=False`), não apagar histórico."""
+    protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    ja_lancado = session.exec(
+        select(ProtocoloInducaoLancamento).where(ProtocoloInducaoLancamento.protocolo_id == protocolo_id)
+    ).first()
+    if ja_lancado:
+        raise HTTPException(
+            status_code=409,
+            detail="Este protocolo já foi lançado ao menos uma vez e não pode ser excluído — desative-o (campo Ativo) em vez disso.",
+        )
+    etapas = session.exec(
+        select(ProtocoloInducaoLactacaoEtapa).where(ProtocoloInducaoLactacaoEtapa.protocolo_id == protocolo_id)
+    ).all()
+    for e in etapas:
+        session.delete(e)
+    session.delete(protocolo)
+    session.commit()
+    return {"excluido": True}
+
+
+# ---------------------------------------------------------------------------
+# Protocolo IATF — cadastro do molde de hormônios. O dia de cada etapa é
+# LIVRE (qualquer inteiro ≥ 0) — antes ficava travado em D0/D7/D9, mas existe
+# protocolo de verdade com outro espaçamento (ex.: D0, D8, D10, D12). A
+# inseminação nunca faz parte do molde (não se cadastra hormônio nela): ela é
+# sempre 2 dias depois da ÚLTIMA etapa cadastrada — D9 → D11 no protocolo
+# clássico, D12 → D14 num protocolo D0/D8/D10/D12 (ver
+# fazenda.rules.protocolo_iatf.dia_inseminacao). Padronizado no mesmo formato
+# do protocolo sanitário/indução: mesmo seletor de insumo (medicamento/
+# princípio ativo/classificação). O lançamento em animais continua em
+# /reproducao (POST /reproducao/protocolo-iatf).
+# ---------------------------------------------------------------------------
+
+
+class EtapaIatfIn(BaseModel):
+    dia: int
+    criterio_tipo: str = "medicamento"  # medicamento | principio_ativo | classificacao
+    principio_ativo_id: int | None = None
+    produto: str
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+
+
+class ProtocoloIatfIn(BaseModel):
+    nome: str
+    observacao: str | None = None
+    ativo: bool = True
+    etapas: list[EtapaIatfIn]
+
+
+def _validar_etapas_iatf(etapas: list[EtapaIatfIn]) -> None:
+    if not etapas:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma etapa do protocolo")
+    for e in etapas:
+        if e.dia < 0:
+            raise HTTPException(status_code=400, detail="O dia da etapa não pode ser negativo — o protocolo começa em D0")
+        if e.criterio_tipo not in CRITERIOS_MEDICAMENTO:
+            raise HTTPException(status_code=400, detail=f"Critério inválido — use um de: {', '.join(CRITERIOS_MEDICAMENTO)}")
+        if not (e.produto or "").strip():
+            raise HTTPException(status_code=400, detail="Informe o medicamento, princípio ativo ou classificação de cada etapa")
+        if e.dose is not None and e.dose <= 0:
+            raise HTTPException(status_code=400, detail="A dose de uma etapa deve ser positiva")
+
+
+def _serializar_protocolo_iatf(session: Session, p: ProtocoloIatf) -> dict:
+    etapas = session.exec(
+        select(ProtocoloIatfEtapa).where(ProtocoloIatfEtapa.protocolo_id == p.id).order_by(ProtocoloIatfEtapa.dia)
+    ).all()
+    return {**p.model_dump(), "etapas": [e.model_dump() for e in etapas]}
+
+
+@router.get("/protocolos-iatf")
+def listar_protocolos_iatf_cadastrados(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ProtocoloIatf).order_by(ProtocoloIatf.nome)
+    if fazenda_id is not None:
+        query = query.where(ProtocoloIatf.fazenda_id == fazenda_id)
+    protocolos = session.exec(query).all()
+    return [_serializar_protocolo_iatf(session, p) for p in protocolos]
+
+
+@router.post("/protocolos-iatf")
+def criar_protocolo_iatf_cadastrado(
+    dados: ProtocoloIatfIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    query_dup = select(ProtocoloIatf).where(ProtocoloIatf.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(ProtocoloIatf.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um protocolo IATF com o nome '{nome}'")
+    _validar_etapas_iatf(dados.etapas)
+
+    protocolo = ProtocoloIatf(nome=nome, observacao=dados.observacao, ativo=dados.ativo, fazenda_id=fazenda_id)
+    session.add(protocolo)
+    session.commit()
+    session.refresh(protocolo)
+    for etapa in dados.etapas:
+        session.add(ProtocoloIatfEtapa(protocolo_id=protocolo.id, fazenda_id=fazenda_id, **etapa.model_dump()))
+    session.commit()
+    return _serializar_protocolo_iatf(session, protocolo)
+
+
+@router.put("/protocolos-iatf/{protocolo_id}")
+def atualizar_protocolo_iatf_cadastrado(
+    protocolo_id: int, dados: ProtocoloIatfIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    protocolo = session.get(ProtocoloIatf, protocolo_id)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_etapas_iatf(dados.etapas)
+
+    protocolo.nome = nome
+    protocolo.observacao = dados.observacao
+    protocolo.ativo = dados.ativo
+    session.add(protocolo)
+
+    etapas_antigas = session.exec(select(ProtocoloIatfEtapa).where(ProtocoloIatfEtapa.protocolo_id == protocolo_id)).all()
+    for e in etapas_antigas:
+        session.delete(e)
+    session.commit()
+    for etapa in dados.etapas:
+        session.add(ProtocoloIatfEtapa(protocolo_id=protocolo.id, fazenda_id=fazenda_id, **etapa.model_dump()))
+    session.commit()
+    return _serializar_protocolo_iatf(session, protocolo)
+
+
+@router.delete("/protocolos-iatf/{protocolo_id}")
+def excluir_protocolo_iatf_cadastrado(
+    protocolo_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    protocolo = session.get(ProtocoloIatf, protocolo_id)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    ja_lancado = session.exec(
+        select(ProtocoloIatfLancamento).where(ProtocoloIatfLancamento.protocolo_id == protocolo_id)
+    ).first()
+    if ja_lancado:
+        raise HTTPException(
+            status_code=409,
+            detail="Este protocolo já foi lançado ao menos uma vez e não pode ser excluído — desative-o em vez disso.",
+        )
+    etapas = session.exec(select(ProtocoloIatfEtapa).where(ProtocoloIatfEtapa.protocolo_id == protocolo_id)).all()
+    for e in etapas:
+        session.delete(e)
+    session.delete(protocolo)
+    session.commit()
+    return {"excluido": True}
 
 
 # Cronograma das duas planilhas do produtor ("Protocolo Ativos 1" — 28 dias,

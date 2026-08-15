@@ -95,6 +95,11 @@ class DietaLancamento(SQLModel, table=True):
     leite_bezerros_kg_dia: Optional[float] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Rastro "esta dieta veio de uma simulação" — preenchido só quando o
+    # lançamento nasce de Formulação de Dietas > Aplicar na dieta atual
+    # (ver fazenda/api/routers/formulacao_dietas.py). None para lançamentos
+    # feitos direto em Alimentação, como sempre.
+    dieta_simulacao_id: Optional[int] = Field(default=None, foreign_key="dieta_simulacao.id", index=True)
 
 
 class DietaItemProgramado(SQLModel, table=True):

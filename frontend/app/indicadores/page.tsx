@@ -7,6 +7,7 @@ import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Modal } from "@/components/Modal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
+import NaoConformidades from "@/components/NaoConformidades";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -99,7 +100,7 @@ export function IndicadoresGerais() {
         </button>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>}
       {!ind && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {ind && <>
@@ -173,10 +174,10 @@ export function IndicadoresGerais() {
             <div className="card-header mb-3 flex items-center gap-2">Composição do Rebanho ({num(reb?.total)} fêmeas) {alvo}<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span></div>
             <div className="space-y-1.5">
               {grupos.map(([grupo, n]) => (
-                <div key={grupo} className={"flex items-center gap-2" + (animais.length ? " row-clickable" : "")} onClick={() => abrir(grupo, (a) => (a.grupo_primario || "(sem grupo)") === grupo)} style={{ ...clickable, padding: "0.15rem 0.25rem", borderRadius: "4px" }}>
+                <div key={grupo} className={"flex items-center gap-2" + (animais.length ? " row-clickable" : "")} onClick={() => abrir(grupo, (a) => (a.grupo_primario || "(sem grupo)") === grupo)} style={{ ...clickable, padding: "0.15rem 0.25rem", borderRadius: "var(--r-sm)" }}>
                   <span style={{ fontSize: "0.72rem", color: animais.length ? "var(--dourado-light)" : "var(--text-muted)", minWidth: "11rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{grupo}</span>
-                  <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "4px", height: "14px", overflow: "hidden" }}>
-                    <div style={{ width: `${(n / maxGrupo) * 100}%`, height: "100%", background: "var(--vinho-light, #8B3A56)", minWidth: "2px" }} />
+                  <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "var(--r-sm)", height: "14px", overflow: "hidden" }}>
+                    <div style={{ width: `${(n / maxGrupo) * 100}%`, height: "100%", background: "var(--vinho-light, #416180)", minWidth: "2px" }} />
                   </div>
                   <span style={{ fontSize: "0.75rem", fontWeight: 700, minWidth: "1.6rem", textAlign: "right" }}>{n}</span>
                 </div>
@@ -229,7 +230,7 @@ export function IndicadoresGerais() {
 // fica mais aqui em Análise. Ver frontend/app/rebanho/page.tsx.
 // "Relatório personalizado" migrou para a aba Relatórios (ver
 // frontend/app/analise-relatorios/page.tsx) — não fica mais aqui.
-type Aba = "gerencial" | "bezerras";
+type Aba = "gerencial" | "naoconformidades" | "bezerras";
 
 export default function IndicadoresPage() {
   const router = useRouter();
@@ -243,6 +244,10 @@ export default function IndicadoresPage() {
   const subNavTree: SubNavNode[] = useMemo(() => {
     const tree: SubNavNode[] = [];
     if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Indicadores Gerais", icon: LineChart });
+    // Visão única do que está fora da meta em reprodução, recria, financeiro
+    // e manejo — reaproveita os mesmos cálculos das telas de origem, ver
+    // GET /nao-conformidades (backend/fazenda/api/routers/nao_conformidades.py).
+    if (vePermiteGerencial) tree.push({ id: "naoconformidades", label: "Não Conformidades", icon: AlertTriangle });
     tree.push({ id: "bezerras", label: "Relatório de bezerras", icon: Baby });
     if (vePermiteRecria) tree.push({ id: "recria", label: "Recria", icon: Baby });
     return tree;
@@ -255,6 +260,7 @@ export default function IndicadoresPage() {
   return (
     <>
       {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
+      {aba === "naoconformidades" && vePermiteGerencial && <div className="p-6 animate-in"><NaoConformidades /></div>}
       {aba === "bezerras" && <RelatorioBezerras />}
     </>
   );

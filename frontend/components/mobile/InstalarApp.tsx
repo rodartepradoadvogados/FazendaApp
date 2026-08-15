@@ -74,7 +74,7 @@ export function InstalarApp() {
 
   return (
     <div style={{
-      margin: "0 0 0.9rem", padding: "0.8rem 0.9rem", borderRadius: 14,
+      margin: "0 0 0.9rem", padding: "0.8rem 0.9rem", borderRadius: "var(--r-app)",
       background: "var(--mob-surface)", border: "1px solid var(--mob-acao)",
       boxShadow: "var(--mob-sombra)", position: "relative",
     }}>

@@ -23,12 +23,13 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { RESPONSAVEIS } from "@/lib/constants";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -212,7 +213,7 @@ function FormModelo({ form, setForm, onSalvar, onCancelar, salvando, msg, opcoes
   planoContas: ContaPlano[]; fornecedores: string[];
 }) {
   return (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
         <div style={{ gridColumn: "1 / -1" }}>
           <label style={labelStyle}>Descrição do modelo (ex.: "Energia CPFL")</label>
@@ -387,7 +388,7 @@ function ModalGerar({ modelo, onClose, onGerado }: { modelo: LancamentoRecorrent
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div>
           <label style={labelStyle}>Valor (R$)</label>
-          <input type="number" inputMode="decimal" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} autoFocus />
+          <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} autoFocus />
         </div>
         <div>
           <label style={labelStyle}>Data de emissão</label>
@@ -425,8 +426,8 @@ function ModalGerar({ modelo, onClose, onGerado }: { modelo: LancamentoRecorrent
           </div>
           <div>
             <label style={labelStyle}>Valor pago (R$)</label>
-            <input type="number" inputMode="decimal" style={inputStyle} value={valorPago}
-              onChange={(e) => setValorPago(e.target.value)} placeholder={valor || "igual ao valor acima"} />
+            <CampoMoeda style={inputStyle} value={Number(valorPago) || 0}
+              onChange={(v) => setValorPago(v ? String(v) : "")} placeholder={valor || "igual ao valor acima"} />
           </div>
           <div>
             <label style={labelStyle}>Conta bancária</label>

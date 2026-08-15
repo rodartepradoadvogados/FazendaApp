@@ -8,9 +8,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, EstoqueSemen, Touro
 from fazenda.rules.acasalamento import criterios_explicacao, sugerir_touros
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter(prefix="/reproducao/acasalamento", tags=["reproducao"])
 
@@ -20,7 +22,15 @@ router = APIRouter(prefix="/reproducao/acasalamento", tags=["reproducao"])
 PROFUNDIDADE_MATERNA = 3
 
 
-def _ancestrais_maternos(session: Session, vaca: Animal) -> list[str]:
+def _escopo(query, modelo, fazenda_id: int | None):
+    """Escopo de fazenda. Antes NADA aqui filtrava: consultar a sugestão de uma
+    vaca PRÓPRIA já devolvia o estoque de sêmen (touro, NAAB, doses, tipo) de
+    todas as outras fazendas — informação comercial de genética dos
+    concorrentes. Ver tests/test_isolamento_relatorios_fornecedor.py (G5)."""
+    return query if fazenda_id is None else query.where(modelo.fazenda_id == fazenda_id)
+
+
+def _ancestrais_maternos(session: Session, vaca: Animal, fazenda_id: int | None = None) -> list[str]:
     """Sobe a linha materna via `Animal.mae_numero` até `PROFUNDIDADE_MATERNA`
     gerações, coletando o NAAB/nome do PAI de cada fêmea ascendente (o touro
     que a gerou) — é isso que precisa ser comparado contra o touro candidato
@@ -35,7 +45,9 @@ def _ancestrais_maternos(session: Session, vaca: Animal) -> list[str]:
         if not mae_numero or mae_numero in visitados:
             break
         visitados.add(mae_numero)
-        mae = session.exec(select(Animal).where(Animal.numero == mae_numero)).first()
+        mae = session.exec(
+            _escopo(select(Animal).where(Animal.numero == mae_numero), Animal, fazenda_id)
+        ).first()
         if not mae:
             break
         pai_da_mae = mae.pai_naab or mae.pai_nome
@@ -45,12 +57,14 @@ def _ancestrais_maternos(session: Session, vaca: Animal) -> list[str]:
     return ancestrais
 
 
-def _touros_com_estoque(session: Session) -> list[dict]:
+def _touros_com_estoque(session: Session, fazenda_id: int | None = None) -> list[dict]:
     """Junta `EstoqueSemen` (doses > 0, ou tipo "fazenda") com o catálogo
     `Touro` via NAAB, trazendo as provas quando disponíveis — mesma lógica de
     `GET /cadastro/estoque-semen/disponivel`, mas devolvendo as provas do
     touro (TPI/NM$/produção) em vez de só nome/tipo/doses."""
-    estoques = [e for e in session.exec(select(EstoqueSemen)).all() if e.ativo]
+    estoques = [e for e in session.exec(_escopo(select(EstoqueSemen), EstoqueSemen, fazenda_id)).all() if e.ativo]
+    # `Touro` é catálogo global do dono do SaaS (NAAB/CDCB, sem fazenda_id) —
+    # esse não é escopado de propósito.
     touros_por_naab = {t.naab: t for t in session.exec(select(Touro)).all() if t.naab}
 
     disponiveis: list[dict] = []
@@ -68,18 +82,24 @@ def _touros_com_estoque(session: Session) -> list[dict]:
 
 
 @router.get("/sugestao")
-def sugestao_acasalamento(numero_matriz: str, session: Session = Depends(get_session)) -> dict:
+def sugestao_acasalamento(
+    numero_matriz: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Sugestão de touro (acasalamento direcionado) para a vaca `numero_matriz`
     — evita consanguinidade, complementa características e só considera
     touros com sêmen em estoque. Retorna a lista ordenada de sugestões (cada
     uma com `motivo` explicando o porquê) mais a explicação fixa dos 3
     critérios usados."""
-    vaca = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vaca = session.exec(
+        _escopo(select(Animal).where(Animal.numero == numero_matriz), Animal, fazenda_id)
+    ).first()
     if not vaca:
         raise HTTPException(status_code=404, detail=f"Animal {numero_matriz} não encontrado")
 
-    ancestrais_maternos = _ancestrais_maternos(session, vaca)
-    touros = _touros_com_estoque(session)
+    ancestrais_maternos = _ancestrais_maternos(session, vaca, fazenda_id)
+    touros = _touros_com_estoque(session, fazenda_id)
     sugestoes = sugerir_touros(vaca.model_dump(), touros, ancestrais_maternos=ancestrais_maternos)
 
     return {

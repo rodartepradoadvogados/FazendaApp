@@ -4,8 +4,10 @@ import { Dna } from "lucide-react";
 import { fetchPedido, fetchPedidos, fetchPlanoContas, movimentarEstoque, FINALIDADES_ESTOQUE } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { EstoquePicker } from "@/components/EstoquePicker";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { Campo, inputStyle, type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES } from "@/components/lancamentos/_shared";
+import { casaBusca } from "@/lib/busca";
 
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
 // Movimentos que reduzem o estoque (baixa).
@@ -61,7 +63,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
   const contasUsadas = useMemo(() => opcoesPara("conta_gerencial_despesa_padrao"), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo]);
 
   const itensFiltrados = useMemo(() => itensBase.filter((e) =>
-    passaFiltros(e) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase()))
+    passaFiltros(e) && casaBusca(e.nome, busca)
   ), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
 
   // Vínculo opcional a um item de Pedido de compra — só entrada de estoque faz
@@ -229,7 +231,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
         </Campo>
         {lancarValor && (
           <Campo label="Valor unitário (R$)">
-            <input type="number" inputMode="decimal" style={inputStyle} value={valorUnitario} onChange={(e) => setValorUnitario(e.target.value)} />
+            <CampoMoeda style={inputStyle} value={Number(valorUnitario) || 0} onChange={(v) => setValorUnitario(v ? String(v) : "")} />
           </Campo>
         )}
         <Campo label="Gerar movimentação financeira?" full>

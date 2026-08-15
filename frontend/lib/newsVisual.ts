@@ -16,12 +16,13 @@ export const FUNDOS_MATERIA = [
   "/images/bg-analise.webp",
 ];
 
-// Mesmos tons de "vinho" e "verde" usados nas duas paletas do site
-// (--vinho/--vinho-light em cada uma), fixos aqui para as duas cores
-// aparecerem sempre juntas, alternando por matéria.
+// O blog é a exceção "branca com tons de azul" da área pública (ver
+// NewsShell.tsx) — duas tonalidades de azul institucional, fixas aqui, para
+// alternar por matéria (não depende da paleta vinho/verde/azul escolhida
+// pelo usuário no resto do sistema).
 const CORES_MATERIA = [
-  { cor: "#5E1A2E", borda: "#7A2340" }, // vinho
-  { cor: "#1F5C3D", borda: "#2E7D52" }, // verde
+  { cor: "#0E2A47", borda: "#2563EB" }, // marinho
+  { cor: "#2E5D8A", borda: "#5B94C7" }, // azul-aço
 ];
 
 export function fundoMateria(index: number): string {

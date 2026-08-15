@@ -1,10 +1,12 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Users, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
-import { fetchPessoas, criarPessoa, atualizarPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
+import { Users, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "lucide-react";
+import { fetchPessoas, criarPessoa, atualizarPessoa, excluirPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
 type Pessoa = {
   id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
@@ -32,12 +34,9 @@ const formVazio: Form = {
 const ESTADOS_CIVIS = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União estável"];
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
 
-const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
+const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
-const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-// Normaliza texto para busca insensível a maiúsculas e acentos.
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
@@ -58,6 +57,7 @@ export default function CadastroPessoas() {
   const [itens, setItens] = useState<Pessoa[] | null>(null);
   const [tipos, setTipos] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [erroExclusao, setErroExclusao] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
@@ -82,6 +82,21 @@ export default function CadastroPessoas() {
     setEditando(p.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
+
+  // Exclusão de fato (não só desativar) — bloqueada pelo backend com 409
+  // quando há folha/férias/13º/rescisão/vale/empreitada/contrato/diária ou
+  // login de usuário vinculado (ver excluir_pessoa em cadastro/pessoas.py),
+  // orientando a desativar em vez de excluir nesse caso.
+  const excluir = async (p: Pessoa) => {
+    if (!window.confirm(`Excluir "${p.nome}"? Isso não pode ser desfeito.`)) return;
+    setErroExclusao(null);
+    try {
+      await excluirPessoa(p.id);
+      await carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao excluir");
+    }
+  };
 
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
@@ -131,6 +146,7 @@ export default function CadastroPessoas() {
       </p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {erroExclusao && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>{erroExclusao}</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {editando === "novo" && (
@@ -164,9 +180,14 @@ export default function CadastroPessoas() {
                     <td style={{ fontSize: "0.78rem" }}>{p.telefones.length ? p.telefones.join(", ") : "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.emails.length ? p.emails.join(", ") : "—"}</td>
                     <td style={{ textAlign: "right" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                        <Pencil size={13} /> Editar
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem", color: "var(--red)" }} onClick={() => excluir(p)}>
+                          <Trash2 size={13} /> Excluir
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {editando === p.id && (
@@ -274,7 +295,7 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
   const tiposAtivos = tipos.filter((t) => t.ativo);
 
   return (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
         <div style={{ gridColumn: "span 2" }}>
@@ -328,7 +349,7 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
         <div><label style={labelStyle}>CEP</label>
           <input style={inputStyle} value={form.cep} onChange={(e) => setForm({ ...form, cep: maskCep(e.target.value) })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>
-          <input type="number" inputMode="decimal" style={inputStyle} value={form.salarioBase} onChange={(e) => setForm({ ...form, salarioBase: e.target.value })} /></div>
+          <CampoMoeda style={inputStyle} value={Number(form.salarioBase) || 0} onChange={(v) => setForm({ ...form, salarioBase: v ? String(v) : "" })} /></div>
         <div><label style={labelStyle}>Data de admissão</label>
           <input type="date" style={inputStyle} value={form.dataAdmissao} onChange={(e) => setForm({ ...form, dataAdmissao: e.target.value })}
             title="Usada para calcular a folha proporcional do 1º mês de trabalho" /></div>

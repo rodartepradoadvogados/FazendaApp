@@ -396,7 +396,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
                 }}
                 style={{
                   display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
-                  padding: "0.35rem 0.65rem", borderRadius: 8, border: "1px solid var(--mob-border)",
+                  padding: "0.35rem 0.65rem", borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)",
                   background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
                 }}
               >

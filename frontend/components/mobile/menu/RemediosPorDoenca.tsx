@@ -3,7 +3,7 @@
 // (mesmo recurso do site, versão campo): escolhe a doença e vê os princípios
 // ativos indicados, em ordem de prioridade clínica, com status de estoque.
 // Só leitura — mesmo padrão de fetch/loading/vazio das outras sub-telas do Menu.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FlaskConical } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchDoencas, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
@@ -16,8 +16,15 @@ const TEXTO_STATUS: Record<OpcaoIndicacaoDoenca["status_estoque"], string> = {
   ok: "Em estoque", low: "Estoque baixo", out: "Sem estoque",
 };
 
+// Mesmos tipos de Doenca.TIPOS (backend) — agrupam o seletor em optgroups,
+// espelhando components/RemediosPorDoenca.tsx (versão site).
+const GRUPOS_TIPO: [string, string][] = [
+  ["doenca", "Doenças"], ["reprodutivo", "Reprodutivo"], ["produtivo", "Produtivo"],
+  ["preventivo", "Preventivo"], ["suporte", "Suporte"],
+];
+
 export default function RemediosPorDoenca({ onVoltar }: { onVoltar: () => void }) {
-  const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
+  const [doencas, setDoencas] = useState<{ id: number; nome: string; tipo?: string | null }[]>([]);
   const [doencaId, setDoencaId] = useState("");
   const [opcoes, setOpcoes] = useState<OpcaoIndicacaoDoenca[] | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -25,6 +32,13 @@ export default function RemediosPorDoenca({ onVoltar }: { onVoltar: () => void }
   useEffect(() => {
     fetchDoencas().then((d: any[]) => setDoencas(d.filter((x) => x.ativo))).catch(() => setDoencas([]));
   }, []);
+
+  const grupos = useMemo(() => GRUPOS_TIPO
+    .map(([tipo, label]) => ({
+      label,
+      itens: doencas.filter((d) => (tipo === "doenca" ? !d.tipo || d.tipo === "doenca" : d.tipo === tipo)),
+    }))
+    .filter((g) => g.itens.length > 0), [doencas]);
 
   useEffect(() => {
     if (!doencaId) { setOpcoes(null); return; }
@@ -44,7 +58,11 @@ export default function RemediosPorDoenca({ onVoltar }: { onVoltar: () => void }
       </label>
       <select className="mob-input" value={doencaId} onChange={(e) => setDoencaId(e.target.value)} style={{ marginBottom: "1rem" }}>
         <option value="">Selecione…</option>
-        {doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+        {grupos.map((g) => (
+          <optgroup key={g.label} label={g.label}>
+            {g.itens.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+          </optgroup>
+        ))}
       </select>
 
       {!doencaId ? (
@@ -60,7 +78,7 @@ export default function RemediosPorDoenca({ onVoltar }: { onVoltar: () => void }
               <span style={{
                 fontSize: "0.72rem", fontWeight: 800, padding: "0.15rem 0.55rem", borderRadius: "999px", flexShrink: 0,
                 background: o.prioridade === 1 ? "var(--mob-verde)" : "var(--mob-surface-2)",
-                color: o.prioridade === 1 ? "#fff" : "var(--mob-muted)",
+                color: o.prioridade === 1 ? "var(--mob-verde-fg)" : "var(--mob-muted)",
                 border: o.prioridade === 1 ? "none" : "1px solid var(--mob-border)",
               }}>
                 {o.prioridade}ª escolha

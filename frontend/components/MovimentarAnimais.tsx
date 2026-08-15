@@ -4,13 +4,14 @@ import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchLotes, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; del_dias: number | null };
 type Lote = { id: number; codigo: string; nome: string; rotulo: string };
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const hoje = () => new Date().toISOString().split("T")[0];
@@ -48,7 +49,7 @@ export default function MovimentarAnimais() {
   const candidatos = useMemo(() => {
     if (!animais) return [];
     return animais.filter((a) =>
-      (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
+      casaBusca(a.numero, busca) &&
       (!filtroLote || a.grupo_primario === filtroLoteRotulo)
     );
   }, [animais, busca, filtroLote, filtroLoteRotulo]);
@@ -113,7 +114,7 @@ export default function MovimentarAnimais() {
               </select></div>
           </div>
 
-          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
             <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ fontSize: "0.85rem" }}>Animais ({candidatos.length}) — {selecionados.size} selecionado(s)</span>
               <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>

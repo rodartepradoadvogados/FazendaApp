@@ -19,7 +19,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.atermaisdigital.cnptia.embrapa.br/web/bovino-de-leite/indicadores-de-qualidade-do-leite",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "27/07/2026";
+const FONTES_ATUALIZADO_EM = "10/08/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
@@ -97,7 +97,7 @@ const input: React.CSSProperties = {
   background: "var(--surface-2)",
   color: "var(--text)",
   border: "1px solid var(--border)",
-  borderRadius: "8px",
+  borderRadius: "var(--r-sm)",
   padding: "0.5rem 0.7rem",
   fontSize: "0.9rem",
 };
@@ -221,7 +221,7 @@ export default function MilkPriceExplainer() {
           style={{
             marginTop: "1.1rem",
             padding: "0.9rem 1rem",
-            borderRadius: "10px",
+            borderRadius: "var(--r-sm)",
             background: "var(--surface-2)",
             border: "1px solid var(--border)",
           }}
@@ -282,7 +282,7 @@ export default function MilkPriceExplainer() {
               key={item.titulo}
               style={{
                 padding: "0.65rem 0.85rem",
-                borderRadius: "8px",
+                borderRadius: "var(--r-sm)",
                 background: "var(--surface-2)",
                 borderLeft: "3px solid var(--dourado)",
               }}

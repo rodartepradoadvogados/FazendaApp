@@ -28,9 +28,14 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 MODULO_REBANHO = "rebanho"
 
 # Módulos comerciais vendáveis — vocabulário fechado (validado no router).
+# "formulacao_dietas" fica de propósito FORA de todo plano do catálogo
+# abaixo (nem Diamond) — é módulo avulso, contratado "sob medida" por
+# fazenda (ContratoFazendaModulo direto), não incluso automaticamente em
+# nenhum pacote existente. Ver fazenda/api/routers/formulacao_dietas.py.
 MODULOS_COMERCIAIS = [
     MODULO_REBANHO, "reprodutivo", "produtivo", "sanitario", "financeiro",
     "planejamento", "pedidos", "estoque", "alimentacao", "agricultura", "consultor",
+    "formulacao_dietas",
 ]
 
 # Catálogo fechado de planos — nome de exibição, preço padrão e módulos
@@ -66,18 +71,17 @@ PLANOS_CATALOGO: dict[str, dict] = {
 }
 
 # Desconto por periodicidade de pagamento adiantado (ver ContratoFazenda.ciclo_pagamento)
-# — aplicado sobre preco_mensal do plano/módulos. Mesmos percentuais usados no
-# contrato-modelo (fazenda/templates/contrato_cowdata.html) e no Painel CowData.
-# Sem tier "anual" de propósito (revisão jul/2026: assinatura é mensal por
-# padrão via Pix Automático; semestral virou o teto de desconto — 20%, mesmo
-# valor que o "anual" tinha antes — manter os dois lado a lado não faria
-# sentido, então o anual saiu).
+# — aplicado sobre preco_mensal do plano/módulos. Trimestral e semestral
+# saíram do catálogo (revisão ago/2026, pedido explícito do usuário) —
+# assinatura é só mensal agora, sem desconto por adiantamento. Os dicts
+# continuam existindo (não viraram uma constante única) porque
+# _publico_contrato usa .get(ciclo, default) — um contrato antigo já gravado
+# com "trimestral"/"semestral" no banco continua sendo lido sem erro, só cai
+# no desconto 0%/1 mês até ser resalvo (nesse ponto passa a "mensal").
 DESCONTO_CICLO_PAGAMENTO: dict[str, float] = {
     "mensal": 0.0,
-    "trimestral": 0.05,
-    "semestral": 0.20,
 }
-MESES_POR_CICLO: dict[str, int] = {"mensal": 1, "trimestral": 3, "semestral": 6}
+MESES_POR_CICLO: dict[str, int] = {"mensal": 1}
 
 STATUS_CONTRATO = ["aguardando_aprovacao", "ativo", "suspenso"]
 

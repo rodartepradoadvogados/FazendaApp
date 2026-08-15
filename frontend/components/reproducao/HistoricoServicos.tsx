@@ -4,11 +4,13 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Plus, Search, X } from "lucide-react";
-import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Plus, Trash2, X } from "lucide-react";
+import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import type { AnimalRow } from "@/components/AnimalModal";
 import { estiloSexado } from "@/lib/constants";
 
 export type Serv = {
@@ -19,6 +21,13 @@ export type Serv = {
   tipo_semen?: string | null; inseminador?: string | null;
   data: string | null; del_servico: number | null; data_d0?: string | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
+  // "reinseminacao" quando o NEGATIVO foi concluído pelo sistema (veio uma
+  // nova tentativa para a matriz), e não porque alguém tocou a vaca.
+  origem_diagnostico?: string | null;
+  // 2º exame (reconfirmação) — distinto do toque acima (campo `diagnostico`).
+  retoque?: boolean;
+  data_reconfirmacao?: string | null;
+  diagnostico_reconfirmacao?: string | null;
   data_perda: string | null; motivo_perda: string | null;
   usuario_nome?: string | null;
 };
@@ -26,17 +35,24 @@ export type Serv = {
 export type Foco = "todos" | "ias" | "diagnosticos" | "perdas";
 
 const DIAG_COR: Record<string, string> = { POSITIVO: "var(--green-light)", NEGATIVO: "var(--red)", ABERTO: "var(--amber)" };
-const MOTIVO_LABEL: Record<string, string> = { aborto: "Aborto", natimorto: "Natimorto", outros: "Outros" };
+// "nao_informado" é o sentinela gravado pelo "Descartar" da pendência da
+// Agenda (ver fazenda.rules.perda_prenhez) — a perda continua registrada,
+// só o motivo que o usuário optou por não informar; por isso tem rótulo
+// próprio aqui, distinto de "(sem motivo)" (motivo_perda null, ainda
+// pendente de decisão — ver o fallback usado nos filtros abaixo).
+const MOTIVO_LABEL: Record<string, string> = { aborto: "Aborto", natimorto: "Natimorto", outros: "Outros", nao_informado: "Não informado" };
 const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const ddmm = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
-const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
 export default function HistoricoServicos({ foco, titulo, descricao }: { foco: Foco; titulo: string; descricao: string }) {
   const [regs, setRegs] = useState<Serv[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [animal, setAnimal] = useState("");
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [ordemParto, setOrdemParto] = useState<string[]>([]);
@@ -69,6 +85,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
   });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
 
   const abrirEdicao = (s: Serv) => {
     setEditando(s);
@@ -99,6 +116,32 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       carregar();
     } catch (e: any) {
       setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
+
+  // Passa pelo fluxo central e auditado de exclusão (POST /exclusoes/confirmar),
+  // igual ao botão de frontend/app/sanidade/page.tsx:960-982 — admin exclui na
+  // hora (e a dose de sêmen debitada por este serviço é estornada
+  // automaticamente pelo motor genérico), operador vira uma solicitação
+  // pendente de aprovação.
+  const excluir = async (s: Serv) => {
+    const msg = admin
+      ? `Excluir o serviço de "${s.numero}" em ${fmtDia(s.data)}? Se houve baixa de dose de sêmen, ela será devolvida ao estoque. Isso não pode ser desfeito.`
+      : `Solicitar a exclusão do serviço de "${s.numero}" em ${fmtDia(s.data)}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setSalvandoEdicao(true); setErroEdicao(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("servico", String(s.id));
+      if (r.status === "excluido") {
+        setEditando(null);
+        carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao excluir");
     } finally {
       setSalvandoEdicao(false);
     }
@@ -162,7 +205,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
 
   const filtrados = useMemo(() => {
     return base.filter((s) =>
-      (!animal || s.numero.toLowerCase().includes(animal.toLowerCase())) &&
+      (animaisSel.size === 0 || animaisSel.has(s.numero)) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
@@ -172,7 +215,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       (foco !== "diagnosticos" || !diag.length || diag.includes(s.diagnostico || "")) &&
       (foco !== "perdas" || !motivo.length || motivo.includes(s.motivo_perda || "(sem motivo)"))
     ).sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1));
-  }, [base, animal, ini, fim, ordemParto, ordemTentativa, metodo, diag, motivo, modo, janelas, foco]);
+  }, [base, animaisSel, ini, fim, ordemParto, ordemTentativa, metodo, diag, motivo, modo, janelas, foco]);
 
   const diagnosticados = filtrados.filter((s) => s.diagnosticado).length;
   const positivos = filtrados.filter((s) => s.positivo).length;
@@ -189,7 +232,8 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>{descricao}</p>
       </div>
 
-      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o reprodutivo</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && <>
@@ -206,8 +250,17 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
             onChange={setModo}
           />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={animal} onChange={(e) => setAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
+              <AnimalPickerModal
+                animais={animais} selecionados={animaisSel}
+                onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                placeholder="Todos" titulo="Filtrar por animal(is) — inclui seleção por lote"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                ]}
+              /></div>
             {modo === "data" ? (
               <>
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label><input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
@@ -269,7 +322,28 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.tipo_servico}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.metodo_ia || "—"}</td>
-                    <td><span style={{ color: DIAG_COR[s.diagnostico || "ABERTO"] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{s.diagnostico || "ABERTO"}</span></td>
+                    <td>
+                      <span style={{ color: DIAG_COR[s.diagnostico || "ABERTO"] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{s.diagnostico || "ABERTO"}</span>
+                      {s.origem_diagnostico === "reinseminacao" && (
+                        <span
+                          title="Concluído pelo sistema: a matriz foi inseminada de novo, então este serviço não pegou. Não houve exame."
+                          style={{ marginLeft: "0.3rem", fontSize: "0.62rem", color: "var(--text-muted)", fontWeight: 400 }}
+                        >
+                          (auto)
+                        </span>
+                      )}
+                      {s.diagnostico_reconfirmacao ? (
+                        <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                          Reconfirmação:{" "}
+                          <span style={{ color: DIAG_COR[s.diagnostico_reconfirmacao] || "var(--text-muted)", fontWeight: 600 }}>
+                            {s.diagnostico_reconfirmacao}
+                          </span>
+                          {s.data_reconfirmacao ? ` em ${fmtDia(s.data_reconfirmacao)}` : ""}
+                        </div>
+                      ) : s.retoque ? (
+                        <div style={{ fontSize: "0.68rem", color: "var(--amber)", marginTop: "0.15rem" }}>Aguardando retoque</div>
+                      ) : null}
+                    </td>
                     <td style={{ textAlign: "right" }}>{s.ordem_parto ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.del_servico ?? "—"}</td>
@@ -290,7 +364,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       </>}
 
       {editando && (
-        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "420px", maxWidth: "95vw" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar — matriz {editando.numero}</div>
@@ -337,9 +411,19 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
               )}
             </div>
             {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
-            <div className="flex items-center gap-3 mt-4">
-              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
-              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            <div className="flex items-center justify-between gap-3 mt-4">
+              <div className="flex items-center gap-3">
+                <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+                <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => excluir(editando)}
+                disabled={salvandoEdicao}
+              >
+                <Trash2 size={14} /> Excluir
+              </button>
             </div>
           </div>
         </div>

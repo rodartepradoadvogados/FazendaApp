@@ -12,16 +12,17 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
-    SeedFlag, Servico, TipoDocumento, Usuario,
+    SeedFlag, Servico, TipoDocumento, Usuario, ValeAvulso, ValeFuncionario,
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale, valor_gerencial
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
@@ -29,11 +30,18 @@ from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.sugestao_documento import sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
-from fazenda.rules.patrimonio import calcular_depreciacao, somar_meses, status_manutencao
+from fazenda.rules.patrimonio import calcular_depreciacao, proxima_atualizacao_valor_mercado, somar_meses, status_manutencao
+from fazenda.rules.parametros import meta_rmca, patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
+from fazenda.config import settings
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
-TIPOS_DOCUMENTO = ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]
+# "Comprovante" e "Orçamento" (pra planejamento ou pedido) entraram junto com
+# a Central de Documentos — antes só existiam via "Boleto"/"Ordem de
+# serviço" (que já estavam em SEED_TIPOS_DOCUMENTO) e "Recibo" (parecido com
+# comprovante, mas não o mesmo rótulo pedido).
+TIPOS_DOCUMENTO = ["Nota fiscal", "Recibo", "Comprovante", "Folha de pagamento", "Fatura", "Orçamento", "Contrato"]
 
 # Categorias do Arquivo fiscal-contábil (fazenda/api/routers/documentos.py) —
 # documentos sem contrapartida em lançamento (CCIR, IRPF/IRPJ, inscrição
@@ -198,6 +206,21 @@ class ParcelaIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
 
 
+class ValeItemNovoIn(BaseModel):
+    """Mesmos campos de ValeItemIn (fazenda/api/routers/cadastro/rh_vale_item.py)
+    — declarado aqui (não importado) para financeiro.py não importar `cadastro`
+    no topo do módulo (ciclo de import: rh_folha.py/rh_contratos.py já
+    importam de financeiro.py — ver §0.8)."""
+    pessoa_id: int
+    modo: str  # "folha" | "avulso"
+    parcelas: int = 1
+    competencia_inicio: Optional[str] = None
+    origem_tipo: Optional[str] = None
+    origem_id: Optional[int] = None
+    observacao: Optional[str] = None
+    confirmar: bool = False
+
+
 class ItemIn(BaseModel):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
@@ -207,6 +230,32 @@ class ItemIn(BaseModel):
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
     valor_total: float
+    # Este item é gasto pessoal de um funcionário/empreiteiro/diarista — ao
+    # salvar, gera o vale de verdade e o item sai dos relatórios gerenciais.
+    # None (padrão) = item normal da fazenda.
+    vale: Optional[ValeItemNovoIn] = None
+
+
+class PatrimonioIn(BaseModel):
+    tipo: Optional[str] = None
+    nome: str
+    numero: Optional[str] = None
+    atividade_cultura: Optional[str] = None
+    data_imobilizacao: Optional[date] = None
+    quantidade: Optional[float] = None
+    unidade: Optional[str] = None
+    valor_total: Optional[float] = None
+    # depreciavel=True (padrão): informe metodo_depreciacao/vida_util/valor_residual.
+    # depreciavel=False (ex.: terra): informe valor_mercado_atual no lugar de
+    # valor_total (se vazio, valor_total é usado como valor de mercado inicial)
+    # e, opcionalmente, a frequência de atualização (None = usa o padrão do
+    # sistema, 0 = nunca).
+    depreciavel: bool = True
+    metodo_depreciacao: Optional[str] = None
+    vida_util: Optional[str] = None
+    valor_residual: Optional[float] = None
+    valor_mercado_atual: Optional[float] = None
+    atualizacao_valor_mercado_frequencia_meses: Optional[int] = None
 
 
 class LancamentoIn(BaseModel):
@@ -241,9 +290,20 @@ class LancamentoIn(BaseModel):
     # Vincula esta nota fiscal/recibo a um Pedido (Pedidos > módulo próprio) —
     # é só a partir deste vínculo que o pedido passa a refletir em Financeiro.
     pedido_id: Optional[int] = None
+    # Preenchido = esta compra é a aquisição de um item de patrimônio novo —
+    # cria o registro em Patrimônio e já vincula (patrimonio_id) ao lançamento,
+    # numa única operação (ver Configurações > Cadastro > Itens de estoque,
+    # flag "Patrimônio", e Controle Financeiro > Patrimônio > "+ Novo
+    # patrimônio" > "É uma compra agora?"). None = lançamento comum, sem vínculo.
+    criar_patrimonio: Optional[PatrimonioIn] = None
 
 
 FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
+
+
+class ParcelaDiferencaIn(BaseModel):
+    data_vencimento: date
+    valor: float
 
 
 class PagamentoIn(BaseModel):
@@ -253,6 +313,14 @@ class PagamentoIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
     forma_pagamento: Optional[str] = None
     data_vencimento_cartao: Optional[date] = None
+    # Diferença entre valor_pago e o valor_total: por padrão vira
+    # desconto_acrescimo, perdoada/cobrada de uma vez (comportamento de
+    # sempre, quando este campo vem vazio). Se o usuário preferir não
+    # resolver a diferença agora, `parcelas_diferenca` a divide em novas
+    # parcelas do MESMO numero_lancamento (mesmo padrão de criar_lancamento)
+    # — a baixa desta parcela grava desconto_acrescimo=0 (a diferença toda
+    # vai para as novas parcelas, nada é perdoado nesta).
+    parcelas_diferenca: Optional[list[ParcelaDiferencaIn]] = None
 
 
 class BaixaLoteIn(BaseModel):
@@ -326,8 +394,14 @@ def dre(
             if centro_custo is None or c.centro_custo == centro_custo:
                 filtradas.append(c)
 
+    # Vale de funcionário/empreiteiro lançado a partir de um item desta nota
+    # não é despesa da fazenda (é adiantamento a receber da pessoa) — vale
+    # nos DOIS regimes (competência e caixa), porque o DRE é resultado
+    # gerencial e vale nunca é despesa em regime nenhum (ver rules/vale_item.py).
+    ajustes = ajuste_vale_por_conta(session, filtradas, fazenda_id)
+
     receitas = sum(c.valor_total or 0 for c in filtradas if c.tipo == "receita")
-    despesas = sum(c.valor_total or 0 for c in filtradas if c.tipo == "despesa")
+    despesas = sum(valor_gerencial(c, ajustes) for c in filtradas if c.tipo == "despesa")
     resultado = receitas - despesas
 
     # Agrupa por código de conta
@@ -340,7 +414,7 @@ def dre(
         if c.tipo == "receita":
             por_conta[nivel1]["receitas"] += c.valor_total or 0
         else:
-            por_conta[nivel1]["despesas"] += c.valor_total or 0
+            por_conta[nivel1]["despesas"] += valor_gerencial(c, ajustes)
 
     return {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -362,14 +436,51 @@ def listar_lancamentos(
     O front filtra por regime (competência/caixa), ano e centro de custo.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # NÃO aplicar sem_itens_de_vale aqui — ver rules/vale_item.py. Este é o
+    # extrato: o item TEM que continuar aparecendo na nota (o caixa da
+    # fazenda continua batendo). Em vez de filtrar, enriquecemos cada item
+    # com os campos de vale logo abaixo.
     query_itens = select(LancamentoItem)
     query_contas = select(ContaGerencial)
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
         query_contas = query_contas.where(ContaGerencial.fazenda_id == fazenda_id)
 
+    itens_carregados = session.exec(query_itens).all()
+
+    # Resolve os dados de vale em lote (duas queries batch) — nunca N+1.
+    ids_vale_funcionario = {it.vale_funcionario_id for it in itens_carregados if it.vale_funcionario_id}
+    ids_vale_avulso = {it.vale_avulso_id for it in itens_carregados if it.vale_avulso_id}
+    vales_funcionario = {
+        v.id: v for v in (
+            session.exec(select(ValeFuncionario).where(ValeFuncionario.id.in_(ids_vale_funcionario))).all()
+            if ids_vale_funcionario else []
+        )
+    }
+    vales_avulso = {
+        v.id: v for v in (
+            session.exec(select(ValeAvulso).where(ValeAvulso.id.in_(ids_vale_avulso))).all()
+            if ids_vale_avulso else []
+        )
+    }
+    ids_pessoa = {v.pessoa_id for v in vales_funcionario.values()} | {v.pessoa_id for v in vales_avulso.values()}
+    nomes_pessoa = {
+        p.id: p.nome for p in (session.exec(select(Pessoa).where(Pessoa.id.in_(ids_pessoa))).all() if ids_pessoa else [])
+    }
+
     itens_por_lancamento: dict[str, list[dict]] = {}
-    for it in session.exec(query_itens).all():
+    for it in itens_carregados:
+        vale_tipo = None
+        vale_id = None
+        vale_pessoa_id = None
+        if it.vale_funcionario_id is not None:
+            vale_tipo, vale_id = "funcionario", it.vale_funcionario_id
+            vale = vales_funcionario.get(vale_id)
+            vale_pessoa_id = vale.pessoa_id if vale else None
+        elif it.vale_avulso_id is not None:
+            vale_tipo, vale_id = "avulso", it.vale_avulso_id
+            vale = vales_avulso.get(vale_id)
+            vale_pessoa_id = vale.pessoa_id if vale else None
         itens_por_lancamento.setdefault(it.numero_lancamento, []).append({
             "id": it.id,
             "codigo_conta_gerencial": it.codigo_conta_gerencial,
@@ -379,10 +490,22 @@ def listar_lancamentos(
             "quantidade": it.quantidade,
             "valor_unitario": it.valor_unitario,
             "valor_total": it.valor_total,
+            "eh_vale": vale_tipo is not None,
+            "vale_tipo": vale_tipo,
+            "vale_id": vale_id,
+            "vale_pessoa_id": vale_pessoa_id,
+            "vale_pessoa_nome": nomes_pessoa.get(vale_pessoa_id) if vale_pessoa_id else None,
         })
 
     contas = session.exec(query_contas).all()
     nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
+
+    # Quais lançamentos têm comprovante/anexo — UMA query, não uma por linha
+    # (o relatório de Contas pagas mostra a coluna para a lista inteira).
+    query_anexos = select(LancamentoAnexo.numero_lancamento)
+    if fazenda_id is not None:
+        query_anexos = query_anexos.where(LancamentoAnexo.fazenda_id == fazenda_id)
+    numeros_com_anexo = set(session.exec(query_anexos).all())
 
     registros = []
     for c in contas:
@@ -409,6 +532,10 @@ def listar_lancamentos(
             "numero_os_orcamento": c.numero_os_orcamento,
             "numero_boleto": c.numero_boleto,
             "numero_documento_pagamento": c.numero_documento_pagamento,
+            # Serve à coluna "Comprovante" do relatório de Contas pagas — o
+            # comprovante do pagamento em lote é o mesmo arquivo para todas as
+            # notas da remessa (ver anexar_comprovante_em_lote).
+            "tem_comprovante": bool(c.numero_lancamento) and c.numero_lancamento in numeros_com_anexo,
             "conta_bancaria": c.conta_bancaria,
             "forma_pagamento": c.forma_pagamento,
             "data_vencimento_cartao": c.data_vencimento_cartao.isoformat() if c.data_vencimento_cartao else None,
@@ -425,12 +552,50 @@ def listar_lancamentos(
             "data_emissao": c.data_emissao.isoformat() if c.data_emissao else None,
             "data_prevista_entrada": c.data_prevista_entrada.isoformat() if c.data_prevista_entrada else None,
             "data_pedido": c.data_pedido.isoformat() if c.data_pedido else None,
+            "patrimonio_id": c.patrimonio_id,
             "mes_competencia": f"{dc.year}-{dc.month:02d}" if dc else None,
             "ano_competencia": dc.year if dc else None,
             "mes_caixa": f"{dp.year}-{dp.month:02d}" if dp else None,
             "ano_caixa": dp.year if dp else None,
         })
     return {"lancamentos": registros, "total": len(registros)}
+
+
+@router.get("/resultado-mes-recente")
+def resultado_mes_recente(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Resultado (receita − despesa) do mês de competência mais recente que tem
+    lançamento — sustenta só o card "Resultado do mês" da Capa.
+
+    Antes a Capa chamava GET /financeiro/lancamentos (o extrato COMPLETO: todo
+    o histórico de ContaGerencial da fazenda, com itens, vale, anexo e nome de
+    usuário resolvidos por lançamento) só para achar o mês mais recente e
+    somar duas colunas — a rota mais pesada do sistema virava trabalho pago a
+    cada abertura da Capa, crescendo sem limite junto com o histórico
+    financeiro. Aqui lemos só (data_competencia, tipo, valor_total), sem os
+    joins/enriquecimentos que o extrato completo existe para sustentar.
+
+    Mantém a mesma soma "crua" de valor_total (sem o ajuste de vale de
+    fazenda.rules.vale_item.valor_gerencial) que a Capa já fazia a partir do
+    extrato — não é o resultado gerencial do DRE (GET /financeiro/dre), que
+    deduz vale; comportamento inalterado de propósito.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial.data_competencia, ContaGerencial.tipo, ContaGerencial.valor_total).where(
+        ContaGerencial.data_competencia != None  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    linhas = [(d, tipo, valor) for d, tipo, valor in session.exec(query).all() if d is not None]
+    if not linhas:
+        return {"mes": None, "resultado": None}
+    mes_mais_recente = max(f"{d.year}-{d.month:02d}" for d, _tipo, _valor in linhas)
+    do_mes = [(tipo, valor) for d, tipo, valor in linhas if f"{d.year}-{d.month:02d}" == mes_mais_recente]
+    receitas = sum((valor or 0.0) for tipo, valor in do_mes if tipo == "receita")
+    despesas = sum((valor or 0.0) for tipo, valor in do_mes if tipo == "despesa")
+    return {"mes": mes_mais_recente, "resultado": round(receitas - despesas, 2)}
 
 
 @router.get("/possiveis-duplicados")
@@ -499,7 +664,7 @@ def itens_por_conta(
     nota tem vários produtos com contas diferentes.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query = select(LancamentoItem)
+    query = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
         query = query.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = session.exec(query).all()
@@ -516,6 +681,28 @@ def itens_por_conta(
         for it in itens
         if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
     ]
+
+
+def _url_dashboard_supabase() -> str | None:
+    """Deriva a URL do painel do Supabase (Table Editor) a partir do
+    SUPABASE_URL já configurado (mesma conta usada pelo Storage) — evita
+    precisar de uma segunda variável de ambiente só para o link do botão.
+    ex.: https://abcdefgh.supabase.co -> https://supabase.com/dashboard/project/abcdefgh/editor"""
+    if not settings.supabase_url:
+        return None
+    host = settings.supabase_url.rstrip("/").split("://")[-1]
+    ref = host.split(".")[0]
+    return f"https://supabase.com/dashboard/project/{ref}/editor" if ref else None
+
+
+@router.get("/supabase-dashboard-url")
+def supabase_dashboard_url(_: None = Depends(exigir_nao_consultor())) -> dict:
+    """Link para o painel do Supabase (Table Editor) — Relatórios financeiros
+    > botão de acesso ao banco de dados externo. Disponível para quem tem o
+    módulo financeiro (o router inteiro já exige isso) ou é contador; bloqueado
+    para consultor (ver fazenda.auth.exigir_nao_consultor). `url: None` quando
+    o Supabase não está configurado (SUPABASE_URL vazio)."""
+    return {"url": _url_dashboard_supabase()}
 
 
 @router.get("/opcoes")
@@ -546,6 +733,9 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
     # ficam sempre disponíveis para seleção, mesmo antes de aparecerem num lançamento.
     centros_custo = sorted(centros_cadastrados | set(CENTROS_CANONICOS) | {c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
+    # NÃO aplicar sem_itens_de_vale aqui — é datalist de nomes de produto já
+    # usados (autocomplete); excluir os itens de vale só empobreceria as
+    # sugestões, sem nenhum ganho gerencial (ver rules/vale_item.py).
     produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
     query_contas_correntes = select(ContaCorrente).where(ContaCorrente.ativo == True)
     if fazenda_id is not None:
@@ -633,9 +823,12 @@ def criar_conta_corrente(
 
 
 @router.put("/contas-correntes/{conta_id}")
-def atualizar_conta_corrente(conta_id: int, dados: ContaCorrenteIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_conta_corrente(
+    conta_id: int, dados: ContaCorrenteIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     c = session.get(ContaCorrente, conta_id)
-    if not c:
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Conta corrente não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(c, campo, valor)
@@ -678,9 +871,12 @@ def criar_centro_custo(
 
 
 @router.put("/centros-custo/{centro_id}")
-def atualizar_centro_custo(centro_id: int, dados: CentroCustoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_centro_custo(
+    centro_id: int, dados: CentroCustoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     c = session.get(CentroCusto, centro_id)
-    if not c:
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Centro de custo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -826,9 +1022,12 @@ def criar_conta_gerencial(
 
 
 @router.put("/plano-contas/{conta_id}")
-def atualizar_conta_gerencial(conta_id: int, dados: PlanoContaGerencialIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_conta_gerencial(
+    conta_id: int, dados: PlanoContaGerencialIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     conta = session.get(PlanoContaGerencial, conta_id)
-    if not conta:
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Conta gerencial não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(conta, campo, valor)
@@ -1016,7 +1215,7 @@ def rmca(
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
-    query_itens = select(LancamentoItem)
+    query_itens = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -1044,6 +1243,7 @@ def rmca(
             "rmca": round(gerencial["receita_leite"] - fisico["custo_total"], 2),
             "itens": fisico["itens"],
         },
+        "meta_rmca": meta_rmca(),
     }
 
 
@@ -1068,7 +1268,7 @@ def custo_litro_leite(
     plano = session.exec(query_plano).all()
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
-    query_itens = select(LancamentoItem)
+    query_itens = sem_itens_de_vale(select(LancamentoItem))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -1077,7 +1277,13 @@ def custo_litro_leite(
     ]
     custo_total = round(sum(i["valor_total"] or 0 for i in itens if i["codigo_conta_gerencial"] in codigos_custo), 2)
 
-    entregas = {e.competencia: e.quantidade_litros for e in session.exec(select(EntregaLeiteMensal)).all()}
+    # Mesmo escopo de fazenda do custo, logo acima — sem este filtro o custo
+    # saía dividido pelos litros entregues por TODAS as fazendas, e o custo por
+    # litro do cliente vinha diluído pela entrega dos outros clientes.
+    query_entregas = select(EntregaLeiteMensal)
+    if fazenda_id is not None:
+        query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+    entregas = {e.competencia: e.quantidade_litros for e in session.exec(query_entregas).all()}
     litros = litros_leite_no_periodo(entregas, data_inicio, data_fim)
 
     return {
@@ -1089,16 +1295,35 @@ def custo_litro_leite(
     }
 
 
+@router.get("/patrimonio/lista-simples")
+def listar_patrimonio_simples(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Id + nome de cada item de patrimônio (sem depreciação/manutenção) —
+    para o seletor "Vincular a patrimônio" na edição de um lançamento
+    (qualquer usuário com módulo financeiro, não só administrador; a aba
+    Patrimônio em si continua admin-only, ver GET /financeiro/patrimonio)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Patrimonio).where(Patrimonio.data_baixa == None)  # noqa: E711
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    return [{"id": p.id, "nome": p.nome, "tipo": p.tipo} for p in session.exec(query).all()]
+
+
 @router.get("/patrimonio")
 def listar_patrimonio(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> dict:
-    """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv),
-    já com a depreciação linear calculada (valor atual = valor total menos a
-    depreciação acumulada desde a imobilização)."""
+    """Lista o patrimônio/imobilizado da fazenda, já com a depreciação linear
+    calculada (valor atual = valor total menos a depreciação acumulada desde
+    a imobilização) — ou, para patrimônio não depreciável (`depreciavel=False`,
+    ex.: terra), o valor de mercado mais recente. Só administradores da
+    fazenda têm acesso a esta aba."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
+    frequencia_padrao = patrimonio_atualizacao_valor_mercado_meses()
     query = select(Patrimonio)
     if fazenda_id is not None:
         query = query.where(Patrimonio.fazenda_id == fazenda_id)
@@ -1112,6 +1337,8 @@ def listar_patrimonio(
         dep = calcular_depreciacao(d, hoje)
         d.update(dep)
         d.update(status_manutencao(d, hoje))
+        prox_valor_mercado = proxima_atualizacao_valor_mercado(d, frequencia_padrao)
+        d["proxima_atualizacao_valor_mercado"] = prox_valor_mercado.isoformat() if prox_valor_mercado else None
         itens.append(d)
         if not i.data_baixa:
             valor_total_bruto += i.valor_total or 0
@@ -1124,6 +1351,108 @@ def listar_patrimonio(
         "valor_atual_total": round(valor_atual_total, 2),
         "inconsistencias": inconsistencias,
     }
+
+
+@router.post("/patrimonio", status_code=201)
+def criar_patrimonio(
+    dados: PatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Cadastra um item de patrimônio já existente na fazenda (não uma
+    compra nova — para isso, ver POST /financeiro/lancamentos com
+    `criar_patrimonio` preenchido, que cria os dois registros vinculados de
+    uma vez). Substitui o upload de CSV como forma de cadastro."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    item = Patrimonio(
+        **dados.model_dump(exclude={"nome"}), nome=dados.nome.strip(), fazenda_id=fazenda_id,
+    )
+    if not item.depreciavel and item.valor_mercado_atual is None:
+        item.valor_mercado_atual = item.valor_total
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+@router.put("/patrimonio/{item_id}")
+def atualizar_patrimonio(
+    item_id: int, dados: PatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Patrimonio, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    for campo, valor in dados.model_dump(exclude={"nome"}).items():
+        setattr(item, campo, valor)
+    item.nome = dados.nome.strip()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+class ValorMercadoIn(BaseModel):
+    valor_mercado_atual: float
+    data: Optional[date] = None
+
+
+@router.put("/patrimonio/{item_id}/valor-mercado")
+def atualizar_valor_mercado(
+    item_id: int, dados: ValorMercadoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Registra uma nova avaliação de valor de mercado — só para patrimônio
+    não depreciável (ver Patrimonio.depreciavel). Atualiza
+    `data_ultima_atualizacao_valor_mercado`, que é a base do próximo cálculo
+    de "quando cobrar de novo" (ver rules.patrimonio.proxima_atualizacao_valor_mercado)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Patrimonio, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if item.depreciavel:
+        raise HTTPException(status_code=400, detail="Este item deprecia normalmente — não usa valor de mercado")
+    item.valor_mercado_atual = dados.valor_mercado_atual
+    item.data_ultima_atualizacao_valor_mercado = dados.data or date.today()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+class VincularPatrimonioIn(BaseModel):
+    patrimonio_id: Optional[int] = None  # None = desvincula
+
+
+@router.put("/lancamentos/{numero_lancamento}/patrimonio")
+def vincular_lancamento_patrimonio(
+    numero_lancamento: str, dados: VincularPatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Vincula (ou desvincula, com patrimonio_id=None) um lançamento já
+    existente a um item de Patrimônio — FK de verdade (ContaGerencial.patrimonio_id),
+    editável tanto por aqui (tela do lançamento) quanto pela tela de
+    Patrimônio (mesmo endpoint, só troca qual lado abre o seletor)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
+    if not contas:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if dados.patrimonio_id is not None:
+        patrimonio = session.get(Patrimonio, dados.patrimonio_id)
+        if not patrimonio or (fazenda_id is not None and patrimonio.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    for conta in contas:
+        conta.patrimonio_id = dados.patrimonio_id
+        session.add(conta)
+    session.commit()
+    return {"numero_lancamento": numero_lancamento, "patrimonio_id": dados.patrimonio_id}
 
 
 class PlanoManutencaoIn(BaseModel):
@@ -1141,6 +1470,7 @@ def atualizar_plano_manutencao(
     dados: PlanoManutencaoIn,
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> dict:
     """Cadastra/edita o plano de manutenção preventiva (opcional) de um item de
     patrimônio — só periodicidade por data (ver rules/patrimonio.py). Sem
@@ -1175,6 +1505,7 @@ def listar_manutencoes(
     item_id: int,
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> list[dict]:
     """Histórico de manutenções registradas para um item de patrimônio."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
@@ -1211,6 +1542,7 @@ def registrar_manutencao(
     item_id: int, dados: ManutencaoRealizadaIn,
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
 ) -> dict:
     """
     Registra que a manutenção preventiva de um item foi paga/realizada:
@@ -1284,7 +1616,7 @@ def criar_lancamento(
     dados: LancamentoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Cria um lançamento financeiro com um ou mais produtos/serviços (itens).
@@ -1292,7 +1624,6 @@ def criar_lancamento(
     que é o que efetivamente vira parcela(s). Sem data de pagamento, o
     lançamento nasce em aberto (contas a pagar/receber).
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("receita", "despesa"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
     if not dados.itens:
@@ -1300,6 +1631,19 @@ def criar_lancamento(
     for item in dados.itens:
         if item.tipo_item is not None and item.tipo_item not in ("produto", "servico"):
             raise HTTPException(status_code=400, detail="tipo_item deve ser 'produto' ou 'servico'")
+
+    itens_com_vale = [item for item in dados.itens if item.vale]
+    if itens_com_vale:
+        if dados.tipo == "receita":
+            raise HTTPException(status_code=400, detail="Só item de despesa pode virar vale.")
+        # Import local — cadastro pode importar financeiro, o contrário não
+        # (ver §0.8: rh_folha.py/rh_contratos.py já importam deste módulo).
+        # Valida TODOS os itens marcados ANTES de gravar qualquer coisa —
+        # qualquer erro aqui aborta o lançamento inteiro sem criar nada.
+        from fazenda.api.routers.cadastro.rh_vale_item import validar_vale_item
+        item_data_vale = dados.data_emissao or dados.data_competencia or date.today()
+        for item in itens_com_vale:
+            validar_vale_item(session, item.valor_total, item_data_vale, item.vale, fazenda_id)
 
     valor_bruto = round(sum(i.valor_total for i in dados.itens), 2)
     valor_liquido = round(valor_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
@@ -1426,27 +1770,86 @@ def criar_lancamento(
         from fazenda.api.routers.pedidos import atualizar_status_por_lancamento
         atualizar_status_por_lancamento(session, dados.pedido_id, valor_liquido)
 
+    if dados.criar_patrimonio:
+        pat = dados.criar_patrimonio
+        item_patrimonio = Patrimonio(
+            **pat.model_dump(exclude={"nome"}), nome=pat.nome.strip(), fazenda_id=fazenda_id,
+        )
+        if not item_patrimonio.depreciavel and item_patrimonio.valor_mercado_atual is None:
+            item_patrimonio.valor_mercado_atual = item_patrimonio.valor_total
+        session.add(item_patrimonio)
+        session.commit()
+        session.refresh(item_patrimonio)
+        for c in criados:
+            c.patrimonio_id = item_patrimonio.id
+            session.add(c)
+        session.commit()
+
+    # Itens marcados como vale (checkbox "É vale de funcionário?") já
+    # passaram por `validar_vale_item` acima, ANTES de gravar nada — aqui só
+    # cria o vale de verdade (ValeFuncionario/ValeAvulso) reaproveitando
+    # criar_vale/criar_vale_avulso e grava o vínculo no item (ver
+    # fazenda/api/routers/cadastro/rh_vale_item.py).
+    vales_criados: list[dict] = []
+    if itens_com_vale:
+        from fazenda.api.routers.cadastro.rh_vale_item import aplicar_vale_item
+        try:
+            for item_in, item_criado in zip(dados.itens, itens_criados):
+                if not item_in.vale:
+                    continue
+                pessoa_vale = session.get(Pessoa, item_in.vale.pessoa_id)
+                resultado = aplicar_vale_item(session, item_criado, item_in.vale, user, fazenda_id)
+                vales_criados.append({
+                    "item_id": item_criado.id,
+                    "vale_tipo": resultado["vale_tipo"],
+                    "vale_id": resultado["vale_id"],
+                    "pessoa_nome": pessoa_vale.nome if pessoa_vale else None,
+                    "valor": item_criado.valor_total,
+                })
+        except HTTPException:
+            # Corrida rara (passou em validar_vale_item mas falhou de
+            # verdade ao aplicar — ex.: 40% do salário estourado por outro
+            # vale lançado nesse meio-tempo). A nota já foi commitada acima
+            # — desfaz por completo em vez de deixar uma nota "meio vale".
+            for it in itens_criados:
+                session.delete(it)
+            for c in criados:
+                session.delete(c)
+            session.commit()
+            raise
+
     # Compra de produto estocável dá entrada automática no estoque — só para
     # despesa e só quando NÃO está vinculada a um Pedido (nesse caso a
     # entrada física já é lançada manualmente via POST /estoque/movimentar
     # quando a mercadoria chega; dar entrada aqui também duplicaria a
-    # contagem). Item não encontrado ou não-estocável: melhor esforço,
-    # segue sem erro (a nota fiscal é o que importa, o estoque é acessório).
+    # contagem). Item não-estocável (financeiro puro): melhor esforço, segue
+    # sem aviso (comportamento intencional). Item NÃO encontrado no estoque
+    # cadastrado (nome digitado em "texto livre" ou fora do cadastro): antes
+    # o `continue` abaixo pulava em silêncio — a nota fiscal salvava normal e
+    # ninguém percebia que o produto nunca deu entrada no estoque (foi o que
+    # aconteceu com sêmen comprado por nome de touro ainda não cadastrado).
+    # Agora sempre passa por `movimentar()`, que já sabe gerar o aviso
+    # "não está no estoque desta fazenda" quando `item` vem None.
     avisos_estoque: list[str] = []
     if dados.tipo == "despesa" and dados.pedido_id is None:
         data_movimento = dados.data_emissao or data_competencia or date.today()
         usuario_id = user.id if isinstance(user, Usuario) else None
         for item_in, item_criado in zip(dados.itens, itens_criados):
+            if item_in.vale:
+                # Ração do cachorro do funcionário não é estoque da fazenda.
+                continue
             if item_in.tipo_item != "produto" or not item_in.quantidade or item_in.quantidade <= 0:
                 continue
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
-            if estoque_item is None or estoque_item.estocavel is False:
+            if estoque_item is not None and estoque_item.estocavel is False:
                 continue
             avisos_estoque += estoque_baixa.movimentar(
-                session, item=estoque_item, quantidade=item_in.quantidade, unidade=estoque_item.unidade,
+                session, item=estoque_item, quantidade=item_in.quantidade,
+                unidade=estoque_item.unidade if estoque_item else None,
                 data=data_movimento, fazenda_id=fazenda_id, movimento="Entrada de compra",
                 observacao=f"Entrada por compra — lançamento {numero_lancamento}",
                 usuario_id=usuario_id, origem_tipo="compra_financeiro", origem_id=item_criado.id, sinal=+1,
+                produto=item_in.produto,
             )
         session.commit()
 
@@ -1456,6 +1859,7 @@ def criar_lancamento(
         "valor_bruto": valor_bruto,
         "valor_liquido": valor_liquido,
         "avisos_estoque": avisos_estoque,
+        "vales_criados": vales_criados,
     }
 
 
@@ -1527,9 +1931,8 @@ def listar_lancamentos_recorrentes(
 @router.post("/recorrentes", status_code=201)
 def criar_lancamento_recorrente(
     dados: LancamentoRecorrenteIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_lancamento_recorrente(dados)
     modelo = LancamentoRecorrente(
         **dados.model_dump(),
@@ -1596,13 +1999,12 @@ class GerarLancamentoRecorrenteIn(BaseModel):
 @router.post("/recorrentes/{modelo_id}/gerar", status_code=201)
 def gerar_lancamento_recorrente(
     modelo_id: int, dados: GerarLancamentoRecorrenteIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Gera um lançamento financeiro de verdade (ContaGerencial + LancamentoItem,
     igual a qualquer outro) a partir de um modelo recorrente + os dados
     variáveis deste período — reaproveita `criar_lancamento`, sem duplicar
     nenhuma regra de criação (numeração, estoque, etc.)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     modelo = session.get(LancamentoRecorrente, modelo_id)
     if not modelo or (fazenda_id is not None and modelo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento recorrente não encontrado")
@@ -1694,17 +2096,70 @@ def pagar_lancamento(
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
         raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
 
+    diferenca = round(dados.valor_pago - (registro.valor_total or 0), 2)
+    if dados.parcelas_diferenca:
+        if not registro.numero_lancamento:
+            raise HTTPException(
+                status_code=400,
+                detail="Este lançamento não tem um número de lançamento válido para parcelar a diferença — use desconto/acréscimo.",
+            )
+        soma_parcelas = round(sum(p.valor for p in dados.parcelas_diferenca), 2)
+        if round(soma_parcelas - abs(diferenca), 2) != 0:
+            raise HTTPException(status_code=400, detail="A soma das parcelas precisa bater com a diferença a parcelar")
+
     registro.data_pagamento = dados.data_pagamento
     registro.valor_pago = dados.valor_pago
     registro.conta_bancaria = dados.conta_bancaria
     registro.numero_documento_pagamento = dados.numero_documento_pagamento
     registro.forma_pagamento = dados.forma_pagamento
     registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
-    registro.desconto_acrescimo = round(dados.valor_pago - (registro.valor_total or 0), 2)
+    # Com parcelas_diferenca, a diferença inteira migra para as novas
+    # parcelas abaixo — esta baixa não perdoa nem cobra nada sozinha.
+    registro.desconto_acrescimo = 0 if dados.parcelas_diferenca else diferenca
     session.add(registro)
+
+    novas: list[ContaGerencial] = []
+    if dados.parcelas_diferenca:
+        parcela_total_atual = registro.parcela_total or 1
+        novo_total = parcela_total_atual + len(dados.parcelas_diferenca)
+        # Reabre a contagem de parcelas do lançamento inteiro — todas as
+        # linhas (já existentes e novas) passam a refletir o novo total.
+        query_irmas = select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento)
+        if registro.fazenda_id is not None:
+            query_irmas = query_irmas.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+        for irma in session.exec(query_irmas).all():
+            irma.parcela_total = novo_total
+            session.add(irma)
+        for i, p in enumerate(dados.parcelas_diferenca, start=parcela_total_atual + 1):
+            nova = ContaGerencial(
+                fazenda_id=registro.fazenda_id,
+                numero_lancamento=registro.numero_lancamento,
+                codigo_conta=registro.codigo_conta,
+                descricao=registro.descricao,
+                data_vencimento=p.data_vencimento,
+                data_competencia=registro.data_competencia,
+                data_emissao=registro.data_emissao,
+                fornecedor_cliente=registro.fornecedor_cliente,
+                numero_nota=registro.numero_nota,
+                tipo_documento=registro.tipo_documento,
+                numero_os_orcamento=registro.numero_os_orcamento,
+                valor_total=p.valor,
+                parcela_num=i,
+                parcela_total=novo_total,
+                responsavel=registro.responsavel,
+                centro_custo=registro.centro_custo,
+                tipo=registro.tipo,
+                origem="manual",
+                usuario_id=registro.usuario_id,
+            )
+            novas.append(nova)
+            session.add(nova)
+
     session.commit()
     session.refresh(registro)
-    return registro.model_dump()
+    for nova in novas:
+        session.refresh(nova)
+    return {**registro.model_dump(), "parcelas_diferenca_criadas": [n.model_dump() for n in novas]}
 
 
 @router.put("/lancamentos/baixa-lote")
@@ -1821,6 +2276,15 @@ def editar_lancamento(
         ).all()
         if len(itens) == 1:
             item = itens[0]
+            # Este item já virou um vale de verdade (ValeFuncionario/ValeAvulso)
+            # com valor próprio — mudar o valor da nota por aqui deixaria o
+            # item e o vale divergentes em silêncio. O usuário precisa
+            # desmarcar o vale primeiro (ver /cadastro/vale-item/{item_id}).
+            if "valor_total" in enviados and eh_item_de_vale(item):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Este item gerou um vale de R$ {item.valor_total:.2f} — desmarque o vale antes de alterar o valor da nota.",
+                )
             if "descricao" in enviados:
                 item.descricao = registro.descricao
             if "valor_total" in enviados:
@@ -1868,6 +2332,130 @@ def editar_lancamento(
     return registro.model_dump()
 
 
+# G2 — `ContaGerencial` que NASCEM já pagas, espelhando a baixa de outro
+# módulo (RH). Estorná-las por aqui deixaria as duas pontas divergentes —
+# desfazer precisa ser feito no módulo de origem. Ver
+# `rh_folha._sincronizar_conta_vale` (Vale de funcionário),
+# `rh_contratos.registrar_pagamento_diaria` (Diária) e o lançamento de Vale
+# avulso (também rh_contratos).
+TIPOS_DOCUMENTO_BAIXA_ESPELHADA = {"Vale de funcionário", "Vale avulso", "Diária"}
+
+
+class EstornoIn(BaseModel):
+    motivo: str | None = None
+    # Sem isso, uma baixa que criou parcela(s) para cobrir a diferença de
+    # valor pago (ver `pagar_lancamento` acima) é bloqueada com 409 — o
+    # chamador precisa confirmar explicitamente que quer removê-las também.
+    confirmar_parcelas_diferenca: bool = False
+
+
+@router.post("/lancamentos/{lancamento_id}/estornar")
+def estornar_lancamento(
+    lancamento_id: int, dados: EstornoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Reverte a baixa (pagamento/recebimento) de um lançamento — o lançamento
+    CONTINUA existindo, só volta para "em aberto" (contas a pagar/receber).
+    Não é exclusão: para excluir o lançamento em si, use o motor genérico
+    (`POST /exclusoes/...`, tipo "financeiro").
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(ContaGerencial, lancamento_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+
+    if registro.data_pagamento is None and registro.valor_pago is None:
+        raise HTTPException(status_code=400, detail="Este lançamento não está baixado — não há pagamento a estornar.")
+
+    if registro.tipo_documento in TIPOS_DOCUMENTO_BAIXA_ESPELHADA:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este lançamento é o espelho de um {registro.tipo_documento} — desfaça no próprio módulo "
+            "(Financeiro › Folha › Vales / Pessoal › Diárias), senão os dois ficam divergentes.",
+        )
+
+    # Parcelas geradas pela diferença de valor pago (`pagar_lancamento`,
+    # `dados.parcelas_diferenca`) — mesmo `numero_lancamento`, número maior
+    # que a parcela baixada, ainda em aberto, lançadas manualmente. Não há
+    # `criado_em` em `ContaGerencial` (só `atualizado_em`) para distinguir
+    # com certeza dessas parcelas "de diferença" de parcelas futuras comuns
+    # do mesmo lançamento que só ainda não foram pagas — usamos
+    # `atualizado_em >= registro.atualizado_em` como aproximação: as
+    # parcelas de diferença são criadas no momento da baixa, estritamente
+    # depois da criação da parcela que está sendo baixada agora.
+    irmas_diferenca: list[ContaGerencial] = []
+    if registro.numero_lancamento and registro.parcela_num is not None:
+        query_irmas = select(ContaGerencial).where(
+            ContaGerencial.numero_lancamento == registro.numero_lancamento,
+            ContaGerencial.parcela_num > registro.parcela_num,
+            ContaGerencial.valor_pago.is_(None),
+            ContaGerencial.origem == "manual",
+        )
+        if registro.fazenda_id is not None:
+            query_irmas = query_irmas.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+        irmas_diferenca = [
+            c for c in session.exec(query_irmas).all()
+            if c.atualizado_em is not None and registro.atualizado_em is not None
+            and c.atualizado_em >= registro.atualizado_em
+        ]
+
+    if irmas_diferenca and not dados.confirmar_parcelas_diferenca:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "mensagem": f"Esta baixa criou {len(irmas_diferenca)} parcela(s) para a diferença. "
+                "Estornar sem removê-las deixa o lançamento com valor duplicado.",
+                # `mode="json"` — o `detail` de HTTPException não passa pelo
+                # `jsonable_encoder` de resposta normal do FastAPI, então
+                # `date`/`datetime` cru quebrariam o `json.dumps` da resposta.
+                "parcelas": [c.model_dump(mode="json") for c in irmas_diferenca],
+            },
+        )
+
+    avisos: list[str] = []
+    if registro.forma_pagamento == "credito":
+        avisos.append("O pagamento estornado era em cartão de crédito — confira/ajuste a fatura manualmente.")
+
+    parcelas_diferenca_removidas = 0
+    if irmas_diferenca:
+        ids_removidas = {c.id for c in irmas_diferenca}
+        for c in irmas_diferenca:
+            session.delete(c)
+        parcelas_diferenca_removidas = len(irmas_diferenca)
+
+        query_restantes = select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento)
+        if registro.fazenda_id is not None:
+            query_restantes = query_restantes.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+        remanescentes = [c for c in session.exec(query_restantes).all() if c.id not in ids_removidas]
+        novo_total = len(remanescentes)
+        for r in remanescentes:
+            r.parcela_total = novo_total
+            session.add(r)
+
+    # Reversão do que a baixa fez (`pagar_lancamento`/`baixa_lote`/
+    # `baixa_lote_detalhada`), ao contrário.
+    registro.data_pagamento = None
+    registro.valor_pago = None
+    registro.conta_bancaria = None
+    registro.numero_documento_pagamento = None
+    registro.forma_pagamento = None
+    registro.data_vencimento_cartao = None
+    registro.desconto_acrescimo = None
+    registro.atualizado_em = datetime.utcnow()
+    session.add(registro)
+
+    session.commit()
+    session.refresh(registro)
+
+    return {
+        **registro.model_dump(),
+        "estornado": True,
+        "parcelas_diferenca_removidas": parcelas_diferenca_removidas,
+        "avisos": avisos,
+    }
+
+
 @router.post("/importar-xml")
 def importar_xml(
     dados: XmlIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1904,43 +2492,210 @@ async def ler_documento_anexado(
     return extraido
 
 
-# Tamanho máximo por anexo (boleto, contrato etc.) — o conteúdo fica no banco,
-# então um limite generoso evita que um arquivo enorme infle a tabela à toa.
+# Tamanho máximo por anexo (boleto, contrato etc.) — sobe pro Supabase Storage,
+# mas o limite continua generoso o bastante sem travar upload de PDF grande.
 TAMANHO_MAXIMO_ANEXO = 15 * 1024 * 1024  # 15 MB
+
+
+def _caminho_anexo_lancamento(session: Session, fazenda_id: int | None, numero_lancamento: str, nome_arquivo: str) -> str:
+    """fazenda-X/numero_lancamento/0001_nome.ext — sequencial dentro do
+    lançamento, mesmo espírito de _proximo_caminho em routers/documentos.py."""
+    pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/{numero_lancamento}"
+    existentes = session.exec(
+        select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
+    ).all()
+    seq = 1 + len(existentes)
+    return f"{pasta}/{seq:04d}_{nome_arquivo}"
 
 
 @router.post("/lancamentos/{numero_lancamento}/anexos", status_code=201)
 async def anexar_arquivo_lancamento(
-    numero_lancamento: str, file: UploadFile,
+    numero_lancamento: str, file: UploadFile, categoria: str | None = Form(None),
+    # Número/data impressos no PRÓPRIO documento (nº do boleto, da nota
+    # fiscal, da OS, do orçamento...) — diferente de `criado_em` (quando foi
+    # enviado). É por aqui que a Central de Documentos acha, por exemplo,
+    # "o boleto número X" mesmo sabendo só esse dado, sem saber o lançamento.
+    numero_documento: str | None = Form(None), data_documento: date | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Anexa um arquivo (ex.: boleto) a um lançamento já criado — várias chamadas
-    para vários arquivos do mesmo lançamento (um boleto por parcela, por
-    exemplo). Não faz nenhuma leitura/OCR aqui; isso já aconteceu, se foi o
-    caso, em /ler-documento antes de o lançamento ser salvo."""
+    """Anexa um arquivo (ex.: boleto, nota fiscal) a um lançamento já criado —
+    várias chamadas para vários arquivos do mesmo lançamento (um boleto por
+    parcela, por exemplo), cada um com sua própria categoria (ver
+    TIPOS_DOCUMENTO). Sobe para o Supabase Storage — não faz nenhuma
+    leitura/OCR aqui; isso já aconteceu, se foi o caso, em /ler-documento
+    antes de o lançamento ser salvo."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
     if fazenda_id is not None:
         query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
-    if not session.exec(query_conta).first():
+    conta = session.exec(query_conta).first()
+    if not conta:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     conteudo = await file.read()
     if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
         raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    nome_arquivo = file.filename or "arquivo"
+    caminho = _caminho_anexo_lancamento(session, fazenda_id, numero_lancamento, nome_arquivo)
+    try:
+        enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream", bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     anexo = LancamentoAnexo(
         numero_lancamento=numero_lancamento,
-        nome_arquivo=file.filename or "arquivo",
+        nome_arquivo=nome_arquivo,
         mime_type=file.content_type or "application/octet-stream",
         tamanho_bytes=len(conteudo),
-        conteudo=conteudo,
+        categoria=categoria or conta.tipo_documento,
+        numero_documento=numero_documento,
+        data_documento=data_documento,
+        caminho_storage=caminho,
         usuario_id=user.id if isinstance(user, Usuario) else None,
         fazenda_id=fazenda_id,
     )
     session.add(anexo)
     session.commit()
     session.refresh(anexo)
-    return {"id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type, "tamanho_bytes": anexo.tamanho_bytes}
+    return {
+        "id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type,
+        "tamanho_bytes": anexo.tamanho_bytes, "categoria": anexo.categoria,
+        "numero_documento": anexo.numero_documento,
+        "data_documento": anexo.data_documento.isoformat() if anexo.data_documento else None,
+    }
+
+
+def _garantir_numero_lancamento(session: Session, fazenda_id: int | None, lancamento_id: int) -> ContaGerencial:
+    """Devolve a conta pelo id, garantindo que ela tenha `numero_lancamento`.
+
+    Lançamento importado da planilha Ideagri (ver parsers/conta_gerencial.py)
+    nasce SEM numero_lancamento — e como todo o mecanismo de anexo é ancorado
+    nessa string, esses lançamentos históricos simplesmente não aceitavam
+    comprovante: a área de arrastar aparecia desabilitada, sem explicar nada.
+    Aqui a numeração é emitida sob demanda, na primeira vez que se anexa algo,
+    e a partir daí o lançamento se comporta como qualquer outro (anexo,
+    recibo, vínculo com patrimônio).
+    """
+    conta = session.get(ContaGerencial, lancamento_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if not conta.numero_lancamento:
+        base = conta.data_competencia or conta.data_vencimento or conta.data_emissao or date.today()
+        conta.numero_lancamento = _proximo_numero_lancamento(session, base.year)
+        session.add(conta)
+        session.commit()
+        session.refresh(conta)
+    return conta
+
+
+@router.post("/lancamentos/por-id/{lancamento_id}/anexos", status_code=201)
+async def anexar_arquivo_lancamento_por_id(
+    lancamento_id: int, file: UploadFile, categoria: str | None = Form(None),
+    numero_documento: str | None = Form(None), data_documento: date | None = Form(None),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Mesma coisa que anexar por numero_lancamento, só que achando o
+    lançamento pelo id — é o caminho usado pelas telas que já têm o registro
+    na mão (baixa de pagamento, edição) e que precisam funcionar mesmo para
+    lançamento importado, que ainda não tem numeração."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    conta = _garantir_numero_lancamento(session, fazenda_id, lancamento_id)
+    return await anexar_arquivo_lancamento(
+        conta.numero_lancamento, file, categoria, numero_documento, data_documento,
+        session=session, user=user, fazenda_id=fazenda_id,
+    )
+
+
+@router.post("/lancamentos/anexos-lote", status_code=201)
+async def anexar_comprovante_em_lote(
+    file: UploadFile,
+    # Default "" em vez de obrigatório: uma lista vazia chega aqui como campo
+    # ausente no multipart, e o 422 genérico do FastAPI não diria o que fazer.
+    lancamento_ids: str = Form(""),
+    categoria: str | None = Form(None),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Um comprovante ÚNICO para vários lançamentos pagos de uma vez (ver a
+    aba "Pagamento em lote" em app/financeiro/page.tsx): o banco emite um
+    comprovante só para a remessa inteira, e cada nota daquela remessa precisa
+    exibi-lo no relatório de Contas pagas.
+
+    O arquivo sobe UMA vez para o Storage e as N linhas de LancamentoAnexo
+    apontam para o MESMO `caminho_storage` — anexar por lançamento, um a um,
+    duplicaria o mesmo PDF N vezes no bucket. Quem paga o preço dessa escolha
+    é `excluir_anexo`, que por isso só apaga o objeto do Storage quando a
+    linha excluída é a última que o referencia.
+
+    `lancamento_ids` vem como CSV porque a requisição é multipart (o mesmo
+    motivo de `categoria` ser Form): não dá para mandar JSON junto do arquivo.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    try:
+        ids = [int(p) for p in lancamento_ids.split(",") if p.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="lancamento_ids inválido — esperado uma lista de ids separados por vírgula")
+    if not ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento para anexar o comprovante")
+
+    conteudo = await file.read()
+    if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    nome_arquivo = file.filename or "comprovante"
+    mime = file.content_type or "application/octet-stream"
+
+    # Emite a numeração de todos ANTES de subir o arquivo: se algum id for de
+    # outra fazenda (404), nada foi enviado ao Storage ainda.
+    contas = [_garantir_numero_lancamento(session, fazenda_id, lid) for lid in ids]
+
+    # O caminho fica ancorado no primeiro lançamento da remessa, seguindo a
+    # convenção de _caminho_anexo_lancamento; os demais só referenciam.
+    caminho = _caminho_anexo_lancamento(session, fazenda_id, contas[0].numero_lancamento, nome_arquivo)
+    try:
+        enviar_arquivo(caminho, conteudo, mime, bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    criados = []
+    for conta in contas:
+        anexo = LancamentoAnexo(
+            numero_lancamento=conta.numero_lancamento,
+            nome_arquivo=nome_arquivo,
+            mime_type=mime,
+            tamanho_bytes=len(conteudo),
+            categoria=categoria or conta.tipo_documento,
+            caminho_storage=caminho,
+            usuario_id=user.id if isinstance(user, Usuario) else None,
+            fazenda_id=fazenda_id,
+        )
+        session.add(anexo)
+        criados.append(anexo)
+    session.commit()
+    for anexo in criados:
+        session.refresh(anexo)
+    return {
+        "anexados": len(criados),
+        "nome_arquivo": nome_arquivo,
+        "anexo_ids": [a.id for a in criados],
+        "numeros_lancamento": [c.numero_lancamento for c in contas],
+    }
+
+
+@router.get("/lancamentos/por-id/{lancamento_id}/anexos")
+def listar_anexos_lancamento_por_id(
+    lancamento_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Anexos do lançamento pelo id. Ao contrário do POST, aqui NÃO se emite
+    numeração: só de abrir a tela não se altera o lançamento — sem número,
+    não há anexo mesmo, e a lista vazia é a resposta certa."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    conta = session.get(ContaGerencial, lancamento_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if not conta.numero_lancamento:
+        return []
+    return listar_anexos_lancamento(conta.numero_lancamento, session=session, fazenda_id=fazenda_id)
 
 
 @router.get("/lancamentos/{numero_lancamento}/anexos")
@@ -1956,6 +2711,8 @@ def listar_anexos_lancamento(
     anexos = session.exec(query).all()
     return [
         {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
+         "categoria": a.categoria, "numero_documento": a.numero_documento,
+         "data_documento": a.data_documento.isoformat() if a.data_documento else None,
          "criado_em": a.criado_em.isoformat()}
         for a in anexos
     ]
@@ -1970,8 +2727,15 @@ def baixar_anexo(
     anexo = session.get(LancamentoAnexo, anexo_id)
     if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    if anexo.caminho_storage:
+        try:
+            conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    else:
+        conteudo = anexo.conteudo  # formato antigo (legado) — ver docstring do model
     return Response(
-        content=anexo.conteudo, media_type=anexo.mime_type,
+        content=conteudo, media_type=anexo.mime_type,
         headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
     )
 
@@ -1985,6 +2749,24 @@ def excluir_anexo(
     anexo = session.get(LancamentoAnexo, anexo_id)
     if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    if anexo.caminho_storage:
+        # Um comprovante de pagamento em lote é UM arquivo no Storage
+        # referenciado por várias linhas (ver anexar_comprovante_em_lote), uma
+        # por lançamento da remessa. Apagar o objeto ao excluir a primeira
+        # linha deixaria as outras apontando para o vazio — o download delas
+        # passaria a falhar. Só remove do Storage quando esta é a última
+        # referência; caso contrário, some apenas o vínculo deste lançamento.
+        outras = session.exec(
+            select(LancamentoAnexo).where(
+                LancamentoAnexo.caminho_storage == anexo.caminho_storage,
+                LancamentoAnexo.id != anexo.id,
+            )
+        ).first()
+        if not outras:
+            try:
+                excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
     session.delete(anexo)
     session.commit()
     return {"excluido": True}
@@ -2045,13 +2827,26 @@ async def enviar_recibo(
 @router.get("/contas-a-pagar")
 def contas_a_pagar(
     dias: int = Query(10, description="Janela em dias"),
+    data_referencia: date | None = Query(None, description="Data de referência para calcular a janela (default: hoje)"),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
-    """Retorna contas com vencimento nos próximos N dias (não quitadas)."""
-    hoje = date.today()
+    """Retorna contas com vencimento nos próximos N dias (não quitadas).
+    `data_referencia` segue a mesma convenção de calcular_pev
+    (fazenda/rules/scratch_pev.py) — sem ela, mesmo comportamento de sempre
+    (janela a partir de hoje); com ela, permite fixar o "hoje" da consulta.
+    Existe para que um teste comparando essa janela contra uma data possa
+    fixar as duas pontas em vez de depender do dia real em que a suíte
+    roda — mesmo defeito que já quebrou 7 testes deste repositório (ver
+    PR #492): asserção com data absoluta escrita à mão, comparada contra
+    `date.today()` real, passa em alguns dias do mês e falha em outros."""
+    hoje = data_referencia or date.today()
     limite = hoje + __import__("datetime").timedelta(days=dias)
 
-    contas = session.exec(select(ContaGerencial)).all()
+    query = select(ContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
     nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
     resultado = []
     for c in contas:

@@ -1,10 +1,12 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
+import { casaBusca } from "@/lib/busca";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
@@ -23,7 +25,7 @@ const LABEL_MOTIVO: Record<string, string> = {
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const hoje = () => new Date().toISOString().split("T")[0];
@@ -43,7 +45,12 @@ export default function BaixarAnimal() {
   const [tipoBaixa, setTipoBaixa] = useState("");
   const [motivo, setMotivo] = useState("");
   const [motivoDoenca, setMotivoDoenca] = useState("");
+  // "Causa do acidente" reaproveita a mesma lista cadastrada em Configurações
+  // > Motivos de baixa (opcoes.motivos_doenca) — mas é opcional (diferente de
+  // doença, onde é obrigatória) e fica num campo próprio.
+  const [motivoAcidente, setMotivoAcidente] = useState("");
   const [motivoOutro, setMotivoOutro] = useState("");
+  const datalistMotivosId = useId();
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_animal");
   const [cliente, setCliente] = useState("");
@@ -82,7 +89,7 @@ export default function BaixarAnimal() {
     if (!animais) return [];
     return animais.filter((a) => {
       if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
-      return !busca || a.numero.toLowerCase().includes(busca.toLowerCase());
+      return casaBusca(a.numero, busca);
     });
   }, [animais, busca, filtroLote]);
   const ord = useOrdenacao(candidatos);
@@ -96,7 +103,7 @@ export default function BaixarAnimal() {
   );
 
   const limpar = () => {
-    setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoOutro("");
+    setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoAcidente(""); setMotivoOutro("");
     setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
@@ -128,7 +135,7 @@ export default function BaixarAnimal() {
     try {
       const r = await criarBaixaAnimal({
         animais: Array.from(selecionados), tipo_baixa: tipoBaixa, motivo,
-        motivo_doenca: motivo === "doenca" ? motivoDoenca : undefined,
+        motivo_doenca: motivo === "doenca" ? motivoDoenca : motivo === "acidente" ? (motivoAcidente || undefined) : undefined,
         motivo_outro: motivo === "outros" ? (motivoOutro.trim() || undefined) : undefined,
         valor: motivo === "venda" ? Number(valor) : undefined,
         tipo_valor: motivo === "venda" ? tipoValor : undefined,
@@ -196,7 +203,7 @@ export default function BaixarAnimal() {
             )}
           </div>
 
-          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
             <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span style={{ fontSize: "0.85rem" }}>Animais ({candidatos.length}) — {selecionados.size} selecionado(s)</span>
               <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
@@ -260,10 +267,23 @@ export default function BaixarAnimal() {
             </div>
           )}
 
+          {motivo === "acidente" && (
+            <div className="mb-3" style={{ maxWidth: "320px" }}>
+              <label style={labelStyle}>Causa do acidente (opcional)</label>
+              <select style={selStyle} value={motivoAcidente} onChange={(e) => setMotivoAcidente(e.target.value)}>
+                <option value="">Selecione...</option>
+                {opcoes.motivos_doenca.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+
           {motivo === "outros" && (
             <div className="mb-3" style={{ maxWidth: "320px" }}>
               <label style={labelStyle}>Descreva o motivo (opcional)</label>
-              <input style={selStyle} value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)} placeholder="ex.: transferência para outra fazenda" />
+              <input style={selStyle} list={datalistMotivosId} value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)} placeholder="ex.: transferência para outra fazenda" />
+              <datalist id={datalistMotivosId}>
+                {opcoes.motivos_doenca.map((d) => <option key={d} value={d} />)}
+              </datalist>
             </div>
           )}
 
@@ -284,7 +304,7 @@ export default function BaixarAnimal() {
               </div>
               <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: "480px" }}>
                 <div><label style={labelStyle}>{tipoValor === "total" ? "Valor total (R$)" : "Valor por animal (R$)"}</label>
-                  <input type="number" step="0.01" style={selStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+                  <CampoMoeda style={selStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
                 <div><label style={labelStyle}>Cliente</label>
                   <select style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)}>
                     <option value="">Selecione…</option>

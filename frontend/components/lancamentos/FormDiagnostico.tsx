@@ -351,7 +351,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       )}
 
       {animaisComAviso.length > 0 && (
-        <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+        <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--amber)", marginTop: "0.1rem" }} />
           <span style={{ fontSize: "0.8rem" }}>
             {animaisComAviso.length} animal(is) com menos de 30 dias da última inseminação/cobertura: {animaisComAviso.join(", ")}. Deseja confirmar mesmo assim?
@@ -360,12 +360,12 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       )}
       {resultado === "negativo" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Ao confirmar, os animais ficam como <strong>vazia</strong> e serão colocados para observação no próximo serviço.
+          Ao confirmar, os animais ficam como <strong>vazia</strong> e serão colocados para observação na próxima visita reprodutiva.
         </p>
       )}
       {resultado === "retoque" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Os animais entram na <strong>agenda para retoque</strong>, no dia do próximo serviço.
+          Os animais entram na <strong>agenda para retoque</strong>, no dia da próxima visita reprodutiva.
         </p>
       )}
       {resultado === "indefinido" && (

@@ -17,7 +17,7 @@ const MODULOS = [
 ];
 const TODOS = MODULOS.map((m) => m.key);
 
-const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
+const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 export default function UsuariosPage() {
@@ -128,7 +128,7 @@ export default function UsuariosPage() {
                     <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setPerms(new Set(["capa"]))}>Limpar</button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem" }}>
+                <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem" }}>
                   {MODULOS.map((m) => (
                     <label key={m.key} className="flex items-center gap-2" style={{ fontSize: "0.8rem", opacity: m.key === "capa" ? 0.7 : 1 }}>
                       <input type="checkbox" checked={perms.has(m.key)} disabled={m.key === "capa"} onChange={() => toggle(m.key)} /> {m.label}
@@ -139,7 +139,7 @@ export default function UsuariosPage() {
               </div>
             )}
 
-            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem" }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem" }}>
               <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
                 <input type="checkbox" checked={podePublicarBlog} onChange={(e) => setPodePublicarBlog(e.target.checked)} />
                 <Newspaper size={14} /> Permitir publicação de matérias no blog (News)
@@ -238,7 +238,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
   };
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "480px", maxWidth: "95vw", maxHeight: "88vh", overflowY: "auto" }}>
         <div className="flex items-center justify-between mb-3">
           <div className="card-header" style={{ margin: 0 }}>Editar usuário</div>
@@ -279,7 +279,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
                   <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setPerms(new Set(["capa"]))}>Limpar</button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem" }}>
+              <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem" }}>
                 {MODULOS.map((m) => (
                   <label key={m.key} className="flex items-center gap-2" style={{ fontSize: "0.8rem", opacity: m.key === "capa" ? 0.7 : 1 }}>
                     <input type="checkbox" checked={perms.has(m.key)} disabled={m.key === "capa"} onChange={() => toggle(m.key)} /> {m.label}
@@ -296,7 +296,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
             {souEu && <p style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Você não pode desativar a si mesmo.</p>}
           </div>
 
-          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem" }}>
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem" }}>
             <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
               <input type="checkbox" checked={podePublicarBlog} onChange={(e) => setPodePublicarBlog(e.target.checked)} />
               <Newspaper size={14} /> Permitir publicação de matérias no blog (News)

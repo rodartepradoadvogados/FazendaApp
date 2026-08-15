@@ -4,13 +4,14 @@ import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
 import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao, fetchAnimais } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { casaBusca } from "@/lib/busca";
 
 type LoteSugerido = { codigo: string; nome: string; rotulo: string; motivo: string | null };
 type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeridos: LoteSugerido[]; motivo: string | null };
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem",
+  borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", fontSize: "0.78rem",
 };
 const hoje = () => new Date().toISOString().split("T")[0];
 
@@ -52,7 +53,7 @@ function FormMover({ sugestao, motivos, onFeito, onCancelar }: { sugestao: Suges
       <button onClick={confirmar} disabled={salvando} className="btn-primary" title="Confirmar a movimentação deste animal" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
         <Check size={13} /> {salvando ? "Movendo…" : "Confirmar"}
       </button>
-      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
         <X size={13} />
       </button>
       {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
@@ -87,7 +88,7 @@ export default function SugestoesMovimentacao() {
   const opcoesLote = Array.from(new Set(dados.sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
   const opcoesCategoria = Array.from(new Set(dados.sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
   const sugestoesFiltradas = dados.sugestoes.filter((s) =>
-    (!fAnimal || s.numero_matriz.toLowerCase().includes(fAnimal.toLowerCase())) &&
+    casaBusca(s.numero_matriz, fAnimal) &&
     (!fLote || s.lote_atual === fLote) &&
     (!fCategoria || categoriaPorAnimal[s.numero_matriz] === fCategoria)
   );
@@ -144,7 +145,7 @@ export default function SugestoesMovimentacao() {
                     <FormMover sugestao={s} motivos={motivos} onFeito={() => { setMovendo(null); carregar(); }} onCancelar={() => setMovendo(null)} />
                   ) : (
                     <button onClick={() => setMovendo(s.numero_matriz)} title={`Mover ${s.numero_matriz} para o lote sugerido`}
-                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
+                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
                       Mover
                     </button>
                   )}

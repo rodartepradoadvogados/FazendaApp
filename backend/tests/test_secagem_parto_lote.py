@@ -297,8 +297,20 @@ class TestSugestaoLoteEvento:
             s.add(Lote(codigo="03", nome="Média", categorias="vaca", del_min=61, del_max=200))
             s.commit()
 
+        # "2026-07-08" era o próprio dia em que este teste foi escrito
+        # (commit 938e325, "Nova sub-aba Secagem e alocação automática de
+        # lote em parto/nascimento (#36)") — a data de nascimento aqui
+        # simula uma bezerra "ao nascer", então tinha que ser SEMPRE hoje,
+        # não uma data fixa. `/sugestao-lote-evento` calcula a idade contra
+        # `date.today()` em produção (correto: o lote "0 a 30 dias" não pode
+        # aceitar quem já passou dos 30 dias), então uma data fixa vira uma
+        # bomba-relógio: assim que o relógio real passa de 30 dias depois de
+        # 08/07/2026 (por volta de 07/08/2026), a bezerra "recém-nascida"
+        # do teste já não é mais recém-nascida e o endpoint corretamente
+        # deixa de sugerir o lote — sem nenhum bug de produção nem mudança
+        # de regra de negócio envolvida.
         r = c.post("/producao/sugestao-lote-evento", json={
-            "numero_matriz": "600", "categoria_abrev": "Bezerra", "data_nasc": "2026-07-08",
+            "numero_matriz": "600", "categoria_abrev": "Bezerra", "data_nasc": date.today().isoformat(),
         })
         assert r.status_code == 200
         assert r.json()["lote_sugerido"]["codigo"] == "01"
@@ -436,13 +448,15 @@ class TestProtocoloIatf:
         # ainda não foi confirmado), não pula direto para D7.
         c, engine = client
         c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": date.today().isoformat(), "protocolo": "Protocolo padrão",
+            "animais": ["500"], "data_d0": date.today().isoformat(),
         })
         r = c.get("/reproducao/protocolo-iatf/ativos")
         assert r.status_code == 200
         ativos = r.json()
         assert len(ativos) == 1
-        assert ativos[0]["nome_protocolo"] == "Protocolo padrão"
+        # Nome é sempre automático agora (Central de Protocolos) — não se
+        # digita mais na hora do lançamento.
+        assert ativos[0]["nome_protocolo"].startswith("PROTOCOLO IATF - ")
         assert ativos[0]["animais"][0]["numero_matriz"] == "500"
         assert ativos[0]["animais"][0]["etapa_atual"] == "D0"
 
@@ -461,15 +475,29 @@ class TestProtocoloIatf:
         assert ativos[0]["animais"][0]["etapa_atual"] == "D9"
         assert ativos[0]["animais"][0]["data_etapa_atual"] == (d0 + timedelta(days=9)).isoformat()
 
+    def test_protocolo_com_d11_ha_poucos_dias_e_sem_baixa_continua_ativo(self, client):
+        # Um D11 vencido há só alguns dias é o caso mais comum (ninguém deu
+        # baixa ainda) — não pode sumir da tela de Inseminação bem na hora em
+        # que o usuário precisa achá-lo para registrar o sêmen com atraso.
+        c, engine = client
+        d0 = date.today() - timedelta(days=13)  # D11 previsto há 2 dias
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["500"], "data_d0": d0.isoformat()})
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        assert len(ativos) == 1
+        assert ativos[0]["concluido"] is False
+        assert ativos[0]["animais"][0]["etapa_atual"] == "D11"
+        assert ativos[0]["animais"][0]["na_inseminacao"] is True
+
     def test_protocolo_com_d11_no_passado_e_sem_baixa_vira_concluido(self, client):
         # #reformular relatório gerencial de IATF atual: um protocolo cujo
-        # D11 já passou, mas ninguém marcou nenhuma etapa "realizada" (ex.:
-        # a inseminação foi feita mas o checkbox nunca confirmado), não pode
-        # ficar mostrando "D0" pra sempre no card IATF atual — some da lista
-        # ativa e migra para "concluido" (última IATF), como se tivesse sido
-        # baixado normalmente.
+        # D11 já passou HÁ MAIS TEMPO que a janela de tolerância
+        # (GRACA_D11_ATRASADO_DIAS, 7 dias), e ninguém marcou nenhuma etapa
+        # "realizada" (ex.: a inseminação foi feita mas o checkbox nunca
+        # confirmado), não pode ficar mostrando "D0" pra sempre no card IATF
+        # atual — some da lista ativa e migra para "concluido" (última
+        # IATF), como se tivesse sido baixado normalmente.
         c, engine = client
-        d0 = date.today() - timedelta(days=30)
+        d0 = date.today() - timedelta(days=21)  # D11 previsto há 10 dias
         c.post("/reproducao/protocolo-iatf", json={"animais": ["500"], "data_d0": d0.isoformat()})
         ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
         assert len(ativos) == 1
@@ -506,7 +534,10 @@ class TestProtocoloIatf:
         # #440: mesmo concluído, a lista de animais do protocolo continua
         # populada (para a Agenda poder mostrar "ÚLTIMA IATF — y animais"
         # com clique para ver quem foi inseminado nesse grupo).
-        assert item["animais"] == [{"numero_matriz": "500", "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True}]
+        assert item["animais"] == [{
+            "numero_matriz": "500", "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True,
+            "pronta_para_inseminar": True,  # hormônio todo aplicado, nenhum Serviço lançado ainda
+        }]
 
 
 class TestRegistrarServico:
@@ -542,12 +573,16 @@ class TestRegistrarServico:
         with Session(engine) as s:
             s.add(Animal(numero="500", raca="Girolando", ativo=True))
             s.commit()
-        c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
-        })
+        criado = c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["500"], "data_d0": "2026-07-08",
+        }).json()
+        nome_protocolo = next(
+            l["nome_protocolo"] for l in c.get("/reproducao/protocolo-iatf/lancamentos").json()
+            if l["lancamento_id"] == criado["lancamento_id"]
+        )
 
         c.post("/reproducao/servico", json={
-            "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": "Protocolo padrão",
+            "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": nome_protocolo,
         })
 
         with Session(engine) as s:

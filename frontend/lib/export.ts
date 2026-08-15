@@ -6,10 +6,14 @@ import { baixarArquivo } from "./nativo";
 
 const NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra";
 
-const COR_VINHO = "3A0F1A";
-const COR_VINHO_RGB: [number, number, number] = [58, 15, 26];
-const COR_DOURADO_RGB: [number, number, number] = [224, 166, 60];
-const COR_GRAFITE_RGB: [number, number, number] = [21, 11, 16];
+// Paleta "Institucional" do redesign (ver globals.css, data-paleta="azul"):
+// marinho estrutural no lugar do vinho, ouro escurecido no lugar do dourado
+// antigo — mesma família de cor de toda a interface, agora também nos
+// documentos exportados.
+const COR_VINHO = "0E2A47";
+const COR_VINHO_RGB: [number, number, number] = [14, 42, 71];
+const COR_DOURADO_RGB: [number, number, number] = [138, 109, 47];
+const COR_GRAFITE_RGB: [number, number, number] = [10, 31, 54];
 const COR_MUTED_RGB: [number, number, number] = [107, 114, 128];
 const COR_MUTED_CLARO_RGB: [number, number, number] = [156, 163, 175];
 const COR_LINHA_RGB: [number, number, number] = [229, 231, 235];
@@ -89,10 +93,20 @@ async function carregarLogo(): Promise<string | null> {
  * esquerda; marca CowData + autor/data à direita; linha de base sutil. */
 function desenharCabecalhoPDF(
   doc: import("jspdf").jsPDF,
-  opts: { titulo: string; subtitulo?: string; usuario?: string; dataStr: string; logo: string | null },
+  opts: { titulo: string; subtitulo?: string; usuario?: string; dataStr: string; logo: string | null; emissor?: string },
 ) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const left = 14;
+
+  // Identificação de quem emite o documento (ex.: "CowData" no recibo) — só
+  // aparece quando o chamador pede via opts.emissor; os demais exports (que
+  // não passam esse campo) continuam exatamente como antes.
+  if (opts.emissor) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(...COR_DOURADO_RGB);
+    doc.text(opts.emissor, left, 6.5, { charSpace: 0.3 });
+  }
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
@@ -372,7 +386,20 @@ export type LancamentoRecibo = {
   tipo: string;
   fornecedor: string;
   descricao: string;
+  /** Valor TOTAL da conta/lançamento original (ex.: R$ 40.000 de uma compra
+   * parcelada) — não necessariamente o que foi efetivamente pago nesta baixa,
+   * ver `valor_pago` abaixo. */
   valor: number;
+  /** Valor efetivamente pago/recebido NESTA baixa. Quando presente e menor
+   * que `valor`, o recibo deixa explícito que houve pagamento parcial (ver
+   * #— bug: recibo mostrava o valor total da conta como se fosse o valor
+   * pago). Undefined/null quando a informação de baixa não se aplica (ex.:
+   * recibo de folha de pagamento gerado fora do fluxo de Financeiro). */
+  valor_pago?: number | null;
+  /** Parcela(s) nova(s) criada(s) com o RESTANTE não pago nesta baixa (o
+   * usuário reparcelou a diferença em vez de dar desconto) — cada item é uma
+   * nova conta a pagar/receber com seu próprio valor e vencimento. */
+  reparcelamento?: { valor: number; data_vencimento?: string | null; parcela_num?: number | null }[];
   data_pagamento?: string | null;
   data_vencimento?: string | null;
   data_emissao?: string | null;
@@ -388,8 +415,19 @@ function fmtDataBR(iso?: string | null): string {
   return d && m && a ? `${d}/${m}/${a}` : iso;
 }
 
+function fmtBRL(v: number): string {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 /** Gera o PDF do recibo de um lançamento — usado tanto para "Salvar" (baixa
- * direto) quanto para "Enviar" (o mesmo PDF vira o anexo do e-mail). */
+ * direto) quanto para "Enviar" (o mesmo PDF vira o anexo do e-mail).
+ *
+ * Bug corrigido: com pagamento PARCIAL (ex.: conta de R$ 40.000, pago
+ * R$ 20.000 e reparcelado o restante), o recibo mostrava o valor TOTAL da
+ * conta original como se fosse o valor pago. Agora, quando `valor_pago` vem
+ * preenchido e é diferente de `valor` (a conta original), o recibo mostra os
+ * dois separadamente — e, se o restante foi reparcelado (`reparcelamento`),
+ * lista a(s) nova(s) parcela(s) com valor e vencimento. */
 export async function gerarReciboPDF(lanc: LancamentoRecibo) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
@@ -398,20 +436,28 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
   const doc = new jsPDF({ orientation: "portrait" });
   const dataStr = new Date().toLocaleDateString("pt-BR");
 
-  desenharCabecalhoPDF(doc, { titulo: "Recibo", usuario: usuario?.nome, dataStr, logo });
+  // "CowData" identifica quem emite o recibo, no topo do documento.
+  desenharCabecalhoPDF(doc, { titulo: "Recibo", usuario: usuario?.nome, dataStr, logo, emissor: "CowData" });
+
+  const houvePagamentoParcial =
+    lanc.valor_pago != null && Math.round((lanc.valor - lanc.valor_pago) * 100) / 100 !== 0;
 
   const rotuloContraparte = lanc.tipo === "receita" ? "Recebemos de" : "Pagamos a";
   const linhas: [string, string][] = [
     ["Nº do lançamento", lanc.numero_lancamento || "—"],
     [rotuloContraparte, lanc.fornecedor || "—"],
     ["Descrição", lanc.descricao || "—"],
-    ["Valor", lanc.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })],
+    ...(houvePagamentoParcial
+      ? ([
+          ["Valor da conta original", fmtBRL(lanc.valor)],
+          ["Valor pago nesta baixa", fmtBRL(lanc.valor_pago as number)],
+        ] as [string, string][])
+      : ([["Valor", fmtBRL(lanc.valor_pago ?? lanc.valor)]] as [string, string][])),
     ["Data de emissão", fmtDataBR(lanc.data_emissao)],
     ["Data de vencimento", fmtDataBR(lanc.data_vencimento)],
     ["Data de pagamento", fmtDataBR(lanc.data_pagamento)],
     ["Forma de pagamento", lanc.forma_pagamento || "—"],
     ["Tipo de documento", lanc.tipo_documento || "—"],
-    ["Centro de custo", lanc.centro_custo || "—"],
   ];
 
   let cursorY = 35;
@@ -427,6 +473,29 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
     cursorY += 6;
   }
   cursorY += 4;
+
+  const reparcelamento = lanc.reparcelamento || [];
+  if (houvePagamentoParcial && reparcelamento.length) {
+    const [r, g, b] = corSecao("financeiro");
+    doc.setFillColor(r, g, b);
+    doc.circle(15.3, cursorY - 1.3, 0.9, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(...COR_GRAFITE_RGB);
+    doc.text("Restante reparcelado", 18, cursorY);
+    cursorY += 4;
+    autoTable(doc, {
+      ...ESTILO_TABELA,
+      head: [["PARCELA", "NOVO VENCIMENTO", "VALOR"]],
+      body: reparcelamento.map((p, i) => [
+        p.parcela_num != null ? String(p.parcela_num) : String(i + 1),
+        fmtDataBR(p.data_vencimento),
+        fmtBRL(p.valor),
+      ]),
+      startY: cursorY,
+    });
+    cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+  }
 
   const itens = (lanc.itens || []).filter((i) => i.produto);
   if (itens.length) {

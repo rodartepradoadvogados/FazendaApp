@@ -18,10 +18,13 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import ContaGerencial
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.custo_hectare import calcular_custo_por_hectare
 from fazenda.rules.parametros import area_total_hectares
+from fazenda.rules.vale_item import ajuste_vale_por_conta, valor_gerencial
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -31,6 +34,7 @@ def custo_por_hectare(
     data_inicio: date = Query(..., description="Data inicial (competência)"),
     data_fim: date = Query(..., description="Data final (competência)"),
     centro_custo: str | None = Query(None),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
     """
@@ -38,13 +42,23 @@ def custo_por_hectare(
     com filtro opcional de centro de custo) dividido pela área total da
     fazenda em hectares (Configurações > Parâmetros).
     """
-    contas = session.exec(select(ContaGerencial)).all()
+    # Escopado na fazenda autenticada. Antes somava a ContaGerencial de TODAS
+    # as fazendas (o custo/hectare do cliente saía com a despesa dos outros
+    # clientes dentro) — ver tests/test_isolamento_relatorios_fornecedor.py (G2).
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
     filtradas = [
         c for c in contas
         if c.data_competencia and data_inicio <= c.data_competencia <= data_fim
         and (centro_custo is None or c.centro_custo == centro_custo)
     ]
-    despesas_total = sum(c.valor_total or 0 for c in filtradas if c.tipo == "despesa")
+    # Vale de funcionário/empreiteiro lançado a partir de um item não é
+    # despesa da fazenda — ver rules/vale_item.py.
+    ajustes = ajuste_vale_por_conta(session, filtradas, None)
+    despesas_total = sum(valor_gerencial(c, ajustes) for c in filtradas if c.tipo == "despesa")
     area = area_total_hectares()
 
     return {

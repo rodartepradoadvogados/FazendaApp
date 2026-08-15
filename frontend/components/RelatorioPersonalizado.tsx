@@ -29,7 +29,7 @@ const RESUMO_ITENS: { key: keyof ResumoRelatorioPersonalizado; label: string; su
 
 const inputStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
@@ -200,7 +200,7 @@ export default function RelatorioPersonalizado() {
               {RESUMO_ITENS.map((item) => {
                 const v = resultado.resumo[item.key];
                 return (
-                  <div key={item.key} style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.6rem 0.7rem" }}>
+                  <div key={item.key} style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem" }}>
                     <p style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--dourado-light)" }}>
                       {v === null || v === undefined ? "—" : `${v}${item.sufixo || ""}`}
                     </p>
@@ -224,7 +224,7 @@ export default function RelatorioPersonalizado() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="numero" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={60} />
                   <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", fontSize: "0.8rem" }} />
+                  <Tooltip contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", fontSize: "0.8rem" }} />
                   <Legend wrapperStyle={{ fontSize: "0.78rem" }} />
                   {parametrosGrafico.map((id, i) => (
                     <Bar key={id} dataKey={id} name={porId.get(id)?.label || id} fill={CORES[i % CORES.length]} />

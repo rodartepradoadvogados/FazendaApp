@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
-  criarMovimentacao, fetchMotivosMovimentacao,
+  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
 } from "@/lib/api";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -18,6 +19,8 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Indicador } from "@/components/ui";
+import { PainelLancarBst } from "@/components/PainelLancarBst";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_AGENDA = [
   { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
@@ -78,6 +81,7 @@ function corCategoria(categoria: string): string {
 const LEGENDA_CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro"];
 
 export default function AgendaPage() {
+  const router = useRouter();
   const [data, setData] = useState(today());
   const [agenda, setAgenda] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -161,6 +165,113 @@ export default function AgendaPage() {
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
     return { ...p, [id]: atual };
   });
+  // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) — 3 cards
+  // novos na Agenda: (1) animal que entrou na janela — incluir/excluir direto,
+  // sem expandir; (2) decisão de modo (veterinário/própria/adiar) — mesmo id
+  // de evento seja "modo" (normal) ou "urgente" (perto da data, sem decisão);
+  // (3) aplicar — mesmo padrão checklist do protocolo customizado acima.
+  const [pessoasCronograma, setPessoasCronograma] = useState<any[]>([]);
+  useEffect(() => { fetchPessoas().then(setPessoasCronograma).catch(() => setPessoasCronograma([])); }, []);
+  const veterinariosCronograma = useMemo(
+    () => pessoasCronograma.filter((p) => p.ativo !== false && (p.tipos || []).includes("Veterinário")).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoasCronograma]
+  );
+  const [cronogramaModoAbertos, setCronogramaModoAbertos] = useState<Set<string>>(new Set());
+  const toggleCronogramaModo = (id: string) => setCronogramaModoAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // "" = ainda escolhendo entre veterinário/própria/adiar; "veterinario"/"adiar" = sub-formulário aberto.
+  const [cronogramaAcao, setCronogramaAcao] = useState<Record<string, "" | "veterinario" | "adiar">>({});
+  const [cronogramaVetSel, setCronogramaVetSel] = useState<Record<string, string>>({});
+  const [cronogramaNovoVet, setCronogramaNovoVet] = useState<Record<string, boolean>>({});
+  const [cronogramaNovoVetNome, setCronogramaNovoVetNome] = useState<Record<string, string>>({});
+  const [cronogramaCriandoVet, setCronogramaCriandoVet] = useState<Set<string>>(new Set());
+  const [cronogramaAdiarData, setCronogramaAdiarData] = useState<Record<string, string>>({});
+  const [cronogramaAdiarMotivo, setCronogramaAdiarMotivo] = useState<Record<string, string>>({});
+
+  const [cronogramaAplicarAbertos, setCronogramaAplicarAbertos] = useState<Set<string>>(new Set());
+  const toggleCronogramaAplicar = (id: string) => setCronogramaAplicarAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const [cronogramaAplicarChecks, setCronogramaAplicarChecks] = useState<Record<string, Set<string>>>({});
+  const abrirCronogramaAplicar = (id: string, animais: string[]) => {
+    setCronogramaAplicarChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+    toggleCronogramaAplicar(id);
+  };
+  const toggleAnimalCronogramaAplicar = (id: string, numero: string) => setCronogramaAplicarChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+
+  const decidirCronogramaAnimal = async (e: any, incluir: boolean) => {
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, undefined, undefined, { incluir });
+      await carregar();
+      mostrarFeedback(incluir ? `Matriz ${e.numero_animal} incluída no cronograma.` : `Matriz ${e.numero_animal} excluída do cronograma.`);
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const decidirCronogramaModo = async (e: any, modo: "veterinario" | "propria") => {
+    if (modo === "veterinario" && !cronogramaVetSel[e.id]) { mostrarFeedback("Selecione o veterinário.", true); return; }
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, undefined, undefined, {
+        modo, veterinario_pessoa_id: modo === "veterinario" ? Number(cronogramaVetSel[e.id]) : undefined,
+      });
+      setCronogramaAcao((p) => ({ ...p, [e.id]: "" }));
+      await carregar();
+      mostrarFeedback("Cronograma agendado.");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const adiarCronograma = async (e: any) => {
+    const novaData = cronogramaAdiarData[e.id];
+    if (!novaData) { mostrarFeedback("Informe a nova data.", true); return; }
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, undefined, undefined, { nova_data: novaData, motivo: cronogramaAdiarMotivo[e.id] || undefined });
+      setCronogramaAcao((p) => ({ ...p, [e.id]: "" }));
+      await carregar();
+      mostrarFeedback("Data adiada.");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const criarVetInlineCronograma = async (e: any) => {
+    const nome = (cronogramaNovoVetNome[e.id] || "").trim();
+    if (!nome) return;
+    setCronogramaCriandoVet((p) => new Set(p).add(e.id));
+    try {
+      const novo = await criarPessoa({ nome, tipos: ["Veterinário"] });
+      setPessoasCronograma((p) => [...p, novo]);
+      setCronogramaVetSel((p) => ({ ...p, [e.id]: String(novo.id) }));
+      setCronogramaNovoVet((p) => ({ ...p, [e.id]: false }));
+      setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: "" }));
+    } catch (err: any) { mostrarFeedback(err.message || "Erro ao cadastrar veterinário", true); }
+    finally { setCronogramaCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const aplicarCronogramaLote = async (e: any) => {
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id);
+      await carregar();
+      mostrarFeedback("Aplicação registrada para todos os animais incluídos.");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
+  const aplicarCronogramaIndividual = async (e: any) => {
+    const checks = cronogramaAplicarChecks[e.id] || new Set(e.animais);
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id, Array.from(checks));
+      await carregar();
+      mostrarFeedback(`Aplicação registrada em ${checks.size} animal(is).`);
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Indução de lactação: mesmo padrão do protocolo IATF (grupo lançamento+dia
   // expandido mostra os animais + medicamentos/observação de manejo do dia).
   const [inducaoAbertos, setInducaoAbertos] = useState<Set<string>>(new Set());
@@ -303,27 +414,42 @@ export default function AgendaPage() {
   // ficam fixos enquanto vigoram (hoje/amanhã), não têm ação de excluir/dar
   // baixa, e somem sozinhos no dia seguinte — por isso vivem numa seção
   // própria, sempre visível, sem passar pelos filtros da agenda cronológica.
-  const comunicados = (agenda?.eventos || []).filter((e: any) => e.comunicado);
+  const comunicados = useMemo(
+    () => (agenda?.eventos || []).filter((e: any) => e.comunicado),
+    [agenda],
+  );
   // Estoque negativo/abaixo do mínimo — informação sempre visível (não é uma
   // pendência que se "resolve", é um alerta que só some quando o saldo normalizar.
   const estoqueNegativo: any[] = agenda?.estoque_negativo || [];
   const estoqueAbaixoMinimo: any[] = agenda?.estoque_abaixo_minimo || [];
-  const eventosBase = (agenda?.eventos || []).filter((e: any) => {
-    if (e.comunicado) return false;
-    if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
-    if (de && e.data < de) return false;
-    if (ate && e.data > ate) return false;
-    if (filtro && !(e.descricao + e.numero_animal + e.categoria).toLowerCase().includes(filtro.toLowerCase())) return false;
-    return true;
-  });
+  const eventosBase = useMemo(
+    () => (agenda?.eventos || []).filter((e: any) => {
+      if (e.comunicado) return false;
+      if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
+      if (de && e.data < de) return false;
+      if (ate && e.data > ate) return false;
+      if (!casaBusca(`${e.descricao} ${e.numero_animal} ${e.categoria}`, filtro)) return false;
+      return true;
+    }),
+    [agenda, fCat, de, ate, filtro],
+  );
   // Próximos eventos: por padrão só os próximos 10 dias; se o usuário definir
   // "Até" explicitamente, respeita o período escolhido (pode ser maior ou menor).
   const limiteFuturo = ate || addDias(hoje, DIAS_PADRAO_FUTURO);
-  const eventosFuturos = eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo);
-  const eventosPendentes = eventosBase.filter((e: any) => e.data < hoje);
+  const eventosFuturos = useMemo(
+    () => eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo),
+    [eventosBase, hoje, limiteFuturo],
+  );
+  const eventosPendentes = useMemo(
+    () => eventosBase.filter((e: any) => e.data < hoje),
+    [eventosBase, hoje],
+  );
   // Localiza um evento pelo id independente da seção (pendentes/futuros) em
   // que ele está renderizado — usado pela confirmação em lote por dia.
-  const eventoPorId = new Map<string, any>((agenda?.eventos || []).map((e: any) => [e.id, e]));
+  const eventoPorId = useMemo(
+    () => new Map<string, any>((agenda?.eventos || []).map((e: any) => [e.id, e])),
+    [agenda],
+  );
 
   // ── Dar baixa em sanidade (evento_sanitario / calendario_sanitario) sem sair
   // da Agenda — individual (1º clique confirma os dados, 2º confirma a baixa)
@@ -531,6 +657,66 @@ export default function AgendaPage() {
     finally { setDescartando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
+  // "Contar diária" / "Descartar diária" — card de diarista ativo sem folga
+  // marcada hoje (ver eventos_diaria_trabalho em agenda.py). ANTES eram
+  // "Importar agora" (só levava pro Financeiro, o usuário tinha que repetir a
+  // decisão lá) e "Realizado" (só dispensava o card da Agenda, sem tocar em
+  // nada do controle de diárias — o dia ficava contado por omissão, sem
+  // registro explícito). Agora as duas chamam DIRETO o mesmo endpoint que o
+  // calendário "Dias trabalhados" do Controle de diárias usa
+  // (`salvarDiasDiaria`, ver rh_contratos.py::salvar_dias_diaria): "Contar"
+  // grava o dia sem exceção (conta, que é o padrão do calendário esparso);
+  // "Descartar" grava uma folga explícita — nenhuma etapa intermediária, tudo
+  // resolvido com um clique aqui mesmo na Agenda.
+  const [processandoDiaria, setProcessandoDiaria] = useState<Set<string>>(new Set());
+  const decidirDiaria = async (e: any, contar: boolean) => {
+    setProcessandoDiaria((p) => new Set(p).add(e.id));
+    try {
+      await salvarDiasDiaria(e.diaria_id, {
+        periodo_inicio: e.data, periodo_fim: e.data,
+        dias_nao_trabalhados: contar ? [] : [e.data],
+      });
+      // O dia já está gravado certo no calendário da diária (linha acima) —
+      // isto só cala o lembrete de hoje na Agenda, mesmo EventoRealizado que
+      // qualquer outro "Realizado" usa.
+      await marcarEventoRealizado(e.id);
+      await carregar();
+      mostrarFeedback(contar ? "Diária contada." : "Diária descartada — hoje virou folga no Controle de diárias.");
+    } catch (err: any) {
+      // 409 = o período já tem pagamento registrado (ver salvar_dias_diaria);
+      // o card só cobre "hoje" e não tem contexto pra oferecer o
+      // "confirmar mesmo assim" com segurança — manda resolver no Controle de
+      // diárias, que já sabe pedir essa confirmação.
+      mostrarFeedback(err.message || "Erro ao registrar a diária. Abra o Controle de diárias para resolver.", true);
+    } finally {
+      setProcessandoDiaria((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  };
+
+  // Pendência "Cadastrar motivo da perda de prenhez" (ver
+  // eventos_perda_prenhez_pendente em agenda.py) — perda já registrada
+  // (manual ou automática por reinseminação), só falta o motivo. "Aborto"/
+  // "Natimorto"/"Outros" gravam o motivo escolhido; "Descartar" grava o
+  // sentinela `nao_informado` — a perda CONTINUA registrada, só o motivo que
+  // o usuário optou por não informar (não é a mesma coisa que excluir a
+  // perda). Os dois casos usam o mesmo PUT de sempre (atualizarServico):
+  // assim que `motivo_perda_prenhez` deixa de ser nulo, o card some sozinho
+  // da Agenda no próximo carregamento — sem precisar de EventoRealizado.
+  const [salvandoMotivoPerda, setSalvandoMotivoPerda] = useState<Set<string>>(new Set());
+  const cadastrarMotivoPerda = async (e: any, motivo: string) => {
+    setSalvandoMotivoPerda((p) => new Set(p).add(e.id));
+    try {
+      await atualizarServico(e.servico_id, { motivo_perda_prenhez: motivo });
+      await carregar();
+      mostrarFeedback(
+        motivo === "nao_informado"
+          ? "Pendência descartada — a perda de prenhez continua registrada."
+          : "Motivo da perda de prenhez registrado."
+      );
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setSalvandoMotivoPerda((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Botão "Realizado" com confirmação inline ("Deseja cumprir essa atividade?
   // Sim/Não") em vez de agir direto no primeiro clique.
   const BotaoRealizado = ({ chave, onConfirmar, compacto }: { chave: string; onConfirmar: () => void; compacto?: boolean }) => {
@@ -717,6 +903,12 @@ export default function AgendaPage() {
           // 1 animal no grupo — com 1 só, o fallback genérico (linha "simples",
           // numero_animal já preenchido) é suficiente e mais direto.
           linhas.push({ tipo: "protocolo_custom", e });
+        } else if (e.tipo === "cronograma_sanitario_animal") {
+          linhas.push({ tipo: "cronograma_animal", e });
+        } else if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
+          linhas.push({ tipo: "cronograma_modo", e });
+        } else if (e.tipo === "cronograma_sanitario_aplicar") {
+          linhas.push({ tipo: "cronograma_aplicar", e });
         } else if (e.categoria === "Gestão/Financeiro" && e.ref) {
           const arr = financeiroPorRef.get(e.ref) ?? [];
           arr.push(e); financeiroPorRef.set(e.ref, arr);
@@ -746,7 +938,7 @@ export default function AgendaPage() {
         itensGrupoAtivo.every((it) => selecionadosLote[d]?.has(it.id));
 
       return (
-        <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+        <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", background: "var(--surface-2)" }}>
             <button onClick={() => toggleData(d)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
               {aberto ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
@@ -803,18 +995,28 @@ export default function AgendaPage() {
                       };
                       const ehSugestaoMov = (e as any).tipo === "sugestao_movimentacao";
                       const ehBstAplicacao = (e as any).tipo === "bst_aplicacao";
+                      // Diária de diarista ativa hoje — clicar no CARD (fora dos botões)
+                      // leva direto pro Controle de diárias (Financeiro > Ações > Folha
+                      // de pagamento > Diária), mesmo destino do link usado pelos botões
+                      // de baixo (ver `link` gerado em agenda.py::eventos_diaria_trabalho).
+                      const ehDiariaTrabalho = (e as any).tipo === "diaria_trabalho";
                       return (
                         <React.Fragment key={i}>
                           <tr
-                            style={(ehSugestaoMov || ehBstAplicacao) ? { cursor: "pointer" } : undefined}
-                            onClick={ehSugestaoMov ? () => abrirSugestaoMov(e) : ehBstAplicacao ? () => abrirListasBst() : undefined}
+                            style={(ehSugestaoMov || ehBstAplicacao || ehDiariaTrabalho) ? { cursor: "pointer" } : undefined}
+                            onClick={
+                              ehSugestaoMov ? () => abrirSugestaoMov(e)
+                              : ehBstAplicacao ? () => abrirListasBst()
+                              : ehDiariaTrabalho ? () => router.push((e as any).link)
+                              : undefined
+                            }
                           >
                             {tdAccent(e.categoria)}
                             <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
                             <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
-                            <td onClick={(ehSugestaoMov || ehBstAplicacao) ? (ev) => ev.stopPropagation() : undefined}>
+                            <td onClick={(ehSugestaoMov || ehBstAplicacao || ehDiariaTrabalho) ? (ev) => ev.stopPropagation() : undefined}>
                               {ehSugestaoMov ? (
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirSugestaoMov(e)}>
                                   <Layers size={12} /> Ver sugestão
@@ -828,6 +1030,21 @@ export default function AgendaPage() {
                                 <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a ficha do animal para lançar o dado pendente">
                                   <User size={12} /> Lançar
                                 </a>
+                              ) : ehDiariaTrabalho ? (
+                                <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                  <button className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}
+                                    disabled={processandoDiaria.has(e.id)}
+                                    title="Registra hoje na contagem de diárias — direto, sem passar pelo Financeiro"
+                                    onClick={() => decidirDiaria(e, true)}>
+                                    <CheckCircle2 size={12} /> Contar diária
+                                  </button>
+                                  <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--text-muted)" }}
+                                    disabled={processandoDiaria.has(e.id)}
+                                    title="Marca hoje como folga — não entra na contagem de diárias"
+                                    onClick={() => decidirDiaria(e, false)}>
+                                    <X size={12} /> Descartar diária
+                                  </button>
+                                </div>
                               ) : (e as any).link ? (
                                 <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
                                   <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a tela de importação">
@@ -890,6 +1107,19 @@ export default function AgendaPage() {
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirListasBst()}>
                                   <Layers size={12} /> Ver listas
                                 </button>
+                              ) : (e as any).tipo === "perda_prenhez_motivo" ? (
+                                <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                  <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                                    <button className="btn-ghost" style={{ fontSize: "0.66rem" }} disabled={salvandoMotivoPerda.has(e.id)} title="Cadastrar motivo: aborto" onClick={() => cadastrarMotivoPerda(e, "aborto")}>Aborto</button>
+                                    <button className="btn-ghost" style={{ fontSize: "0.66rem" }} disabled={salvandoMotivoPerda.has(e.id)} title="Cadastrar motivo: natimorto" onClick={() => cadastrarMotivoPerda(e, "natimorto")}>Natimorto</button>
+                                    <button className="btn-ghost" style={{ fontSize: "0.66rem" }} disabled={salvandoMotivoPerda.has(e.id)} title="Cadastrar motivo: outros" onClick={() => cadastrarMotivoPerda(e, "outros")}>Outros</button>
+                                  </div>
+                                  <button className="btn-ghost" style={{ fontSize: "0.66rem", color: "var(--text-muted)" }} disabled={salvandoMotivoPerda.has(e.id)}
+                                    title="A perda de prenhez continua registrada — só o motivo fica sem informar"
+                                    onClick={() => cadastrarMotivoPerda(e, "nao_informado")}>
+                                    <X size={11} /> Descartar
+                                  </button>
+                                </div>
                               ) : (
                                 <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                               )}
@@ -1051,6 +1281,169 @@ export default function AgendaPage() {
                         </React.Fragment>
                       );
                     }
+                    if (linha.tipo === "cronograma_animal") {
+                      const e = linha.e;
+                      return (
+                        <tr key={`cron-animal-${i}`}>
+                          {tdAccent(e.categoria)}
+                          <td style={{ fontWeight: 700 }}>{e.numero_animal}</td>
+                          <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                          <td>
+                            <span className="flex items-center gap-1">
+                              <button className="btn-primary" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaAnimal(e, true)}>
+                                <Check size={11} /> Incluir
+                              </button>
+                              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaAnimal(e, false)}>
+                                <X size={11} /> Excluir
+                              </button>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    if (linha.tipo === "cronograma_modo") {
+                      const e = linha.e;
+                      const urgente = e.tipo === "cronograma_sanitario_urgente";
+                      const abertoCron = cronogramaModoAbertos.has(e.id);
+                      const acao = cronogramaAcao[e.id] || "";
+                      return (
+                        <React.Fragment key={`cron-modo-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => toggleCronogramaModo(e.id)}>
+                            {tdAccent(e.categoria)}
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>—</td>
+                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
+                              {abertoCron ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}
+                              {urgente && (
+                                <span style={{ marginLeft: "0.5rem", fontSize: "0.66rem", fontWeight: 700, color: "var(--red)", background: "rgba(220,38,38,0.12)", padding: "0.05rem 0.45rem", borderRadius: 999 }}>
+                                  Urgente
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                            <td onClick={(ev) => ev.stopPropagation()} />
+                          </tr>
+                          {abertoCron && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.6rem 0" }}>
+                                  {!acao ? (
+                                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                                      <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "veterinario" }))}>
+                                        Veterinário
+                                      </button>
+                                      <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaModo(e, "propria")}>
+                                        Aplicação própria
+                                      </button>
+                                      {urgente && (
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "adiar" }))}>
+                                          Adiar
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : acao === "veterinario" ? (
+                                    <div style={{ maxWidth: 420 }}>
+                                      <label style={rotuloInline}>Veterinário</label>
+                                      {!cronogramaNovoVet[e.id] ? (
+                                        <>
+                                          <select style={inputInline} value={cronogramaVetSel[e.id] || ""} onChange={(ev) => setCronogramaVetSel((p) => ({ ...p, [e.id]: ev.target.value }))}>
+                                            <option value="">Selecione…</option>
+                                            {veterinariosCronograma.map((v) => <option key={v.id} value={v.id}>{v.nome}</option>)}
+                                          </select>
+                                          <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", marginTop: "0.35rem" }} onClick={() => setCronogramaNovoVet((p) => ({ ...p, [e.id]: true }))}>
+                                            + cadastrar novo veterinário
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <div className="flex items-center gap-2" style={{ marginTop: "0.3rem" }}>
+                                          <input style={inputInline} placeholder="Nome do veterinário" value={cronogramaNovoVetNome[e.id] || ""} onChange={(ev) => setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                                          <button className="btn-secondary" style={{ fontSize: "0.7rem" }} disabled={cronogramaCriandoVet.has(e.id)} onClick={() => criarVetInlineCronograma(e)}>
+                                            {cronogramaCriandoVet.has(e.id) ? "Salvando…" : "Salvar"}
+                                          </button>
+                                          <button className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => setCronogramaNovoVet((p) => ({ ...p, [e.id]: false }))}>Cancelar</button>
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !cronogramaVetSel[e.id]} onClick={() => decidirCronogramaModo(e, "veterinario")}>
+                                          <Check size={12} /> Confirmar
+                                        </button>
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "" }))}>Voltar</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ maxWidth: 320 }}>
+                                      <label style={rotuloInline}>Nova data</label>
+                                      <input type="date" style={inputInline} value={cronogramaAdiarData[e.id] || ""} onChange={(ev) => setCronogramaAdiarData((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                                      <label style={{ ...rotuloInline, marginTop: "0.4rem" }}>Motivo (opcional)</label>
+                                      <input style={inputInline} value={cronogramaAdiarMotivo[e.id] || ""} onChange={(ev) => setCronogramaAdiarMotivo((p) => ({ ...p, [e.id]: ev.target.value }))} />
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id)} onClick={() => adiarCronograma(e)}>
+                                          <Check size={12} /> Confirmar adiamento
+                                        </button>
+                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "" }))}>Voltar</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
+                    if (linha.tipo === "cronograma_aplicar") {
+                      const e = linha.e;
+                      const abertoCron = cronogramaAplicarAbertos.has(e.id);
+                      const checks = cronogramaAplicarChecks[e.id] || new Set(e.animais);
+                      return (
+                        <React.Fragment key={`cron-aplicar-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => abrirCronogramaAplicar(e.id, e.animais)}>
+                            {tdAccent(e.categoria)}
+                            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
+                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
+                              {abertoCron ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                            <td onClick={(ev) => ev.stopPropagation()}>
+                              <button className="btn-primary" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => aplicarCronogramaLote(e)}>
+                                <Check size={11} /> Aplicar em lote
+                              </button>
+                            </td>
+                          </tr>
+                          {abertoCron && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.5rem 0" }}>
+                                  <table className="fazenda-table" style={{ margin: 0 }}>
+                                    <thead><tr><th></th><th>Nº</th></tr></thead>
+                                    <tbody>
+                                      {e.animais.map((numero: string) => (
+                                        <tr key={numero}>
+                                          <td><input type="checkbox" checked={checks.has(numero)} onChange={() => toggleAnimalCronogramaAplicar(e.id, numero)} /></td>
+                                          <td style={{ fontWeight: 700 }}>{numero}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size} onClick={() => aplicarCronogramaIndividual(e)}>
+                                      <Check size={12} /> Individualizado ({checks.size}/{e.animais.length})
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
                     if (linha.tipo === "inducao") {
                       const e = linha.e;
                       const abertoInducao = inducaoAbertos.has(e.id);
@@ -1067,7 +1460,7 @@ export default function AgendaPage() {
                             <td style={{ color: "var(--amber)", fontSize: "0.78rem", fontWeight: e.observacao ? 700 : 400 }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
                             <td onClick={(ev) => ev.stopPropagation()}>
-                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id, undefined, e.medicamentos_opcoes)} />
                             </td>
                           </tr>
                           {abertoInducao && (
@@ -1095,9 +1488,39 @@ export default function AgendaPage() {
                                       ))}
                                     </tbody>
                                   </table>
+                                  {(e.medicamentos_opcoes?.length ?? 0) > 0 && (
+                                    <div style={{ marginTop: "0.6rem", background: "var(--surface)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+                                      <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.35rem" }}>
+                                        Qual medicamento/frasco você está usando?
+                                      </div>
+                                      {e.medicamentos_opcoes.map((h: any, idx: number) => {
+                                        const sel = medIatf[e.id]?.[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
+                                        return (
+                                          <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
+                                              {h.produto}{h.dose ? ` · ${h.dose}${h.unidade || ""}` : ""}
+                                            </span>
+                                            {(h.opcoes?.length ?? 0) === 0 ? (
+                                              <span style={{ fontSize: "0.72rem", color: "var(--amber)" }}>Sem medicamento em estoque para este princípio.</span>
+                                            ) : (
+                                              <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} value={sel ?? ""}
+                                                onChange={(ev) => escolherMedIatf(e.id, idx, ev.target.value ? Number(ev.target.value) : null)}>
+                                                <option value="">Selecione o frasco…</option>
+                                                {h.opcoes.map((o: any) => (
+                                                  <option key={o.estoque_id} value={o.estoque_id}>
+                                                    {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}{!o.estoque_inicializado ? " (sem estoque inicial)" : ""}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                   <div className="flex items-center gap-2 mt-2">
                                     <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
-                                      onClick={() => marcarRealizado(e.id, Array.from(checks))}>
+                                      onClick={() => marcarRealizado(e.id, Array.from(checks), e.medicamentos_opcoes)}>
                                       <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
                                     </button>
                                   </div>
@@ -1243,7 +1666,7 @@ export default function AgendaPage() {
                 <button key={iso} type="button" onClick={() => abrirDiaCalendario(iso)}
                   title={evs.length ? `${evs.length} evento${evs.length !== 1 ? "s" : ""}` : undefined}
                   style={{
-                    minHeight: "4.4rem", padding: "0.3rem 0.35rem", borderRadius: "8px", textAlign: "left", cursor: "pointer",
+                    minHeight: "4.4rem", padding: "0.3rem 0.35rem", borderRadius: "var(--r-sm)", textAlign: "left", cursor: "pointer",
                     display: "flex", flexDirection: "column", gap: "0.25rem",
                     border: "1px solid " + (ehSelecionado ? "var(--dourado)" : ehHoje ? "var(--dourado-light)" : "var(--border)"),
                     background: ehSelecionado ? "rgba(184,134,11,0.18)" : ehHoje ? "rgba(184,134,11,0.08)" : "var(--surface-2)",
@@ -1335,9 +1758,6 @@ export default function AgendaPage() {
   };
 
   const ordIatf = useOrdenacao(candidatas);
-  const ordBstAptos = useOrdenacao(bstAptos);
-  const ordBstExcl = useOrdenacao(bstExcl);
-  const ordBstNunca = useOrdenacao(bstNuncaAplicados);
   const [listaAtiva, setListaAtiva] = useState<Set<string>>(new Set());
   const toggleLista = (k: string) => setListaAtiva((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
@@ -1370,7 +1790,7 @@ export default function AgendaPage() {
     const [gerando, setGerando] = useState(false);
     const semDados = eventos.length === 0;
     const btn: React.CSSProperties = {
-      display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "6px",
+      display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "var(--r-sm)",
       border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)",
       fontSize: "0.78rem", fontWeight: 600, cursor: semDados ? "not-allowed" : "pointer", opacity: semDados ? 0.5 : 1,
     };
@@ -1404,12 +1824,12 @@ export default function AgendaPage() {
               <div>
                 <label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>De</label>
                 <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
               </div>
               <div>
                 <label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Até</label>
                 <input type="date" value={fim} onChange={(e) => setFim(e.target.value)}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
               </div>
             </div>
             <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>Deixe em branco para exportar tudo o que está carregado.</p>
@@ -1445,7 +1865,7 @@ export default function AgendaPage() {
               onChange={e => setData(e.target.value)}
               className="btn-ghost"
               title="Data de referência: ancora toda a agenda — eventos, contas e visitas são calculados a partir dela."
-              style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "8px" }}
+              style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "var(--r-sm)" }}
             />
           </div>
           <button onClick={carregar} className="btn-ghost" title="Recarregar">
@@ -1464,7 +1884,7 @@ export default function AgendaPage() {
 
       {/* Feedback transitório de ações (sucesso em verde, erro em vermelho) */}
       {feedback && (
-        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "8px",
+        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "var(--r-sm)",
           background: feedback.erro ? "rgba(192,57,43,0.15)" : "rgba(20,83,45,0.35)",
           border: "1px solid " + (feedback.erro ? "var(--red)" : "var(--green-light)"),
           color: feedback.erro ? "var(--red)" : "var(--green-light)" }}>
@@ -1570,7 +1990,7 @@ export default function AgendaPage() {
                   {ordIatf.linhasOrdenadas.map((c: any, i: number) => (
                     <tr key={i}>
                       <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
-                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "var(--r-sm)", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
                       <td>{c.del_dias ?? "—"}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
                       <td><BotaoAgendar numero={c.numero_matriz} descricao="IATF: candidata a novo serviço" categoria="Reprodutivo" /></td>
@@ -1591,7 +2011,7 @@ export default function AgendaPage() {
                       <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
                       <td style={{ fontSize: "0.78rem" }}>{a.nome_protocolo}</td>
                       <td style={{ fontSize: "0.78rem" }}>{fmtCurta(a.data_d0)}</td>
-                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{a.etapa_atual}</span></td>
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "var(--r-sm)", fontSize: "0.75rem" }}>{a.etapa_atual}</span></td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{a.data_etapa_atual ? fmtCurta(a.data_etapa_atual) : "—"}</td>
                     </tr>
                   ))}
@@ -1617,84 +2037,12 @@ export default function AgendaPage() {
             </div>
           )}
 
-          {listaAtiva.has("bstAptos") && (
-            <div className="card mb-2" style={{ overflowX: "auto" }}>
-              <table className="fazenda-table">
-                <thead><tr>
-                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <ThOrdenavel label="Já tomou BST?" campo="ja_aplicado_antes" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
-                  <th></th>
-                </tr></thead>
-                <tbody>
-                  {ordBstAptos.linhasOrdenadas.map((b: any, i: number) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                      <td>{b.del_dias ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem", color: b.ja_aplicado_antes ? "var(--text-muted)" : "var(--blue)" }}>
-                        {b.ja_aplicado_antes ? "Já tomou antes" : "Primeira vez"}
-                      </td>
-                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST" categoria="Sanidade" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {listaAtiva.has("bstExcl") && (
-            <div className="card mb-2" style={{ overflowX: "auto" }}>
-              <table className="fazenda-table">
-                <thead><tr>
-                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                  <ThOrdenavel label="Motivo" campo="motivo_exclusao" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
-                </tr></thead>
-                <tbody>
-                  {ordBstExcl.linhasOrdenadas.map((b: any, i: number) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                      <td>{b.del_dias ?? "—"}</td>
-                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{b.motivo_exclusao}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {listaAtiva.has("bstNunca") && (
-            <div className="card mb-2" style={{ overflowX: "auto" }}>
-              <table className="fazenda-table">
-                <thead><tr>
-                  <th></th>
-                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
-                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
-                  <th>Motivo</th>
-                  <th></th>
-                </tr></thead>
-                <tbody>
-                  {ordBstNunca.linhasOrdenadas.map((b: any, i: number) => (
-                    <tr key={i}>
-                      <td>
-                        {b.requer_reanalise && (
-                          <span title="Retirada do BST — revisar antes de incluir de novo" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
-                        )}
-                      </td>
-                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                      <td>{b.del_dias ?? "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{b.requer_reanalise ? (b.motivo_exclusao || "Revisar") : "Nunca aplicada — apta na próxima"}</td>
-                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST — nunca aplicada" categoria="Sanidade" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {(listaAtiva.has("bstAptos") || listaAtiva.has("bstExcl") || listaAtiva.has("bstNunca")) && (
+            <div className="mb-2">
+              {/* As 3 listas (aptas/inaptas/incluir no próximo) viram um painel só,
+                  com seleção — pode aplicar em umas e deixar de aplicar em outras
+                  na mesma tela, sem sair da Agenda. */}
+              <PainelLancarBst agenda={agenda} onAtualizado={carregar} />
             </div>
           )}
 
@@ -1741,15 +2089,15 @@ export default function AgendaPage() {
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar agenda</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
-            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
-            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
+            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
               <option value="">Todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
             </select></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar</label>
-            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
         </div>
         {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
       </div>
@@ -1764,7 +2112,7 @@ export default function AgendaPage() {
           </div>
           <div className="space-y-2">
             {comunicados.map((e: any) => (
-              <div key={e.id} className="flex items-start justify-between gap-3" style={{ padding: "0.6rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              <div key={e.id} className="flex items-start justify-between gap-3" style={{ padding: "0.6rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
                 <div>
                   <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>{e.descricao}</p>
                   {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
@@ -1849,14 +2197,14 @@ export default function AgendaPage() {
           {paineis.has("estoqueAlertas") && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
               {estoqueNegativo.map((i) => (
-                <div key={`neg_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "10px", background: "color-mix(in srgb, var(--vinho) 25%, transparent)", border: "1px solid var(--red)" }}>
+                <div key={`neg_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "var(--r-sm)", background: "color-mix(in srgb, var(--vinho) 25%, transparent)", border: "1px solid var(--red)" }}>
                   <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>{i.nome}</p>
                   <p style={{ fontSize: "0.85rem", color: "var(--red)", fontWeight: 700, marginTop: "0.2rem" }}>{i.quantidade} {i.unidade || ""}</p>
                   <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>saldo negativo</p>
                 </div>
               ))}
               {estoqueAbaixoMinimo.map((i) => (
-                <div key={`min_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "10px", background: "color-mix(in srgb, var(--dourado) 20%, transparent)", border: "1px solid var(--amber)" }}>
+                <div key={`min_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "var(--r-sm)", background: "color-mix(in srgb, var(--dourado) 20%, transparent)", border: "1px solid var(--amber)" }}>
                   <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>{i.nome}</p>
                   <p style={{ fontSize: "0.85rem", fontWeight: 700, marginTop: "0.2rem" }}>{i.quantidade} de {i.estoque_minimo} {i.unidade || ""}</p>
                   <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>abaixo do mínimo</p>
@@ -1883,7 +2231,7 @@ export default function AgendaPage() {
             </label>
             <select
               value={destinoMov} onChange={(e) => setDestinoMov(e.target.value)}
-              style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem", marginBottom: "1rem" }}
+              style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem", marginBottom: "1rem" }}
             >
               {sugestaoMovAberta.lotes_sugeridos?.map((l: any) => (
                 <option key={l.codigo} value={l.codigo}>{l.rotulo} (sugerido)</option>
@@ -1921,7 +2269,7 @@ export default function AgendaPage() {
                     type={f.type}
                     value={(form as any)[f.key]}
                     onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-                    style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                    style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                   />
                 </div>
               ))}
@@ -1963,7 +2311,7 @@ export default function AgendaPage() {
                 <select
                   value={form.categoria}
                   onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 >
                   {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
                 </select>
@@ -1974,7 +2322,7 @@ export default function AgendaPage() {
                 <select
                   value={form.tipo_evento}
                   onChange={e => setForm(p => ({ ...p, tipo_evento: e.target.value }))}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 >
                   <option value="">—</option>
                   {TIPOS_EVENTO.map(t => <option key={t}>{t}</option>)}
@@ -1986,7 +2334,7 @@ export default function AgendaPage() {
                 <input
                   type="text" value={form.observacao}
                   onChange={e => setForm(p => ({ ...p, observacao: e.target.value }))}
-                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 />
               </div>
 
@@ -1999,10 +2347,10 @@ export default function AgendaPage() {
                     <span style={{ fontSize: "0.8rem" }}>A cada</span>
                     <input type="number" min={1} value={form.recorrenciaNumero}
                       onChange={e => setForm(p => ({ ...p, recorrenciaNumero: e.target.value }))}
-                      style={{ width: "5rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.5rem", color: "var(--text)", fontSize: "0.875rem" }} />
+                      style={{ width: "5rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.5rem", color: "var(--text)", fontSize: "0.875rem" }} />
                     <select value={form.recorrenciaFrequencia}
                       onChange={e => setForm(p => ({ ...p, recorrenciaFrequencia: e.target.value as "dias" | "meses" }))}
-                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}>
+                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}>
                       <option value="dias">dias</option>
                       <option value="meses">meses</option>
                     </select>

@@ -59,7 +59,7 @@ export function Paginacao({
             value={tamanhoPagina}
             onChange={(e) => onMudarTamanho(Number(e.target.value))}
             title="Registros por página"
-            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.25rem 0.4rem", fontSize: "0.72rem" }}
+            style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.25rem 0.4rem", fontSize: "0.72rem" }}
           >
             {(tamanhos || TAMANHOS_PADRAO).map((n) => <option key={n} value={n}>{n} / página</option>)}
           </select>

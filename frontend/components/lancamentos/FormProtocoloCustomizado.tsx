@@ -37,7 +37,7 @@ function ProtocolosCustomizadosAtivos({ recarregarRef }: { recarregarRef: React.
         {ativos.map((p) => {
           const aberto = abertos.has(p.lancamento_id);
           return (
-            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
               <div style={{ display: "flex", alignItems: "center", background: "var(--surface)" }}>
                 <button onClick={() => toggle(p.lancamento_id)} style={{ flex: 1, display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                   {aberto ? <ChevronDown size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} /> : <ChevronRight size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}
@@ -129,8 +129,14 @@ export function FormProtocoloCustomizado({ animais }: { animais: AnimalRow[] }) 
         protocolo_id: Number(protocoloId), animais: animaisAlvo, lote, data_inicio: dataInicio,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
-      setSucesso(
-        vinculo === "fazenda"
+      // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
+      // protocolo, mesma data, mesmo(s) animal(is) ou mesma tarefa da fazenda)
+      // e reaproveitou em vez de duplicar — duplo clique ou retry da fila
+      // offline. Sem este ramo a tela dizia "lançado ... — 0 eventos na
+      // Agenda", que parece defeito (mesmo padrão de FormInducaoLactacao).
+      setSucesso(r.criado === false
+        ? (r.aviso || "Este protocolo já estava lançado para este alvo nesta data — nada foi duplicado.")
+        : vinculo === "fazenda"
           ? `Protocolo "${protocolo?.nome}" lançado como tarefa da fazenda — ${r.eventos_criados} eventos na Agenda.`
           : `Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`
       );

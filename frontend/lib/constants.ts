@@ -27,6 +27,17 @@ export function rotuloOrigemMovimentoLote(origem: unknown): string {
 // digitação) — usada no lançamento e na edição de aplicações de sanidade.
 export const VIAS_APLICACAO = [
   "Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina",
+  "Intravaginal", "Intradérmica", "Pour-on",
+];
+
+// Unidades de dose no CADASTRO de qualquer protocolo (IATF, sanitário,
+// indução de lactação, customizado) — lista fechada, pelo mesmo motivo das
+// vias acima: unidade digitada à mão não casa com a unidade do item de
+// estoque e quebra a baixa automática (ver rules/unidades.py no backend).
+// Espelha SEED_UNIDADES_ESTOQUE (api/routers/cadastro/estoque.py) + "frasco",
+// que é como o produtor conta hormônio no curral.
+export const UNIDADES_PROTOCOLO = [
+  "unidade", "ml", "L", "dose", "frasco", "kg", "g", "metro", "saca 30kg", "saca 60kg",
 ];
 
 // Centrais (studs) oficiais da NAAB — o número inicial de um código NAAB

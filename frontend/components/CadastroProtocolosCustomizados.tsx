@@ -1,28 +1,28 @@
 "use client";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
 import {
   fetchProtocolosCustomizados, criarProtocoloCustomizado, atualizarProtocoloCustomizado, excluirProtocoloCustomizado,
-  CATEGORIAS_PROTOCOLO_CUSTOM,
+  fetchEstoque, CATEGORIAS_PROTOCOLO_CUSTOM, TIPOS_PROTOCOLO_CUSTOM,
   type ProtocoloCustomizado, type EtapaProtocoloCustomizado,
 } from "@/lib/api";
-import { VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO, UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { type EstoqueItem } from "@/components/lancamentos/comumForms";
+import { normalizarBusca as normalizar } from "@/lib/busca";
 
-const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
+const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
-const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
-
-const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
 
 type ProtocoloForm = {
-  nome: string; categoria: string; dia_inicial: number; observacao: string; ativo: boolean;
+  nome: string; categoria: string; tipo: string; dia_inicial: number; observacao: string; ativo: boolean;
   etapas: EtapaProtocoloCustomizado[];
 };
 const etapaVazia = (dia: number): EtapaProtocoloCustomizado => ({ dia, descricao_evento: "", insumo_padrao: "", dose: null, unidade: "", via: "", observacao: "" });
 // Protocolos novos nascem em D0, mesmo padrão dos demais protocolos do sistema
 // (indução de lactação, IATF, sanitário).
-const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", categoria: "Atividades", dia_inicial: 0, observacao: "", ativo: true, etapas: [etapaVazia(0)] });
+const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", categoria: "Atividades", tipo: "", dia_inicial: 0, observacao: "", ativo: true, etapas: [etapaVazia(0)] });
 
 export default function CadastroProtocolosCustomizados() {
   const [itens, setItens] = useState<ProtocoloCustomizado[] | null>(null);
@@ -39,7 +39,7 @@ export default function CadastroProtocolosCustomizados() {
   const abrirNovo = () => { setForm(protocoloFormVazio()); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: ProtocoloCustomizado) => {
     setForm({
-      nome: p.nome, categoria: p.categoria, dia_inicial: p.dia_inicial, observacao: p.observacao || "", ativo: p.ativo,
+      nome: p.nome, categoria: p.categoria, tipo: p.tipo || "", dia_inicial: p.dia_inicial, observacao: p.observacao || "", ativo: p.ativo,
       etapas: p.etapas.length ? p.etapas.map((e) => ({ ...e })) : [etapaVazia(p.dia_inicial)],
     });
     setEditando(p.id); setMsg(null);
@@ -64,7 +64,7 @@ export default function CadastroProtocolosCustomizados() {
     setSalvando(true); setMsg(null);
     try {
       const dados = {
-        nome: form.nome.trim(), categoria: form.categoria, dia_inicial: form.dia_inicial,
+        nome: form.nome.trim(), categoria: form.categoria, tipo: form.tipo || null, dia_inicial: form.dia_inicial,
         observacao: form.observacao.trim() || undefined, ativo: form.ativo,
         etapas: form.etapas.map((e) => ({
           ...e, dia: Number(e.dia), descricao_evento: e.descricao_evento.trim(),
@@ -122,13 +122,14 @@ export default function CadastroProtocolosCustomizados() {
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Etapas</th><th></th></tr></thead>
+              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Tipo</th><th>Etapas</th><th></th></tr></thead>
               <tbody>
                 {linhasOrdenadas.map((p) => (
                   <Fragment key={p.id}>
                     <tr>
                       <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                       <td style={{ fontSize: "0.78rem" }}>{categoriaLabel(p.categoria)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === p.tipo)?.[1] || p.tipo) : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
                       <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - p.dia_inicial}`).join(", ")}</td>
                       <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
@@ -140,7 +141,7 @@ export default function CadastroProtocolosCustomizados() {
                       </td>
                     </tr>
                     {editando === p.id && (
-                      <tr><td colSpan={4} style={{ padding: 0 }}>
+                      <tr><td colSpan={5} style={{ padding: 0 }}>
                         <FormProtocoloCustomizado
                           form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
                           acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
@@ -149,8 +150,8 @@ export default function CadastroProtocolosCustomizados() {
                     )}
                   </Fragment>
                 ))}
-                {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
+                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -165,8 +166,24 @@ function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvand
   onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
   acrescentarEtapa: () => void; removerEtapa: (idx: number) => void; atualizarEtapa: (idx: number, patch: Partial<EtapaProtocoloCustomizado>) => void;
 }) {
+  // Insumo sugerido: cada etapa pode vir do estoque (com opção de mostrar
+  // itens sem saldo) ou de texto livre — permanece só informativo (ver nota
+  // abaixo), o modo é puramente uma facilidade de preenchimento.
+  const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
+  const [modoInsumo, setModoInsumo] = useState<Record<number, "estoque" | "livre">>({});
+
+  useEffect(() => { fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {}); }, []);
+
+  const estoqueVisivel = useMemo(
+    () => estoque.filter((it) => incluirSemEstoque || (it.quantidade ?? 0) > 0).sort((a, b) => a.nome.localeCompare(b.nome)),
+    [estoque, incluirSemEstoque],
+  );
+  const modoDaEtapa = (idx: number, valorAtual: string) =>
+    modoInsumo[idx] ?? (valorAtual && estoque.some((it) => it.nome === valorAtual) ? "estoque" : "livre");
+
   return (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome</label>
           <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Recepção de bezerras" /></div>
@@ -177,20 +194,64 @@ function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvand
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
       </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Tipo (Central de Protocolos)</label>
+          <select style={inputStyle} value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+            <option value="">Sem tipo — fora de Acompanhamento/Histórico</option>
+            {TIPOS_PROTOCOLO_CUSTOM.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
+          </select>
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+            Só entra nos filtros por tipo da Central de Protocolos se isto estiver preenchido.
+          </p>
+        </div>
+      </div>
       <div className="mb-3"><label style={labelStyle}>Observação (opcional)</label>
         <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} placeholder="Contexto geral do protocolo" /></div>
 
-      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
+      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Etapas (D0, D1, D2...)</p>
+      <label className="flex items-center gap-2" style={{ fontSize: "0.72rem", color: "var(--text-muted)", cursor: "pointer", marginBottom: "0.5rem" }}>
+        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+        Ao selecionar do estoque, incluir itens sem saldo
+      </label>
       <div className="space-y-2 mb-2">
-        {form.etapas.map((e, idx) => (
-          <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "6px" }}>
+        {form.etapas.map((e, idx) => {
+          const modo = modoDaEtapa(idx, e.insumo_padrao || "");
+          return (
+          <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "var(--r-sm)" }}>
             <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
             <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>O que fazer</label>
               <input style={inputStyle} value={e.descricao_evento} onChange={(ev) => atualizarEtapa(idx, { descricao_evento: ev.target.value })} placeholder="ex.: Pesar e vermifugar" /></div>
-            <div><label style={labelStyle}>Insumo sugerido</label>
-              <input style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })} placeholder="texto livre — informativo" /></div>
+            <div>
+              <div className="flex items-center justify-between" style={{ marginBottom: "0.15rem" }}>
+                <label style={labelStyle}>Insumo sugerido</label>
+                <select
+                  style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                  value={modo}
+                  onChange={(ev) => setModoInsumo((m) => ({ ...m, [idx]: ev.target.value as "estoque" | "livre" }))}
+                >
+                  <option value="estoque">do estoque</option>
+                  <option value="livre">texto livre</option>
+                </select>
+              </div>
+              {modo === "estoque" ? (
+                <select style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })}>
+                  <option value="">Selecione…</option>
+                  {/* Item já salvo que não bate com o estoque visível (fora de linha, ou saldo zerado com o checkbox desmarcado) continua listado para não sumir. */}
+                  {e.insumo_padrao && !estoqueVisivel.some((it) => it.nome === e.insumo_padrao) && <option value={e.insumo_padrao}>{e.insumo_padrao}</option>}
+                  {estoqueVisivel.map((it) => <option key={it.nome} value={it.nome}>{it.nome}{it.quantidade != null ? ` (${it.quantidade} ${it.unidade || ""})` : ""}</option>)}
+                </select>
+              ) : (
+                <input style={inputStyle} value={e.insumo_padrao || ""} onChange={(ev) => atualizarEtapa(idx, { insumo_padrao: ev.target.value })} placeholder="texto livre — informativo" />
+              )}
+            </div>
             <div><label style={labelStyle}>Dose</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizarEtapa(idx, { dose: ev.target.value ? Number(ev.target.value) : null })} /></div>
-            <div><label style={labelStyle}>Unidade</label><input style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })} placeholder="ml, kg…" /></div>
+            <div><label style={labelStyle}>Unidade</label>
+              <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })}>
+                <option value="">—</option>
+                {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
+                {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
+                {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select></div>
             <div><label style={labelStyle}>Via</label>
               <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
                 <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
@@ -201,7 +262,8 @@ function FormProtocoloCustomizado({ form, setForm, onSalvar, onCancelar, salvand
               {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginBottom: "0.8rem" }} onClick={acrescentarEtapa}>
         <Plus size={14} /> Acrescentar etapa

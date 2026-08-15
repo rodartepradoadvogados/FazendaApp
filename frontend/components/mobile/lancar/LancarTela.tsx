@@ -4,7 +4,7 @@
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2, Baby } from "lucide-react";
+import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2, ListChecks } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
 import { fetchAnimais, podeModulo } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
@@ -15,21 +15,21 @@ const FormReprodutivo = dynamic(() => import("./FormReprodutivo").then((m) => m.
 const FormProducao = dynamic(() => import("./FormProducao").then((m) => m.FormProducao), { ssr: false });
 const FormSanidade = dynamic(() => import("./FormSanidade").then((m) => m.FormSanidade), { ssr: false });
 const FormAlimentacao = dynamic(() => import("./FormAlimentacao").then((m) => m.FormAlimentacao), { ssr: false });
-const FormRecria = dynamic(() => import("./FormRecria").then((m) => m.FormRecria), { ssr: false });
+const FormProtocolos = dynamic(() => import("./FormProtocolos").then((m) => m.FormProtocolos), { ssr: false });
 const Movimentar = dynamic(() => import("@/components/mobile/rebanho/Movimentar"), { ssr: false });
 const Baixar = dynamic(() => import("@/components/mobile/rebanho/Baixar"), { ssr: false });
 const FormFinanceiroApp = dynamic(() => import("./FormFinanceiroApp"), { ssr: false });
 const BalancoEstoque = dynamic(() => import("./BalancoEstoque"), { ssr: false });
 const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 
-type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "recria" | "movimentar" | "baixar" | "financeiro" | "estoque" | "exclusao";
+type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "protocolos" | "movimentar" | "baixar" | "financeiro" | "estoque" | "exclusao";
 
 const TITULOS: Record<Tela, string> = {
   reprodutivo: "Reprodutivo",
   producao: "Produção (leite)",
   sanidade: "Sanidade",
   alimentacao: "Alimentação",
-  recria: "Recria — Registrar caso",
+  protocolos: "Protocolos",
   movimentar: "Movimentar animais",
   baixar: "Baixar animal",
   financeiro: "Financeiro",
@@ -39,13 +39,21 @@ const TITULOS: Record<Tela, string> = {
 
 export function LancarTela() {
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
-  const [tela, setTela] = useState<Tela | null>(null);
+  // /app/lancar#financeiro (ex.: atalho "$ Lançar financeiro" do Calendário
+  // Sanitário) abre direto em Financeiro > Contas a pagar — o `?servico=`
+  // que vem junto é lido pelo próprio FormFinanceiro (ver components/
+  // FormFinanceiro.tsx), não precisa ser tratado aqui.
+  const [tela, setTela] = useState<Tela | null>(() => (
+    typeof window !== "undefined" && window.location.hash === "#financeiro" ? "financeiro" : null
+  ));
   const [fixado, setFixado] = useState<Animal | null>(null);
   // Ao "gerar movimentação financeira" no Balanço de estoque, guarda qual
   // pílula (despesa/receita) o Financeiro deve abrir já selecionada. Fica
   // undefined ao entrar por "Financeiro" direto, para o submenu aparecer
   // primeiro (ver FormFinanceiroApp: tipoInicial ausente = mostra a grade).
-  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita" | undefined>(undefined);
+  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita" | undefined>(() => (
+    typeof window !== "undefined" && window.location.hash === "#financeiro" ? "despesa" : undefined
+  ));
   // Só sabemos a permissão real depois de montar (localStorage não existe no
   // servidor) — evita vazar os blocos de Financeiro/Estoque antes da hora.
   const [montado, setMontado] = useState(false);
@@ -60,7 +68,7 @@ export function LancarTela() {
         {tela === "producao" && <FormProducao animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "alimentacao" && <FormAlimentacao />}
-        {tela === "recria" && <FormRecria animais={animais.dados} animalFixado={fixado?.numero || null} />}
+        {tela === "protocolos" && <FormProtocolos animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "movimentar" && <Movimentar />}
         {tela === "baixar" && <Baixar />}
         {tela === "financeiro" && <FormFinanceiroApp onVoltar={() => setTela(null)} tipoInicial={tipoFinanceiroInicial} animais={animais.dados} />}
@@ -88,23 +96,24 @@ export function LancarTela() {
         ? <ChipAnimal animal={fixado} onSoltar={() => setFixado(null)} />
         : <BuscaAnimal animais={animais.dados} onEscolher={setFixado} />}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem", marginTop: "0.4rem" }}>
-        <MobBloco icone={<Activity size={24} />} label="Reprodutivo" cor="var(--mob-roxo)" onClick={() => setTela("reprodutivo")} />
-        <MobBloco icone={<Milk size={24} />} label="Produção (Leite)" cor="var(--mob-azul)" onClick={() => setTela("producao")} />
-        <MobBloco icone={<Syringe size={24} />} label="Sanidade" cor="var(--mob-verde)" onClick={() => setTela("sanidade")} />
-        <MobBloco icone={<Wheat size={24} />} label="Alimentação" cor="var(--mob-laranja)" onClick={() => setTela("alimentacao")} />
-        {montado && podeModulo("recria") && (
-          <MobBloco icone={<Baby size={24} />} label="Recria" cor="var(--mob-dourado)" onClick={() => setTela("recria")} />
-        )}
-        <MobBloco icone={<ArrowLeftRight size={24} />} label="Movimentar" cor="var(--mob-amarelo)" onClick={() => setTela("movimentar")} />
-        <MobBloco icone={<Skull size={24} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", marginTop: "0.4rem" }}>
+        <MobBloco icone={<Activity size={22} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
+        <MobBloco icone={<Milk size={22} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
+        <MobBloco icone={<Syringe size={22} />} label="Sanidade" onClick={() => setTela("sanidade")} />
+        <MobBloco icone={<Wheat size={22} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
+        <MobBloco icone={<ListChecks size={22} />} label="Protocolos" onClick={() => setTela("protocolos")} />
+        <MobBloco icone={<ArrowLeftRight size={22} />} label="Movimentar" onClick={() => setTela("movimentar")} />
+        {/* Vermelho reservado para as 2 ações realmente destrutivas/irreversíveis
+            (baixa de animal, exclusão de lançamento) — as demais usam o mesmo
+            dourado neutro, sem uma cor por seção (ver .mob-bloco .icone). */}
+        <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
         {montado && podeModulo("financeiro") && (
-          <MobBloco icone={<Landmark size={24} />} label="Financeiro" cor="var(--mob-vinho)" onClick={() => { setTipoFinanceiroInicial(undefined); setTela("financeiro"); }} />
+          <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setTela("financeiro"); }} />
         )}
         {montado && podeModulo("estoque") && (
-          <MobBloco icone={<Boxes size={24} />} label="Balanço de estoque" cor="var(--mob-dourado)" onClick={() => setTela("estoque")} />
+          <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => setTela("estoque")} />
         )}
-        <MobBloco icone={<Trash2 size={24} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
+        <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
       </div>
     </div>
   );
@@ -144,7 +153,7 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1.1rem",
-      padding: "0.7rem 0.8rem 0.7rem 1rem", borderRadius: 14,
+      padding: "0.7rem 0.8rem 0.7rem 1rem", borderRadius: "var(--r-app)",
       background: "var(--mob-vinho)", color: "#FFFFFF",
     }}>
       <span style={{ flex: 1, minWidth: 0 }}>
@@ -152,7 +161,7 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
         {rotuloAnimal(animal) && <span style={{ display: "block", fontSize: "0.8rem", opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rotuloAnimal(animal)}</span>}
       </span>
       <button type="button" onClick={onSoltar} aria-label="Soltar animal"
-        style={{ width: 44, height: 44, borderRadius: 10, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <X size={18} />
       </button>
     </div>

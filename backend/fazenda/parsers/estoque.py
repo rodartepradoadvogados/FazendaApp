@@ -31,6 +31,9 @@ HORMONIO_NOMES = {
     "estron": "Estron",
     "sincrocp": "SincroCP",
     "lactotropin": "Lactotropin",
+    # Erro de grafia frequente na digitação/planilha — o produto da Elanco é
+    # Lactotropin, com N. Normaliza para o nome correto na importação.
+    "lactotropim": "Lactotropin",
     "boostin": "Boostin",
 }
 

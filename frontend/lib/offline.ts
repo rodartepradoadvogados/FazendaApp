@@ -38,9 +38,38 @@
 //   - localStorage não guarda Blob de forma segura e tem cota pequena
 //     (~5-10MB) — insuficiente para fotos de câmera. Fila migrada para
 //     IndexedDB (ver lib/outboxDb.ts), guardando o Blob por referência.
+//   - Item ficava preso em "Aguardando envio…" pra sempre, sem nunca crescer
+//     o contador de tentativas nem deixar pista nenhuma do motivo: (1)
+//     enviarOuEnfileirar/enviarOuEnfileirarArquivo usavam AbortSignal.timeout()
+//     como sinal de abort — API ausente em WebView Android desatualizada,
+//     que lança TypeError antes do fetch sequer sair, tratado (de propósito)
+//     como falha de rede → trocado pelo padrão manual (AbortController +
+//     setTimeout) já usado em fetchCru, que funciona em qualquer WebView.
+//     (2) o catch genérico do loop de sincronizar() e o `continue` do filtro
+//     de fazenda engoliam o erro sem logar nem contar tentativa — agora
+//     ambos logam (console.error/warn, visível via chrome://inspect — já
+//     ligado, ver capacitor.config.ts) e incrementam tentativas com o mesmo
+//     backoff dos outros ramos, só pra tornar o retry visível (não muda o
+//     design de nunca marcar erro definitivo por falha de rede).
+//   - "onLine=true rede=4g 9.5Mbps" no debugUltimoErro (diagnóstico da
+//     correção acima) mostrou um relato real de sincronização travada por
+//     dias a fio, sempre com sinal de rádio bom — mas isso só prova que a
+//     RÁDIO do aparelho está conectada, nunca que o SERVIDOR está alcançável
+//     (DNS/TLS/roteamento até nós pode falhar com sinal ótimo — comum em
+//     bloqueio de operadora ou WebView com certificado desatualizado). A
+//     bolinha verde/vermelha do cabeçalho do app (`app/app/layout.tsx`)
+//     também usava só navigator.onLine, então dizia "conectado" mesmo nesse
+//     cenário — dado enganoso bater de frente com "não sincroniza nada".
+//     Duas correções: (1) diagnosticoFalhaRede() (abaixo) agora tenta de
+//     verdade um GET /health com timeout curto (5s) toda vez que um envio
+//     falha por rede, e anota se o SERVIDOR respondeu ou não — separando
+//     "sinal bom mas nosso servidor inalcançável" de "falha pontual deste
+//     envio só". (2) useConectividadeReal() (abaixo) faz o mesmo ping
+//     periódico usado pelo indicador do site desktop (ver Sidebar.tsx) — a
+//     bolinha do app agora reflete se o SERVIDOR respondeu, não só a rádio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
-import { API, getToken, getFazendaAtual } from "@/lib/api";
+import { API, getToken, getFazendaAtual, mensagemErroApi } from "@/lib/api";
 import {
   garantirPronto, pedirStoragePersistente, idbDisponivel, cabeNoDisco,
   inserirRegistro, lerRegistro, listarResumos, atualizarRegistro, removerRegistro, lerBlob,
@@ -153,6 +182,26 @@ export function useOnline(): boolean {
   return online;
 }
 
+/** Diferente de useOnline() (rádio do aparelho, pode mentir) — pinga de
+ *  verdade GET /health, mesmo padrão já usado no indicador do site desktop
+ *  (ver Sidebar.tsx). Usado na bolinha do cabeçalho do app (app/app/layout.tsx)
+ *  pra ela parar de dizer "conectado" quando o aparelho tem rádio mas nosso
+ *  servidor está inalcançável — exatamente o cenário que confundia o
+ *  diagnóstico de "sincronização não funciona" (rádio bom, bolinha verde,
+ *  mas nada sincroniza). Otimista (`true`) até a 1ª checagem responder, pra
+ *  não piscar vermelho no instante de abrir o app. */
+export function useConectividadeReal(): boolean {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    let ativo = true;
+    const checar = () => probarServidorAlcancavel().then((ok) => { if (ativo) setOnline(ok); });
+    checar();
+    const id = setInterval(checar, 30000);
+    return () => { ativo = false; clearInterval(id); };
+  }, []);
+  return online;
+}
+
 // ── Cache de leitura (GET) ───────────────────────────────────────────────────
 export async function fetchComCache<T>(chave: string, buscar: () => Promise<T>): Promise<{ dados: T | null; doCache: boolean }> {
   try {
@@ -171,6 +220,21 @@ export async function fetchComCache<T>(chave: string, buscar: () => Promise<T>):
 /** Momento da última cópia local de uma chave de cache (ou null). */
 export function cacheEm(chave: string): string | null {
   try { const raw = localStorage.getItem(PREFIXO_CACHE + chave); return raw ? JSON.parse(raw).em : null; } catch { return null; }
+}
+
+/** Leitura síncrona só dos dados de uma chave de cache (sem buscar nada nem
+ *  tocar rede) — mesmo esquema de chave/prefixo e mesmo formato salvo por
+ *  fetchComCache ({ dados, em }). Usado para estatísticas ao vivo (ex.: Menu)
+ *  que reaproveitam um cache já escrito por outra tela, sem custar requisição
+ *  nova. Null tanto se a chave nunca foi salva quanto se o JSON está corrompido. */
+export function lerCache<T>(chave: string): T | null {
+  try {
+    const raw = localStorage.getItem(PREFIXO_CACHE + chave);
+    if (!raw) return null;
+    return (JSON.parse(raw).dados as T) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Fila de envio (outbox) — leitura ─────────────────────────────────────────
@@ -209,6 +273,150 @@ function proximaTentativa(tentativas: number): string {
   return new Date(Date.now() + espera).toISOString();
 }
 
+// Timeout curto — só para o probe de diagnóstico abaixo, nunca deve
+// pendurar o loop de sincronização esperando por ele.
+const TIMEOUT_PROBE_MS = 5000;
+
+/** GET /health com timeout curto — só para diagnóstico (nunca decide se
+ *  enfileira ou não; isso continua vindo do fetch real do próprio envio).
+ *  `false` tanto para falha de rede quanto para timeout quanto para
+ *  resposta não-2xx — qualquer um desses já significa "não dá pra dizer que
+ *  o servidor está alcançável agora". */
+async function probarServidorAlcancavel(): Promise<boolean> {
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_PROBE_MS);
+  try {
+    const res = await fetch(`${API}/health`, { cache: "no-store", signal: controlador.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** Diagnóstico do momento da falha — anexado à mensagem técnica
+ *  (debugUltimoErro) pra separar "sem sinal de verdade" de "tem sinal mas o
+ *  fetch falhou mesmo assim" (ex.: WebView com problema, DNS, certificado) —
+ *  sem isso, "TypeError: Failed to fetch" sozinho não diz qual dos dois é,
+ *  e foi exatamente essa dúvida que travou o diagnóstico de um relato real
+ *  ("app não envia dados", com sinal 4G bom informado pelo próprio
+ *  aparelho). navigator.connection só existe em Chrome/WebView Android —
+ *  undefined em iOS/Safari, ok ficar de fora nesse caso. Além do sinal de
+ *  rádio (que só prova que a operadora está conectada, nunca que NOSSO
+ *  servidor está alcançável), tenta de verdade um GET /health com timeout
+ *  curto — se ele TAMBÉM falhar, é bloqueio/instabilidade de rede até o
+ *  servidor (DNS, TLS, operadora), não uma falha pontual deste envio. */
+async function diagnosticoFalhaRede(): Promise<string> {
+  const partes: string[] = [`onLine=${typeof navigator !== "undefined" ? navigator.onLine : "?"}`];
+  const conexao = typeof navigator !== "undefined" ? (navigator as any).connection : undefined;
+  if (conexao) {
+    partes.push(`rede=${conexao.effectiveType ?? "?"}`);
+    if (typeof conexao.downlink === "number") partes.push(`${conexao.downlink}Mbps`);
+    if (conexao.saveData) partes.push("economiaDeDados=on");
+  }
+  const servidorAlcancavel = await probarServidorAlcancavel();
+  partes.push(
+    servidorAlcancavel
+      ? "servidorRespondeu=sim(provável falha pontual só deste envio)"
+      : "servidorRespondeu=NÃO(nosso servidor está inalcançável a partir daqui, mesmo com sinal — não é só sinal fraco)",
+  );
+  return partes.join(" ");
+}
+
+// ── Fallback: ponte nativa CapacitorHttp() chamada DIRETO ──────────────────
+// Prova real (revisão de código, ago/2026 — ver node_modules/@capacitor/
+// android/capacitor/src/main/assets/native-bridge.js e .../plugin/
+// CapacitorHttp.java, .../PluginCall.java): capacitor.config.ts já liga
+// `CapacitorHttp: { enabled: true }` pra fazer window.fetch/XMLHttpRequest
+// passarem pela ponte nativa (OkHttp) em vez do fetch cru da WebView — mas
+// essa flag só produz efeito quando ela realmente chega ao .apk instalado
+// no aparelho (exige `npx cap sync android` refletido no build + o
+// funcionário ter reinstalado essa versão; a flag mora em
+// android/app/src/main/assets/capacitor.config.json, um arquivo GERADO,
+// fora do git). Se o aparelho ainda roda um .apk mais velho que a
+// correção, ou o sync nunca rodou antes do build, window.fetch nunca foi
+// trocado e continua sendo o fetch cru da própria Android System WebView —
+// e o relato real da fila travada prova exatamente isso: o erro capturado
+// é literalmente "TypeError: Failed to fetch", o texto de erro de rede do
+// PRÓPRIO Chromium (blink). Quando a ponte nativa de verdade falha, o erro
+// que ela devolve pro JS tem `.name` "Error" (CapacitorException, sem
+// override de name — ver PluginCall.java `reject()`) e `.message` = a
+// mensagem da exception Java (ex.: "Unable to resolve host…") — NUNCA
+// "TypeError: Failed to fetch". Ou seja: essa string por si só já é a prova
+// de que a requisição que falhou não passou pela ponte nativa.
+// Em vez de confiar de novo só na flag automática (que já devia estar
+// ligada e não resolveu o relato), as funções de envio abaixo chamam o
+// plugin CapacitorHttp DIRETO — `CapacitorHttp.request()` — como ÚLTIMA
+// tentativa depois que o fetch normal já falhou por rede. Funciona mesmo
+// que o patch automático de window.fetch nunca tenha entrado em vigor,
+// porque o Android registra o plugin CapacitorHttp incondicionalmente
+// (Bridge.java, no construtor da Bridge — a flag "enabled" só liga o PATCH
+// automático de fetch/XHR, não a existência do plugin em si). Nunca roda
+// fora do app nativo (PWA/Chrome não têm ponte nenhuma — Capacitor.
+// isNativePlatform() volta false, e a função desiste rápido) — o
+// comportamento do PWA não muda em nada.
+let capacitorCoreCache: typeof import("@capacitor/core") | null = null;
+async function carregarPonteNativa(): Promise<typeof import("@capacitor/core") | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    if (!capacitorCoreCache) capacitorCoreCache = await import("@capacitor/core");
+    return capacitorCoreCache.Capacitor.isNativePlatform() ? capacitorCoreCache : null;
+  } catch {
+    return null; // @capacitor/core ausente (não deveria acontecer dentro do app) — não pode derrubar o envio por isso
+  }
+}
+
+/** Só o suficiente de `Response` que o resto do código usa (`ok`, `status`,
+ *  `json()`) — o mesmo formato serve pra resposta de verdade do fetch da
+ *  WebView e pra resposta "traduzida" da ponte nativa abaixo. */
+type RespostaEnvio = { ok: boolean; status: number; json: () => Promise<any> };
+
+/** Chama CapacitorHttp.request() direto (sem passar por window.fetch — ver
+ *  comentário grande acima). RESOLVE normalmente pra qualquer resposta HTTP
+ *  de verdade, mesmo 4xx/5xx (igual o fetch resolveria) — só LANÇA quando a
+ *  ponte não existe aqui (fora do app Android) ou quando ela mesma falha de
+ *  rede (aí sim equivalente a um TypeError de fetch). */
+async function fetchViaPonteNativa(caminho: string, metodo: string, headers: Record<string, string>, corpo: unknown, timeoutMs: number): Promise<RespostaEnvio> {
+  const cap = await carregarPonteNativa();
+  if (!cap) throw new Error("ponte nativa indisponível aqui (fora do app Android, ou @capacitor/core não carregou)");
+  const nativa = await cap.CapacitorHttp.request({
+    url: `${API}${caminho}`, method: metodo, headers, data: corpo,
+    connectTimeout: timeoutMs, readTimeout: timeoutMs,
+  });
+  return {
+    ok: nativa.status >= 200 && nativa.status < 300,
+    status: nativa.status,
+    // dataType não foi informado no request acima → o Android decide sozinho
+    // a partir do Content-Type da RESPOSTA; nativeResponse.data já vem
+    // objeto quando é JSON, mas alguns servidores/erro devolvem texto cru —
+    // tenta os dois em vez de assumir um formato só.
+    json: async () => (typeof nativa.data === "string" ? JSON.parse(nativa.data) : nativa.data),
+  };
+}
+
+/** Headers comuns aos dois caminhos de envio JSON (fetch da WebView e ponte
+ *  nativa) — Idempotency-Key + Authorization (quando logado). Content-Type
+ *  é responsabilidade de quem monta a chamada (aqui sempre application/json). */
+function headersEnvioJson(id: string): Record<string, string> {
+  const token = getToken();
+  return { "Content-Type": "application/json", "Idempotency-Key": id, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+/** Interpreta uma RespostaEnvio (de qualquer um dos dois caminhos) do mesmo
+ *  jeito que o resto do arquivo sempre interpretou `res` do fetch: 2xx vira
+ *  o corpo JSON já decodificado, qualquer outro status vira Error com a
+ *  mensagem de validação do backend (mensagemErroApi) — usado tanto pela
+ *  tentativa via WebView quanto pela tentativa via ponte nativa, pra não
+ *  duplicar essa lógica duas vezes. */
+async function resolverRespostaJson(res: RespostaEnvio, mensagemErroPadrao: string): Promise<any> {
+  if (!res.ok) {
+    const detalhe = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(detalhe.detail) || mensagemErroPadrao);
+  }
+  return res.json().catch(() => undefined);
+}
+
 /**
  * Tenta enviar agora; sem internet (ou falha de rede), guarda na fila para
  * sincronizar depois. Erro do servidor (4xx/5xx) com internet É repassado —
@@ -230,34 +438,74 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
   // cliente vê erro de rede e enfileira, porém o reenvio usa a MESMA chave,
   // então o servidor devolve a resposta já salva em vez de duplicar.
   const id = gerarId();
-  if (!navigator.onLine) {
-    await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
-    await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
-    return { enviado: false };
-  }
+  // NÃO trava em navigator.onLine (mesmo motivo de sincronizar() — em WebView
+  // Android essa API é conhecida por ficar presa em `false` mesmo com
+  // internet real, o que fazia todo lançamento cair direto na fila sem nem
+  // tentar enviar, mesmo com internet de verdade). Tenta de verdade; falha de
+  // rede cai no catch abaixo e enfileira do mesmo jeito.
   const { authFetch } = await import("@/lib/api");
+  // AbortController manual em vez de AbortSignal.timeout() — a API estática
+  // só existe em WebView/Chrome 103+ (meados de 2022); num Android System
+  // WebView desatualizado (comum em aparelho de uso rural) ela lança um
+  // TypeError IMEDIATO, antes do fetch sequer começar, que o catch abaixo
+  // trata como falha de rede — enfileirando uma ação que na real tinha
+  // internet disponível. O padrão manual (igual ao já usado em fetchCru,
+  // abaixo) funciona em qualquer WebView.
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_ENVIO_MS);
   try {
     const res = await authFetch(`${API}${caminho}`, {
       method: metodo,
       headers: { "Content-Type": "application/json", "Idempotency-Key": id },
       body: JSON.stringify(corpo),
-      signal: AbortSignal.timeout(TIMEOUT_ENVIO_MS),
+      signal: controlador.signal,
     });
-    if (!res.ok) {
-      const detalhe = await res.json().catch(() => ({}));
-      throw new Error(detalhe.detail || `Erro ${res.status} ao salvar`);
-    }
-    const resposta = await res.json().catch(() => undefined);
+    const resposta = await resolverRespostaJson(res, `Erro ${res.status} ao salvar`);
     return { enviado: true, resposta };
   } catch (e) {
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
-    // aborta como erro de rede, não de validação → nos dois casos, enfileira.
+    // aborta como erro de rede, não de validação → nos dois casos, enfileira
+    // — mas ANTES de desistir, tenta UMA vez a ponte nativa CapacitorHttp
+    // direto (ver fetchViaPonteNativa, acima): cobre o caso real (ago/2026)
+    // em que window.fetch não estava de fato interceptado pela ponte nativa
+    // — mesmo com CapacitorHttp:{enabled:true} escrito em capacitor.config.ts
+    // — porque a flag só produz efeito no .apk que foi de fato sincronizado
+    // e reinstalado com ela. Se a ponte devolver uma resposta de VERDADE do
+    // servidor (2xx ou 4xx/5xx), essa resposta vale tanto quanto a do fetch
+    // normal teria valido — inclusive erro de validação (4xx) vai pro
+    // formulário na hora, não pra fila (por isso resolverRespostaJson roda
+    // dentro do try: um `throw` aí sai deste catch sem cair no `if` abaixo).
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
-      await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
-      await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
-      return { enviado: false };
+      try {
+        const res2 = await fetchViaPonteNativa(caminho, metodo, headersEnvioJson(id), corpo, TIMEOUT_ENVIO_MS);
+        const resposta = await resolverRespostaJson(res2, `Erro ${res2.status} ao salvar`);
+        return { enviado: true, resposta };
+      } catch (e2) {
+        // e2 pode ser (a) a ponte nativa também falhando de rede, (b) ela
+        // nem existir aqui (PWA/navegador — nunca é o caso na prática, já
+        // que só chegamos aqui dentro do app), ou (c) uma resposta de
+        // validação do servidor VIA PONTE (Error comum, não TypeError) — só
+        // esse último caso deve furar o enfileiramento e ir pro formulário,
+        // exatamente como aconteceria se o fetch normal tivesse recebido a
+        // mesma resposta.
+        if (e2 instanceof Error && !(e2 instanceof TypeError)) {
+          const éFalhaDeTransporteDaPonte = e2.message.startsWith("ponte nativa indisponível");
+          if (!éFalhaDeTransporteDaPonte) throw e2; // validação de verdade, vinda da ponte — repassa pro formulário
+        }
+        const motivoWebview = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        const motivoPonte = e2 instanceof Error ? `${e2.name}: ${e2.message}` : String(e2);
+        await inserirItem({
+          id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente",
+          fazendaId: getFazendaAtual()?.id ?? null,
+          debugUltimoErro: `[webview] ${motivoWebview} | [ponteNativa] ${motivoPonte} (${await diagnosticoFalhaRede()})`,
+        });
+        await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
+        return { enviado: false };
+      }
     }
     throw e; // resposta do servidor (validação etc.) → o formulário mostra
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -272,6 +520,16 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
  * enviada sozinha quando a conexão voltar — igual a um lançamento JSON.
  * Lança ErroCotaOutbox se o aparelho não tiver espaço, ou Error comum se o
  * servidor recusou com o app online (dado inválido).
+ *
+ * Diferente de enviarOuEnfileirar, NÃO tenta a ponte nativa (CapacitorHttp.
+ * request()) como fallback aqui: a API nativa exige o arquivo em base64
+ * (~33% maior que o Blob original — pesado pra foto de câmera de vários MB
+ * em 3G rural, ver convertFormData em native-bridge.js) e o multipart
+ * (`dataType: 'formData'`) exigiria remontar cada campo manualmente. Fica
+ * só no fetch/FormData de sempre — se a ponte nativa realmente não estiver
+ * ativa (ver comentário grande em fetchViaPonteNativa, acima), a foto ainda
+ * assim entra na fila normalmente e é reenviada depois; só não ganha a
+ * segunda tentativa imediata que o lançamento JSON ganha.
  */
 export async function enviarOuEnfileirarArquivo(opcoes: {
   caminho: string;
@@ -296,23 +554,24 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
     return fd;
   };
 
-  if (!navigator.onLine) {
-    if (modoLegado) throw new Error("Este aparelho não consegue guardar fotos offline — tente novamente com internet.");
-    if (!(await cabeNoDisco(opcoes.arquivo.size))) throw new ErroCotaOutbox();
-    await enfileirarArquivo();
-    return { enviado: false };
-  }
-
+  // NÃO trava em navigator.onLine — mesmo motivo de enviarOuEnfileirar/
+  // sincronizar() acima: em WebView Android essa API pode ficar presa em
+  // `false` mesmo com internet real. Tenta de verdade; falha de rede cai no
+  // catch abaixo e enfileira do mesmo jeito.
   const { authFetch } = await import("@/lib/api");
+  // Mesmo motivo do AbortController manual em enviarOuEnfileirar (acima):
+  // AbortSignal.timeout() não existe em WebView antiga.
+  const controlador = new AbortController();
+  const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_ENVIO_ARQUIVO_MS);
   try {
     const res = await authFetch(`${API}${opcoes.caminho}`, {
       method: metodo,
       body: montarFormData(), // sem Content-Type manual — o browser gera o boundary
-      signal: AbortSignal.timeout(TIMEOUT_ENVIO_ARQUIVO_MS),
+      signal: controlador.signal,
     });
     if (!res.ok) {
       const detalhe = await res.json().catch(() => ({}));
-      throw new Error(detalhe.detail || `Erro ${res.status} ao enviar`);
+      throw new Error(mensagemErroApi(detalhe.detail) || `Erro ${res.status} ao enviar`);
     }
     return { enviado: true };
   } catch (e) {
@@ -323,6 +582,8 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
       return { enviado: false };
     }
     throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   async function enfileirarArquivo() {
@@ -360,6 +621,33 @@ async function fetchCru(caminho: string, metodo: string, corpo: unknown, id: str
     });
   } finally {
     clearTimeout(timeoutId);
+  }
+}
+
+/** fetchCru + fallback pela ponte nativa (ver comentário grande em
+ *  fetchViaPonteNativa, na seção de envio interativo, acima) — mesmo
+ *  raciocínio, aplicado ao reenvio em segundo plano: cada rodada de
+ *  sincronizar() que falhar por rede tenta a ponte nativa direto ANTES de
+ *  desistir e reagendar o backoff, o que é especialmente valioso aqui — é
+ *  esse loop que produz o "tentativa 12" do relato real, e cada tentativa
+ *  adicional pela ponte é uma chance de recuperar sem esperar o usuário
+ *  reinstalar o app. Só para itens `tipo: "json"` (ver fetchCruArquivo,
+ *  sem fallback, pelo mesmo motivo do comentário em
+ *  enviarOuEnfileirarArquivo). Lança um erro combinado (com os dois motivos
+ *  etiquetados) quando AMBOS os caminhos falham, pra debugUltimoErro em
+ *  sincronizar() carregar o diagnóstico completo. */
+async function fetchCruComFallbackNativo(caminho: string, metodo: string, corpo: unknown, id: string): Promise<RespostaEnvio> {
+  try {
+    return await fetchCru(caminho, metodo, corpo, id);
+  } catch (e) {
+    if (!(e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError"))) throw e;
+    try {
+      return await fetchViaPonteNativa(caminho, metodo, headersEnvioJson(id), corpo, TIMEOUT_ENVIO_MS);
+    } catch (e2) {
+      const motivoWebview = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      const motivoPonte = e2 instanceof Error ? `${e2.name}: ${e2.message}` : String(e2);
+      throw new Error(`[webview] ${motivoWebview} | [ponteNativa] ${motivoPonte}`);
+    }
   }
 }
 
@@ -421,12 +709,18 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
         // Item enfileirado numa fazenda e o usuário trocou de fazenda antes
         // de sincronizar — o backend grava na fazenda do TOKEN vigente, não
         // na de quando o item foi criado, então enviar agora gravaria no
-        // lugar errado. Pula (sem contar tentativa) até o usuário voltar
-        // pra fazenda certa. `fazendaId` undefined = item antigo (migrado
-        // antes deste campo existir) — sincroniza normalmente.
-        if (atual.fazendaId !== undefined && atual.fazendaId !== (getFazendaAtual()?.id ?? null)) continue;
+        // lugar errado. Pula até o usuário voltar pra fazenda certa — mas
+        // conta como tentativa (com log) pra não travar em "Aguardando
+        // envio…" sem nenhuma pista. `fazendaId` undefined = item antigo
+        // (migrado antes deste campo existir) — sincroniza normalmente.
+        if (atual.fazendaId !== undefined && atual.fazendaId !== (getFazendaAtual()?.id ?? null)) {
+          console.warn(`[offline] sincronizar: pulando "${atual.descricao}" (id ${atual.id}) — fazenda do item (${atual.fazendaId}) difere da atual (${getFazendaAtual()?.id ?? null}).`);
+          const tentativas = (atual.tentativas || 0) + 1;
+          await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
+          continue;
+        }
         try {
-          const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCru(atual.caminho, atual.metodo, atual.corpo, atual.id);
+          const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCruComFallbackNativo(atual.caminho, atual.metodo, atual.corpo, atual.id);
           if (res.ok) {
             await removerItem(atual.id);
             enviados++;
@@ -434,14 +728,22 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           }
           if (res.status === 401 || res.status === 403 || res.status >= 500) {
             // Sessão expirada ou servidor fora do ar — tenta de novo mais
-            // tarde, nunca descarta nem marca como erro definitivo.
+            // tarde, nunca descarta nem marca como erro definitivo. Mas
+            // registra o motivo em debugUltimoErro (igual ao catch abaixo):
+            // sem isso, um token expirado ficava pendurado indefinidamente
+            // como "pendente", sem nenhuma pista visível na tela de
+            // Sincronização de por que nunca ia embora (relato: "app não
+            // envia dados pra nuvem" — a causa mais provável é essa).
             const tentativas = (atual.tentativas || 0) + 1;
-            await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas) });
+            const motivo = res.status === 401 || res.status === 403
+              ? "Sessão expirada — abra o app e faça login de novo para este item ser enviado."
+              : `Servidor indisponível (${res.status}) — vai tentar de novo automaticamente.`;
+            await atualizarItem(atual.id, { tentativas, proximaTentativaEm: proximaTentativa(tentativas), debugUltimoErro: motivo });
             continue;
           }
           // 4xx "de verdade" (400/404/409/422...) = dado inválido, exige o usuário.
           const detalhe = await res.json().catch(() => ({}));
-          await atualizarItem(atual.id, { status: "erro", erro: detalhe.detail || `Erro ${res.status}` });
+          await atualizarItem(atual.id, { status: "erro", erro: mensagemErroApi(detalhe.detail) || `Erro ${res.status}` });
         } catch (e) {
           // Rede caiu de novo no meio deste grupo — para só este grupo; o
           // próximo (json→form ou form→json) ainda é tentado. Registra a
@@ -450,9 +752,10 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
           // falha que se repete sempre (CORS, DNS, URL de API errada) parece
           // idêntica a "nunca tentou", indistinguível pra quem usa o app.
           const tentativas = (atual.tentativas || 0) + 1;
+          const motivo = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
           await atualizarItem(atual.id, {
             tentativas, proximaTentativaEm: proximaTentativa(tentativas),
-            debugUltimoErro: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+            debugUltimoErro: `${motivo} (${await diagnosticoFalhaRede()})`,
           });
           break;
         }

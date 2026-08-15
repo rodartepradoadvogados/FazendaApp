@@ -122,6 +122,11 @@ PRINCIPIOS: list[dict] = [
      "justificativa": "Controle em frascos (ml).",
      "unidade_base": "ml", "unidade_apresentacao": "frasco",
      "marcas": [("Cystorelin", "Boehringer Ingelheim"), ("Sincrorelin", "Ourofino"), ("Conceptase", "Agener")]},
+    {"nome": "Somatotropina Bovina Recombinante (bST)", "categoria": "Fármacos Reprodutivos e Hormônios", "categoria_software": "Hormônio Galactopoiético",
+     "uso_principal": "Aumento e manutenção da persistência da lactação, aplicado a cada 14 dias.",
+     "justificativa": "Controle em seringas/doses. Já existe manejo de bST no rebanho (ver Animal.excluir_bst e aguardando_nova_aplicacao_bst) — o princípio precisa existir na farmácia para o item de estoque poder se vincular a ele e a baixa sair por dose.",
+     "unidade_base": "dose", "unidade_apresentacao": "seringa",
+     "marcas": [("Lactotropin", "Elanco"), ("Boostin", "MSD")]},
     # ── Antiparasitários ────────────────────────────────────────────────────
     {"nome": "Ivermectina", "categoria": "Antiparasitários (Ecto, Endo e Hemoparasiticidas)", "categoria_software": "Endectocida Injetável",
      "uso_principal": "Nematódeos e carrapatos.",
@@ -158,6 +163,20 @@ PRINCIPIOS: list[dict] = [
      "justificativa": "Controle em frascos (litros).",
      "unidade_base": "L", "unidade_apresentacao": "frasco",
      "marcas": [("Valbazen", "Zoetis"), ("Ricobendazol", "Ourofino"), ("Biozen", "Biovet")]},
+    # Adição 2026-08-07 — necessidade real não coberta pelo catálogo anterior:
+    # coccidiose de bezerros não tinha nenhum princípio próprio (a fazenda só
+    # tinha vermífugos de nematódeo, que não tratam Eimeria).
+    {"nome": "Toltrazuril", "categoria": "Antiparasitários (Ecto, Endo e Hemoparasiticidas)", "categoria_software": "Anticoccidiano Oral",
+     "uso_principal": "Coccidiose de bezerros (Eimeria bovis, E. zuernii, E. alabamensis) — dose única.",
+     "justificativa": "Controle em frascos (ml). 1ª escolha para coccidiose — dose única, referência de bula confirmada (Baycox).",
+     "unidade_base": "ml", "unidade_apresentacao": "frasco",
+     "marcas": [("Baycox 5%", "Elanco")]},
+    {"nome": "Sulfaquinoxalina", "categoria": "Antiparasitários (Ecto, Endo e Hemoparasiticidas)", "categoria_software": "Anticoccidiano Oral",
+     "uso_principal": "Coccidiose de bezerros — alternativa sulfamídica ao toltrazuril (tratamento em vários dias, não dose única).",
+     "justificativa": "Controle em frascos (ml). SEM marca comercial confirmada para bovinos no catálogo (as marcas encontradas na pesquisa "
+                      "são registradas para aves/ovinos) — produtor cadastra a que usa.",
+     "unidade_base": "ml", "unidade_apresentacao": "frasco",
+     "marcas": []},
     # ── Metabólicos, Vitaminas e Minerais ───────────────────────────────────
     {"nome": "Borogluconato de Cálcio", "categoria": "Metabólicos, Vitaminas e Minerais", "categoria_software": "Metabólico Injetável",
      "uso_principal": "Febre do leite, paralisia pós-parto.",
@@ -184,6 +203,54 @@ PRINCIPIOS: list[dict] = [
      "justificativa": "Controle em galões (litros).",
      "unidade_base": "L", "unidade_apresentacao": "galão",
      "marcas": [("Cetol", "Bravet"), ("Energet", "Agener"), ("Propilenoglicol", None)]},
+    # Adição 2026-08-07 — necessidade real não coberta pelo catálogo anterior:
+    # timpanismo/indigestão espumosa (pasto novo/leguminosa) é manejo de
+    # urgência de curral e não tinha nenhum princípio antiespumante.
+    {"nome": "Dimeticona / Simeticona (Antiespumante)", "categoria": "Metabólicos, Vitaminas e Minerais", "categoria_software": "Antiespumante Oral (Manejo de Urgência)",
+     "uso_principal": "Timpanismo/indigestão espumosa — manejo de urgência em pasto novo/leguminosas.",
+     "justificativa": "Controle em frascos (ml). Emergência de curral, quadro pode evoluir a óbito por asfixia em minutos.",
+     "unidade_base": "ml", "unidade_apresentacao": "frasco",
+     "marcas": [("Ruminol VTQ", "Vetoquinol")]},
+    # Adição 2026-08-07 — necessidade real não coberta pelo catálogo anterior:
+    # a fluidoterapia/reidratação é o que mais salva bezerro com diarreia
+    # (mais que o antibiótico), e não tinha nenhum princípio próprio.
+    {"nome": "Eletrólitos Orais (Reidratante)", "categoria": "Metabólicos, Vitaminas e Minerais", "categoria_software": "Reidratante Oral",
+     "uso_principal": "Reidratação oral de bezerro com diarreia — 1ª linha, mais decisiva para a sobrevivência do que o antibiótico.",
+     "justificativa": "Controle em unidades (sachê/envelope). Item de maternidade de altíssimo giro, hoje sem princípio vinculado.",
+     "unidade_base": "unidade", "unidade_apresentacao": "caixa",
+     "marcas": [("AltaLYTE", "Alta Genetics")]},
+    {"nome": "Ringer Lactato / Soro Fisiológico (Fluidoterapia IV)", "categoria": "Metabólicos, Vitaminas e Minerais", "categoria_software": "Fluidoterapia Intravenosa",
+     "uso_principal": "Desidratação grave (bezerro prostrado/sem reflexo de sucção) e qualquer emergência com necessidade de reposição volêmica IV.",
+     "justificativa": "Controle em litros (bolsas/frascos). Complementa o eletrólito oral quando a via oral não é suficiente.",
+     "unidade_base": "L", "unidade_apresentacao": "frasco",
+     "marcas": [("Ringer Lactato", "JP Farma")]},
+    # ── Antissépticos e Curativos (adição 2026-08-07) ───────────────────────
+    # Antissepsia de úbere e umbigo — consumo DIÁRIO na ordenha (pré/pós-
+    # dipping) e na maternidade (cura de umbigo). Um dos itens de maior giro
+    # da fazenda; hoje o estoque de iodo não tinha NENHUM princípio vinculado.
+    {"nome": "Iodo (Tintura/PVPI)", "categoria": "Antissépticos e Curativos", "categoria_software": "Antisséptico Tópico",
+     "uso_principal": "Pré e pós-dipping de tetos na ordenha e imersão do coto umbilical do bezerro recém-nascido.",
+     "justificativa": "Controle em galões (litros). Uso diário na ordenha — altíssimo giro.",
+     "unidade_base": "L", "unidade_apresentacao": "galão",
+     "marcas": [("Tintura de Iodo 10%", "Pinus")]},
+    {"nome": "Clorexidina (Antisséptico Tópico)", "categoria": "Antissépticos e Curativos", "categoria_software": "Antisséptico Tópico",
+     "uso_principal": "Cura de umbigo de bezerro recém-nascido e antissepsia de teto — alternativa ao iodo.",
+     "justificativa": "Controle em galões (litros).",
+     "unidade_base": "L", "unidade_apresentacao": "galão",
+     "marcas": [("Clorexidina-Cetrimida", "Chemitec")]},
+    # ── Anestésicos (adição 2026-08-07) ─────────────────────────────────────
+    {"nome": "Lidocaína (Cloridrato)", "categoria": "Anestésicos", "categoria_software": "Anestésico Local Injetável",
+     "uso_principal": "Anestesia local infiltrativa/bloqueio — descorna, castração, sutura de feridas.",
+     "justificativa": "Controle em frascos (ml). Necessidade real de bem-estar/procedimento cirúrgico não coberta pelo catálogo anterior.",
+     "unidade_base": "ml", "unidade_apresentacao": "frasco",
+     "marcas": [("Lidovet", "Bravet")]},
+    # ── Emergência (adição 2026-08-07) ──────────────────────────────────────
+    {"nome": "Adrenalina (Epinefrina)", "categoria": "Emergência", "categoria_software": "Emergência Injetável",
+     "uso_principal": "Choque anafilático e emergências cardiorrespiratórias — 1ª escolha, ação imediata.",
+     "justificativa": "Controle em frascos (ml). Item de emergência de curral não coberto pelo catálogo anterior — na prática costuma ser "
+                      "adquirido em farmácia humana; nenhuma marca veterinária foi confirmada com segurança, então fica sem marca no catálogo.",
+     "unidade_base": "ml", "unidade_apresentacao": "frasco",
+     "marcas": []},
     # ── Biológicos (Vacinas e Diagnósticos) — agrupados por doença/antígeno ──
     {"nome": "Brucelose Bovina (Cepa 19 ou RB51)", "categoria": "Biológicos (Vacinas e Diagnósticos)", "categoria_software": "Biológico (Vacina Liofilizada)",
      "justificativa": "Controle em doses. Requer trava sistêmica com receituário.",
@@ -210,4 +277,22 @@ PRINCIPIOS: list[dict] = [
      "justificativa": "Controle em doses. Uso restrito para exames.",
      "unidade_base": "dose", "unidade_apresentacao": "dose", "eh_biologico": True, "doenca": "Tuberculose",
      "marcas": [("PPD Bovino", "Instituto Biológico / Ourofino")]},
+    # Adição 2026-08-07 — necessidade real não coberta pelo catálogo anterior.
+    # MESMOS NOMES usados em rules do calendário sanitário padrão
+    # (api/routers/cadastro/sanitario.py::SEED_PRINCIPIOS_CALENDARIO) — de
+    # propósito, para casar com o princípio que já existe lá (criado antes
+    # deste seed rodar, ver ordem em main.py::lifespan) em vez de duplicar o
+    # catálogo com um segundo princípio para a mesma vacina.
+    {"nome": "Raiva (Vacina)", "categoria": "Biológicos (Vacinas e Diagnósticos)", "categoria_software": "Biológico (Vacina)",
+     "uso_principal": "Raiva dos Herbívoros — zoonose fatal transmitida principalmente pelo morcego hematófago (Desmodus rotundus). "
+                      "Vacinação obrigatória/recomendada em área de foco (PNCRH), sem tratamento possível após início dos sintomas.",
+     "justificativa": "Controle em doses.",
+     "unidade_base": "dose", "unidade_apresentacao": "dose", "eh_biologico": True, "doenca": "Raiva",
+     "marcas": [("Vacina Antirrábica para Herbívoros", "Labovet")]},
+    {"nome": "Febre Aftosa (Vacina)", "categoria": "Biológicos (Vacinas e Diagnósticos)", "categoria_software": "Biológico (Vacina)",
+     "uso_principal": "Febre aftosa — calendário obrigatório definido pelo serviço veterinário oficial (MAPA/Defesa Agropecuária estadual), "
+                      "varia por UF e status sanitário da zona.",
+     "justificativa": "Controle em doses.",
+     "unidade_base": "dose", "unidade_apresentacao": "dose", "eh_biologico": True, "doenca": "Febre Aftosa",
+     "marcas": []},
 ]

@@ -18,9 +18,20 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fazenda.rules.parametros import get_param
+from fazenda.rules.gestation import dias_gestacao
+from fazenda.rules.parametros import dias_reinseminacao_max, dias_reinseminacao_min, get_param, meta_taxa_servico
 
-GESTACAO_DIAS = 280  # gestação média usada nas previsões de parto/secagem
+# Gestação média usada SÓ no IEP agregado do gráfico de distribuição de DEL
+# (estatística por faixa de todo o rebanho, sem animal associado — não dá
+# pra usar a gestação por raça aí). Toda previsão POR ANIMAL (parto/secagem
+# em `relatorios_manejo` e `fluxo_lactacao`, abaixo) usa a gestação
+# ESPECÍFICA da raça do bicho (`fazenda.rules.gestation.dias_gestacao`) — a
+# mesma regra usada pela Agenda (`agenda_engine.py`) e por `producao.py::
+# secagem-info`. Antes este módulo usava 280 dias fixos pra TODO animal,
+# inclusive Girolando (287) e Gir/Zebu/Nelore (295): a previsão de secagem
+# do Rebanho ficava até 15 dias adiantada em relação à da Agenda para
+# raças não-Holandês, fazendo as duas telas "discordarem" da mesma vaca.
+GESTACAO_DIAS = 280
 
 # Quando a previsão de secagem (baseada na concepção em curso) já passou há
 # mais que isso sem o animal ter sido secado, o atraso deixa de ser real —
@@ -61,10 +72,29 @@ def _ultimo_servico(numero: str, servicos_por_animal: dict[str, list[dict]]) -> 
     return servs[-1] if servs else None
 
 
-def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
-    pos = [s for s in _servicos_do_animal(numero, servicos_por_animal)
-           if (s.get("diagnostico") or "").strip().upper() == "POSITIVO"]
-    return pos[-1] if pos else None
+def _ultimo_servico_positivo(
+    numero: str, servicos_por_animal: dict[str, list[dict]],
+    partos_por_animal: dict[str, list[dict]] | None = None,
+) -> dict | None:
+    """Serviço VIGENTE da matriz (o mais recente — e, quando
+    `partos_por_animal` é informado, também posterior ao último parto), SE
+    ele estiver positivo e sem perda de prenhez registrada. Não é "o último
+    serviço positivo do histórico": um serviço mais novo (mesmo sem
+    diagnóstico ainda) ou um parto já encerram aquela prenhez — contá-la
+    mesmo assim fazia uma vaca reinseminada sem diagnóstico (ou já parida)
+    continuar aparecendo como prenhe, com previsão de parto/secagem de uma
+    gestação que não existe mais (ver fazenda.rules.perda_prenhez)."""
+    servs = _servicos_do_animal(numero, servicos_por_animal)
+    if partos_por_animal is not None:
+        ultimo_parto = _ultimo_parto(numero, partos_por_animal)
+        if ultimo_parto is not None:
+            servs = [s for s in servs if s.get("data_servico") and s["data_servico"] > ultimo_parto]
+    if not servs:
+        return None
+    ultimo = servs[-1]
+    if (ultimo.get("diagnostico") or "").strip().upper() == "POSITIVO" and not ultimo.get("data_perda_prenhez"):
+        return ultimo
+    return None
 
 
 def _indexar(servicos: list[dict], partos: list[dict]) -> tuple[dict, dict]:
@@ -81,6 +111,20 @@ def _indexar(servicos: list[dict], partos: list[dict]) -> tuple[dict, dict]:
     return serv_idx, parto_idx
 
 
+def _indexar_secagens(secagens: list[dict] | None) -> dict[str, list[dict]]:
+    idx: dict[str, list[dict]] = {}
+    for s in secagens or []:
+        m = s.get("numero_matriz")
+        if m:
+            idx.setdefault(m, []).append(s)
+    return idx
+
+
+def _ultima_secagem(numero: str, secagens_por_animal: dict[str, list[dict]]) -> date | None:
+    datas = [s["data_secagem"] for s in secagens_por_animal.get(numero, []) if s.get("data_secagem")]
+    return max(datas) if datas else None
+
+
 def _prenhe(animal: dict, ult_pos: dict | None) -> bool:
     sit = (animal.get("sit_rep") or "").strip()
     if sit == "Ges.":
@@ -95,7 +139,7 @@ def _prenhe(animal: dict, ult_pos: dict | None) -> bool:
 # MANEJO — 8 listas semaforizadas
 # ===========================================================================
 def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[dict],
-                      semen: list[dict], hoje: date) -> dict:
+                      semen: list[dict], hoje: date, secagens: list[dict] | None = None) -> dict:
     pev = int(get_param("pev_dias", 45) or 45)
     meta_1a = int(get_param("meta_del_max_1o_servico", 100) or 100)
     dias_toque = int(get_param("dias_toque", 30) or 30)
@@ -104,6 +148,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
     seco = int(get_param("periodo_seco_dias", 60) or 60)
 
     serv_idx, parto_idx = _indexar(servicos, partos)
+    secagem_idx = _indexar_secagens(secagens)
     femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"]
     # Sexado/convencional por nome do touro — fallback para serviços antigos
     # que não gravaram tipo_semen no momento da inseminação (ver Servico.tipo_semen).
@@ -124,8 +169,12 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         dparto = _ultimo_parto(num, parto_idx)
         dpp = _dias(dparto, hoje) if dparto else None  # dias pós-parto
         us = _ultimo_servico(num, serv_idx)
-        ups = _ultimo_servico_positivo(num, serv_idx)
-        prenhe = sit == "Ges." or (ups is not None and not (us or {}).get("data_perda_prenhez") and not sit.startswith("Vaz."))
+        ups = _ultimo_servico_positivo(num, serv_idx, parto_idx)
+        # `ups` já garante vigência (mais recente, positivo, sem perda) — não
+        # precisa checar `data_perda_prenhez` de novo aqui (e checar em `us`,
+        # como antes, estava errado: `us` é sempre o serviço MAIS recente,
+        # que pode já ser outro, sem a perda, deixado por uma reinseminação).
+        prenhe = sit == "Ges." or (ups is not None and not sit.startswith("Vaz."))
         vazia = sit.startswith("Vaz.")
         inseminada = sit == "Ins."
         # Serviço em aberto = já tem data_servico lançada e ainda sem
@@ -216,7 +265,13 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         if prenhe and ups:
             concep = ups.get("data_servico")
             dias_gest = _dias(concep, hoje)
-            prev_parto = concep + timedelta(days=GESTACAO_DIAS) if concep else None
+            # Dias de gestação ESPECÍFICOS da raça do animal (280/287/295 —
+            # ver fazenda.rules.gestation), a mesma conta usada pela Agenda
+            # (agenda_engine.py) e por producao.py::secagem-info — não o
+            # GESTACAO_DIAS fixo de 280 daqui, que fazia esta previsão
+            # divergir da Agenda para qualquer raça não-Holandês.
+            dias_gest_raca = dias_gestacao(a.get("raca"))
+            prev_parto = concep + timedelta(days=dias_gest_raca) if concep else None
             if not eh_vaca:
                 cor = "branco"
                 dpp_conc = None
@@ -234,9 +289,16 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                               "dpp_concepcao": dpp_conc, "previsao_parto": prev_parto,
                               "reconfirmada": reconfirmada_efetiva, "cor": cor})
 
-            # 6) Secagem — vaca prenhe em lactação
-            if eh_vaca and (a.get("del_dias") or 0) > 0 and concep:
-                prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
+            # 6) Secagem — vaca prenhe em lactação. "Em lactação" AO VIVO (secagem
+            # mais recente, se houver, é ANTERIOR ao último parto — senão já foi
+            # secada nesse ciclo), não `Animal.del_dias` (congelado no valor do
+            # último GERAL.csv, nunca atualizado por uma Secagem lançada no app —
+            # uma vaca recém-parida pelo app nunca entrava aqui, e uma vaca
+            # recém-secada pelo app nunca saía, ver auditoria ago/2026).
+            ult_secagem = _ultima_secagem(num, secagem_idx)
+            em_lactacao_viva = ult_secagem is None or (dparto is not None and ult_secagem < dparto)
+            if eh_vaca and em_lactacao_viva and concep:
+                prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
                 d_secar = _dias(hoje, prev_secagem)
                 if d_secar is not None and d_secar < -LIMITE_SECAGEM_RETROATIVA_DIAS:
                     pass  # atraso implausível — considerada secada 60 dias antes do último parto, sai da pendência
@@ -412,6 +474,23 @@ def _buckets_intervalo(valores: list[int]) -> list[dict]:
              "pct": round(100 * n / total, 2) if total else 0} for lbl, lo, hi in faixas]
 
 
+def _buckets_dias_reinseminacao(valores: list[int]) -> list[dict]:
+    """Faixas do gráfico de dias-para-reinseminação — ao contrário de
+    `_buckets_intervalo` (fixas), calculadas a partir da janela configurada
+    em Configurações > Parâmetros > Reinseminação e observação de cio
+    (dias_reinseminacao_min/max): antes da janela = reinseminação adiantada,
+    dentro = dentro do padrão da fazenda, depois = atrasada."""
+    minimo, maximo = dias_reinseminacao_min(), dias_reinseminacao_max()
+    faixas = []
+    if minimo > 1:
+        faixas.append((f"1-{minimo - 1} dias (adiantada)", 1, minimo - 1))
+    faixas.append((f"{minimo}-{maximo} dias (janela ideal)", minimo, maximo))
+    faixas.append((f">{maximo} dias (atrasada)", maximo + 1, 100000))
+    total = len(valores)
+    return [{"faixa": lbl, "servicos": (n := sum(1 for v in valores if lo <= v <= hi)),
+             "pct": round(100 * n / total, 2) if total else 0} for lbl, lo, hi in faixas]
+
+
 def intervalo_entre_servicos(servicos: list[dict]) -> dict:
     """Distribuição do intervalo em dias entre serviços consecutivos."""
     intervalos = [s["intervalo_tentativas"] for s in servicos
@@ -421,7 +500,7 @@ def intervalo_entre_servicos(servicos: list[dict]) -> dict:
 
 def dias_para_reinseminacao(servicos: list[dict], partos: list[dict]) -> dict:
     """Dias desde que a vaca foi identificada VAZIA (diagnóstico negativo ou perda)
-    até a re-inseminação (próximo serviço)."""
+    até a re-inseminação (o serviço seguinte)."""
     serv_idx, _ = _indexar(servicos, partos)
     valores = []
     for num, servs in serv_idx.items():
@@ -436,12 +515,14 @@ def dias_para_reinseminacao(servicos: list[dict], partos: list[dict]) -> dict:
             prox_serv = prox.get("data_servico")
             if vazia_em and isinstance(prox_serv, date) and prox_serv >= vazia_em:
                 valores.append((prox_serv - vazia_em).days)
-    return {"barras": _buckets_intervalo(valores), "total": len(valores)}
+    return {"barras": _buckets_dias_reinseminacao(valores), "total": len(valores)}
 
 
 def taxa_servico_prenhez(animais: list[dict], servicos: list[dict], partos: list[dict], hoje: date) -> dict:
     """Taxa de serviço e taxa de prenhez por faixa de DEL + acumulado de prenhas.
-    Parâmetros inferidos: 50% até 100d, 75% até 150d, ≤10% aos 300d."""
+    Referências: meta de taxa de serviço aos 100d vem de Configurações >
+    Parâmetros (`meta_taxa_servico`, editável); 75% até 150d e ≤10% aos 300d
+    ainda não têm parâmetro equivalente, continuam fixos."""
     serv_idx, parto_idx = _indexar(servicos, partos)
     femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"
               and _eh_vaca(a["numero"], parto_idx)]
@@ -469,7 +550,7 @@ def taxa_servico_prenhez(animais: list[dict], servicos: list[dict], partos: list
             "acumulado_prenhas_pct": round(100 * prenhas_acum / total_vacas, 0) if total_vacas else 0,
         })
     return {"linhas": linhas, "total_vacas": total_vacas,
-            "parametros": {"meta_100d": 50, "meta_150d": 75, "max_300d": 10}}
+            "parametros": {"meta_100d": meta_taxa_servico(), "meta_150d": 75, "max_300d": 10}}
 
 
 def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict], hoje: date, meses: int = 8) -> dict:
@@ -486,7 +567,7 @@ def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict]
     parir_por_mes: dict[str, dict[str, int]] = {}
     for a in femeas:
         num = a["numero"]
-        ups = _ultimo_servico_positivo(num, serv_idx)
+        ups = _ultimo_servico_positivo(num, serv_idx, parto_idx)
         if not ups or not ups.get("data_servico"):
             continue
         sit = (a.get("sit_rep") or "").strip()
@@ -494,8 +575,9 @@ def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict]
             continue
         concep = ups["data_servico"]
         reconf = bool(ups.get("data_reconfirmacao"))
-        prev_parto = concep + timedelta(days=GESTACAO_DIAS)
-        prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
+        dias_gest_raca = dias_gestacao(a.get("raca"))
+        prev_parto = concep + timedelta(days=dias_gest_raca)
+        prev_secagem = concep + timedelta(days=dias_gest_raca - seco)
         eh_vaca = _eh_vaca(num, parto_idx)
         if eh_vaca and (a.get("del_dias") or 0) > 0 and prev_secagem >= hoje:
             k = prev_secagem.strftime("%Y-%m")

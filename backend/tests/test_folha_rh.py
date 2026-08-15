@@ -5,10 +5,14 @@ eSocial (envio ao governo) está FORA de escopo — cobre só o cálculo interno
 e o lançamento em Contas a Pagar:
 - `calcular_ferias`/`calcular_decimo_terceiro`/`calcular_rescisao` são
   funções puras (sem banco);
-- os endpoints de férias/13º geram o registro de acompanhamento + a conta a
-  pagar, e bloqueiam edição/exclusão quando já pagos (mesmo padrão de Folha
-  de Pagamento/Empreitada/Contrato); rescisão só gera a conta a pagar (não
-  há tabela de acompanhamento dedicada).
+- os endpoints de férias/13º/rescisão geram o registro de acompanhamento
+  (`FeriasFuncionario`/`DecimoTerceiro`/`RescisaoFuncionario`) + a conta a
+  pagar, e bloqueiam edição/exclusão quando já pagos/fechados (mesmo padrão
+  de Folha de Pagamento/Empreitada/Contrato). A camada de persistência/ciclo
+  de vida da rescisão (`simulacao` → `fechada`, edição, fechamento único/
+  detalhado, isolamento multi-fazenda) é coberta em separado, em
+  `test_rescisao_fluxo.py` — aqui só ficam as funções puras de cálculo e o
+  `POST /cadastro/rescisao/calcular` (que segue sem persistir nada).
 """
 from __future__ import annotations
 
@@ -358,10 +362,14 @@ def test_calcular_rescisao_tipo_invalido_levanta_erro():
 
 
 # ---------------------------------------------------------------------------
-# Rescisão — endpoints. Diferente de férias/13º, não há tabela de
-# acompanhamento dedicada: `/cadastro/rescisao/calcular` só simula (não
-# grava nada) e `/cadastro/rescisao` gera a conta a pagar (mesmo padrão de
-# `tipo_documento` usado para listar em `GET /cadastro/rescisao`).
+# Rescisão — `/cadastro/rescisao/calcular` (único endpoint deste bloco que
+# sobrevive aqui). Só simula (não grava nada) — usado pela tela para conferir
+# os números antes de criar a simulação persistida em
+# `POST /cadastro/rescisoes` (ver test_rescisao_fluxo.py para o restante do
+# ciclo de vida: criar/editar/excluir simulação, fechar único/detalhado,
+# listagem, isolamento multi-fazenda). Os antigos `GET`/`POST
+# /cadastro/rescisao` (sem tabela de acompanhamento própria, só gravavam
+# direto a ContaGerencial) foram removidos nessa migração.
 # ---------------------------------------------------------------------------
 def _criar_pessoa_com_admissao(engine, salario_base: float, data_admissao: date) -> int:
     with Session(engine) as s:
@@ -398,34 +406,6 @@ def test_simular_rescisao_nao_gera_lancamento(client):
 
     with Session(engine) as s:
         assert s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Rescisão")).first() is None
-
-
-def test_criar_rescisao_gera_lancamento_financeiro(client):
-    c, engine = client
-    pessoa_id = _criar_pessoa_com_admissao(engine, 3000.0, date(2026, 1, 20))
-
-    r = c.post(
-        "/cadastro/rescisao",
-        json=_payload_rescisao(pessoa_id, status="pago", data_pagamento="2026-07-25"),
-    )
-    assert r.status_code == 200, r.text
-    dados = r.json()
-    assert dados["valor_total"] == 9755.27
-    assert dados["numero_lancamento_gerado"]
-
-    with Session(engine) as s:
-        conta = s.exec(
-            select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados["numero_lancamento_gerado"])
-        ).first()
-        assert conta is not None
-        assert conta.tipo_documento == "Rescisão"
-        assert conta.valor_total == 9755.27
-        assert conta.valor_pago == 9755.27
-        assert conta.tipo == "despesa"
-
-    r2 = c.get("/cadastro/rescisao")
-    assert r2.status_code == 200, r2.text
-    assert len(r2.json()) == 1
 
 
 def test_rescisao_sem_data_admissao_bloqueia(client):

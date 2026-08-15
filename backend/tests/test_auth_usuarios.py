@@ -224,3 +224,48 @@ def test_permissoes_vet_e_recria_nao_somem_ao_editar(client):
     )
     assert r.status_code == 200
     assert sorted(r.json()["permissoes"]) == ["agenda", "recria", "vet"]
+
+
+def test_listar_usuarios_com_fazenda_selecionada_mostra_so_essa_fazenda(client):
+    """Regressão: GET /auth/usuarios (Controle de Acesso) devolvia TODO
+    Usuario do banco, de qualquer fazenda-cliente — bug real encontrado em
+    produção via sessão de suporte CowData: "Fazenda Teste" via Controle de
+    Acesso via /usuarios mostrava login de outra fazenda. Com fazenda_id
+    selecionado no token, só entram usuários cuja Pessoa pertence a ela."""
+    c, engine = client
+    token = _login(c)
+    with Session(engine) as s:
+        from fazenda.models import Fazenda
+        s.add(Fazenda(id=10, nome="Fazenda A"))
+        s.add(Fazenda(id=20, nome="Fazenda B"))
+        pessoa_a = Pessoa(nome="Funcionário A", tipo="Funcionário", fazenda_id=10)
+        pessoa_b = Pessoa(nome="Funcionário B", tipo="Funcionário", fazenda_id=20)
+        s.add(pessoa_a)
+        s.add(pessoa_b)
+        s.commit()
+        s.refresh(pessoa_a)
+        s.refresh(pessoa_b)
+        pid_a, pid_b = pessoa_a.id, pessoa_b.id
+
+    c.post(
+        "/auth/usuarios",
+        json={"username": "user_a", "senha": "123", "pessoa_id": pid_a, "papel": "operador", "permissoes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    c.post(
+        "/auth/usuarios",
+        json={"username": "user_b", "senha": "123", "pessoa_id": pid_b, "papel": "operador", "permissoes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    from fazenda.auth import get_fazenda_atual_id
+    import main
+    main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 10
+    try:
+        r = c.get("/auth/usuarios", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        del main.app.dependency_overrides[get_fazenda_atual_id]
+    assert r.status_code == 200
+    usernames = {u["username"] for u in r.json()}
+    assert "user_a" in usernames
+    assert "user_b" not in usernames

@@ -161,15 +161,32 @@ class TestIatfNaoAbsorveAnimalDeOutroLancamento:
 
 class TestD0ConfirmadoNaListaAtivos:
     def test_d0_confirmado_falso_ate_marcar_realizado_na_agenda(self, client):
+        # D0 fixo em "2026-07-03" era uma bomba-relógio: `GET
+        # /protocolo-iatf/ativos` (fazenda/api/routers/reproducao.py) só
+        # lista um protocolo com D0 tão velho enquanto `date.today()` REAL
+        # ainda estiver dentro da janela de graça — GRACA_D11_ATRASADO_DIAS
+        # (7 dias após o D11 previsto) some soma outros +7 dias após
+        # `proxima_visita` antes de sumir de vez da lista (ver comentário
+        # acima de `listar_protocolos_iatf_ativos`). Passados esses dias —
+        # o caso de "2026-07-03" a partir de meados de agosto/2026 — o
+        # protocolo simplesmente não aparece mais em `ativos`, e o
+        # `next(...)` do teste estoura `StopIteration`. O comportamento de
+        # produção está certo (protocolo abandonado há muito tempo
+        # realmente deve sumir da lista); o teste é quem fixou uma data que
+        # teria que ser eternamente "recente". Usa D0 = hoje (protocolo
+        # recém-lançado, ainda dentro de toda janela por dezenas de dias),
+        # que é também o cenário que o nome do teste descreve.
         c, engine = client
-        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
-        lancamento_id = r.json()["lancamento_id"]
+        hoje = date.today()
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": hoje.isoformat()})
 
         ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
         animal = next(a for g in ativos for a in g["animais"] if a["numero_matriz"] == "700")
         assert animal["d0_confirmado"] is False
 
-        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{lancamento_id}_0"})
+        # evento_id da Agenda é chaveado por (data prevista, dia), não mais
+        # por lancamento_id — ver comentário em calcular_agenda.
+        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{hoje.isoformat()}_0"})
         ativos2 = c.get("/reproducao/protocolo-iatf/ativos").json()
         animal2 = next(a for g in ativos2 for a in g["animais"] if a["numero_matriz"] == "700")
         assert animal2["d0_confirmado"] is True
@@ -191,7 +208,9 @@ class TestRemoverAnimalIatf:
         c, engine = client
         r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
         lancamento_id = r.json()["lancamento_id"]
-        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{lancamento_id}_0"})
+        # evento_id da Agenda é chaveado por (data prevista, dia), não mais
+        # por lancamento_id — ver comentário em calcular_agenda.
+        c.post("/agenda/realizados", json={"evento_id": "protocolo_iatf_2026-07-03_0"})
 
         rd = c.delete(f"/reproducao/protocolo-iatf/{lancamento_id}/animais/700")
         assert rd.status_code == 409
@@ -252,6 +271,70 @@ class TestDescontoDoseSemen:
             assert mov is not None
             assert mov.quantidade == 1
             assert mov.origem_tipo == "ia_semen"
+
+
+class TestProtocoloVigenteParaInseminacao:
+    """"Protocolo de IATF atual" (sub-aba Inseminação) tem que mostrar a
+    matriz enquanto o protocolo estiver vigente — nenhum Serviço lançado
+    depois do D0 — não importa em qual etapa do hormônio ela está hoje. A
+    inseminação pode ser lançada bem depois de o hormônio ter sido aplicado
+    (a posteriori)."""
+
+    def _animal(self, ativos, numero):
+        return next(a for g in ativos for a in g["animais"] if a["numero_matriz"] == numero)
+
+    def test_pronta_para_inseminar_mesmo_ainda_no_d0_sem_servico(self, client):
+        c, engine = client
+        hoje = date.today().isoformat()
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": hoje})
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal = self._animal(ativos, "700")
+        # Ainda em D0 (não é a etapa de inseminação) — mas sem serviço nenhum
+        # lançado, o protocolo continua vigente e a matriz tem que aparecer.
+        assert animal["etapa_atual"] == "D0"
+        assert animal["pronta_para_inseminar"] is True
+
+    def test_deixa_de_estar_pronta_apos_lancar_servico_no_ciclo(self, client):
+        c, engine = client
+        hoje = date.today()
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": hoje.isoformat()})
+        c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": (hoje + timedelta(days=11)).isoformat(),
+            "tipo_servico": "IA", "reprodutor": "Coors",
+        })
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal = self._animal(ativos, "700")
+        assert animal["pronta_para_inseminar"] is False
+
+    def test_protocolo_concluido_pronta_para_inseminar_ate_ter_servico(self, client):
+        c, engine = client
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        for evento_id in [
+            "protocolo_iatf_2026-07-03_0", "protocolo_iatf_2026-07-10_7",
+            "protocolo_iatf_2026-07-12_9", "protocolo_iatf_2026-07-14_11",
+        ]:
+            r = c.post("/agenda/realizados", json={"evento_id": evento_id})
+            assert r.status_code == 200, r.text
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        grupo = next(g for g in ativos if any(a["numero_matriz"] == "700" for a in g["animais"]))
+        assert grupo["concluido"] is True
+        animal = self._animal(ativos, "700")
+        assert animal["etapa_atual"] == "Concluído"
+        # Hormônio todo aplicado, mas ninguém lançou a inseminação ainda —
+        # continua "pronta", que é justamente o caso que a Central de
+        # Protocolos confirmar sozinha (sem passar pela tela de Inseminação)
+        # deixava invisível antes desta correção.
+        assert animal["pronta_para_inseminar"] is True
+
+        c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-07-15", "tipo_servico": "IA", "reprodutor": "Coors",
+        })
+        ativos2 = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal2 = self._animal(ativos2, "700")
+        assert animal2["pronta_para_inseminar"] is False
 
 
 class TestSemenDisponivel:

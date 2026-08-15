@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, BaixaAnimal, ContaGerencial, MotivoBaixa, Usuario
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -29,7 +29,7 @@ class BaixaIn(BaseModel):
     animais: list[str]
     tipo_baixa: str
     motivo: str
-    motivo_doenca: str | None = None
+    motivo_doenca: str | None = None  # causa específica cadastrada (Configurações > Motivos de baixa) — motivo == "doenca" (obrigatório) ou "acidente" (opcional)
     motivo_outro: str | None = None  # texto livre opcional — só quando motivo == "outros"
     valor: float | None = None
     cliente: str | None = None
@@ -121,9 +121,8 @@ def listar_baixas(
 @router.post("/")
 def registrar_baixa(
     dados: BaixaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.tipo_baixa not in TIPOS_BAIXA:
@@ -203,7 +202,7 @@ def registrar_baixa(
     for numero, animal in encontrados:
         session.add(BaixaAnimal(
             numero_animal=numero, tipo_baixa=dados.tipo_baixa, motivo=dados.motivo,
-            motivo_doenca=dados.motivo_doenca if dados.motivo == "doenca" else None,
+            motivo_doenca=dados.motivo_doenca if dados.motivo in ("doenca", "acidente") else None,
             motivo_outro=dados.motivo_outro if dados.motivo == "outros" else None,
             valor=valor_unitario if dados.motivo == "venda" else None,
             cliente=dados.cliente if dados.motivo == "venda" else None,
@@ -217,6 +216,8 @@ def registrar_baixa(
         animal.ativo = False
         animal.data_baixa = dados.data_baixa
         if dados.motivo == "doenca":
+            animal.motivo_baixa = dados.motivo_doenca
+        elif dados.motivo == "acidente" and (dados.motivo_doenca or "").strip():
             animal.motivo_baixa = dados.motivo_doenca
         elif dados.motivo == "outros" and (dados.motivo_outro or "").strip():
             animal.motivo_baixa = dados.motivo_outro

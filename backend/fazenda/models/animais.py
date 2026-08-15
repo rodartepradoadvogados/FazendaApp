@@ -324,7 +324,7 @@ class BaixaAnimal(SQLModel, table=True):
     numero_animal: str = Field(index=True)
     tipo_baixa: str  # morte | descarte_voluntario | descarte_involuntario
     motivo: str      # venda | abate | acidente | doenca | macho | outros
-    motivo_doenca: Optional[str] = None  # preenchido só quando motivo == "doenca"
+    motivo_doenca: Optional[str] = None  # causa específica cadastrada — motivo == "doenca" (obrigatório) ou "acidente" (opcional)
     motivo_outro: Optional[str] = None   # texto livre opcional quando motivo == "outros"
     valor: Optional[float] = None        # preenchido só quando motivo == "venda" — sempre o valor POR ANIMAL já resolvido
     cliente: Optional[str] = None        # preenchido só quando motivo == "venda"

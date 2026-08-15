@@ -14,12 +14,14 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from fazenda.auth import (
-    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, exigir_dono, get_current_user,
-    get_fazenda_atual_id, hash_senha, token_manter_conectado, verificar_senha,
+    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
+    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id,
+    get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
 )
+from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
+from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -81,14 +83,35 @@ class PreferenciasIn(BaseModel):
 def _publico(u: Usuario, session: Session | None = None) -> dict:
     perms = MODULOS if u.papel == "admin" else [m for m in (u.permissoes or "").split(",") if m]
     pessoa_nome = None
+    pessoa_tipo = None
     if u.pessoa_id and session is not None:
         pessoa = session.get(Pessoa, u.pessoa_id)
         pessoa_nome = pessoa.nome if pessoa else None
+        # CSV de TipoPessoa.nome (ex.: "Empreiteiro" ou "Funcionário,Diarista")
+        # — usado no app de campo (frontend/lib/api.ts::ehOperadorRestrito)
+        # pra restringir o Menu de operadores vinculados a certos tipos de
+        # Pessoa (empreiteiro/prestador/diarista/funcionário).
+        pessoa_tipo = pessoa.tipo if pessoa else None
+    eh_equipe_cowdata = False
+    areas_cowdata: list[str] = []
+    if session is not None and not eh_email_dono_equivalente(u.email) and eh_membro_equipe_cowdata(session, u):
+        eh_equipe_cowdata = True
+        perm = session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == u.id)).first()
+        areas_cowdata = [a for a in (perm.areas or "").split(",") if a] if perm else []
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
             "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
-            "email": u.email, "eh_dono": (u.email or "").strip().lower() == EMAIL_DONO,
+            "email": u.email, "eh_dono": eh_email_dono_equivalente(u.email),
             "pode_publicar_materias_blog": u.pode_publicar_materias_blog,
-            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome}
+            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome, "pessoa_tipo": pessoa_tipo,
+            # Membro da Equipe CowData (não dono) com login próprio — ver
+            # fazenda/models/equipe_cowdata_acesso.py. `areas_painel_cowdata`
+            # alimenta o filtro do menu do Painel CowData no frontend.
+            "eh_equipe_cowdata": eh_equipe_cowdata, "areas_painel_cowdata": areas_cowdata,
+            # Membro da Equipe CowData com cargo Consultor — junto com o
+            # vínculo `consultor` NA FAZENDA SELECIONADA é o que libera a
+            # Formulação de Dietas (ver auth.py::exigir_admin_ou_consultor_fazenda
+            # e lib/api.ts::podeFormularDietas). Sozinho não libera nada.
+            "eh_consultor_cowdata": eh_consultor_cowdata(session, u) if session is not None else False}
 
 
 def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario_id: int | None = None) -> Pessoa:
@@ -127,11 +150,42 @@ def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
     return [f for f in fazendas if f and f.ativa]
 
 
-def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
+def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session: Session | None = None) -> dict:
     # `vinculo_contador` diz ao frontend se deve mandar direto pro Painel do
     # Contador (/contador, casca própria) em vez da navegação normal da
     # fazenda — ver components/AuthShell.tsx e fazenda/models/multitenant.py.
-    return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "vinculo_contador": bool(vinculo and vinculo.contador)}
+    # `vinculo_consultor` diz ao frontend que este usuário é um vínculo
+    # externo (veterinário/agrônomo convidado) — usado para ESCONDER
+    # funcionalidades sensíveis (ex.: botão de acesso ao banco de dados
+    # externo em Relatórios financeiros) mesmo quando ele tem o módulo
+    # "financeiro" liberado, ver frontend/lib/api.ts::ehConsultor().
+    # `vinculo_contratante` diz ao frontend que este usuário é o usuário
+    # mestre DESTA fazenda — usado por podeFormularDietas() (Formulação de
+    # Dietas), espelhando fazenda.auth.exigir_admin_ou_consultor_fazenda.
+    # `modulos_contratados`: os módulos comerciais que a FAZENDA (não o
+    # usuário) contratou e estão ativos — mesma trava do backend
+    # (fazenda.auth.exigir_modulo_contratado), espelhada aqui para a Sidebar
+    # poder ESCONDER de cara o que a fazenda não comprou, em vez de mostrar o
+    # item e só 403ar ao clicar ("acesso integral" mesmo em plano restrito —
+    # bug real encontrado em produção). `session=None` (ex.: contexto sem
+    # banco à mão) devolve lista vazia — o frontend trata ausência do campo
+    # como "sem restrição conhecida", nunca escondendo por engano.
+    modulos: list[str] = []
+    if session is not None:
+        modulos = sorted(
+            m.modulo for m in session.exec(
+                select(ContratoFazendaModulo).where(
+                    ContratoFazendaModulo.fazenda_id == f.id, ContratoFazendaModulo.ativo == True,  # noqa: E712
+                )
+            ).all()
+        )
+    return {
+        "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
+        "vinculo_contador": bool(vinculo and vinculo.contador),
+        "vinculo_consultor": bool(vinculo and vinculo.consultor),
+        "vinculo_contratante": bool(vinculo and vinculo.contratante),
+        "modulos_contratados": modulos,
+    }
 
 
 def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazenda | None:
@@ -153,18 +207,43 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
     # 0 ou 1 fazenda vinculada → auto-seleciona (ou nenhuma) e segue como
     # sempre seguiu, sem tela nova. Só aparece a seleção quando há de fato
-    # mais de uma fazenda vinculada ao mesmo usuário.
+    # mais de uma fazenda vinculada ao mesmo usuário — EXCETO para os
+    # administradores CowData (ver EMAILS_DONO_EQUIVALENTE), que sempre
+    # escolhem entre a fazenda direto (administrador) e o Painel CowData
+    # (suporte auditado, ver cofre_acesso.py), mesmo tendo só 1 fazenda —
+    # pedido explícito do usuário: nunca cair direto numa fazenda-cliente
+    # sem escolher conscientemente "como quem". Só força essa tela quando
+    # existe pelo menos 1 fazenda de verdade pra oferecer ao lado do Painel
+    # CowData — sem isso (dono-equivalente sem nenhum UsuarioFazenda gravado,
+    # só o bypass por e-mail) mantém o comportamento de sempre, pra nunca
+    # arriscar travar quem só tinha esse acesso indireto.
     fazendas = _fazendas_vinculadas(session, user.id)
-    fazenda_auto = fazendas[0] if len(fazendas) == 1 else None
+    eh_admin_cowdata = eh_email_dono_equivalente(user.email) and len(fazendas) >= 1
+    # Membro da Equipe CowData com login próprio (ago/2026, ver
+    # eh_membro_equipe_cowdata) — mesma tela de escolha do dono, mas SEM a
+    # trava "len(fazendas) >= 1": ao contrário do dono (que sempre tem o
+    # bypass por e-mail como rede de segurança), um membro comum da equipe
+    # pode legitimamente não ter NENHUMA fazenda vinculada e mesmo assim
+    # precisa cair no Painel CowData, não ficar sem destino nenhum.
+    eh_membro_cowdata = not eh_email_dono_equivalente(user.email) and eh_membro_equipe_cowdata(session, user)
+    mostrar_opcao_cowdata = eh_admin_cowdata or eh_membro_cowdata
+    fazenda_auto = fazendas[0] if (len(fazendas) == 1 and not mostrar_opcao_cowdata) else None
     resposta = {
         "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None, manter_conectado=dados.manter_conectado),
         "usuario": _publico(user, session),
     }
     if fazenda_auto:
-        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id))
-    if len(fazendas) > 1:
+        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id), session)
+    if len(fazendas) > 1 or mostrar_opcao_cowdata:
         resposta["selecao_fazenda_necessaria"] = True
-        resposta["fazendas_disponiveis"] = [_fazenda_publica(f) for f in fazendas]
+        opcoes = [_fazenda_publica(f, session=session) for f in fazendas]
+        if mostrar_opcao_cowdata:
+            # Sentinela id=0 (fazendas de verdade começam em 1) — o frontend
+            # reconhece pelo campo "cowdata" e, ao escolher, só navega pro
+            # Painel CowData usando o token já emitido acima (fid=None), sem
+            # chamar /auth/selecionar-fazenda (essa "fazenda" não existe).
+            opcoes.append({"id": 0, "nome": "Painel CowData", "cowdata": True})
+        resposta["fazendas_disponiveis"] = opcoes
     return resposta
 
 
@@ -208,7 +287,7 @@ def selecionar_fazenda(
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
     return {
         "token": criar_token(user.username, fazenda_id=fazenda.id, manter_conectado=manter_conectado),
-        "fazenda_atual": _fazenda_publica(fazenda, vinculo),
+        "fazenda_atual": _fazenda_publica(fazenda, vinculo, session),
     }
 
 
@@ -280,19 +359,42 @@ def redefinir_senha(dados: RedefinirSenhaIn, session: Session = Depends(get_sess
 def me(
     user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    suporte: dict = Depends(get_suporte_do_token),
     session: Session = Depends(get_session),
 ) -> dict:
     dados = _publico(user, session)
     if fazenda_id:
         fazenda = session.get(Fazenda, fazenda_id)
         if fazenda:
-            dados["fazenda_atual"] = _fazenda_publica(fazenda, _vinculo(session, user.id, fazenda_id))
+            dados["fazenda_atual"] = _fazenda_publica(fazenda, _vinculo(session, user.id, fazenda_id), session)
+    # Sessão aberta a partir do Painel CowData (ver cofre_acesso.py) — o
+    # frontend usa isso pra mostrar o aviso "modo suporte" com o botão de
+    # encerrar (POST /painel-cowdata/cofre/sessoes/{id}/encerrar).
+    dados["suporte_ativo"] = suporte["ativo"]
+    dados["sessao_suporte_id"] = suporte["sessao_id"]
+    dados["nivel_sigilo_suporte"] = suporte["nivel_sigilo"]
     return dados
 
 
 @router.get("/usuarios")
-def listar_usuarios(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    return [_publico(u, session) for u in session.exec(select(Usuario)).all()]
+def listar_usuarios(
+    _: Usuario = Depends(exigir_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Controle de Acesso (Insights e Administração > Controle de Acesso):
+    lista os usuários da fazenda ATUAL (a mesma que o resto da tela mostra,
+    inclusive em sessão de suporte — ver get_fazenda_atual_id), não de todo o
+    banco. Sem o filtro, essa tela — que já pede "cadastre a pessoa NESTA
+    fazenda primeiro" para criar um login novo — misturava usuários de
+    QUALQUER cliente da plataforma na lista da direita (bug real encontrado
+    em produção). Token sem fazenda selecionada (legado) mantém o
+    comportamento antigo, sem filtro — mesmo "sem retroatividade" do resto
+    do piloto de multi-fazenda."""
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    return [_publico(u, session) for u in session.exec(query).all()]
 
 
 @router.get("/usuarios/acessos")

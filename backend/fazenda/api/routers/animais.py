@@ -13,12 +13,16 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen,
     EventoSanitario, ExameResultado, MovimentoLote, OcorrenciaClinica, Parto,
-    PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
+    PesagemCorporal, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
+    ProtocoloIatfAplicacao, ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
+    ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
     Sanidade, Secagem, Servico, Touro, VendaAnimal,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
+from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
@@ -96,14 +100,18 @@ def listar_animais(
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
         query_secagem = query_secagem.where(Secagem.fazenda_id == fazenda_id)
-    ult_pos: dict[str, object] = {}
-    for s in session.exec(query_servico).all():
-        d = s.data_servico
-        if d and (s.diagnostico or "").strip().upper() == "POSITIVO":
-            if s.numero_matriz not in ult_pos or d > ult_pos[s.numero_matriz]:
-                ult_pos[s.numero_matriz] = d
+    servicos_todos = session.exec(query_servico).all()
+    partos_todos = session.exec(query_parto).all()
+    # Serviço vigente positivo por matriz (não "o último diagnóstico positivo
+    # do histórico" cru) — uma vaca reinseminada sem diagnóstico ainda, com a
+    # prenhez já perdida, ou que já pariu depois daquele serviço não deve
+    # continuar contando "dias de gestação" de uma prenhez que não existe
+    # mais (ver fazenda.rules.perda_prenhez).
+    ult_pos: dict[str, object] = {
+        numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
+    }
     ult_parto: dict[str, object] = {}
-    for p in session.exec(query_parto).all():
+    for p in partos_todos:
         d = p.data_parto
         if d and (p.numero_matriz not in ult_parto or d > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = d
@@ -152,15 +160,18 @@ def estratificacao_rebanho(
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    partos_todos = session.exec(query_parto).all()
+    servicos_todos = session.exec(query_servico).all()
     ult_parto: dict[str, date] = {}
-    for p in session.exec(query_parto).all():
+    for p in partos_todos:
         if p.data_parto and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = p.data_parto
-    ult_pos: dict[str, date] = {}
-    for s in session.exec(query_servico).all():
-        if s.data_servico and (s.diagnostico or "").strip().upper() == "POSITIVO":
-            if s.numero_matriz not in ult_pos or s.data_servico > ult_pos[s.numero_matriz]:
-                ult_pos[s.numero_matriz] = s.data_servico
+    # Serviço vigente positivo por matriz — mesmo critério de listar_animais
+    # acima (ver fazenda.rules.perda_prenhez): não conta uma prenhez já
+    # perdida ou já substituída por uma reinseminação sem diagnóstico.
+    ult_pos: dict[str, date] = {
+        numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
+    }
 
     estratos = {
         "aleitamento_0_3m": 0, "recria_4_11m": 0, "recria_12_24m": 0,
@@ -243,9 +254,10 @@ def buscar_animal(
 
 
 def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
-    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as 4 linhas
-    D0/D7/D9/D11 são um único protocolo de IATF. Antes a ficha do animal
-    contava 4 IATFs onde houve 1, distorcendo o histórico reprodutivo."""
+    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as linhas
+    de um mesmo protocolo IATF (D0/D7/D9/D11 clássico, ou os dias livres de
+    um molde) são um único protocolo. Antes a ficha do animal contava um IATF
+    por etapa, distorcendo o histórico reprodutivo."""
     from fazenda.models import ProtocoloIatfLancamento
 
     por_lancamento: dict[int, list] = {}
@@ -257,7 +269,10 @@ def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
         aps = sorted(aps, key=lambda a: a.dia)
         lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
         d0 = next((a.data_prevista for a in aps if a.dia == 0), None)
-        d11 = next((a.data_prevista for a in aps if a.dia == 11), None)
+        # Inseminação = etapa de MAIOR dia deste protocolo — não necessariamente
+        # D11 (molde com dias livres desloca esse número).
+        maior_dia = max((a.dia for a in aps), default=None)
+        d11 = next((a.data_prevista for a in aps if a.dia == maior_dia), None) if maior_dia is not None else None
         linhas.append({
             "lancamento_id": lancamento_id,
             "nome_protocolo": lancamento.nome_protocolo if lancamento else "IATF",
@@ -470,6 +485,53 @@ def ficha_animal(
         {**p.model_dump(), "protocolo_nome": protocolos_nomes.get(p.protocolo_id, "—")} for p in protocolos_sanitarios_rows
     ]
 
+    # Indução de lactação e protocolo customizado — os dois protocolos que
+    # nunca tinham entrado na ficha, apesar de já existirem no sistema (um
+    # animal em indução ativa não mostrava nada aqui). Mesmo formato das
+    # demais seções: uma linha por etapa/dia, com o que foi feito e quando.
+    query_inducao = (
+        select(ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento)
+        .join(ProtocoloInducaoLancamento, ProtocoloInducaoAplicacao.lancamento_id == ProtocoloInducaoLancamento.id)
+        .where(ProtocoloInducaoAplicacao.numero_matriz == numero)
+    )
+    if fazenda_id is not None:
+        query_inducao = query_inducao.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
+    inducao_lactacao = [
+        {
+            "nome_protocolo": lanc.nome_protocolo,
+            "dia": ap.dia,
+            "descricao": ap.descricao or ap.observacao_manejo or "—",
+            "data_prevista": ap.data_prevista.isoformat() if ap.data_prevista else None,
+            "realizada": "Sim" if ap.realizada else "Não",
+            "data_realizacao": ap.data_realizacao.isoformat() if ap.data_realizacao else None,
+        }
+        for ap, lanc in sorted(
+            session.exec(query_inducao).all(), key=lambda r: (r[0].data_prevista or date.min, r[0].dia)
+        )
+    ]
+
+    query_custom = (
+        select(ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento)
+        .join(ProtocoloCustomizadoLancamento, ProtocoloCustomizadoAplicacao.lancamento_id == ProtocoloCustomizadoLancamento.id)
+        .where(ProtocoloCustomizadoAplicacao.numero_matriz == numero)
+    )
+    if fazenda_id is not None:
+        query_custom = query_custom.where(ProtocoloCustomizadoAplicacao.fazenda_id == fazenda_id)
+    protocolos_customizados = [
+        {
+            "nome_protocolo": lanc.nome_protocolo,
+            "dia": ap.dia - (lanc.dia_inicial or 0),
+            "descricao": ap.descricao or "—",
+            "insumo": ap.insumo or "—",
+            "data_prevista": ap.data_prevista.isoformat() if ap.data_prevista else None,
+            "realizada": "Sim" if ap.realizada else "Não",
+            "data_realizacao": ap.data_realizacao.isoformat() if ap.data_realizacao else None,
+        }
+        for ap, lanc in sorted(
+            session.exec(query_custom).all(), key=lambda r: (r[0].data_prevista or date.min, r[0].dia)
+        )
+    ]
+
     query_secagens = select(Secagem).where(Secagem.numero_matriz == numero)
     if fazenda_id is not None:
         query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
@@ -553,12 +615,23 @@ def ficha_animal(
         })
     linha_tempo_sanitaria.sort(key=lambda e: e["data"] or date.min)
 
+    # DEL AO VIVO (ver _del_dias_ao_vivo no topo do arquivo) — precisa ser
+    # calculado ANTES da previsão de secagem logo abaixo, que decide se o
+    # animal "está em lactação" a partir dele. `Animal.del_dias` fica
+    # congelado no valor do último GERAL.csv (zerado no instante do parto
+    # lançado no app, mas nunca atualizado por uma Secagem lançada depois) —
+    # usar o valor cru aqui fazia um animal recém-parido pelo app nunca
+    # ganhar previsão de secagem, e um animal recém-secado pelo app nunca
+    # perder a previsão (ver auditoria ago/2026).
+    ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
+    ultima_secagem_data = secagens[-1].data_secagem if secagens else None
+    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_data, ultima_secagem_data, date.today())
+
     # Previsão de parto / secagem: gestação em curso = último serviço positivo
     # (sem perda registrada) posterior ao último parto — mesma regra usada nas
     # Listas de manejo (relatorios_gerenciais), aqui aplicada a um único animal.
     previsao_parto = None
     previsao_secagem = None
-    ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
     servicos_positivos = [
         s for s in servicos
         if (s.diagnostico or "").strip().upper() == "POSITIVO" and not s.data_perda_prenhez
@@ -566,10 +639,14 @@ def ficha_animal(
     ]
     if servicos_positivos:
         concepcao = servicos_positivos[-1].data_servico
-        previsao_parto = concepcao + timedelta(days=GESTACAO_DIAS)
-        if (animal.del_dias or 0) > 0:
+        # Gestação da raça DESTE animal (Holandês 280, Girolando 287,
+        # Gir/Zebu 295) — usar 280 para todos previa o parto de um Gir 15 dias
+        # antes do real, e arrastava a secagem junto.
+        gestacao_do_animal = dias_gestacao_da_raca(animal.raca, GESTACAO_DIAS)
+        previsao_parto = concepcao + timedelta(days=gestacao_do_animal)
+        if (del_dias_vivo or 0) > 0:
             seco = int(get_param("periodo_seco_dias", 60) or 60)
-            previsao_secagem = concepcao + timedelta(days=GESTACAO_DIAS - seco)
+            previsao_secagem = concepcao + timedelta(days=gestacao_do_animal - seco)
             # Atraso implausível (parto/secagem que não foi lançado a tempo,
             # ver LIMITE_SECAGEM_RETROATIVA_DIAS) — mostra a data em que
             # deveria ter secado (60 dias antes do último parto) em vez da
@@ -592,12 +669,10 @@ def ficha_animal(
             "dias_para_parto": (previsao_parto - date.today()).days,
         }
 
-    # DEL e categoria AO VIVO (ver funções no topo do arquivo) — corrige o
-    # texto/número congelados do GERAL.csv quando há parto (e secagem) já
-    # lançados no app mais recentes do que o último import.
-    ultima_secagem_data = secagens[-1].data_secagem if secagens else None
+    # Categoria AO VIVO (ver _categoria_ao_vivo no topo do arquivo) — mesma
+    # ideia do del_dias_vivo calculado acima, para o texto de categoria.
     animal_dump = animal.model_dump()
-    animal_dump["del_dias"] = _del_dias_ao_vivo(animal_dump["del_dias"], ultimo_parto_data, ultima_secagem_data, date.today())
+    animal_dump["del_dias"] = del_dias_vivo
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
         animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
     )
@@ -619,6 +694,8 @@ def ficha_animal(
         "qualidade_leite": _dump(qualidade_leite),
         "aplicacoes_sanitarias": _dump(aplicacoes_sanitarias),
         "protocolos_sanitarios": protocolos_sanitarios,
+        "inducao_lactacao": inducao_lactacao,
+        "protocolos_customizados": protocolos_customizados,
         "secagens": _dump(secagens),
         "eventos_agenda": _dump(eventos_agenda),
         "baixa": baixa.model_dump() if baixa else None,

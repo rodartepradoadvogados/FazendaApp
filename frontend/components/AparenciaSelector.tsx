@@ -17,9 +17,9 @@ const TEMAS_APP = [
   { id: "escuro" as Tema, label: "Escuro", icon: Moon },
 ];
 const PALETAS = [
-  { id: "vinho" as Paleta, label: "Vinho", icon: Wine, title: "Paleta Vinho (padrão)" },
+  { id: "vinho" as Paleta, label: "Vinho", icon: Wine, title: "Paleta Vinho" },
   { id: "verde" as Paleta, label: "Verde", icon: Leaf, title: "Paleta Verde" },
-  { id: "azul" as Paleta, label: "Azul", icon: Droplet, title: "Paleta Azul" },
+  { id: "azul" as Paleta, label: "Azul", icon: Droplet, title: "Paleta Azul (padrão)" },
 ];
 
 /**
@@ -28,15 +28,15 @@ const PALETAS = [
  * independentes: trocar uma não mexe na outra.
  */
 export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "app" }) {
-  const [tema, setTema] = useState<Tema>("misto");
-  const [paleta, setPaleta] = useState<Paleta>("vinho");
+  const [tema, setTema] = useState<Tema>("claro");
+  const [paleta, setPaleta] = useState<Paleta>("azul");
 
   useEffect(() => {
     const el = document.documentElement;
-    const t = (el.getAttribute("data-theme") as Tema) || "misto";
-    const p = (el.getAttribute("data-paleta") as Paleta) || "vinho";
+    const t = (el.getAttribute("data-theme") as Tema) || "claro";
+    const p = (el.getAttribute("data-paleta") as Paleta) || "azul";
     setTema(variant === "app" && t === "misto" ? "claro" : t);
-    setPaleta(p === "verde" || p === "azul" ? p : "vinho");
+    setPaleta(p === "verde" || p === "vinho" ? p : "azul");
   }, [variant]);
 
   function mudarTema(t: Tema) {
@@ -49,11 +49,12 @@ export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "ap
   }
 
   if (variant === "app") {
+    // Sem seletor de Paleta aqui: o app de campo não segue mais data-paleta
+    // (ver comentário em globals.css) — o picker viraria um no-op dentro do
+    // app, então só sobra Tema (Claro/Escuro).
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "1.6rem", minHeight: "calc(100dvh - 150px)" }}>
         <TileGroup titulo="Tema" opcoes={TEMAS_APP} ativa={tema} onEscolher={mudarTema} />
-        <TileGroup titulo="Paleta" opcoes={PALETAS} ativa={paleta} onEscolher={mudarPaleta}
-          swatch={{ vinho: "var(--mob-vinho-fixo)", verde: "var(--mob-verde-fixo)", azul: "var(--mob-azul)" }} />
         <ReivindicarProprietario variant="app" />
       </div>
     );
@@ -113,7 +114,7 @@ function ReivindicarProprietario({ variant }: { variant: "site" | "app" }) {
         <button type="button" onClick={() => setConfirmando(true)}
           title="Assuma o Controle de Acesso e o relatório de Acessos e Auditoria — só é possível se ninguém mais já for o proprietário"
           className="flex items-center gap-2"
-          style={{ background: "none", border: `1px dashed ${corBorda}`, borderRadius: "10px", padding: "0.5rem 0.8rem", color: corMuted, cursor: "pointer", fontSize: "0.82rem" }}>
+          style={{ background: "none", border: `1px dashed ${corBorda}`, borderRadius: "var(--r-sm)", padding: "0.5rem 0.8rem", color: corMuted, cursor: "pointer", fontSize: "0.82rem" }}>
           <Mail size={15} /> Sou o proprietário — assumir Controle de Acesso
         </button>
       ) : (
@@ -155,7 +156,7 @@ function TileGroup<T extends string>({ titulo, opcoes, ativa, onEscolher, swatch
             <button key={o.id} type="button" onClick={() => onEscolher(o.id)} title={o.title}
               style={{
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "0.7rem",
-                borderRadius: "20px", cursor: "pointer", padding: "1rem",
+                borderRadius: "var(--r-sm)", cursor: "pointer", padding: "1rem",
                 border: ativo ? `2px solid ${cor || "var(--mob-dourado-2)"}` : "1px solid var(--mob-border)",
                 background: ativo ? `color-mix(in srgb, ${cor || "var(--mob-dourado-2)"} 16%, var(--mob-surface))` : "var(--mob-surface)",
                 color: "var(--mob-text)", fontWeight: 700, fontSize: "1rem",

@@ -11,8 +11,8 @@ export function LoginWatermark() {
     <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
       <div
         style={{
-          position: "absolute", top: "6vh", left: "50%", transform: "translateX(-50%)",
-          width: "clamp(220px, 30vw, 420px)", opacity: 0.16,
+          position: "absolute", top: "-24vh", left: "50%", transform: "translateX(-50%)",
+          width: "clamp(1440px, 234vw, 2880px)", opacity: 0.1,
         }}
       >
         <CowDataMark size="100%" variant="mono" color="#ffffff" />

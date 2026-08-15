@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, Servico
+from fazenda.models import Animal, Lote, Parto, Servico
 
 
 @pytest.fixture
@@ -96,6 +96,69 @@ class TestRegistrarDiagnostico:
         assert r.json()["retoque"] is False
         assert r.json()["diagnostico"] == "POSITIVO"
 
+    def test_reconfirmada_grava_nos_campos_de_reconfirmacao_sem_apagar_o_toque(self, client):
+        """Regressão (relato do produtor, ago/2026): selecionar "reconfirmada"
+        em Lançamentos > Diagnóstico de gestação (ex.: a partir da Agenda do
+        veterinário > Inseminadas 60+ dias) só desligava `retoque`, sem
+        gravar `data_reconfirmacao`/`diagnostico_reconfirmacao` — a matriz
+        nunca aparecia como reconfirmada em lugar nenhum (Agenda, roteiro,
+        histórico) e ainda perdia a data do 1º toque, sobrescrita pela data
+        da reconfirmação."""
+        client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "retoque",
+        })
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-20", "resultado": "reconfirmada",
+        })
+        corpo = r.json()
+        assert corpo["data_diagnostico"] == "2026-07-01"  # 1º toque preservado, não sobrescrito
+        assert corpo["data_reconfirmacao"] == "2026-07-20"
+        assert corpo["diagnostico_reconfirmacao"] == "POSITIVO"
+
+    def test_negativo_apos_retoque_grava_perda_na_reconfirmacao_sem_apagar_o_toque(self, client):
+        """2º exame (reconfirmação) vindo negativo — a matriz perdeu a
+        prenhez depois de já ter sido tocada positiva. Não pode sobrescrever
+        o 1º toque (que foi um resultado real, diferente) com NEGATIVO."""
+        client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "retoque",
+        })
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-20", "resultado": "negativo",
+        })
+        corpo = r.json()
+        assert corpo["diagnostico"] == "POSITIVO"  # 1º toque preservado
+        assert corpo["data_diagnostico"] == "2026-07-01"
+        assert corpo["diagnostico_reconfirmacao"] == "NEGATIVO"
+        assert corpo["data_reconfirmacao"] == "2026-07-20"
+        assert corpo["retoque"] is False
+
+    def test_reconfirmada_sai_da_lista_de_reconfirmacao_e_entra_em_gestantes(self, client_com_engine):
+        """Ponta a ponta: lançar "reconfirmada" pela tela de Diagnóstico de
+        gestação (POST /diagnostico, não /reconfirmacao) precisa tirar a
+        matriz da lista "Inseminadas 60+ dias — reconfirmação" e colocá-la em
+        "vacas_gestantes" no roteiro do veterinário — mesma verificação feita
+        pela Agenda do veterinário."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "401")).first()
+            animal.categoria_abrev = "Vaca"
+            s.add(animal)
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 5, 1),
+                data_diagnostico=date(2026, 6, 1), diagnostico="POSITIVO", retoque=True,
+                ult_ocorrencia=1,
+            ))
+            s.commit()
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-08-14", "resultado": "reconfirmada",
+        })
+        assert r.status_code == 200
+
+        r2 = c.get("/reproducao/agenda-veterinario", params={"data": "2026-08-14"})
+        listas = r2.json()["listas"]
+        assert not any(a["numero_matriz"] == "401" for a in listas["inseminadas_60_mais"])
+        assert any(a["numero_matriz"] == "401" for a in listas["vacas_gestantes"])
+
     def test_matriz_sem_servico_da_404(self, client):
         r = client.post("/reproducao/diagnostico", json={
             "numero_matriz": "999", "data_diagnostico": "2026-07-01", "resultado": "negativo",
@@ -114,7 +177,18 @@ class TestRegistrarDiagnostico:
         })
         assert r.status_code == 200
         assert r.json()["diagnostico"] == "INDEFINIDO"
-        assert r.json()["retoque"] is False
+
+    def test_indefinido_ja_entra_marcado_para_retoque(self, client):
+        # Regra definida pelo produtor: inconclusivo não é positivo, negativo
+        # nem "em aberto" — é um estado próprio, e a única saída dele é
+        # examinar de novo. Antes o retoque ficava False e a vaca dependia de
+        # alguém lembrar de voltar nela; agora o lembrete cai na agenda
+        # sozinho (agenda_engine.py só olha o flag, não o diagnóstico).
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "indefinido",
+        })
+        assert r.status_code == 200
+        assert r.json()["retoque"] is True
 
     def test_metodo_cio_de_repasse_persistido(self, client):
         r = client.post("/reproducao/diagnostico", json={
@@ -274,3 +348,42 @@ class TestRetoqueNaAgenda:
         r = client.get("/agenda/", params={"data": "2026-07-01"})
         eventos = r.json()["eventos"]
         assert not any("Retoque" in e["descricao"] for e in eventos)
+
+    def test_pariu_depois_do_servico_nao_gera_retoque(self, client_com_engine):
+        """Regressão (matriz 131, relato do produtor ago/2026): vaca com
+        retoque pendente que já pariu depois do serviço não deve continuar
+        recebendo o alerta de retoque na Agenda — o parto já resolveu a
+        gestação sozinho, com ou sem reconfirmação formal."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 4, 1),
+                data_diagnostico=date(2026, 5, 1), diagnostico="POSITIVO",
+                retoque=True, ult_ocorrencia=1,
+            ))
+            s.add(Parto(numero_matriz="401", data_parto=date(2026, 6, 19), ordem_parto=1))
+            s.commit()
+        r = c.get("/agenda/", params={"data": "2026-08-14"})
+        eventos = r.json()["eventos"]
+        assert not any(e["numero_animal"] == "401" and "Retoque" in e["descricao"] for e in eventos)
+
+    def test_lote_pre_parto_nao_gera_retoque(self, client_com_engine):
+        """Regressão (matrizes 145/429/430/432/433/435, relato do produtor
+        ago/2026): vaca com retoque pendente já movida para um lote
+        cadastrado com `pre_parto=True` não deve continuar recebendo o
+        alerta de retoque — a mudança de lote já reconhece a gestação."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "401")).first()
+            animal.grupo_primario = "09 - Pré-parto"
+            s.add(animal)
+            s.add(Lote(codigo="09", nome="Pré-parto", pre_parto=True))
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 6, 1),
+                data_diagnostico=date(2026, 7, 1), diagnostico="POSITIVO",
+                retoque=True, ult_ocorrencia=1,
+            ))
+            s.commit()
+        r = c.get("/agenda/", params={"data": "2026-08-14"})
+        eventos = r.json()["eventos"]
+        assert not any(e["numero_animal"] == "401" and "Retoque" in e["descricao"] for e in eventos)

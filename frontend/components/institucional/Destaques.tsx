@@ -29,7 +29,7 @@ export function FaixaNumeros({ itens }: { itens: { valor: string; rotulo: string
   return (
     <div style={{
       display: "grid", gridTemplateColumns: `repeat(${Math.min(itens.length, 4)}, 1fr)`, gap: "1rem",
-      padding: "1.4rem", borderRadius: "14px", background: "var(--surface-2)", border: "1px solid var(--border)",
+      padding: "1.4rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)",
     }} className="destaques-faixa-numeros">
       {itens.map((it) => (
         <div key={it.rotulo} style={{ textAlign: "center" }}>

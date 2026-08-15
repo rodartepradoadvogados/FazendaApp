@@ -38,8 +38,7 @@ ABAS_VALIDAS = [
 ]
 
 # Job-roles (Pessoa.tipo) que liberam "Delegar tarefa", além de Usuario.papel
-# == "admin". "Vet/Zootec." é um tipo combinado à parte e fica de fora — só os
-# tipos exatos abaixo (mais admin) contam.
+# == "admin".
 TIPOS_DELEGAM_TAREFA = {"Veterinário", "Zootecnista", "Geral"}
 
 

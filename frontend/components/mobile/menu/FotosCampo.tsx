@@ -15,6 +15,7 @@ import {
   fetchPortalDestinatarios, type FotoCampo, type PortalDestinatario,
 } from "@/lib/api";
 import { Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { MobConfirmModal } from "@/components/mobile/ui";
 import { useCache, SeletorAnimal, BotoesEscolha, MobPill, LinhaPills, type Animal as AnimalTipo } from "@/components/mobile/lancar/comum";
 import { PortalMencaoInput } from "@/components/PortalMencaoInput";
 import { redimensionarFoto } from "@/lib/imagem";
@@ -159,7 +160,7 @@ export default function FotosCampo() {
       ) : (
         <div className="mob-card" style={{ padding: "0.9rem", marginBottom: "1.1rem" }}>
           {/* Preview local — ainda não subiu, por isso <img> direto (sem passar pelo backend). */}
-          <img src={preview} alt="Prévia da foto" style={{ width: "100%", borderRadius: 10, display: "block", marginBottom: "0.7rem", maxHeight: 260, objectFit: "cover" }} />
+          <img src={preview} alt="Prévia da foto" style={{ width: "100%", borderRadius: "var(--r-app)", display: "block", marginBottom: "0.7rem", maxHeight: 260, objectFit: "cover" }} />
 
           <div style={{ fontSize: "0.78rem", fontWeight: 600, marginBottom: "0.3rem", color: "var(--mob-muted)" }}>Para (opcional)</div>
           <PortalMencaoInput opcoes={destinatariosOpcoes} selecionados={destinatarios} onChange={setDestinatarios} placeholder="Ninguém marcado = todos" />
@@ -220,7 +221,7 @@ export default function FotosCampo() {
               <Upload size={17} /> {enviando ? "Enviando…" : online ? "Enviar" : "Guardar para enviar depois"}
             </button>
             <button type="button" onClick={descartarPreview} disabled={enviando}
-              style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.85rem", fontWeight: 600, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: 10, padding: "0 0.9rem", cursor: "pointer" }}>
+              style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.85rem", fontWeight: 600, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: "var(--r-app)", padding: "0 0.9rem", cursor: "pointer" }}>
               <Trash2 size={15} /> Descartar
             </button>
           </div>
@@ -250,6 +251,7 @@ export default function FotosCampo() {
 
 function CartaoFotoPendente({ item }: { item: ItemOutbox }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [confirmarDescarte, setConfirmarDescarte] = useState(false);
 
   useEffect(() => {
     let cancelado = false;
@@ -265,19 +267,32 @@ function CartaoFotoPendente({ item }: { item: ItemOutbox }) {
   return (
     <div className="mob-card" style={{ padding: "0.5rem", position: "relative" }}>
       {url ? (
-        <img src={url} alt="Foto aguardando envio" style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: 8, display: "block", opacity: 0.75 }} />
+        <img src={url} alt="Foto aguardando envio" style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: "var(--r-app)", display: "block", opacity: 0.75 }} />
       ) : (
-        <div style={{ width: "100%", height: 130, borderRadius: 8, background: "var(--mob-surface-2)" }} />
+        <div style={{ width: "100%", height: 130, borderRadius: "var(--r-app)", background: "var(--mob-surface-2)" }} />
       )}
       <div style={{ marginTop: "0.4rem", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", color: item.erro ? "var(--mob-vermelho)" : "var(--mob-ambar)", fontWeight: 600 }}>
         <CloudUpload size={13} />
         {item.erro || ((item.tentativas || 0) > 0 ? `Aguardando envio (tentativa ${item.tentativas})…` : "Aguardando envio…")}
       </div>
       {item.erro && (
-        <button type="button" onClick={() => descartarPendente(item.id)}
-          style={{ marginTop: "0.35rem", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.74rem", fontWeight: 600, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: 8, padding: "0.25rem 0.5rem", cursor: "pointer" }}>
+        <button type="button" onClick={() => setConfirmarDescarte(true)}
+          style={{ marginTop: "0.35rem", display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.74rem", fontWeight: 600, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: "var(--r-app)", padding: "0.25rem 0.5rem", cursor: "pointer" }}>
           <Trash2 size={12} /> Descartar
         </button>
+      )}
+
+      {/* Descartar pendência — ação destrutiva e permanente (perde uma foto
+          já na fila offline), exige confirmação explícita. */}
+      {confirmarDescarte && (
+        <MobConfirmModal
+          titulo="Descartar foto?"
+          textoConfirmar="Descartar"
+          onCancelar={() => setConfirmarDescarte(false)}
+          onConfirmar={() => { descartarPendente(item.id); setConfirmarDescarte(false); }}
+        >
+          Esta foto ainda não foi enviada ao servidor. Descartar apaga o registro para sempre — não é possível desfazer.
+        </MobConfirmModal>
       )}
     </div>
   );
@@ -303,9 +318,9 @@ function CartaoFoto({ foto, onExcluida }: { foto: FotoCampo; onExcluida: () => v
   return (
     <div className="mob-card" style={{ padding: "0.5rem", position: "relative" }}>
       {url ? (
-        <img src={url} alt={foto.descricao || "Foto do campo"} style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: 8, display: "block" }} />
+        <img src={url} alt={foto.descricao || "Foto do campo"} style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: "var(--r-app)", display: "block" }} />
       ) : (
-        <div style={{ width: "100%", height: 130, borderRadius: 8, background: "var(--mob-surface-2)" }} />
+        <div style={{ width: "100%", height: 130, borderRadius: "var(--r-app)", background: "var(--mob-surface-2)" }} />
       )}
       <div style={{ marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--mob-muted)" }}>
         {new Date(foto.data_captura).toLocaleDateString("pt-BR")}

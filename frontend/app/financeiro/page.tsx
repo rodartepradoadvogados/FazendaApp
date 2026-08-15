@@ -2,25 +2,42 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat,
+  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   atualizarPlanoManutencaoPatrimonio, fetchManutencoesPatrimonio, registrarManutencaoPatrimonio,
+  criarPatrimonio, atualizarPatrimonio, atualizarValorMercadoPatrimonio, vincularLancamentoPatrimonio, fetchPatrimonioListaSimples, type PatrimonioPayload,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
-  atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  atualizarLancamentoFinanceiro, ehAdmin, ehConsultor, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
+  fetchSupabaseDashboardUrl,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
   fetchItensCenario, criarItemCenario, atualizarItemCenario, excluirItemCenario, fetchProjecaoCenario,
   importarParaPedido, type OrcamentoItemPayload, type CenarioPayload, type PlanejamentoItemPayload,
+  anexarArquivoLancamentoPorId, anexarComprovanteEmLote, listarAnexosLancamentoPorId, excluirAnexoLancamento, urlAnexoLancamento, type AnexoLancamento,
+  fetchCartoesCredito, fetchCartaoCredito, criarCartaoCredito, atualizarCartaoCredito, fetchExtratoCartao, fetchFaturasCartao,
+  criarLancamentoCartao, fecharFaturaCartao, pagarFaturaCartao,
+  type CartaoCredito, type CartaoCreditoPayload, type FaturaCartao, type LancamentoCartao,
+  marcarItemComoVale, desmarcarItemComoVale,
+  estornarPagamentoLancamento, type EstornoLancamentoOut,
+  fetchEstoque, fetchServicosCadastro,
 } from "@/lib/api";
+import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
+import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { ServicoPicker } from "@/components/ServicoPicker";
+import NovoItemEstoque from "@/components/NovoItemEstoque";
+import NovoServicoRapido from "@/components/NovoServicoRapido";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { FiltrosSalvos } from "@/components/FiltrosSalvos";
@@ -36,12 +53,17 @@ import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
 import { DocumentosFiscais } from "@/components/DocumentosFiscais";
 import LancamentosRecorrentesView from "@/components/LancamentosRecorrentesView";
+import { casaBusca } from "@/lib/busca";
 
 const COLUNAS_LANCAMENTOS = [
   { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
   { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
   { header: "Centro custo", key: "centro_custo" }, { header: "Documento", key: "documento" },
   { header: "Valor", key: "valor" }, { header: "Pago", key: "valor_pago" }, { header: "Conta bancária", key: "conta_bancaria" },
+  // Comprovante em arquivo (inclusive o comprovante único de um pagamento em
+  // lote, compartilhado por todas as notas da remessa) — ver
+  // `tem_comprovante` em listar_lancamentos no backend.
+  { header: "Comprovante", key: "comprovante_txt" },
 ];
 const COLUNAS_LIVRO = [
   { header: "Data", key: "dataFmt" }, { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
@@ -54,15 +76,21 @@ type Lanc = {
   centro_custo: string; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
   tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
+  // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
+  // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
+  tem_comprovante?: boolean;
   conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
   mes_competencia: string | null; mes_caixa: string | null;
-  itens?: { produto: string }[];
+  itens?: { id: number; produto: string; valor_total: number; descricao?: string | null;
+            eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
+            vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
   usuario_nome?: string | null;
+  patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -74,6 +102,7 @@ const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "custo_vaca_lote", label: "Custo por vaca/lote", icon: BarChart3, desc: "Despesas do período divididas pelo nº de vacas em lactação, por lote" },
   { id: "custo_safra", label: "Custo por safra", icon: BarChart3, desc: "Despesas do centro de custo e período da safra divididas por hectare/tonelada" },
   { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
+  { id: "compra_semen", label: "Compra de sêmen", icon: ShoppingCart, desc: "Consulta por touro, período, documento ou vendedor" },
 ];
 const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_pagar", label: "Contas a pagar", icon: Clock, desc: "Despesas em aberto (sem data de pagamento)" },
@@ -96,7 +125,7 @@ const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
 ];
 const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
-const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 // "2026-07" → "jul/2026" (rótulo legível do mês de competência)
@@ -199,6 +228,15 @@ export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rel, setRel] = useState<Rel>("a_pagar");
+  // Link pro banco de dados externo (Supabase) — só busca quando o usuário
+  // entra numa sub-aba de Relatórios financeiros, e só se não for consultor
+  // (backend já bloqueia; aqui é só pra não mostrar o botão à toa).
+  const [supabaseUrl, setSupabaseUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (RELATORIOS.some((r) => r.id === rel) && !ehConsultor() && supabaseUrl === null) {
+      fetchSupabaseDashboardUrl().then((d) => setSupabaseUrl(d.url || "")).catch(() => setSupabaseUrl(""));
+    }
+  }, [rel]);
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
@@ -215,7 +253,10 @@ export default function FinanceiroPage() {
   // Pagamento/Recebimento vindo da lista de Contas a pagar/receber ou da Agenda.
   const [notaAlvoRef, setNotaAlvoRef] = useState<string | null>(null);
   const [editando, setEditando] = useState<Lanc | null>(null);
-  const [recibo, setRecibo] = useState<Lanc | null>(null);
+  // #— bug do recibo: além do Lanc em si, carrega a(s) parcela(s) nova(s)
+  // criada(s) pelo reparcelamento do restante não pago nesta baixa (quando
+  // houver) — ver `reparcelamentoDoRecibo` logo abaixo.
+  const [recibo, setRecibo] = useState<(Lanc & { reparcelamento?: { valor: number; data_vencimento: string | null; parcela_num: number | null }[] }) | null>(null);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [visaoFluxo, setVisaoFluxo] = useState<"mensal" | "diario">("mensal");
   // Opções de fornecedor/cliente e produto/serviço para os filtros dos relatórios.
@@ -251,6 +292,28 @@ export default function FinanceiroPage() {
     if ("relContaNome" in f) setRelContaNome(f.relContaNome || "");
   }
 
+  // Acha, entre TODOS os lançamentos carregados (`regs`), a(s) parcela(s)
+  // nova(s) que nasceram do reparcelamento do restante desta baixa parcial —
+  // ver PUT /financeiro/lancamentos/{id}/pagar (`parcelas_diferenca`): elas
+  // compartilham numero_lancamento, ainda não têm data_pagamento e a soma
+  // delas bate com a diferença (valor da conta − valor pago). Sem essa soma
+  // bater, não arrisca mostrar parcelas de outro reparcelamento/pendência
+  // não relacionada — o recibo simplesmente não exibe a seção.
+  function reparcelamentoDoRecibo(l: Lanc): { valor: number; data_vencimento: string | null; parcela_num: number | null }[] {
+    if (l.valor_pago == null) return [];
+    const restante = Math.round((l.valor - l.valor_pago) * 100) / 100;
+    // desconto_acrescimo != 0 nesta baixa significa que a diferença foi
+    // absorvida como desconto/acréscimo, não reparcelada — nada a mostrar.
+    if (restante <= 0 || Math.round((l.desconto_acrescimo || 0) * 100) !== 0 || !l.numero_lancamento || !regs) return [];
+    const candidatas = regs.filter((s) =>
+      s.numero_lancamento === l.numero_lancamento && s.id !== l.id &&
+      !s.data_pagamento && s.valor_pago == null && (s.parcela_num ?? 0) > (l.parcela_num ?? 0),
+    );
+    const soma = Math.round(candidatas.reduce((acc, s) => acc + (s.valor || 0), 0) * 100) / 100;
+    if (!candidatas.length || soma !== restante) return [];
+    return candidatas.map((s) => ({ valor: s.valor, data_vencimento: s.data_vencimento, parcela_num: s.parcela_num }));
+  }
+
   const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
     recarregar();
@@ -269,6 +332,12 @@ export default function FinanceiroPage() {
     const ir = qs.get("ir");
     if (ir === "a_pagar") setRel("pagamento");
     else if (ir === "a_receber") setRel("recebimento");
+    // "folha" — vem do card de diária da Agenda ("Contar diária"/"Descartar
+    // diária" clicam no card, não nos botões, pra abrir direto em Financeiro
+    // > Ações > Folha de pagamento; a sub-aba/diária específica dentro dela é
+    // lida pelo próprio FolhaPagamentoView a partir de categoria/diaria/
+    // calendario, ver useEffect lá).
+    else if (ir === "folha") setRel("folha");
     else if (ir && ["pagas", "recebidas", "extrato"].includes(ir)) setRel(ir as Rel);
     const ref = qs.get("ref");
     if (ref) setNotaAlvoRef(ref);
@@ -281,10 +350,11 @@ export default function FinanceiroPage() {
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    // Patrimônio e Documentos são destinos únicos — viram folha direta (sem
-    // grupo "guarda-chuva" de 1 item só), economizando um nível/clique da
-    // árvore de navegação.
+    // Patrimônio, Cartão de crédito e Documentos são destinos únicos — viram
+    // folha direta (sem grupo "guarda-chuva" de 1 item só), economizando um
+    // nível/clique da árvore de navegação.
     { id: "patrimonio", label: "Patrimônio", icon: Building2 },
+    { id: "cartao_credito", label: "Cartão de crédito", icon: CreditCard },
     { id: "documentos", label: "Documentos", icon: Paperclip },
   ], []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
@@ -298,12 +368,22 @@ export default function FinanceiroPage() {
     // Contas em aberto/pagas (CONTAS_IDS) não ganham período padrão: a lista
     // "filtrados" já trata ausência de período como "mostra tudo" — contas
     // vencidas ou a vencer não podem sumir por um filtro implícito de hoje.
-    // O padrão hoje-hoje vale só para os relatórios (Fluxo, DRE, Livro Caixa
-    // etc.), que precisam de algum período para não ficar vazios.
+    // O padrão vale só para os relatórios (Fluxo, DRE, Livro Caixa etc.),
+    // que precisam de algum período para não ficar vazios.
+    //
+    // BUG corrigido: o padrão era literalmente hoje-hoje (1 dia só). Isso
+    // esconde qualquer lançamento cuja data de competência não seja HOJE —
+    // o que é o caso da imensa maioria dos lançamentos "automáticos" de RH
+    // (Rescisão/Férias/13º/Folha usam a data do evento — desligamento,
+    // competência etc. — não o dia em que o usuário clicou em "Fechar"), e
+    // foi relatado como "rescisão fechada não aparece na DRE". Mês corrente
+    // (1º dia até hoje) é um padrão muito mais útil e ainda "só um período",
+    // sem virar uma varredura de todo o histórico.
     if (regs && !inicio && !CONTAS_IDS.has(rel)) {
-      const hoje = new Date().toISOString().slice(0, 10);
-      setInicio(hoje);
-      setFim(hoje);
+      const hoje = new Date();
+      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+      setInicio(inicioMes);
+      setFim(hoje.toISOString().slice(0, 10));
     }
   }, [regs, inicio, rel]);
 
@@ -368,20 +448,35 @@ export default function FinanceiroPage() {
         const d = campoData(r);
         // Início e fim funcionam como limites independentes — só um dos dois
         // já filtra (ex.: só "início" = "a partir desta data em diante").
-        // Lançamento sem data nesse campo não some por um filtro que ele não
-        // tem como satisfazer.
-        const dentroPeriodo = (!inicio || !d || d >= inicio) && (!fim || !d || d <= fim);
+        // BUG corrigido: antes, um lançamento sem data nesse campo passava
+        // SEMPRE, mesmo com início/fim escolhidos pelo usuário — o filtro de
+        // período (e, por tabela, o de centro de custo junto dele) parecia
+        // simplesmente não fazer nada, porque a maioria das contas em aberto
+        // não tem "data de pagamento" preenchida. Agora esse "não filtra por
+        // falta de dado" só vale quando NENHUM período foi definido (início E
+        // fim vazios) — que é o caso que a regra original queria cobrir.
+        const semPeriodoDefinido = !inicio && !fim;
+        const dentroPeriodo = semPeriodoDefinido || (d != null && d !== "" && (!inicio || d >= inicio) && (!fim || d <= fim));
         return dentroPeriodo && (!centro || r.centro_custo === centro) && (!contaBanco || r.conta_bancaria === contaBanco);
       });
     }
-    if (!regs || !inicio || !fim) return [];
+    if (!regs) return [];
+    // Busca por documento é GLOBAL: quem digita um número de nota quer achar
+    // aquela nota, não "aquela nota dentro deste período e deste centro de
+    // custo". Antes, procurar uma NF exigia acertar antes o período — e a
+    // data comparada aqui é a de PAGAMENTO, então uma compra a prazo (nota de
+    // sêmen parcelada, por exemplo) era descartada antes de o filtro de
+    // documento sequer rodar: a nota existia e simplesmente não aparecia.
+    const buscaPorDocumento = !!relDocumento.trim();
+    if (!buscaPorDocumento && (!inicio || !fim)) return [];
     return regs.filter((r) => {
       const d = campoData(r);
-      if (!(d && d >= inicio && d <= fim && (!centro || r.centro_custo === centro))) return false;
+      if (!buscaPorDocumento && !(d && d >= inicio && d <= fim)) return false;
+      if (!buscaPorDocumento && centro && r.centro_custo !== centro) return false;
       if (relTipo && r.tipo !== relTipo) return false;
       if (relFornecedor && r.fornecedor !== relFornecedor) return false;
       if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
-      if (relDocumento && !((r.numero_documento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(relDocumento.toLowerCase()))) return false;
+      if (relDocumento && !casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, relDocumento)) return false;
       if (!casaContaGerencial(r, relConta)) return false;
       return true;
     });
@@ -507,16 +602,23 @@ export default function FinanceiroPage() {
   });
   const pagLivro = usePaginacao(livroOrdenado);
 
-  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+      <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
+        </div>
+        {RELATORIOS.some((r) => r.id === rel) && !!supabaseUrl && (
+          <a href={supabaseUrl} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
+            <Layers size={13} /> Banco de dados (Supabase)
+          </a>
+        )}
       </div>
 
-      {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o CONTA_GERENCIAL</a>.</span></div>}
+      {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && regs.length === 0 && !error && (
@@ -524,7 +626,7 @@ export default function FinanceiroPage() {
           <BarChart3 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
           <p style={{ color: "var(--text-muted)" }}>Nenhum lançamento financeiro no banco.</p>
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload</a>.
+            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.
             Se você já subiu e sumiu, o banco de produção não está persistindo — confira o Postgres no Railway.
           </p>
         </div>
@@ -532,6 +634,7 @@ export default function FinanceiroPage() {
 
       {regs && regs.length > 0 && <>
         {rel === "patrimonio" ? <PatrimonioView />
+          : rel === "cartao_credito" ? <CartaoCreditoView />
           : rel === "documentos" ? <DocumentosFiscais />
           : rel === "recorrentes" ? <LancamentosRecorrentesView onFeito={recarregar} />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
@@ -543,6 +646,7 @@ export default function FinanceiroPage() {
           : rel === "custo_vaca_lote" ? <CustoVacaLoteView />
           : rel === "custo_safra" ? <CustoSafraView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
+          : rel === "compra_semen" ? <RelatorioCompraSemenView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
         {/* Filtros */}
@@ -609,7 +713,8 @@ export default function FinanceiroPage() {
           <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
             onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
             onEditar={(l) => setEditando(l)}
-            onRecibo={(l) => setRecibo(l)} />
+            onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
+            onEstornado={recarregar} />
         ) : <>
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -896,7 +1001,8 @@ export default function FinanceiroPage() {
           <FormEditarLancamento lanc={editando} centros={centros} planoContas={planoContas} produtos={opcoesProdutoRel}
             fornecedores={opcoesRel.fornecedores}
             onCancelar={() => setEditando(null)}
-            onSalvo={() => { setEditando(null); recarregar(); }} />
+            onSalvo={() => { setEditando(null); recarregar(); }}
+            onVerRelatorioVales={() => { setEditando(null); setRel("folha"); }} />
         </Modal>
       )}
       {recibo && <ReciboModal lanc={recibo} onClose={() => setRecibo(null)} />}
@@ -906,7 +1012,7 @@ export default function FinanceiroPage() {
 
 const selStyleLote: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 // Cabeçalho fixo ao rolar as tabelas de notas (Contas a pagar/receber/pagas/
@@ -950,6 +1056,12 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
   const patchLinha = (id: number, patch: Partial<LinhaPag>) => setPorLinha((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  // Comprovante em ARQUIVO da remessa — o banco emite um só para o lote
+  // inteiro, e ele precisa aparecer em todas as notas daquele pagamento no
+  // relatório de Contas pagas. Diferente de `numeroComprovante`, que é apenas
+  // o número digitado. Sobe DEPOIS da baixa confirmada: sem baixa não há o
+  // que comprovar, e assim uma falha no upload nunca desfaz o pagamento.
+  const [comprovanteArquivo, setComprovanteArquivo] = useState<File | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
@@ -976,7 +1088,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
     return regs.filter((r) =>
       !r.data_pagamento &&
       (tipoFiltro === "todos" || r.tipo === tipoFiltro) &&
-      (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+      casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, numeroDocumento) &&
       (!fornecedor || r.fornecedor === fornecedor) &&
       (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
       (!centroCusto || r.centro_custo === centroCusto) &&
@@ -1045,8 +1157,23 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           numero_documento_pagamento: numeroComprovante || undefined,
         });
       }
-      setMsg({ tipo: "sucesso", texto: `${r.baixados} lançamento(s) baixado(s) com sucesso.` });
-      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({});
+      // Comprovante do lote: sobe DEPOIS da baixa, sobre os ids que acabaram
+      // de ser baixados. Se o upload falhar, a baixa continua valendo — o
+      // aviso diferencia os dois casos para o usuário saber o que refazer.
+      let aviso = `${r.baixados} lançamento(s) baixado(s) com sucesso.`;
+      if (comprovanteArquivo) {
+        try {
+          const a = await anexarComprovanteEmLote(Array.from(selecionados), comprovanteArquivo);
+          aviso += ` Comprovante "${a.nome_arquivo}" anexado a ${a.anexados} lançamento(s).`;
+        } catch (e: any) {
+          setMsg({ tipo: "erro", texto: `Baixa concluída, mas o comprovante não foi anexado: ${e.message}. Anexe pela tela de pagamento.` });
+          setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
+          carregar(); onFeito?.();
+          return;
+        }
+      }
+      setMsg({ tipo: "sucesso", texto: aviso });
+      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
       carregar();
       onFeito?.();
     } catch (e: any) {
@@ -1065,8 +1192,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtros</span>
-          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
-            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          <button className="btn-ghost" title="Abre um lançamento NOVO a partir de um documento (nota fiscal, boleto ou recibo) — leitura automática, não anexa a nenhuma nota já existente" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Lançar por nota fiscal, boleto ou recibo…
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1111,7 +1238,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
         </ModalDivididoDocumento>
       )}
 
-      <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
           <span style={{ fontSize: "0.85rem" }}>
             {filtrados.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}
@@ -1224,7 +1351,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                           </td>
                           <td style={{ textAlign: "right", color: n.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(n.valor)}</td>
                           <td><input type="date" style={{ ...selStyleLote, minWidth: 130 }} value={l.data} onChange={(e) => patchLinha(n.id, { data: e.target.value })} /></td>
-                          <td><input type="number" inputMode="decimal" style={{ ...selStyleLote, width: 100 }} value={l.valor} onChange={(e) => patchLinha(n.id, { valor: e.target.value })} /></td>
+                          <td><CampoMoeda style={{ ...selStyleLote, width: 100 }} value={Number(l.valor) || 0} onChange={(v) => patchLinha(n.id, { valor: v ? String(v) : "" })} /></td>
                           <td>
                             <select style={{ ...selStyleLote, minWidth: 110 }} value={l.conta} onChange={(e) => patchLinha(n.id, { conta: e.target.value })}>
                               <option value="">—</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
@@ -1243,6 +1370,29 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+          {/* Comprovante único da remessa — vale para os dois modos (pagamento
+              igual para todas ou linha a linha): o que define o lote é a
+              seleção, não o modo. Fica fora do card de "pagamento único" por
+              isso. */}
+          {selecionados.size > 0 && (
+            <div className="card mb-4">
+              <div className="card-header mb-2">Comprovante do lote <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.75rem" }}>(opcional)</span></div>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>
+                Um arquivo só — o mesmo comprovante fica vinculado às {selecionados.size} nota(s) selecionada(s) e aparece
+                no relatório de Contas pagas de cada uma.
+              </p>
+              {comprovanteArquivo ? (
+                <div className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+                  <FileText size={14} style={{ color: "var(--dourado-light)" }} />
+                  <span>{comprovanteArquivo.name}</span>
+                  <button type="button" onClick={() => setComprovanteArquivo(null)} className="btn-ghost" title="Remover comprovante" aria-label="Remover comprovante"><X size={14} /></button>
+                </div>
+              ) : (
+                <Dropzone compact label="Arraste o comprovante do pagamento" hint="PDF ou imagem, até 15 MB"
+                  onFiles={(fs) => setComprovanteArquivo(fs[0] || null)} />
+              )}
             </div>
           )}
           {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
@@ -1268,6 +1418,10 @@ type ItemPatrimonio = {
   frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
   data_proxima_manutencao: string | null; observacao_manutencao: string | null;
   situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
+  // Não depreciável (ex.: terra) — acompanha valor de mercado em vez de depreciar.
+  depreciavel: boolean; valor_mercado_atual: number | null;
+  data_ultima_atualizacao_valor_mercado: string | null; atualizacao_valor_mercado_frequencia_meses: number | null;
+  proxima_atualizacao_valor_mercado: string | null;
 };
 type InconsistenciaPatrimonio = { item: string; numero: string | null; motivo: string };
 
@@ -1290,9 +1444,23 @@ function SeloManutencao({ item }: { item: ItemPatrimonio }) {
 }
 
 function PatrimonioView() {
+  if (!ehAdmin()) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+        <Building2 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
+        <p style={{ color: "var(--text-muted)" }}>Controle Financeiro &gt; Patrimônio é restrito a administradores da fazenda.</p>
+      </div>
+    );
+  }
+  return <PatrimonioViewAdmin />;
+}
+
+function PatrimonioViewAdmin() {
   const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number; inconsistencias: InconsistenciaPatrimonio[] } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
+  const [itemEditando, setItemEditando] = useState<ItemPatrimonio | "novo" | null>(null);
+  const [itemValorMercado, setItemValorMercado] = useState<ItemPatrimonio | null>(null);
 
   const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
   useEffect(carregar, []);
@@ -1313,7 +1481,7 @@ function PatrimonioView() {
     proximaManutencao: (i) => i.data_proxima_manutencao || "",
   });
 
-  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o LISTA_DE_PATRIMONIO.csv</a>.</span></div>;
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe o patrimônio</a>.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
   if (!dados.itens.length) {
     return (
@@ -1321,7 +1489,7 @@ function PatrimonioView() {
         <Building2 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
         <p style={{ color: "var(--text-muted)" }}>Nenhum item de patrimônio no banco.</p>
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-          Suba o <strong>LISTA_DE_PATRIMONIO.csv</strong> na tela de <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload</a>.
+          Suba o <strong>LISTA_DE_PATRIMONIO.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>.
         </p>
       </div>
     );
@@ -1360,7 +1528,12 @@ function PatrimonioView() {
         </div>
       )}
       <div className="card">
-        <div className="card-header mb-3">Bens</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span>Bens</span>
+          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setItemEditando("novo")}>
+            <Plus size={13} /> Novo patrimônio
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead>
@@ -1385,26 +1558,47 @@ function PatrimonioView() {
               {bensOrdenados.map((i) => (
                 <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
-                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{i.nome}</td>
+                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
+                    {i.nome}
+                    {!i.depreciavel && <span title="Não depreciável — acompanha valor de mercado" style={{ marginLeft: "0.35rem", fontSize: "0.68rem", color: "var(--dourado-light)", border: "1px solid var(--dourado)", borderRadius: "999px", padding: "0.05rem 0.4rem" }}>valor de mercado</span>}
+                  </td>
                   <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.metodo_depreciacao || "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.vida_util || "—"}</td>
-                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_depreciacao || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.vida_util || "—") : "—"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.depreciavel && i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
-                    {i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
+                    {!i.depreciavel ? "—" : i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
                   <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
-                  <td>{i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span> : <SeloManutencao item={i} />}</td>
                   <td>
-                    {!i.data_baixa && (
-                      <button className="btn-ghost" title="Plano de manutenção" style={{ padding: "0.25rem" }} onClick={() => setItemManutencao(i)}>
-                        <Wrench size={14} />
+                    {i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span>
+                      : i.depreciavel ? <SeloManutencao item={i} />
+                      : i.proxima_atualizacao_valor_mercado ? (
+                        <span style={{ fontSize: "0.75rem", color: new Date(i.proxima_atualizacao_valor_mercado) < new Date() ? "var(--red)" : "var(--text-muted)" }}>
+                          Atualizar valor até {formatDate(i.proxima_atualizacao_valor_mercado)}
+                        </span>
+                      ) : <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Sem agenda</span>}
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-1">
+                      <button className="btn-ghost" title="Editar" style={{ padding: "0.25rem" }} onClick={() => setItemEditando(i)}>
+                        <Pencil size={14} />
                       </button>
-                    )}
+                      {!i.data_baixa && i.depreciavel && (
+                        <button className="btn-ghost" title="Plano de manutenção" style={{ padding: "0.25rem" }} onClick={() => setItemManutencao(i)}>
+                          <Wrench size={14} />
+                        </button>
+                      )}
+                      {!i.data_baixa && !i.depreciavel && (
+                        <button className="btn-ghost" title="Atualizar valor de mercado" style={{ padding: "0.25rem" }} onClick={() => setItemValorMercado(i)}>
+                          <TrendingUp size={14} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1415,7 +1609,179 @@ function PatrimonioView() {
       {itemManutencao && (
         <ModalManutencaoPatrimonio item={itemManutencao} onClose={() => setItemManutencao(null)} onSalvo={() => { carregar(); }} />
       )}
+      {itemEditando && (
+        <ModalNovoPatrimonio item={itemEditando === "novo" ? null : itemEditando} onClose={() => setItemEditando(null)} onSalvo={() => { setItemEditando(null); carregar(); }} />
+      )}
+      {itemValorMercado && (
+        <ModalValorMercadoPatrimonio item={itemValorMercado} onClose={() => setItemValorMercado(null)} onSalvo={() => { setItemValorMercado(null); carregar(); }} />
+      )}
     </>
+  );
+}
+
+/** Cadastro manual de um item de patrimônio (substitui o upload de CSV) —
+ * cria diretamente, ou, se marcado "é uma compra agora?", redireciona para
+ * Lançar > Financeiro > Contas a pagar com o item pré-preenchido; a criação
+ * de fato acontece quando ESSE lançamento for salvo (ver FormFinanceiro e
+ * POST /financeiro/lancamentos, campo criar_patrimonio). */
+function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio | null; onClose: () => void; onSalvo: () => void }) {
+  const [ehCompraAgora, setEhCompraAgora] = useState(false);
+  const [nome, setNome] = useState(item?.nome || "");
+  const [tipo, setTipo] = useState(item?.tipo || "");
+  const [numero, setNumero] = useState(item?.numero || "");
+  const [dataImobilizacao, setDataImobilizacao] = useState(item?.data_imobilizacao || "");
+  const [quantidade, setQuantidade] = useState(item?.quantidade != null ? String(item.quantidade) : "");
+  const [unidade, setUnidade] = useState(item?.unidade || "");
+  const [valorTotal, setValorTotal] = useState(item?.valor_total != null ? String(item.valor_total) : "");
+  const [depreciavel, setDepreciavel] = useState(item?.depreciavel ?? true);
+  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "");
+  const [vidaUtil, setVidaUtil] = useState(item?.vida_util || "");
+  const [valorResidual, setValorResidual] = useState(item?.valor_residual != null ? String(item.valor_residual) : "");
+  const [frequenciaValorMercado, setFrequenciaValorMercado] = useState(
+    item?.atualizacao_valor_mercado_frequencia_meses != null ? String(item.atualizacao_valor_mercado_frequencia_meses) : ""
+  );
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
+    const payload: PatrimonioPayload = {
+      nome: nome.trim(), tipo: tipo || null, numero: numero || null,
+      data_imobilizacao: dataImobilizacao || null,
+      quantidade: quantidade ? Number(quantidade) : null, unidade: unidade || null,
+      valor_total: valorTotal ? Number(valorTotal) : null,
+      depreciavel,
+      metodo_depreciacao: depreciavel ? (metodoDepreciacao || null) : null,
+      vida_util: depreciavel ? (vidaUtil || null) : null,
+      valor_residual: depreciavel && valorResidual ? Number(valorResidual) : null,
+      atualizacao_valor_mercado_frequencia_meses: !depreciavel && frequenciaValorMercado ? Number(frequenciaValorMercado) : null,
+    };
+    if (ehCompraAgora && !item) {
+      const params = new URLSearchParams({
+        ir: "financeiro_despesa", patrimonio_nome: payload.nome,
+        patrimonio_tipo: payload.tipo || "", patrimonio_valor: payload.valor_total != null ? String(payload.valor_total) : "",
+        patrimonio_depreciavel: depreciavel ? "1" : "0",
+      });
+      window.location.href = `/lancamentos?${params.toString()}`;
+      return;
+    }
+    setSalvando(true); setErro("");
+    try {
+      if (item) await atualizarPatrimonio(item.id, payload);
+      else await criarPatrimonio(payload);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={item ? `Editar patrimônio — ${item.nome}` : "Novo patrimônio"} onClose={onClose} width="640px">
+      <div className="space-y-3">
+        {!item && (
+          <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", background: "var(--surface-2)", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)" }}>
+            <input type="checkbox" checked={ehCompraAgora} onChange={(e) => setEhCompraAgora(e.target.checked)} />
+            É uma compra agora? (leva para Lançar &gt; Financeiro já com estes dados — o patrimônio é criado junto com o lançamento)
+          </label>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div style={{ gridColumn: "1 / -1" }}><label style={label}>Nome</label>
+            <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Trator Massey Ferguson" /></div>
+          <div><label style={label}>Tipo</label>
+            <input style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="ex.: Máquinas, Terra, Benfeitoria" /></div>
+          <div><label style={label}>Nº patrimônio</label>
+            <input style={inputStyle} value={numero} onChange={(e) => setNumero(e.target.value)} /></div>
+          <div><label style={label}>Data de imobilização</label>
+            <input type="date" style={inputStyle} value={dataImobilizacao} onChange={(e) => setDataImobilizacao(e.target.value)} /></div>
+          <div><label style={label}>Valor {depreciavel ? "de aquisição" : "inicial (de mercado)"} (R$)</label>
+            <CampoMoeda style={inputStyle} value={Number(valorTotal) || 0} onChange={(v) => setValorTotal(v ? String(v) : "")} /></div>
+          <div><label style={label}>Quantidade</label>
+            <input type="number" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></div>
+          <div><label style={label}>Unidade</label>
+            <input style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} /></div>
+        </div>
+
+        <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
+          <button type="button" className={depreciavel ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }} onClick={() => setDepreciavel(true)}>Deprecia normalmente</button>
+          <button type="button" className={!depreciavel ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }} onClick={() => setDepreciavel(false)}>
+            Não depreciável (ex.: terra) — só valoriza
+          </button>
+        </div>
+
+        {depreciavel ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div><label style={label}>Método de depreciação</label>
+              <input style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)} placeholder="ex.: Linear" /></div>
+            <div><label style={label}>Vida útil</label>
+              <input style={inputStyle} value={vidaUtil} onChange={(e) => setVidaUtil(e.target.value)} placeholder="ex.: 10 Anos" /></div>
+            <div><label style={label}>Valor residual (R$)</label>
+              <CampoMoeda style={inputStyle} value={Number(valorResidual) || 0} onChange={(v) => setValorResidual(v ? String(v) : "")} /></div>
+          </div>
+        ) : (
+          <div>
+            <label style={label}>Frequência de atualização do valor de mercado (meses)</label>
+            <input type="number" min={0} style={{ ...inputStyle, maxWidth: "220px" }} value={frequenciaValorMercado}
+              onChange={(e) => setFrequenciaValorMercado(e.target.value)} placeholder="vazio = usa o padrão do sistema; 0 = nunca" />
+          </div>
+        )}
+
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>
+            {salvando ? "Salvando…" : ehCompraAgora && !item ? "Ir para o lançamento" : "Salvar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Registra uma nova avaliação de valor de mercado — só para patrimônio não
+ * depreciável (ver ItemPatrimonio.depreciavel). */
+function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
+  const [valor, setValor] = useState(item.valor_mercado_atual != null ? String(item.valor_mercado_atual) : "");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!valor) { setErro("Informe o valor de mercado."); return; }
+    setSalvando(true); setErro("");
+    try {
+      await atualizarValorMercadoPatrimonio(item.id, Number(valor), data);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={`Atualizar valor de mercado — ${item.nome}`} onClose={onClose} width="420px">
+      <div className="space-y-3">
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          Última avaliação: {item.valor_mercado_atual != null ? formatBRL(item.valor_mercado_atual) : "—"}
+          {item.data_ultima_atualizacao_valor_mercado ? ` (${formatDate(item.data_ultima_atualizacao_valor_mercado)})` : ""}
+        </p>
+        <div><label style={label}>Novo valor de mercado (R$)</label>
+          <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
+        <div><label style={label}>Data da avaliação</label>
+          <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1489,7 +1855,7 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
 
   const inputStyle: React.CSSProperties = {
     background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
   };
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -1529,7 +1895,7 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
                 <div><label style={label}>Data da manutenção</label>
                   <input type="date" style={inputStyle} value={dataRealizacao} onChange={(e) => setDataRealizacao(e.target.value)} /></div>
                 <div><label style={label}>Valor (R$)</label>
-                  <input style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0,00" /></div>
+                  <CampoMoeda style={inputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
                 <div><label style={label}>Fornecedor/Oficina</label>
                   <input style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
                 <div><label style={label}>Descrição do serviço</label>
@@ -1598,9 +1964,394 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
   );
 }
 
+// ─────────────────────── Cartão de crédito ───────────────────────
+const cartaoInputStyle: React.CSSProperties = {
+  background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+  borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+};
+const cartaoLabelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+function CartaoVisual({ cartao }: { cartao: CartaoCredito }) {
+  return (
+    <div style={{
+      background: "linear-gradient(135deg, var(--vinho, #0E2A47) 0%, var(--vinho-dark, #0A1F36) 100%)",
+      borderRadius: "var(--r-sm)", padding: "1rem 1.1rem", color: "#fff", display: "grid", gap: "0.5rem",
+      position: "relative", overflow: "hidden", minHeight: "110px",
+    }}>
+      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 85% 15%, rgba(232,199,102,0.25), transparent 55%)" }} />
+      <div style={{ fontSize: "0.68rem", letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.85, position: "relative" }}>
+        {cartao.banco_emissor || "Cartão de crédito"}
+      </div>
+      <div style={{ fontSize: "1.05rem", fontWeight: 700, position: "relative" }}>{cartao.apelido}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", opacity: 0.9, position: "relative" }}>
+        <span>Fecha dia {cartao.dia_fechamento} · Vence dia {cartao.dia_vencimento}</span>
+        {cartao.bandeira && <span style={{ fontStyle: "italic", color: "#C9A44C" }}>{cartao.bandeira}</span>}
+      </div>
+      {!cartao.ativo && <span style={{ fontSize: "0.68rem", opacity: 0.85, position: "relative" }}>Inativo</span>}
+    </div>
+  );
+}
+
+function CartaoCreditoView() {
+  const [cartoes, setCartoes] = useState<CartaoCredito[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [novoAberto, setNovoAberto] = useState(false);
+  const [editando, setEditando] = useState<CartaoCredito | null>(null);
+  const [selecionado, setSelecionado] = useState<CartaoCredito | null>(null);
+
+  const carregar = () => { fetchCartoesCredito().then(setCartoes).catch((e) => setErro(e.message)); };
+  useEffect(carregar, []);
+
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}.</span></div>;
+  if (!cartoes) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  if (selecionado) {
+    return (
+      <DetalheCartaoView
+        cartao={cartoes.find((c) => c.id === selecionado.id) || selecionado}
+        onVoltar={() => setSelecionado(null)}
+        onAtualizado={carregar}
+      />
+    );
+  }
+
+  return (
+    <>
+      {!cartoes.length ? (
+        <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+          <CreditCard size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
+          <p style={{ color: "var(--text-muted)" }}>Nenhum cartão de crédito cadastrado ainda.</p>
+          <button className="btn-primary mt-3" style={{ fontSize: "0.82rem" }} onClick={() => setNovoAberto(true)}>
+            <Plus size={14} /> Novo cartão
+          </button>
+        </div>
+      ) : (
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><CreditCard size={16} /> Cartões cadastrados</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setNovoAberto(true)}>
+              <Plus size={13} /> Novo cartão
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {cartoes.map((c) => (
+              <div key={c.id} style={{ cursor: "pointer" }} onClick={() => setSelecionado(c)}>
+                <CartaoVisual cartao={c} />
+                <div className="flex items-center justify-between mt-1">
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {c.limite != null ? `Limite ${formatBRL(c.limite)}` : "Sem limite cadastrado"}
+                  </span>
+                  <button className="btn-ghost" style={{ padding: "0.2rem" }} title="Editar cartão"
+                    onClick={(e) => { e.stopPropagation(); setEditando(c); }}>
+                    <Pencil size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(novoAberto || editando) && (
+        <ModalNovoCartao
+          cartao={editando}
+          onClose={() => { setNovoAberto(false); setEditando(null); }}
+          onSalvo={() => { setNovoAberto(false); setEditando(null); carregar(); }}
+        />
+      )}
+    </>
+  );
+}
+
+function ModalNovoCartao({ cartao, onClose, onSalvo }: { cartao: CartaoCredito | null; onClose: () => void; onSalvo: () => void }) {
+  const [apelido, setApelido] = useState(cartao?.apelido || "");
+  const [bandeira, setBandeira] = useState(cartao?.bandeira || "");
+  const [bancoEmissor, setBancoEmissor] = useState(cartao?.banco_emissor || "");
+  const [diaFechamento, setDiaFechamento] = useState(cartao?.dia_fechamento != null ? String(cartao.dia_fechamento) : "");
+  const [diaVencimento, setDiaVencimento] = useState(cartao?.dia_vencimento != null ? String(cartao.dia_vencimento) : "");
+  const [limite, setLimite] = useState(cartao?.limite != null ? String(cartao.limite) : "");
+  const [controlaMilhas, setControlaMilhas] = useState(cartao?.controla_milhas ?? false);
+  const [milhasPorReal, setMilhasPorReal] = useState(cartao?.milhas_por_real != null ? String(cartao.milhas_por_real) : "");
+  const [ativo, setAtivo] = useState(cartao?.ativo ?? true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!apelido.trim()) { setErro("Apelido é obrigatório."); return; }
+    if (!diaFechamento || !diaVencimento) { setErro("Informe o dia de fechamento e o dia de vencimento."); return; }
+    const payload: CartaoCreditoPayload = {
+      apelido: apelido.trim(), bandeira: bandeira || null, banco_emissor: bancoEmissor || null,
+      dia_fechamento: Number(diaFechamento), dia_vencimento: Number(diaVencimento),
+      limite: limite ? Number(limite) : null, controla_milhas: controlaMilhas,
+      milhas_por_real: controlaMilhas && milhasPorReal ? Number(milhasPorReal) : null, ativo,
+    };
+    setSalvando(true); setErro("");
+    try {
+      if (cartao) await atualizarCartaoCredito(cartao.id, payload);
+      else await criarCartaoCredito(payload);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <Modal title={cartao ? `Editar cartão — ${cartao.apelido}` : "Novo cartão de crédito"} onClose={onClose} width="520px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Apelido</label>
+            <input style={cartaoInputStyle} value={apelido} onChange={(e) => setApelido(e.target.value)} placeholder="ex.: Nubank PJ" /></div>
+          <div><label style={cartaoLabelStyle}>Bandeira</label>
+            <input style={cartaoInputStyle} value={bandeira} onChange={(e) => setBandeira(e.target.value)} placeholder="Visa, Mastercard, Elo…" /></div>
+          <div><label style={cartaoLabelStyle}>Banco emissor</label>
+            <input style={cartaoInputStyle} value={bancoEmissor} onChange={(e) => setBancoEmissor(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Dia de fechamento</label>
+            <input type="number" min={1} max={31} style={cartaoInputStyle} value={diaFechamento} onChange={(e) => setDiaFechamento(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Dia de vencimento</label>
+            <input type="number" min={1} max={31} style={cartaoInputStyle} value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Limite (R$)</label>
+            <CampoMoeda style={cartaoInputStyle} value={Number(limite) || 0} onChange={(v) => setLimite(v ? String(v) : "")} /></div>
+          <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} /> Ativo</label></div>
+        </div>
+        <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+          <input type="checkbox" checked={controlaMilhas} onChange={(e) => setControlaMilhas(e.target.checked)} /> Este cartão acumula milhas/pontos
+        </label>
+        {controlaMilhas && (
+          <div style={{ maxWidth: "220px" }}>
+            <label style={cartaoLabelStyle}>Milhas por real gasto</label>
+            <input type="number" step="0.01" style={cartaoInputStyle} value={milhasPorReal} onChange={(e) => setMilhasPorReal(e.target.value)} placeholder="ex.: 1.2" />
+          </div>
+        )}
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const STATUS_FATURA_LABEL: Record<string, string> = { aberta: "Aberta", fechada: "Fechada — aguardando pagamento", paga: "Paga" };
+const STATUS_FATURA_COR: Record<string, string> = { aberta: "var(--dourado-light)", fechada: "var(--amber)", paga: "var(--green-light)" };
+
+function DetalheCartaoView({ cartao, onVoltar, onAtualizado }: { cartao: CartaoCredito; onVoltar: () => void; onAtualizado: () => void }) {
+  const [extrato, setExtrato] = useState<{ cartao: CartaoCredito; fatura: FaturaCartao; lancamentos: LancamentoCartao[] } | null>(null);
+  const [faturas, setFaturas] = useState<FaturaCartao[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [novaCompraAberta, setNovaCompraAberta] = useState(false);
+  const [pagando, setPagando] = useState<FaturaCartao | null>(null);
+  const [acao, setAcao] = useState<{ tipo: "fechar"; id: number } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const carregar = () => {
+    fetchExtratoCartao(cartao.id).then(setExtrato).catch((e) => setErro(e.message));
+    fetchFaturasCartao(cartao.id).then(setFaturas).catch(() => {});
+  };
+  useEffect(carregar, [cartao.id]);
+
+  const fechar = async (faturaId: number) => {
+    setAcao({ tipo: "fechar", id: faturaId }); setMsg(null);
+    try {
+      await fecharFaturaCartao(faturaId);
+      carregar(); onAtualizado();
+    } catch (e: any) { setMsg(e.message); }
+    finally { setAcao(null); }
+  };
+
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}.</span></div>;
+
+  return (
+    <>
+      <button className="btn-ghost mb-3" style={{ fontSize: "0.78rem" }} onClick={onVoltar}>
+        <ArrowLeft size={13} /> Voltar aos cartões
+      </button>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div><CartaoVisual cartao={cartao} /></div>
+        <div className="grid grid-cols-2 gap-3" style={{ gridColumn: "span 2" }}>
+          <KPI v={extrato ? formatBRL(extrato.fatura.valor_total || 0) : "…"} l={`Fatura atual (${extrato?.fatura.competencia || ""})`} c="var(--dourado-light)" />
+          <KPI v={extrato ? STATUS_FATURA_LABEL[extrato.fatura.status] : "…"} l="Status" />
+          {cartao.limite != null && <KPI v={formatBRL(cartao.limite)} l="Limite" c="var(--text-muted)" />}
+          {cartao.controla_milhas && (
+            <div className="kpi-card">
+              <div className="flex items-center gap-1" style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}><Award size={12} /> Milhas acumuladas</div>
+              <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--dourado-light)" }}>{cartao.milhas_totais ?? 0}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{msg}</p>}
+
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span>Extrato — fatura {extrato?.fatura.status === "aberta" ? "em aberto" : extrato?.fatura.competencia}</span>
+          {extrato?.fatura.status === "aberta" && (
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => fechar(extrato.fatura.id)} disabled={acao?.id === extrato.fatura.id}>
+                {acao?.id === extrato.fatura.id ? "Fechando…" : "Fechar fatura agora"}
+              </button>
+              <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => setNovaCompraAberta(true)}>
+                <Plus size={13} /> Nova compra
+              </button>
+            </div>
+          )}
+        </div>
+        {!extrato ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !extrato.lancamentos.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma compra lançada nesta fatura ainda.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+              <tbody>
+                {extrato.lancamentos.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_compra)}</td>
+                    <td style={{ fontSize: "0.82rem" }}>
+                      {l.descricao}{l.parcela_num && l.parcela_total ? <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}> ({l.parcela_num}/{l.parcela_total})</span> : null}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.nome_conta_gerencial || "—"}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem", fontWeight: 600 }}>{formatBRL(l.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-3">Faturas anteriores</div>
+        {!faturas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !faturas.filter((f) => f.status !== "aberta").length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma fatura fechada ainda.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Competência</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {faturas.filter((f) => f.status !== "aberta").map((f) => (
+                  <tr key={f.id}>
+                    <td style={{ fontSize: "0.82rem", fontWeight: 600 }}>{f.competencia}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{formatDate(f.data_vencimento)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{f.valor_total != null ? formatBRL(f.valor_total) : "—"}</td>
+                    <td style={{ fontSize: "0.78rem", fontWeight: 600, color: STATUS_FATURA_COR[f.status] }}>{STATUS_FATURA_LABEL[f.status] || f.status}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {f.status === "fechada" && (
+                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} onClick={() => setPagando(f)}>Pagar</button>
+                      )}
+                      {f.status === "paga" && f.numero_lancamento && (
+                        <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lanç. {f.numero_lancamento}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {novaCompraAberta && (
+        <ModalNovaCompraCartao cartaoId={cartao.id} onClose={() => setNovaCompraAberta(false)} onSalvo={() => { setNovaCompraAberta(false); carregar(); }} />
+      )}
+      {pagando && (
+        <ModalPagarFatura fatura={pagando} cartao={cartao} onClose={() => setPagando(null)} onSalvo={() => { setPagando(null); carregar(); onAtualizado(); }} />
+      )}
+    </>
+  );
+}
+
+function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: number; onClose: () => void; onSalvo: () => void }) {
+  const [dataCompra, setDataCompra] = useState(new Date().toISOString().slice(0, 10));
+  const [descricao, setDescricao] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [valor, setValor] = useState("");
+  const [parcelaTotal, setParcelaTotal] = useState("1");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const salvar = async () => {
+    if (!descricao.trim()) { setErro("Descrição é obrigatória."); return; }
+    if (!valor || Number(valor) <= 0) { setErro("Informe um valor positivo."); return; }
+    setSalvando(true); setErro("");
+    try {
+      const totalParcelas = Math.max(1, Number(parcelaTotal) || 1);
+      await criarLancamentoCartao(cartaoId, {
+        data_compra: dataCompra, descricao: descricao.trim(), nome_conta_gerencial: categoria || null,
+        valor: Number(valor), parcela_num: totalParcelas > 1 ? 1 : null, parcela_total: totalParcelas > 1 ? totalParcelas : null,
+        observacao: observacao || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <Modal title="Nova compra no cartão" onClose={onClose} width="460px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><label style={cartaoLabelStyle}>Data da compra</label>
+            <input type="date" style={cartaoInputStyle} value={dataCompra} onChange={(e) => setDataCompra(e.target.value)} /></div>
+          <div><label style={cartaoLabelStyle}>Valor (R$)</label>
+            <CampoMoeda style={cartaoInputStyle} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Descrição</label>
+            <input style={cartaoInputStyle} value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="ex.: Peças trator" /></div>
+          <div><label style={cartaoLabelStyle}>Categoria (opcional)</label>
+            <input style={cartaoInputStyle} value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="ex.: Manutenção" /></div>
+          <div><label style={cartaoLabelStyle}>Parcelas</label>
+            <input type="number" min={1} style={cartaoInputStyle} value={parcelaTotal} onChange={(e) => setParcelaTotal(e.target.value)} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Observação</label>
+            <input style={cartaoInputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+        </div>
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+          Cai automaticamente na fatura certa: até o dia de fechamento entra na competência atual, depois do fechamento entra na fatura seguinte.
+        </p>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Lançar"}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: FaturaCartao; cartao: CartaoCredito; onClose: () => void; onSalvo: () => void }) {
+  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+
+  const pagar = async () => {
+    setSalvando(true); setErro("");
+    try {
+      await pagarFaturaCartao(fatura.id, { data_pagamento: dataPagamento });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <Modal title={`Pagar fatura — ${cartao.apelido} (${fatura.competencia})`} onClose={onClose} width="420px">
+      <div className="space-y-3">
+        <p style={{ fontSize: "0.85rem" }}>
+          Valor da fatura: <strong>{fatura.valor_total != null ? formatBRL(fatura.valor_total) : "—"}</strong>
+        </p>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          Gera uma Conta a Pagar de verdade em Financeiro (mesmo fluxo de baixa de qualquer outro lançamento) — dá pra editar
+          conta gerencial e centro de custo depois, em Contas a pagar.
+        </p>
+        <div><label style={cartaoLabelStyle}>Data do pagamento</label>
+          <input type="date" style={cartaoInputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={pagar} disabled={salvando}>{salvando ? "Pagando…" : "Confirmar pagamento"}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 const inputStyleRelCompraVenda: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
 };
 const COLUNAS_REL_COMPRA_VENDA_ANIMAL = [
   { header: "Tipo", key: "tipoLabel" }, { header: "Nº animal", key: "numero_animal" },
@@ -1728,14 +2479,145 @@ function RelatorioCompraVendaAnimaisView() {
   );
 }
 
+const COLUNAS_REL_COMPRA_SEMEN = [
+  { header: "Touro", key: "touro_nome" }, { header: "NAAB", key: "naab" }, { header: "Tipo", key: "tipo" },
+  { header: "Doses", key: "doses" }, { header: "Valor/dose", key: "valor_unitario" }, { header: "Valor total", key: "valor_total" },
+  { header: "Data", key: "data_compra" }, { header: "Vendedor", key: "vendedor" }, { header: "Documento", key: "numero_documento" },
+  { header: "Lançamento", key: "numero_lancamento" }, { header: "Centro de custo", key: "centro_custo" },
+];
+
+/**
+ * Relatório financeiro de compra de sêmen — espelho de
+ * RelatorioCompraVendaAnimaisView, consultando CompraSemen (em vez de
+ * CompraAnimal/VendaAnimal), filtrável por touro, NAAB, vendedor, período ou
+ * número do documento.
+ */
+function RelatorioCompraSemenView() {
+  const [touro, setTouro] = useState("");
+  const [vendedor, setVendedor] = useState("");
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
+  const [numeroDocumento, setNumeroDocumento] = useState("");
+  const [linhas, setLinhas] = useState<LinhaRelatorioCompraSemen[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(false);
+
+  const buscar = () => {
+    setCarregando(true); setErro(null);
+    fetchRelatorioCompraSemen({ touro, vendedor, dataDe, dataAte, numeroDocumento })
+      .then(setLinhas)
+      .catch((e) => setErro(e.message))
+      .finally(() => setCarregando(false));
+  };
+  useEffect(buscar, []);
+
+  const totalDoses = useMemo(() => (linhas ?? []).reduce((a, l) => a + l.doses, 0), [linhas]);
+  const totalGasto = useMemo(() => (linhas ?? []).reduce((a, l) => a + l.valor_total, 0), [linhas]);
+  const { ordenados: linhasOrdenadas, sortKey: sortKeySemen, sortDir: sortDirSemen, ordenar: ordenarSemen } = useOrdenacao(linhas ?? [], {
+    touro_nome: (l) => l.touro_nome || "",
+    naab: (l) => l.naab || "",
+    tipo: (l) => l.tipo || "",
+    doses: (l) => l.doses,
+    valor_unitario: (l) => l.valor_unitario,
+    valor_total: (l) => l.valor_total,
+    data_compra: (l) => l.data_compra || "",
+    vendedor: (l) => (l.vendedor || "").toLowerCase(),
+    numero_documento: (l) => l.numero_documento || "",
+    numero_lancamento: (l) => l.numero_lancamento || "",
+    centro_custo: (l) => l.centro_custo || "",
+  });
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Touro</label>
+            <input style={inputStyleRelCompraVenda} value={touro} onChange={(e) => setTouro(e.target.value)} placeholder="ex.: Coors" /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Vendedor</label>
+            <input style={inputStyleRelCompraVenda} value={vendedor} onChange={(e) => setVendedor(e.target.value)} placeholder="ex.: ABS" /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>De</label>
+            <input type="date" style={inputStyleRelCompraVenda} value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Até</label>
+            <input type="date" style={inputStyleRelCompraVenda} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
+            <input style={inputStyleRelCompraVenda} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></div>
+          <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={buscar} disabled={carregando}>
+            <Search size={13} /> {carregando ? "Buscando…" : "Buscar"}
+          </button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-4"><span>{erro}</span></div>}
+
+      {linhas && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+            <KPI v={String(linhas.length)} l="Compras" />
+            <KPI v={String(totalDoses)} l="Doses compradas" />
+            <KPI v={formatBRL(totalGasto)} l="Total gasto" c="var(--red)" />
+          </div>
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0 }}>Compras de sêmen</div>
+              <ExportarBotoes titulo="Compra de sêmen" colunas={COLUNAS_REL_COMPRA_SEMEN} linhas={linhas} nomeArquivoBase="compra_semen" disabled={!linhas.length} />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrd rotulo="Touro" chave="touro_nome" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="NAAB" chave="naab" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Doses" chave="doses" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Valor/dose" chave="valor_unitario" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Valor total" chave="valor_total" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Data" chave="data_compra" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Vendedor" chave="vendedor" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Documento" chave="numero_documento" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Lançamento" chave="numero_lancamento" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                  <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
+                </tr></thead>
+                <tbody>
+                  {linhasOrdenadas.map((l, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{l.touro_nome}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.naab || "—"}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.tipo === "sexado" ? "Sexado" : "Convencional"}</td>
+                      <td style={{ textAlign: "right" }}>{l.doses}</td>
+                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor_unitario)}</td>
+                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor_total)}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.data_compra}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.vendedor}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_documento || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_lancamento || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.centro_custo || "—"}</td>
+                    </tr>
+                  ))}
+                  {!linhas.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhuma compra de sêmen encontrada para o filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 /**
  * Edição de um lançamento financeiro já salvo (uma nota / uma parcela). Serve
  * para contas a pagar, a receber, pagas e recebidas — edita valor, descrição,
  * fornecedor/cliente, centro de custo, conta gerencial, datas e documento sem
  * precisar dar baixa. Não mexe no pagamento (isso é o fluxo "Tratar").
  */
-function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedores, onSalvo, onCancelar }: {
+type ItemLancEditar = NonNullable<Lanc["itens"]>[number];
+
+function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedores, onSalvo, onCancelar, onVerRelatorioVales }: {
   lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; produtos: string[]; fornecedores: string[]; onSalvo: () => void; onCancelar: () => void;
+  // Leva o usuário até "Financeiro > Ações > Folha de pagamento > Relatório
+  // de vales e descontos" (ver chamada em app/financeiro/page.tsx) — usado
+  // pelo link "ver no relatório de vales" do bloco de itens abaixo.
+  onVerRelatorioVales?: () => void;
 }) {
   const [descricao, setDescricao] = useState(lanc.descricao || "");
   const [fornecedor, setFornecedor] = useState(lanc.fornecedor || "");
@@ -1745,6 +2627,38 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const itensDoLanc = lanc.itens || [];
   const podeEditarProduto = itensDoLanc.length <= 1;
   const [produto, setProduto] = useState(itensDoLanc[0]?.produto || "");
+  // Mesmo padrão de seleção de produto/serviço do lançamento novo
+  // (FormFinanceiro): toggle produto×serviço, EstoquePicker em janela
+  // suspensa (não mais <input list> com <datalist> nativo) e botão para
+  // cadastrar produto/serviço novo sem sair da edição — antes a edição usava
+  // uma implementação própria, mais simples, que nunca ganhou esse picker.
+  const [tipoItem, setTipoItem] = useState<"produto" | "servico">("produto");
+  const [modoProduto, setModoProduto] = useState<"estoque" | "livre">("estoque");
+  const [produtosEstoqueEdicao, setProdutosEstoqueEdicao] = useState<EstoqueItemPicker[]>([]);
+  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
+    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+  })))).catch(() => {});
+  useEffect(() => { carregarEstoqueEdicao(); }, []);
+  const [servicosEdicao, setServicosEdicao] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
+  const carregarServicosEdicao = () => fetchServicosCadastro().then(setServicosEdicao).catch(() => {});
+  useEffect(() => { carregarServicosEdicao(); }, []);
+  const sugestoesServicoEdicao = useMemo(
+    () => servicosEdicao.filter((s) => s.ativo).map((s) => s.nome).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [servicosEdicao]
+  );
+  // Chute do tipo (produto × serviço) a partir do nome já salvo — só uma vez,
+  // assim que o cadastro de serviços carrega; depois disso quem manda é o
+  // toggle clicado pelo usuário (evita "brigar" com a escolha dele).
+  const tipoInicializado = useRef(false);
+  useEffect(() => {
+    if (!tipoInicializado.current && servicosEdicao.length) {
+      tipoInicializado.current = true;
+      if (produto && sugestoesServicoEdicao.includes(produto)) setTipoItem("servico");
+    }
+  }, [servicosEdicao, sugestoesServicoEdicao, produto]);
+  const [adicionarNovoAberto, setAdicionarNovoAberto] = useState(false);
+  const [modoAdicionarEdicao, setModoAdicionarEdicao] = useState<"produto" | "servico">("produto");
   const [centroCusto, setCentroCusto] = useState(lanc.centro_custo || "");
   const [codigoConta, setCodigoConta] = useState(lanc.codigo_conta || "");
   const [nomeConta, setNomeConta] = useState(lanc.conta_completa || "");
@@ -1760,13 +2674,81 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
+  const [anexos, setAnexos] = useState<AnexoLancamento[] | null>(null);
+  const [enviandoAnexo, setEnviandoAnexo] = useState(false);
+  const [categoriaAnexo, setCategoriaAnexo] = useState(lanc.tipo_documento || "");
+  // Número/data do PRÓXIMO arquivo a anexar — cada documento deste
+  // lançamento (orçamento, pedido, nota fiscal, boleto, comprovante...) pode
+  // ter seu próprio número/data, achável depois na Central de Documentos.
+  const [numeroDocAnexo, setNumeroDocAnexo] = useState("");
+  const [dataDocAnexo, setDataDocAnexo] = useState("");
+  // Vincular esta compra/venda a um item de Patrimônio (entrada/saída de
+  // patrimônio) — FK de verdade, editável tanto aqui quanto pela tela de
+  // Patrimônio (mesmo endpoint, ver vincularLancamentoPatrimonio).
+  const [patrimonioId, setPatrimonioId] = useState(lanc.patrimonio_id ? String(lanc.patrimonio_id) : "");
+  const [patrimonios, setPatrimonios] = useState<{ id: number; nome: string; tipo: string | null }[]>([]);
+  useEffect(() => { fetchPatrimonioListaSimples().then(setPatrimonios).catch(() => {}); }, []);
   const tipoConta = lanc.tipo === "receita" ? "receita" : "despesa";
   const fornecedoresDisponiveis = useMemo(
     () => Array.from(new Set([...(fornecedor ? [fornecedor] : []), ...fornecedores])).sort(),
     [fornecedores, fornecedor]
   );
   const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
+
+  // Checkbox "É vale de funcionário?" por item da nota (item já salvo — o
+  // vale é de verdade, criado/excluído já no backend, ver lib/api.ts). Marcar
+  // abre o ValeItemModal; desmarcar SEMPRE pergunta antes de excluir o vale
+  // vinculado (decisão do usuário — nunca em silêncio, nunca vínculo
+  // pendurado sem perguntar).
+  const [valeModalItem, setValeModalItem] = useState<ItemLancEditar | null>(null);
+  const [confirmarDesmarcar, setConfirmarDesmarcar] = useState<ItemLancEditar | null>(null);
+  const [desmarcando, setDesmarcando] = useState(false);
+  const [desmarcarErro, setDesmarcarErro] = useState<string | null>(null);
+
+  async function marcarVale(item: ItemLancEditar, dados: ValeItemDados) {
+    await marcarItemComoVale(item.id, {
+      pessoa_id: dados.pessoa_id, modo: dados.modo, parcelas: dados.parcelas,
+      competencia_inicio: dados.competencia_inicio || undefined,
+      origem_tipo: dados.origem_tipo, origem_id: dados.origem_id,
+      observacao: dados.observacao, confirmar: dados.confirmar,
+    });
+    setValeModalItem(null);
+    onSalvo();
+  }
+
+  async function desmarcarVale(item: ItemLancEditar, excluirVale: boolean) {
+    setDesmarcando(true); setDesmarcarErro(null);
+    try {
+      await desmarcarItemComoVale(item.id, excluirVale);
+      setConfirmarDesmarcar(null);
+      onSalvo();
+    } catch (e: any) {
+      setDesmarcarErro(e.message || "Erro ao desmarcar vale");
+    } finally {
+      setDesmarcando(false);
+    }
+  }
   useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
+  useEffect(() => {
+    listarAnexosLancamentoPorId(lanc.id).then(setAnexos).catch(() => setAnexos([]));
+  }, [lanc.id]);
+
+  const enviarAnexo = async (file: File) => {
+    setEnviandoAnexo(true); setErro("");
+    try {
+      const novo = await anexarArquivoLancamentoPorId(lanc.id, file, categoriaAnexo || null, numeroDocAnexo || null, dataDocAnexo || null);
+      setAnexos((p) => [...(p || []), novo]);
+      setNumeroDocAnexo(""); setDataDocAnexo("");
+    } catch (e: any) { setErro(e.message); }
+    finally { setEnviandoAnexo(false); }
+  };
+
+  const removerAnexo = async (id: number) => {
+    try {
+      await excluirAnexoLancamento(id);
+      setAnexos((p) => (p || []).filter((a) => a.id !== id));
+    } catch (e: any) { setErro(e.message); }
+  };
 
   const salvar = async () => {
     setSalvando(true); setErro("");
@@ -1780,6 +2762,10 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
         numero_documento_pagamento: numeroPagamento || null, tipo_documento: tipoDocumento || null,
         ...(podeEditarProduto && produto.trim() ? { produto: produto.trim() } : {}),
       });
+      const novoPatrimonioId = patrimonioId ? Number(patrimonioId) : null;
+      if (novoPatrimonioId !== (lanc.patrimonio_id ?? null) && lanc.numero_lancamento) {
+        await vincularLancamentoPatrimonio(lanc.numero_lancamento, novoPatrimonioId);
+      }
       onSalvo();
     } catch (e: any) { setErro(e.message); setSalvando(false); }
   };
@@ -1787,7 +2773,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   return (
     <div className="space-y-3">
       {lanc.parcela_total && lanc.parcela_total > 1 && (
-        <p style={{ fontSize: "0.75rem", color: "var(--amber)", background: "rgba(180,120,0,0.12)", padding: "0.5rem 0.7rem", borderRadius: "8px" }}>
+        <p style={{ fontSize: "0.75rem", color: "var(--amber)", background: "rgba(180,120,0,0.12)", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)" }}>
           Esta é a parcela {lanc.parcela_num}/{lanc.parcela_total}. A edição altera <strong>só esta parcela</strong> — as outras seguem como estão.
         </p>
       )}
@@ -1810,21 +2796,88 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             </button>
           </div>
         </div>
-        <div><label style={labelStyleLote}>Produto / serviço</label>
+        <div style={{ gridColumn: "1 / -1" }}><label style={labelStyleLote}>Produto / serviço</label>
           {podeEditarProduto ? (
-            <input style={selStyleLote} list="produtos-editar-lancamento" value={produto} onChange={(e) => setProduto(e.target.value)}
-              placeholder={itensDoLanc.length ? undefined : "Sem vínculo — escolha ou digite um produto/serviço"} />
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                {(["produto", "servico"] as const).map((t) => (
+                  <button key={t} type="button" title={t === "produto" ? "Este item é um produto de estoque" : "Este item é um serviço"}
+                    onClick={() => { setTipoItem(t); setProduto(""); }}
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
+                      border: "1px solid " + (tipoItem === t ? "var(--dourado)" : "var(--border)"),
+                      background: tipoItem === t ? "var(--dourado)" : "transparent",
+                      color: tipoItem === t ? "#1a1a1a" : "var(--text-muted)", fontWeight: tipoItem === t ? 700 : 400 }}>
+                    {t === "produto" ? "Produto" : "Serviço"}
+                  </button>
+                ))}
+              </div>
+              {tipoItem === "servico" ? (
+                <ServicoPicker servicos={sugestoesServicoEdicao.map((nome) => ({ nome }))}
+                  value={produto} onChange={setProduto} />
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
+                    <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                      value={modoProduto} onChange={(e) => setModoProduto(e.target.value as "estoque" | "livre")}
+                      title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro.">
+                      <option value="estoque">do estoque</option>
+                      <option value="livre">texto livre</option>
+                    </select>
+                  </div>
+                  {modoProduto === "estoque" ? (
+                    <EstoquePicker itens={produtosEstoqueEdicao} value={produto} todasFinalidades incluirNaoEstocaveis onChange={setProduto} />
+                  ) : (
+                    <>
+                      <input list="produtos-editar-lancamento" style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}
+                        placeholder="ex.: Supermercado, Material de escritório…" />
+                      <datalist id="produtos-editar-lancamento">{produtos.map((p) => <option key={p} value={p} />)}</datalist>
+                    </>
+                  )}
+                </div>
+              )}
+              {itensDoLanc.length === 0 && (
+                <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>Sem vínculo — escolha ou cadastre um produto/serviço.</p>
+              )}
+              <button type="button" className="btn-ghost" title="Cadastrar um novo produto ou serviço"
+                style={{ fontSize: "0.72rem", marginTop: "0.4rem" }}
+                onClick={() => { setModoAdicionarEdicao(tipoItem === "servico" ? "servico" : "produto"); setAdicionarNovoAberto(true); }}>
+                <Plus size={13} /> Adicionar {tipoItem === "servico" ? "serviço" : "produto"} novo(a)
+              </button>
+            </>
           ) : (
             <p style={{ ...selStyleLote, background: "transparent", border: "none", padding: "0.45rem 0", color: "var(--text-muted)", fontSize: "0.75rem" }}>
               Nota com {itensDoLanc.length} produtos/serviços — edite pelo lançamento original.
             </p>
           )}
-          {podeEditarProduto && (
-            <datalist id="produtos-editar-lancamento">{produtos.map((p) => <option key={p} value={p} />)}</datalist>
-          )}
         </div>
+        {itensDoLanc.length > 0 && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label style={labelStyleLote}>Produtos/serviços desta nota</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginTop: "0.3rem" }}>
+              {itensDoLanc.map((it) => (
+                <div key={it.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", flexWrap: "wrap" }}>
+                  {tipoConta === "despesa" && (
+                    <input type="checkbox" checked={it.eh_vale}
+                      onChange={(e) => e.target.checked ? setValeModalItem(it) : setConfirmarDesmarcar(it)} />
+                  )}
+                  <span>{it.produto} — {formatBRL(it.valor_total)}</span>
+                  {it.eh_vale && (
+                    <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
+                      → vale de {it.vale_pessoa_nome}
+                      {" "}
+                      <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }}
+                        onClick={() => onVerRelatorioVales?.()}>
+                        ver no relatório de vales
+                      </button>
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div><label style={labelStyleLote}>Valor (R$)</label>
-          <input style={selStyleLote} type="number" step="0.01" value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+          <CampoMoeda style={selStyleLote} value={Number(valor) || 0} onChange={(v) => setValor(v ? String(v) : "")} /></div>
         <div><label style={labelStyleLote}>Centro de custo</label>
           <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
             <option value="">—</option>{centrosOpcoes.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -1850,14 +2903,71 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
           <input style={selStyleLote} value={numeroOsOrcamento} onChange={(e) => setNumeroOsOrcamento(e.target.value)} placeholder="ex.: OS-123 ou ORC-45" /></div>
         <div><label style={labelStyleLote}>Número do pagamento</label>
           <input style={selStyleLote} value={numeroPagamento} onChange={(e) => setNumeroPagamento(e.target.value)} placeholder="ex.: comprovante, nº do PIX…" /></div>
+        <div><label style={labelStyleLote}>Vincular a patrimônio (entrada/saída de bem)</label>
+          <select style={selStyleLote} value={patrimonioId} onChange={(e) => setPatrimonioId(e.target.value)}>
+            <option value="">— Nenhum</option>
+            {patrimonioId && !patrimonios.some((p) => String(p.id) === patrimonioId) && (
+              <option value={patrimonioId}>Item vinculado (Nº {patrimonioId})</option>
+            )}
+            {patrimonios.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.tipo ? ` — ${p.tipo}` : ""}</option>)}
+          </select></div>
       </div>
+      {/* Sempre visível: antes o bloco inteiro sumia quando o lançamento não
+          tinha `numero_lancamento` (todo lançamento importado da planilha),
+          e não havia como anexar comprovante nesses. Agora o anexo é pelo id
+          e o backend emite a numeração na primeira anexação. */}
+      {(
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
+          <label style={labelStyleLote}>Anexos</label>
+          {/* Um lançamento pode reunir vários documentos diferentes (orçamento,
+              pedido, nota fiscal, boleto, comprovante...) — cada um com sua
+              própria categoria/número/data, achável depois na Central de
+              Documentos mesmo sabendo só um desses dados. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+            <select style={selStyleLote} value={categoriaAnexo} onChange={(e) => setCategoriaAnexo(e.target.value)}>
+              <option value="">Categoria do anexo…</option>
+              {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Comprovante", "Fatura", "Orçamento", "Boleto", "Ordem de serviço", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
+            </select>
+            <input style={selStyleLote} placeholder="Número do documento" value={numeroDocAnexo} onChange={(e) => setNumeroDocAnexo(e.target.value)} />
+            <input type="date" style={selStyleLote} title="Data deste documento" value={dataDocAnexo} onChange={(e) => setDataDocAnexo(e.target.value)} />
+          </div>
+          <Dropzone
+            compact
+            accept="application/pdf,image/jpeg,image/png"
+            disabled={enviandoAnexo}
+            label={enviandoAnexo ? "Enviando…" : "Arraste o comprovante/nota/boleto aqui, ou"}
+            onFiles={(files) => enviarAnexo(files[0])}
+          />
+          {anexos === null ? (
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Carregando anexos…</p>
+          ) : anexos.length === 0 ? (
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Nenhum anexo ainda.</p>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {anexos.map((a) => (
+                <li key={a.id} className="flex items-center gap-2" style={{ padding: "0.25rem 0", fontSize: "0.78rem" }}>
+                  <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}
+                    title="Abrir este documento numa aba nova">
+                    {a.nome_arquivo}{a.categoria ? ` — ${a.categoria}` : ""}{a.numero_documento ? ` (${a.numero_documento})` : ""}
+                  </a>
+                  <button type="button" className="btn-ghost" title="Excluir anexo" onClick={() => removerAnexo(a.id)}><Trash2 size={13} /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2 justify-end">
         <button className="btn-ghost" onClick={onCancelar} disabled={salvando}>Cancelar</button>
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar alterações"}</button>
       </div>
       {abrirNovoFornecedor && (
-        <Modal title={`Novo ${tipoConta === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px">
+        // zIndex explícito acima do Modal "Editar lançamento" que já envolve
+        // este formulário (ambos nascem com o mesmo zIndex=90 padrão do
+        // Modal.tsx, então sem isso a ordem de empilhamento dependia da
+        // ordem de montagem no DOM e podia abrir "por baixo").
+        <Modal title={`Novo ${tipoConta === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px" zIndex={100}>
           <NovoFornecedorRapido
             tipoSugerido={tipoConta}
             onCriado={(f) => { if (f?.nome) setFornecedor(f.nome); setAbrirNovoFornecedor(false); }}
@@ -1865,13 +2975,113 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
           />
         </Modal>
       )}
+
+      {adicionarNovoAberto && (
+        <Modal title={`Adicionar ${modoAdicionarEdicao === "servico" ? "serviço" : "produto"} novo(a)`} onClose={() => setAdicionarNovoAberto(false)} width="700px" zIndex={100}>
+          <div className="flex items-center gap-2 mb-3">
+            <button type="button" onClick={() => setModoAdicionarEdicao("produto")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionarEdicao === "produto" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionarEdicao === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionarEdicao === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionarEdicao === "produto" ? 700 : 500 }}>
+              Novo produto (estoque)
+            </button>
+            <button type="button" onClick={() => setModoAdicionarEdicao("servico")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionarEdicao === "servico" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionarEdicao === "servico" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionarEdicao === "servico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionarEdicao === "servico" ? 700 : 500 }}>
+              Novo serviço
+            </button>
+          </div>
+          {modoAdicionarEdicao === "produto" ? (
+            <NovoItemEstoque
+              onCriado={(item) => {
+                if (item?.nome) { setTipoItem("produto"); setModoProduto("estoque"); setProduto(item.nome); }
+                carregarEstoqueEdicao();
+                setAdicionarNovoAberto(false);
+              }}
+              onCancelar={() => setAdicionarNovoAberto(false)}
+            />
+          ) : (
+            <NovoServicoRapido
+              onCriado={(servico) => {
+                if (servico?.nome) { setTipoItem("servico"); setProduto(servico.nome); }
+                carregarServicosEdicao();
+                setAdicionarNovoAberto(false);
+              }}
+              onCancelar={() => setAdicionarNovoAberto(false)}
+            />
+          )}
+        </Modal>
+      )}
+
+      {valeModalItem && (
+        <ValeItemModal apresentacao="modal"
+          valorItem={valeModalItem.valor_total}
+          dataItem={dataEmissao || dataCompetencia || ""}
+          produtoItem={valeModalItem.produto}
+          inicial={null}
+          onConfirmar={(d) => marcarVale(valeModalItem, d)}
+          onCancelar={() => setValeModalItem(null)} />
+      )}
+
+      {confirmarDesmarcar && (
+        <Modal title="Excluir também o vale?" onClose={() => { setConfirmarDesmarcar(null); setDesmarcarErro(null); }} width="480px">
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            Este item gerou o vale de {confirmarDesmarcar.vale_pessoa_nome} no valor de {formatBRL(confirmarDesmarcar.valor_total)}.
+            Ao desmarcar, o item volta a contar como despesa da fazenda nos relatórios. <strong>Excluir também o vale?</strong>
+          </p>
+          {desmarcarErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.4rem" }}>{desmarcarErro}</p>}
+          <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
+            <button className="btn-primary" disabled={desmarcando} onClick={() => desmarcarVale(confirmarDesmarcar, true)}>
+              {desmarcando ? "Excluindo…" : "Sim, excluir o vale"}
+            </button>
+            <button className="btn-ghost" disabled={desmarcando} onClick={() => desmarcarVale(confirmarDesmarcar, false)}>
+              Não, manter o vale
+            </button>
+            <button className="btn-ghost" disabled={desmarcando} onClick={() => { setConfirmarDesmarcar(null); setDesmarcarErro(null); }}>
+              Cancelar
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void }) {
+function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, onEstornado }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void; onEstornado: () => void }) {
   const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
+
+  // G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o
+  // lançamento. Se a baixa criou parcela(s) para cobrir a diferença de valor
+  // pago, a API responde 409 com as parcelas — pedimos confirmação numa
+  // segunda etapa antes de apagá-las junto.
+  const [estornando, setEstornando] = useState<number | null>(null);
+  const [confirmarParcelas, setConfirmarParcelas] = useState<{ lanc: Lanc; mensagem: string; parcelas: any[] } | null>(null);
+  const [erroEstorno, setErroEstorno] = useState<string | null>(null);
+
+  const estornar = async (l: Lanc, confirmarParcelasDiferenca = false) => {
+    if (!confirmarParcelasDiferenca) {
+      if (!window.confirm("Estornar a baixa deste lançamento? Ele volta para contas a pagar/receber.")) return;
+    }
+    setEstornando(l.id); setErroEstorno(null);
+    try {
+      const r: EstornoLancamentoOut = await estornarPagamentoLancamento(l.id, { confirmar_parcelas_diferenca: confirmarParcelasDiferenca });
+      setConfirmarParcelas(null);
+      if (r.avisos?.length) window.alert(r.avisos.join("\n"));
+      onEstornado();
+    } catch (e: any) {
+      if (e.status === 409 && e.detail?.parcelas) {
+        setConfirmarParcelas({ lanc: l, mensagem: e.detail.mensagem, parcelas: e.detail.parcelas });
+      } else {
+        setErroEstorno(e.message);
+      }
+    } finally {
+      setEstornando(null);
+    }
+  };
   const hoje = new Date().toISOString().slice(0, 10);
   const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
   // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
@@ -1904,7 +3114,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
   const filtradosLocal = useMemo(() => itens.filter((r) =>
     (!fProduto || (r.itens || []).some((it) => it.produto === fProduto)) &&
     (!fContraparte || r.fornecedor === fContraparte) &&
-    (!fDocumento || (r.numero_documento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(fDocumento.toLowerCase())) &&
+    casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, fDocumento) &&
     casaContaGerencial(r, fConta) &&
     (rel !== "extrato" || !fTipo || r.tipo === fTipo)
   ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel]);
@@ -1965,7 +3175,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
           <span>Lançamentos</span>
           <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
-            linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
+            linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}`, comprovante_txt: r.tem_comprovante ? "Sim" : "" }))} />
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
@@ -1992,7 +3202,16 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: vencido ? "var(--red)" : undefined, fontWeight: vencido ? 700 : undefined }}>
                       {formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "")}{vencido ? " ⚠" : ""}
                     </td>
-                    <td style={{ fontSize: "0.78rem" }}>{r.descricao || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>
+                      {r.descricao || "—"}
+                      {(r.itens || []).some((it) => it.eh_vale) && (
+                        <span title="Item lançado como vale — fora dos relatórios gerenciais"
+                          style={{ marginLeft: "0.4rem", fontSize: "0.65rem", fontWeight: 700, color: "var(--dourado-light)",
+                            border: "1px solid var(--dourado-light)", borderRadius: "999px", padding: "0.05rem 0.4rem" }}>
+                          vale
+                        </span>
+                      )}
+                    </td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
                     <td style={{ fontSize: "0.75rem" }}>{r.centro_custo}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}</td>
@@ -2003,6 +3222,12 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
                     <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                       <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
                       {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
+                      {!emAberto && (
+                        <button className="btn-ghost" title="Estornar a baixa — o lançamento volta para contas a pagar/receber"
+                          style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} disabled={estornando === r.id} onClick={() => estornar(r)}>
+                          <Undo2 size={12} /> Estornar
+                        </button>
+                      )}
                       <button className="btn-ghost" title="Emitir recibo deste lançamento (salvar PDF ou enviar por e-mail)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onRecibo(r)}><Receipt size={12} /> Recibo</button>
                     </td>
                   </tr>
@@ -2019,11 +3244,57 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
           </div>
         )}
       </div>
+
+      {erroEstorno && (
+        <div className="alert-critico mt-3"><AlertTriangle size={18} /><span>{erroEstorno}</span></div>
+      )}
+
+      {confirmarParcelas && (
+        <Modal title="Estornar com parcelas de diferença" onClose={() => setConfirmarParcelas(null)} width="560px">
+          <p style={{ fontSize: "0.85rem" }}>{confirmarParcelas.mensagem}</p>
+          <div className="overflow-x-auto" style={{ maxHeight: "40vh", margin: "0.75rem 0" }}>
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+              <tbody>
+                {confirmarParcelas.parcelas.map((p: any) => (
+                  <tr key={p.id}>
+                    <td style={{ fontSize: "0.8rem" }}>{p.parcela_num}/{p.parcela_total}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{formatDate(p.data_vencimento)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.8rem" }}>{formatBRL(p.valor_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button className="btn-ghost" onClick={() => setConfirmarParcelas(null)} disabled={estornando !== null}>Cancelar</button>
+            <button className="btn-primary" onClick={() => estornar(confirmarParcelas.lanc, true)} disabled={estornando !== null}>
+              Estornar e remover as parcelas
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
 
 const LABEL_FORMA_PAGAMENTO: Record<string, string> = { pix: "Pix", transferencia: "Transferência", boleto: "Boleto", credito: "Crédito", debito: "Débito" };
+
+// Divide a diferença entre valor pago e valor do lançamento em `qtd`
+// parcelas mensais iguais (a última absorve o resto do arredondamento) —
+// mesmo algoritmo de `dividirParcelas` em FormFinanceiro.tsx, para o botão
+// "Parcelar a diferença" do pagamento.
+function dividirDiferenca(valorTotal: number, qtd: number, primeiraData: string): { data_vencimento: string; valor: string }[] {
+  if (qtd <= 0) return [];
+  const base = Math.floor((valorTotal / qtd) * 100) / 100;
+  const resto = Math.round((valorTotal - base * qtd) * 100) / 100;
+  const inicio = primeiraData ? new Date(primeiraData + "T00:00:00") : new Date();
+  return Array.from({ length: qtd }, (_, i) => {
+    const d = new Date(inicio); d.setMonth(d.getMonth() + i + 1);
+    const valor = i === qtd - 1 ? base + resto : base;
+    return { data_vencimento: d.toISOString().slice(0, 10), valor: valor.toFixed(2) };
+  });
+}
 
 /**
  * Pagamento (despesa) ou Recebimento (receita) individual — escolhe UMA nota
@@ -2055,11 +3326,19 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
   const [numeroDocPagamento, setNumeroDocPagamento] = useState("");
-  const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
+  // Diferença entre valor pago e valor do lançamento (item 4 do pedido do
+  // usuário): em vez de sempre virar desconto/acréscimo, o usuário escolhe.
+  const [modoDiferenca, setModoDiferenca] = useState<"desconto" | "parcelar">("desconto");
+  const [qtdParcelasDiferenca, setQtdParcelasDiferenca] = useState(2);
+  const [parcelasDiferenca, setParcelasDiferenca] = useState<{ data_vencimento: string; valor: string }[]>([]);
+  // Comprovante de pagamento anexado à PRÓPRIA nota selecionada (não abre um
+  // novo lançamento) — reaproveita o mesmo mecanismo de FormEditarLancamento.
+  const [anexosPagamento, setAnexosPagamento] = useState<AnexoLancamento[] | null>(null);
+  const [enviandoAnexoPagamento, setEnviandoAnexoPagamento] = useState(false);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -2078,7 +3357,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   }, [opcoes.produtos, regs]);
 
   const filtradas = useMemo(() => abertas.filter((r) =>
-    (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+    casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, numeroDocumento) &&
     (!fornecedor || r.fornecedor === fornecedor) &&
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto) &&
@@ -2101,7 +3380,9 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     setValorPago(String(nota.valor));
     setDataPagamento(new Date().toISOString().slice(0, 10));
     setContaBancaria(""); setFormaPagamento(""); setDataVencimentoCartao(""); setNumeroDocPagamento("");
-    setConfirmando(false); setMsg(null);
+    setModoDiferenca("desconto"); setQtdParcelasDiferenca(2); setParcelasDiferenca([]);
+    setAnexosPagamento(null);
+    setMsg(null);
   }
 
   // Chega da lista de Contas a pagar/receber ou da Agenda com uma nota específica já em mente.
@@ -2115,17 +3396,64 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
 
   const notaSelecionada = useMemo(() => abertas.find((r) => r.id === notaId) || null, [abertas, notaId]);
   const diferenca = notaSelecionada ? Math.round((Number(valorPago) - notaSelecionada.valor) * 100) / 100 : 0;
+  const somaParcelasDiferenca = useMemo(() => parcelasDiferenca.reduce((a, p) => a + (Number(p.valor) || 0), 0), [parcelasDiferenca]);
+  const parcelasDiferencaBatem = Math.round((somaParcelasDiferenca - Math.abs(diferenca)) * 100) / 100 === 0;
+
+  // Carrega os anexos já existentes desta nota (comprovante, boleto, nota
+  // fiscal…) assim que ela é selecionada para pagamento.
+  useEffect(() => {
+    if (!notaSelecionada) { setAnexosPagamento([]); return; }
+    listarAnexosLancamentoPorId(notaSelecionada.id).then(setAnexosPagamento).catch(() => setAnexosPagamento([]));
+  }, [notaSelecionada?.id]);
+
+  // Regenera a divisão da diferença (igual, mês a mês) ao ligar "parcelar"
+  // ou mudar a quantidade — não depende do valor da diferença em si para não
+  // apagar edições manuais do usuário a cada tecla digitada em "valor pago"
+  // (mesmo padrão de `dividirParcelas` em FormFinanceiro.tsx).
+  useEffect(() => {
+    if (modoDiferenca !== "parcelar") { setParcelasDiferenca([]); return; }
+    setParcelasDiferenca(dividirDiferenca(Math.abs(diferenca), qtdParcelasDiferenca, dataPagamento));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoDiferenca, qtdParcelasDiferenca, notaId]);
+
+  async function enviarAnexoPagamento(file: File) {
+    if (!notaSelecionada) return;
+    setEnviandoAnexoPagamento(true); setMsg(null);
+    try {
+      const novo = await anexarArquivoLancamentoPorId(notaSelecionada.id, file, null);
+      setAnexosPagamento((p) => [...(p || []), novo]);
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao anexar arquivo" });
+    } finally {
+      setEnviandoAnexoPagamento(false);
+    }
+  }
+
+  async function removerAnexoPagamento(id: number) {
+    try {
+      await excluirAnexoLancamento(id);
+      setAnexosPagamento((p) => (p || []).filter((a) => a.id !== id));
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao remover anexo" });
+    }
+  }
 
   async function confirmar() {
     if (!notaSelecionada) return;
-    if (diferenca !== 0 && !confirmando) { setConfirmando(true); return; }
     if (formaPagamento === "credito" && !dataVencimentoCartao) { setMsg({ tipo: "erro", texto: "Informe a data de vencimento do cartão." }); return; }
+    if (diferenca !== 0 && modoDiferenca === "parcelar" && !parcelasDiferencaBatem) {
+      setMsg({ tipo: "erro", texto: "A soma das parcelas precisa bater com a diferença a parcelar." });
+      return;
+    }
     setSalvando(true); setMsg(null);
     try {
       await marcarPagoFinanceiro(notaSelecionada.id, {
         data_pagamento: dataPagamento, valor_pago: Number(valorPago) || 0,
         conta_bancaria: contaBancaria || undefined, numero_documento_pagamento: numeroDocPagamento || undefined,
         forma_pagamento: formaPagamento || undefined, data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
+        parcelas_diferenca: diferenca !== 0 && modoDiferenca === "parcelar"
+          ? parcelasDiferenca.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0 }))
+          : undefined,
       });
       setMsg({ tipo: "sucesso", texto: `${tipo === "receita" ? "Recebimento" : "Pagamento"} registrado com sucesso.` });
       setNotaId(null);
@@ -2134,7 +3462,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao tratar a nota" });
     } finally {
-      setSalvando(false); setConfirmando(false);
+      setSalvando(false);
     }
   }
 
@@ -2147,8 +3475,8 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
-          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
-            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          <button className="btn-ghost" title="Abre um lançamento NOVO a partir de um documento (nota fiscal, boleto ou recibo) — leitura automática, não anexa a nenhuma nota já existente" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Lançar por nota fiscal, boleto ou recibo…
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -2183,7 +3511,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
         </ModalDivididoDocumento>
       )}
 
-      <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
           <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
@@ -2239,7 +3567,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <div><label style={labelStyleLote}>Data de {tipo === "receita" ? "recebimento" : "pagamento"}</label>
               <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
             <div><label style={labelStyleLote}>Valor {tipo === "receita" ? "recebido" : "pago"} (R$)</label>
-              <input type="number" inputMode="decimal" style={selStyleLote} value={valorPago} onChange={(e) => setValorPago(e.target.value)} /></div>
+              <CampoMoeda style={selStyleLote} value={Number(valorPago) || 0} onChange={(v) => setValorPago(v ? String(v) : "")} /></div>
             <div><label style={labelStyleLote}>Conta corrente</label>
               <select style={selStyleLote} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
                 <option value="">Selecione…</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
@@ -2261,18 +3589,87 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             )}
           </div>
           {diferenca !== 0 && (
-            <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
-              {diferenca < 0 ? `Desconto de ${formatBRL(Math.abs(diferenca))}` : `Acréscimo de ${formatBRL(diferenca)}`} em relação ao valor do lançamento.
-            </p>
+            <div style={{ marginTop: "0.7rem", padding: "0.7rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              <p style={{ fontSize: "0.78rem", margin: "0 0 0.5rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
+                {diferenca < 0 ? `Desconto de ${formatBRL(Math.abs(diferenca))}` : `Acréscimo de ${formatBRL(diferenca)}`} em relação ao valor do lançamento. O que fazer com a diferença?
+              </p>
+              <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                  <input type="radio" checked={modoDiferenca === "desconto"} onChange={() => setModoDiferenca("desconto")} />
+                  Lançar {diferenca < 0 ? "desconto" : "acréscimo"}
+                </label>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                  <input type="radio" checked={modoDiferenca === "parcelar"} onChange={() => setModoDiferenca("parcelar")} />
+                  Parcelar a diferença de {formatBRL(Math.abs(diferenca))}
+                </label>
+              </div>
+              {modoDiferenca === "parcelar" && (
+                <div style={{ marginTop: "0.7rem" }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <label style={labelStyleLote}>Em quantas parcelas?</label>
+                    <input type="number" min={1} max={36} style={{ ...selStyleLote, width: "5rem" }}
+                      value={qtdParcelasDiferenca} onChange={(e) => setQtdParcelasDiferenca(Math.max(1, Number(e.target.value) || 1))} />
+                  </div>
+                  <table className="fazenda-table" style={{ margin: 0 }}>
+                    <thead><tr><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor (R$)</th></tr></thead>
+                    <tbody>
+                      {parcelasDiferenca.map((p, i) => (
+                        <tr key={i}>
+                          <td><input type="date" style={selStyleLote} value={p.data_vencimento}
+                            onChange={(e) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
+                          <td><CampoMoeda style={{ ...selStyleLote, textAlign: "right" }} value={Number(p.valor) || 0}
+                            onChange={(v) => setParcelasDiferenca((arr) => arr.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p style={{ fontSize: "0.74rem", marginTop: "0.4rem", color: parcelasDiferencaBatem ? "var(--text-muted)" : "var(--red)" }}>
+                    Soma das parcelas: {formatBRL(somaParcelasDiferenca)} {parcelasDiferencaBatem ? "" : `(precisa bater com ${formatBRL(Math.abs(diferenca))})`}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
+
+          <div style={{ marginTop: "0.9rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+            <label style={labelStyleLote}>Comprovante de pagamento (opcional)</label>
+            <Dropzone
+              compact
+              accept="application/pdf,image/jpeg,image/png"
+              disabled={enviandoAnexoPagamento}
+              label={enviandoAnexoPagamento ? "Enviando…" : "Arraste o comprovante aqui, ou"}
+              onFiles={(files) => enviarAnexoPagamento(files[0])}
+            />
+            {/* Documentos já anexados a ESTE lançamento (boleto, nota fiscal,
+                orçamento...), não só comprovantes de pagamento — clicáveis,
+                pra abrir o boleto e ler código de barras/QR code sem precisar
+                lembrar onde ele foi guardado, com o lançamento ainda aberto
+                aqui na tela enquanto paga. */}
+            {anexosPagamento && anexosPagamento.length > 0 && (
+              <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0" }}>
+                {anexosPagamento.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between" style={{ fontSize: "0.78rem", padding: "0.2rem 0" }}>
+                    <a href={urlAnexoLancamento(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>
+                      {a.nome_arquivo}{a.categoria ? ` (${a.categoria}${a.numero_documento ? ` ${a.numero_documento}` : ""})` : ""}
+                    </a>
+                    <button className="btn-ghost" title="Remover anexo" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => removerAnexoPagamento(a.id)}>
+                      <Trash2 size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
               painel inteiro some no mesmo clique que confirma (setNotaId(null)
               zera notaSelecionada), então um sucesso mostrado aqui dentro
               nunca chegaria a ser visto. */}
           {msg?.tipo === "erro" && <p style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: "0.6rem" }}>{msg.texto}</p>}
           <div className="flex items-center gap-3 mt-4">
-            <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar} disabled={salvando}>
-              <Check size={14} /> {confirmando ? "Confirmar mesmo com diferença" : salvando ? "Salvando…" : "Confirmar baixa"}
+            <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar}
+              disabled={salvando || (diferenca !== 0 && modoDiferenca === "parcelar" && !parcelasDiferencaBatem)}>
+              <Check size={14} /> {salvando ? "Salvando…" : "Confirmar baixa"}
             </button>
             <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
@@ -2296,6 +3693,7 @@ type RmcaResp = {
   contas_custo: string[];
   gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
   fisico: { receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[] };
+  meta_rmca: number;
 };
 
 function primeiroDiaDoMes() {
@@ -2307,7 +3705,7 @@ function primeiroDiaDoMes() {
 const ROTEIRO_RMCA = [
   { t: "1. O que é o RMCA", d: "Receita Menos Custo com Alimentação: quanto sobra da receita do leite depois de descontar o gasto com ração/alimentação no mesmo período. Duas versões lado a lado — gerencial e físico — para conferência cruzada." },
   { t: "2. Versão gerencial — marque as contas", d: "Vá em Configurações → Parâmetros financeiros → Conta gerencial. Marque a(s) conta(s) de receita que representam a venda do leite (ex.: \"Leite indústria\") e a(s) conta(s) de despesa que representam alimentação (ex.: \"Ração\", \"Silagem\", \"Sal mineral\"). O RMCA gerencial soma os lançamentos financeiros dessas contas no período." },
-  { t: "3. Versão física — indique os produtos", d: "Vá em Configurações → Cadastro → Itens de estoque. Na coluna RMCA, marque quais produtos são ração/alimento e devem entrar no custo físico. Desmarque produtos que não são alimentação (medicamentos, materiais etc.), mesmo que também tenham baixa de \"Saída de ajuste\"." },
+  { t: "3. Versão física — indique os produtos", d: "Vá em Configurações → Cadastro → Estoque → Itens de Estoque. Na coluna RMCA, marque quais produtos são ração/alimento e devem entrar no custo físico. Desmarque produtos que não são alimentação (medicamentos, materiais etc.), mesmo que também tenham baixa de \"Saída de ajuste\"." },
   { t: "4. Como o custo físico é calculado", d: "Para cada produto marcado, o sistema soma a quantidade baixada como \"Saída de ajuste\" pela Alimentação no período e multiplica pelo valor unitário cadastrado no Estoque. O card \"RMCA físico\" mostra o detalhamento produto a produto." },
   { t: "5. Por que duas versões", d: "A gerencial reflete o que foi de fato lançado no financeiro (pode incluir sobras de estoque, compras antecipadas). A física reflete o consumo real no período, ainda que o pagamento tenha sido em outro mês. Comparar as duas ajuda a identificar diferenças de timing." },
 ];
@@ -2381,7 +3779,7 @@ function RmcaView() {
               <div className="grid grid-cols-1 gap-3 mb-3">
                 <KPI v={formatBRL(dados.gerencial.receita_leite)} l="Receita do leite" c="var(--green-light)" />
                 <KPI v={formatBRL(dados.gerencial.custo_alimentacao)} l="Custo de alimentação" c="var(--red)" />
-                <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= 0 ? "var(--green-light)" : "var(--amber)"} />
+                <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
               </div>
               {dados.contas_receita.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Receita: {dados.contas_receita.join(", ")}</p>}
               {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
@@ -2394,7 +3792,7 @@ function RmcaView() {
               <div className="grid grid-cols-1 gap-3 mb-3">
                 <KPI v={formatBRL(dados.fisico.receita_leite)} l="Receita do leite" c="var(--green-light)" />
                 <KPI v={formatBRL(dados.fisico.custo_alimentacao)} l="Custo de alimentação (físico)" c="var(--red)" />
-                <KPI v={formatBRL(dados.fisico.rmca)} l="RMCA" c={dados.fisico.rmca >= 0 ? "var(--green-light)" : "var(--amber)"} />
+                <KPI v={formatBRL(dados.fisico.rmca)} l="RMCA" c={dados.fisico.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
               </div>
               {dados.fisico.itens.length > 0 && (
                 <div className="overflow-x-auto">
@@ -2957,7 +4355,7 @@ function FormItemOrcamento({ planoContas, centros, anoDefault, item, onSalvo, on
           <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
         </select>
       </div>
-      <div><label style={labelStyleLote}>Valor orçado</label><input type="number" step="0.01" style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={(e) => setValor(Number(e.target.value))} /></div>
+      <div><label style={labelStyleLote}>Valor orçado</label><CampoMoeda style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={setValor} /></div>
       <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       {erro && <div className="alert-critico"><span>{erro}</span></div>}
       <div className="flex gap-2 justify-end">
@@ -3329,7 +4727,7 @@ function FormItemCenario({ planoContas, centros, cenarioId, item, onSalvo, onCan
           <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
         </select>
       </div>
-      <div><label style={labelStyleLote}>Valor previsto</label><input type="number" step="0.01" style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={(e) => setValor(Number(e.target.value))} /></div>
+      <div><label style={labelStyleLote}>Valor previsto</label><CampoMoeda style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={setValor} /></div>
       <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       {erro && <div className="alert-critico"><span>{erro}</span></div>}
       <div className="flex gap-2 justify-end">

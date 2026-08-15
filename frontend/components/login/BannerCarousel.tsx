@@ -91,7 +91,7 @@ export function BannerCarousel() {
               <span style={{
                 display: "inline-block", padding: "0.3rem 0.75rem", borderRadius: "999px", fontSize: "0.72rem", fontWeight: 700,
                 letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--dourado-light)",
-                background: "rgba(212,160,23,0.14)", border: "1px solid rgba(212,160,23,0.3)", marginBottom: "1.1rem",
+                background: "rgba(201,164,76,0.14)", border: "1px solid rgba(201,164,76,0.3)", marginBottom: "1.1rem",
               }}>
                 {b.eyebrow}
               </span>

@@ -101,7 +101,7 @@ export default function AnaliseReprodutivaPage() {
 
   const selStyle: React.CSSProperties = {
     background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-    borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+    borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
   };
 
   return (
@@ -119,7 +119,7 @@ export default function AnaliseReprodutivaPage() {
       {error && (
         <div className="alert-critico mb-4">
           <AlertTriangle size={18} />
-          <span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload do reprodutivo</a>.</span>
+          <span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados reprodutivos</a>.</span>
         </div>
       )}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -183,7 +183,7 @@ export default function AnaliseReprodutivaPage() {
               {quebra.map((row) => (
                 <div key={row.k} className="flex items-center gap-3">
                   <span style={{ fontSize: "0.78rem", minWidth: "9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.k}</span>
-                  <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "4px", height: "18px", overflow: "hidden" }}>
+                  <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "var(--r-sm)", height: "18px", overflow: "hidden" }}>
                     <div style={{ width: `${row.pct ?? 0}%`, height: "100%", background: "var(--green-light)", minWidth: "2px" }} />
                   </div>
                   <span style={{ fontSize: "0.78rem", fontWeight: 700, minWidth: "8.5rem", textAlign: "right" }}>

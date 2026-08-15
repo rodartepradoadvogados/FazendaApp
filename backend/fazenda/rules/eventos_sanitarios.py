@@ -44,13 +44,27 @@ ROTULOS_GATILHO = {
 }
 
 
-def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None, hoje: date) -> list[date]:
+def _ocorrencias_recorrentes(
+    base: date, valor: int | None, unidade: str | None, hoje: date,
+    janela_passado: int | None = None, janela_futuro: int | None = None,
+) -> list[date]:
     """Datas da recorrência dentro da janela [hoje-janela_passado, hoje+janela_futuro]
-    (editável em Configurações > Parâmetros, padrão 120/180 dias)."""
+    (editável em Configurações > Parâmetros, padrão 120/180 dias).
+
+    `janela_passado`/`janela_futuro` são opcionais — quando o chamador está
+    num loop por evento/regra (ver `eventos_agenda`/`_eventos_calendario_agenda`
+    abaixo), calcula os dois UMA vez fora do loop e passa aqui, evitando reler
+    o mesmo parâmetro (via `_linha`, que abre uma sessão de banco própria a
+    cada chamada) uma vez por evento cadastrado. Sem eles, consulta como
+    sempre — mantém quem chama isolado (fora deste arquivo, hoje ninguém)."""
     if not (base and valor and unidade):
         return []
-    minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
-    limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
+    if janela_passado is None:
+        janela_passado = janela_eventos_sanitarios_passado()
+    if janela_futuro is None:
+        janela_futuro = janela_eventos_sanitarios_futuro()
+    minimo = hoje - timedelta(days=janela_passado)
+    limite = hoje + timedelta(days=janela_futuro)
     saida: list[date] = []
     d = base
     guarda = 0
@@ -62,19 +76,22 @@ def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None,
     return saida
 
 
-def _ocorrencias_epoca(ev: EventoSanitario, hoje: date) -> list[date]:
-    return _ocorrencias_recorrentes(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, hoje)
+def _ocorrencias_epoca(
+    ev: EventoSanitario, hoje: date, janela_passado: int | None = None, janela_futuro: int | None = None,
+) -> list[date]:
+    return _ocorrencias_recorrentes(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, hoje, janela_passado, janela_futuro)
 
 
-def _limiares_categoria(session: Session) -> tuple[int, int]:
+def _limiares_categoria(session: Session, fazenda_id: int | None) -> tuple[int, int]:
     """Dia de desmama (fim da 1ª categoria cadastrada) e dia de entrada em
     recria (início da 2ª) — lidos do cadastro de Categorias (Configurações >
     Cadastro > Categorias), na ordem cadastrada (`CategoriaManejo.ordem`).
     Sem cadastro suficiente, cai no padrão histórico de 90/91 dias (mesmo
     usado no aviso fixo de desmama da Agenda)."""
-    cats = session.exec(
-        select(CategoriaManejo).where(CategoriaManejo.ativo == True).order_by(CategoriaManejo.ordem)  # noqa: E712
-    ).all()
+    query = select(CategoriaManejo).where(CategoriaManejo.ativo == True).order_by(CategoriaManejo.ordem)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CategoriaManejo.fazenda_id == fazenda_id)
+    cats = session.exec(query).all()
     if len(cats) >= 2 and cats[1].dia_min is not None:
         dia_desmama = cats[0].dia_max if cats[0].dia_max is not None else 90
         return dia_desmama, cats[1].dia_min
@@ -83,60 +100,111 @@ def _limiares_categoria(session: Session) -> tuple[int, int]:
 
 def _datas_gatilho(
     session: Session, gatilho: str, gatilho_lote: str | None = None, gatilho_idade_meses: int | None = None,
-    offset_dias: int = 0,
+    offset_dias: int = 0, sexo_alvo: str | None = None, fazenda_id: int | None = None,
+    animais_cache: dict[str, Animal] | None = None,
 ) -> list[tuple[str, date]]:
     """Datas (por animal) em que um gatilho de evento de vida ocorre ou vai
     ocorrer — usado tanto para gerar a pendência na Agenda (`eventos_agenda`)
     quanto para o relatório de "quais animais entrarão em determinado
-    calendário" (rota /sanidade/calendario/relatorio-eventos-vida)."""
+    calendário" (rota /sanidade/calendario/relatorio-eventos-vida).
+
+    `animais_cache` (numero -> Animal) é opcional — quando o chamador já tem
+    a tabela Animal carregada (ver `eventos_agenda` abaixo, que chama esta
+    função uma vez por EVENTO SANITÁRIO "por evento" cadastrado), evita reler
+    a tabela inteira de novo só para o filtro de elegibilidade no fim desta
+    função; sem cache (demais chamadores, uma chamada isolada cada), consulta
+    como sempre."""
     offset = timedelta(days=offset_dias or 0)
     saida: list[tuple[str, date]] = []
 
+    def _da_fazenda(query, modelo):
+        if fazenda_id is None:
+            return query
+        return query.where(modelo.fazenda_id == fazenda_id)
+
     if gatilho == "nascimento":
-        for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
+        for a in session.exec(_da_fazenda(select(Animal).where(Animal.data_nasc != None), Animal)).all():  # noqa: E711
             saida.append((a.numero, a.data_nasc + offset))
     elif gatilho == "secagem":
-        for s in session.exec(select(Secagem)).all():
+        for s in session.exec(_da_fazenda(select(Secagem), Secagem)).all():
             saida.append((s.numero_matriz, s.data_secagem + offset))
     elif gatilho == "parto":
-        for p in session.exec(select(Parto).where(Parto.data_parto != None)).all():  # noqa: E711
+        for p in session.exec(_da_fazenda(select(Parto).where(Parto.data_parto != None), Parto)).all():  # noqa: E711
             saida.append((p.numero_matriz, p.data_parto + offset))
     elif gatilho == "entrada_lote" and gatilho_lote:
-        for m in session.exec(select(MovimentoLote).where(MovimentoLote.lote_destino == gatilho_lote)).all():
+        for m in session.exec(_da_fazenda(select(MovimentoLote).where(MovimentoLote.lote_destino == gatilho_lote), MovimentoLote)).all():
             saida.append((m.numero_matriz, m.data_movimento + offset))
     elif gatilho == "novilha_apta" and gatilho_idade_meses:
         for a in session.exec(
-            select(Animal).where(Animal.sexo == "F", Animal.ativo == True, Animal.data_nasc != None)  # noqa: E711,E712
+            _da_fazenda(select(Animal).where(Animal.sexo == "F", Animal.ativo == True, Animal.data_nasc != None), Animal)  # noqa: E711,E712
         ).all():
             saida.append((a.numero, _somar_meses(a.data_nasc, gatilho_idade_meses) + offset))
     elif gatilho == "desmama":
-        dia_desmama, _ = _limiares_categoria(session)
-        for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
+        dia_desmama, _ = _limiares_categoria(session, fazenda_id)
+        for a in session.exec(_da_fazenda(select(Animal).where(Animal.data_nasc != None), Animal)).all():  # noqa: E711
             saida.append((a.numero, a.data_nasc + timedelta(days=dia_desmama) + offset))
     elif gatilho == "mudanca_recria":
-        _, dia_recria = _limiares_categoria(session)
-        for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
+        _, dia_recria = _limiares_categoria(session, fazenda_id)
+        for a in session.exec(_da_fazenda(select(Animal).where(Animal.data_nasc != None), Animal)).all():  # noqa: E711
             saida.append((a.numero, a.data_nasc + timedelta(days=dia_recria) + offset))
     elif gatilho == "inseminacao":
-        for s in session.exec(select(Servico).where(Servico.data_servico != None)).all():  # noqa: E711
+        for s in session.exec(_da_fazenda(select(Servico).where(Servico.data_servico != None), Servico)).all():  # noqa: E711
             saida.append((s.numero_matriz, s.data_servico + offset))
     elif gatilho == "gestacao_confirmada":
-        for s in session.exec(select(Servico).where(Servico.diagnostico == "POSITIVO")).all():
+        # `data_perda_prenhez.is_(None)` — uma prenhez que já se perdeu (manual
+        # ou automática por reinseminação, ver fazenda.rules.perda_prenhez)
+        # não confirma gestação nenhuma; sem o filtro, o evento (ex.: uma
+        # vacina de gestante) continuava sendo sugerido para uma vaca que já
+        # não está mais prenha.
+        for s in session.exec(
+            _da_fazenda(
+                select(Servico).where(Servico.diagnostico == "POSITIVO", Servico.data_perda_prenhez.is_(None)),
+                Servico,
+            )
+        ).all():
             base = s.data_diagnostico or s.data_servico
             if base:
                 saida.append((s.numero_matriz, base + offset))
     elif gatilho == "mudanca_pre_parto":
         limite = pre_parto_max()
+        # Mesmo filtro de perda de prenhez do gatilho acima — sem ele, uma
+        # vaca que perdeu a prenhez (com ou sem nova IA já lançada) continuava
+        # recebendo a sugestão de mudar para o lote de pré-parto, o pedido
+        # específico do produtor que este módulo existe para atender.
         for s in session.exec(
-            select(Servico).where(Servico.diagnostico == "POSITIVO", Servico.data_servico != None)  # noqa: E711
+            _da_fazenda(
+                select(Servico).where(
+                    Servico.diagnostico == "POSITIVO", Servico.data_servico != None,  # noqa: E711
+                    Servico.data_perda_prenhez.is_(None),
+                ),
+                Servico,
+            )
         ).all():
             prevista = calcular_parto_provavel(s.data_servico, s.raca_matriz).data_parto_provavel
             saida.append((s.numero_matriz, prevista - timedelta(days=limite) + offset))
 
-    return saida
+    # Filtro único no fim (não em cada ramo, pra cobrir gatilho novo por
+    # igual): nunca sugere animal já baixado (vendido/morto/etc.) — pendência
+    # de vacina pra quem não está mais no rebanho não faz sentido — nem fora
+    # do sexo-alvo do evento, quando um está definido (ex.: Brucelose B19 só
+    # em fêmeas; macho não recebe).
+    animais = (
+        animais_cache if animais_cache is not None
+        else {a.numero: a for a in session.exec(_da_fazenda(select(Animal), Animal)).all()}
+    )
+
+    def elegivel(numero: str) -> bool:
+        a = animais.get(numero)
+        if not a or not a.ativo:
+            return False
+        if sexo_alvo and a.sexo != sexo_alvo:
+            return False
+        return True
+
+    return [(n, d) for n, d in saida if elegivel(n)]
 
 
-def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
+def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str], fazenda_id: int | None) -> list[dict]:
     """
     Eventos da Agenda vindos das REGRAS do calendário sanitário (preventivo).
     Antes, essas regras só apareciam na tela de calendário e nunca na Agenda —
@@ -145,12 +213,27 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
     Exame (categoria_preventiva == "exame") não tem produto/baixa de estoque:
     a baixa apenas marca como realizado (e permite lançar o financeiro).
     """
-    regras = session.exec(
-        select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
-    ).all()
+    query_regras = (
+        # usa_cronograma=True fica de fora daqui — essas regras geram suas
+        # próprias pendências pelo workflow do cronograma (ver
+        # rules.cronograma_sanitario.eventos_agenda), nunca as duas ao mesmo
+        # tempo para a mesma regra.
+        select(CalendarioSanitario).where(CalendarioSanitario.ativo == True).where(CalendarioSanitario.usa_cronograma == False)  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query_regras = query_regras.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    regras = session.exec(query_regras).all()
     if not regras:
         return []
-    eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    query_eventos = select(EventoSanitario)
+    if fazenda_id is not None:
+        query_eventos = query_eventos.where(EventoSanitario.fazenda_id == fazenda_id)
+    eventos = {e.id: e for e in session.exec(query_eventos).all()}
+    # Calculado uma vez para todas as regras do loop abaixo — ver o
+    # comentário de `_ocorrencias_recorrentes`: sem isso, cada regra ativa
+    # relia numa nova leitura do parâmetro (sessão de banco própria).
+    janela_passado = janela_eventos_sanitarios_passado()
+    janela_futuro = janela_eventos_sanitarios_futuro()
     saida: list[dict] = []
     for c in regras:
         ev = eventos.get(c.evento_sanitario_id)
@@ -158,7 +241,7 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
         categoria = (ev.categoria_preventiva if ev else None) or None
         eh_exame = categoria == "exame"
         alvo = c.categoria_alvo or "rebanho"
-        for d in _ocorrencias_recorrentes(c.data_evento, c.frequencia_valor, c.frequencia_unidade, hoje):
+        for d in _ocorrencias_recorrentes(c.data_evento, c.frequencia_valor, c.frequencia_unidade, hoje, janela_passado, janela_futuro):
             eid = f"calendario_sanitario_{c.id}__{d.isoformat()}"
             if eid in realizados:
                 continue
@@ -235,25 +318,46 @@ def _base(ev: EventoSanitario, quando: date, numero: str | None, sufixo: str, pr
     }
 
 
-def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
+def eventos_agenda(session: Session, hoje: date, realizados: set[str], fazenda_id: int | None = None) -> list[dict]:
     """Todos os eventos da Agenda vindos dos eventos sanitários agendados."""
-    todos_eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    query_todos_eventos = select(EventoSanitario)
+    if fazenda_id is not None:
+        query_todos_eventos = query_todos_eventos.where(EventoSanitario.fazenda_id == fazenda_id)
+    todos_eventos = {e.id: e for e in session.exec(query_todos_eventos).all()}
     eventos = [
         e for e in todos_eventos.values()
         if e.ativo and e.tipo_agendamento != "nenhum"
     ]
 
+    # Eventos ligados a uma regra do calendário sanitário com
+    # usa_cronograma=True não geram mais a pendência antiga de "aplicar
+    # agora" — o animal entra na trilha do cronograma (ver
+    # rules.cronograma_sanitario), que pergunta se ele entra na lista de
+    # espera em vez de cobrar aplicação imediata (ver eventos_agenda_cronograma
+    # em routers/agenda.py). Um evento sem regra vinculada (ou com regra
+    # usa_cronograma=False) continua exatamente como sempre.
+    query_calendarios_cron = select(CalendarioSanitario).where(CalendarioSanitario.usa_cronograma == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_calendarios_cron = query_calendarios_cron.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    calendarios_cronograma = {c.evento_sanitario_id: c for c in session.exec(query_calendarios_cron).all()}
+
     # Resolve o princípio ativo do produto padrão (nome do item de estoque) —
     # alimenta o seletor "Princípio ativo" já pré-preenchido na Agenda, do
     # mesmo jeito que as regras do calendário sanitário já fazem.
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
     principio_por_nome = {
-        e.nome: e.principio_ativo_id for e in session.exec(select(Estoque)).all()
+        e.nome: e.principio_ativo_id for e in session.exec(query_estoque).all()
     }
 
     # Pré-carrega Sanidade por animal (produto minúsculo, data) para deduplicar:
     # se já foi aplicado depois do gatilho, o evento some da Agenda.
+    query_sanidade = select(Sanidade)
+    if fazenda_id is not None:
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
     aplic_por_animal: dict[str, list[tuple[str, date | None]]] = {}
-    for s in session.exec(select(Sanidade)).all():
+    for s in session.exec(query_sanidade).all():
         aplic_por_animal.setdefault(s.numero_matriz, []).append(((s.produto or "").strip().lower(), s.data_aplicacao))
 
     def ja_aplicado(numero: str, produto: str | None, desde: date) -> bool:
@@ -279,6 +383,27 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
             return False
         return ja_aplicado_alguma_vez(numero, condicao.produto_padrao)
 
+    # Cache único de Animal (numero -> objeto), reaproveitado em toda chamada
+    # de _datas_gatilho abaixo. Sem isso, CADA evento sanitário "por evento"
+    # (nascimento, desmama, entrada em lote, novilha apta…) relia numa leitura
+    # nova da tabela Animal inteira só para o filtro final de elegibilidade —
+    # numa fazenda com uma dúzia de eventos cadastrados (comum: uma vacina por
+    # doença), isso multiplicava a mesma consulta pesada uma dúzia de vezes a
+    # cada carregamento da Agenda.
+    query_animais_gatilho = select(Animal)
+    if fazenda_id is not None:
+        query_animais_gatilho = query_animais_gatilho.where(Animal.fazenda_id == fazenda_id)
+    animais_cache = {a.numero: a for a in session.exec(query_animais_gatilho).all()}
+
+    # Mesmo raciocínio do cache de Animal acima, para os dois parâmetros de
+    # janela — ver o comentário de `_ocorrencias_recorrentes`. Calculados uma
+    # vez para todos os eventos deste loop (época e por evento), em vez de
+    # reler `janela_eventos_sanitarios_passado/futuro` (cada leitura abre uma
+    # sessão de banco própria — ver `_linha` em rules/parametros.py) a cada
+    # evento sanitário cadastrado.
+    janela_passado = janela_eventos_sanitarios_passado()
+    janela_futuro = janela_eventos_sanitarios_futuro()
+
     saida: list[dict] = []
 
     for ev in eventos:
@@ -286,7 +411,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
         principio_ativo_id = principio_por_nome.get(ev.produto_padrao) if ev.produto_padrao else None
 
         if ev.tipo_agendamento == "epoca":
-            for d in _ocorrencias_epoca(ev, hoje):
+            for d in _ocorrencias_epoca(ev, hoje, janela_passado, janela_futuro):
                 evt = _base(ev, d, None, d.isoformat(), principio_ativo_id)
                 if evt["id"] not in realizados:
                     saida.append(evt)
@@ -295,11 +420,17 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
         if ev.tipo_agendamento != "evento" or not ev.gatilho:
             continue
 
-        minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
-        limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
-        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset)
+        minimo = hoje - timedelta(days=janela_passado)
+        limite = hoje + timedelta(days=janela_futuro)
+        gatilhos = _datas_gatilho(
+            session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset, ev.sexo_alvo, fazenda_id,
+            animais_cache=animais_cache,
+        )
+
+        calendario_cron = calendarios_cronograma.get(ev.id)
 
         vistos: set[str] = set()
+        numeros_para_cronograma: list[str] = []
         for numero, quando in gatilhos:
             if not (minimo <= quando <= limite):
                 continue
@@ -309,13 +440,27 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
                 continue
             if bloqueado_pela_condicao(ev, numero):
                 continue
+            if calendario_cron:
+                # Trilha do cronograma: só sugere quando o animal JÁ bateu o
+                # critério (não antecipa animais que ainda vão chegar lá) —
+                # o funcionário decide incluir/excluir pela Agenda.
+                if quando <= hoje:
+                    vistos.add(numero)
+                    numeros_para_cronograma.append(numero)
+                continue
             evt = _base(ev, quando, numero, quando.isoformat(), principio_ativo_id)
             if evt["id"] in realizados:
                 continue
             vistos.add(numero)
             saida.append(evt)
 
+        # Um SELECT+INSERT em lote por evento sanitário em vez de um por
+        # animal — ver fazenda.rules.cronograma_sanitario.sugerir_animais_em_lote.
+        if calendario_cron and numeros_para_cronograma:
+            from fazenda.rules.cronograma_sanitario import sugerir_animais_em_lote
+            sugerir_animais_em_lote(session, calendario_cron, numeros_para_cronograma, hoje)
+
     # Regras do calendário sanitário (preventivo) também viram pendências.
-    saida.extend(_eventos_calendario_agenda(session, hoje, realizados))
+    saida.extend(_eventos_calendario_agenda(session, hoje, realizados, fazenda_id))
 
     return saida

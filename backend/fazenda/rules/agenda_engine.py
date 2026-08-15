@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
+from fazenda.api.routers.animais import _del_dias_ao_vivo
 from fazenda.rules.bst import ResultadoBST, avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
@@ -27,12 +28,26 @@ from fazenda.rules.iatf import (
 from fazenda.rules.parametros import (
     dias_contas_a_pagar_agenda as _dias_contas_a_pagar_padrao,
     dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
+    gestacao_dias_referencia,
     intervalo_bst as _intervalo_bst_padrao,
     intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
     periodo_seco_dias,
     pre_parto_max,
 )
+from fazenda.rules.perda_prenhez import retoque_esta_resolvido
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
+
+
+def _del_projetado_bst(del_atual: int | None, proxima_visita_bst: date | None, hoje: date) -> int | None:
+    """DEL que o animal terá na data da PRÓXIMA aplicação de BST agendada
+    (`proxima_visita_bst`) — mesma conta usada para 'DEL projetado' das
+    candidatas IATF (ver `del_dias_projetado` em
+    `api/routers/reproducao.py::candidatas_iatf_projetadas`): DEL de hoje +
+    dias até a data de referência futura. None quando falta um dos dois dados
+    (sem último parto → sem `del_atual`; sem aplicação de BST agendada ainda)."""
+    if del_atual is None or proxima_visita_bst is None:
+        return None
+    return del_atual + (proxima_visita_bst - hoje).days
 
 
 @dataclass
@@ -114,6 +129,8 @@ class AgendaEngine:
         eventos_manuais: list[dict],
         dias_contas_a_pagar: int | None = None,
         proxima_visita_bst_real: date | None = None,
+        lotes: list[dict] | None = None,
+        secagens: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -132,6 +149,9 @@ class AgendaEngine:
                 informada, substitui a estimativa por analogia ao serviço
                 reprodutivo — o motor usa essa data para projetar o DEL de
                 cada animal na próxima aplicação (bst_elegiveis/nunca aplicadas).
+            secagens: Lista de dicts com campos do modelo Secagem — usada para
+                calcular o DEL de cada animal AO VIVO (ver `_del_dias_ao_vivo`),
+                em vez do `Animal.del_dias` congelado no último GERAL.csv.
 
         Returns:
             AgendaResult com todos os blocos da agenda calculados.
@@ -142,6 +162,15 @@ class AgendaEngine:
         intervalo_visita_reprodutiva = _intervalo_visita_reprodutiva_padrao()
         intervalo_bst = _intervalo_bst_padrao()
         dias_reinseminacao = _dias_reinseminacao_referencia()
+
+        # Grupos (Lote.codigo + " - " + Lote.nome, mesmo formato de
+        # Animal.grupo_primario) cujo cadastro já marca `pre_parto=True` —
+        # animal cujo grupo atual já é um desses não recebe o alerta "entrando
+        # no pré-parto" de novo (já foi movido manualmente/pela sugestão de
+        # movimentação; ver lote_criterios.py).
+        grupos_ja_pre_parto = {
+            f"{l['codigo']} - {l['nome']}" for l in (lotes or []) if l.get("pre_parto")
+        }
 
         # Índices auxiliares
         servico_por_animal: dict[str, dict] = {
@@ -154,6 +183,19 @@ class AgendaEngine:
             if n not in parto_por_animal:
                 parto_por_animal[n] = p
             partos_por_animal.setdefault(n, []).append(p)
+
+        # Secagem mais recente por animal — junto com o parto mais recente
+        # acima, alimenta o DEL AO VIVO (ver _del_dias_ao_vivo, importado do
+        # topo do arquivo) usado logo abaixo no loop por animal.
+        ult_secagem_por_animal: dict[str, date] = {}
+        ult_secagem_rotina_por_animal: dict[str, date] = {}
+        for s in secagens or []:
+            n = s.get("numero_matriz")
+            d = s.get("data_secagem")
+            if n and d and (n not in ult_secagem_por_animal or d > ult_secagem_por_animal[n]):
+                ult_secagem_por_animal[n] = d
+            if n and d and s.get("motivo") == "rotina" and (n not in ult_secagem_rotina_por_animal or d > ult_secagem_rotina_por_animal[n]):
+                ult_secagem_rotina_por_animal[n] = d
 
         # 1. CANDIDATAS IATF
         iatf_input = [
@@ -190,10 +232,39 @@ class AgendaEngine:
             result.proxima_visita_bst = proxima_visita_bst_real
 
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
-        # agenda no dia do próximo serviço (data do diagnóstico + meta de
+        # agenda no dia da próxima visita reprodutiva (data do diagnóstico + meta de
         # reinseminação; sem diagnóstico registrado, usa a data do serviço).
+        # A cobrança para assim que um evento mais definitivo já tiver
+        # resolvido a gestação sozinho — parto, secagem de rotina ou entrada
+        # na janela de pré-parto (ver perda_prenhez.retoque_esta_resolvido);
+        # sem isso, uma vaca que já pariu ou já está no pré-parto continuava
+        # recebendo o alerta de retoque para sempre, já que só a
+        # reconfirmação manual desligava o flag `retoque` do serviço.
+        gestacao_dias_ref = gestacao_dias_referencia()
+        pre_parto_max_dias = pre_parto_max()
+        grupo_por_animal = {a["numero"]: a.get("grupo_primario") or "" for a in animais}
         for s in servicos:
             if not s.get("retoque"):
+                continue
+            numero_s = s["numero_matriz"]
+            # Já está fisicamente no lote de pré-parto (grupo_primario aponta
+            # pra um Lote com pre_parto=True) — mesmo sinal que já suspende o
+            # alerta "Pré-parto" abaixo (grupos_ja_pre_parto). Verificação à
+            # parte de `retoque_esta_resolvido`: o critério do lote é
+            # race-aware (fazenda.rules.lote_criterios.dias_para_parto usa
+            # dias_gestacao(raca)), enquanto o cálculo abaixo usa a média
+            # configurável — as duas janelas podem divergir alguns dias para
+            # raças fora do Holandês.
+            if grupo_por_animal.get(numero_s) in grupos_ja_pre_parto:
+                continue
+            if retoque_esta_resolvido(
+                data_servico=s.get("data_servico"),
+                hoje=data_referencia,
+                ultimo_parto=parto_por_animal.get(numero_s, {}).get("data_parto"),
+                ultima_secagem_rotina=ult_secagem_rotina_por_animal.get(numero_s),
+                dias_gestacao_referencia=gestacao_dias_ref,
+                pre_parto_max_dias=pre_parto_max_dias,
+            ):
                 continue
             ancora = s.get("data_diagnostico") or s.get("data_servico")
             if not ancora:
@@ -271,7 +342,6 @@ class AgendaEngine:
             numero = animal["numero"]
             raca = animal.get("raca")
             sit_rep = animal.get("sit_rep") or ""
-            del_dias = animal.get("del_dias")
             grupo = animal.get("grupo_primario") or ""
 
             servico = servico_por_animal.get(numero, {})
@@ -281,6 +351,29 @@ class AgendaEngine:
             data_servico = servico.get("data_servico")
             diagnostico = (servico.get("diagnostico") or "").upper()
             ordem_parto = parto.get("ordem_parto") or servico.get("ordem_parto") or 0
+            # Perda de prenhez registrada neste serviço (manual ou automática
+            # por reinseminação, ver fazenda.rules.perda_prenhez) — mesmo
+            # diagnóstico ainda marcado POSITIVO, a gestação não é mais
+            # vigente: não gera Parto provável/Pré-parto/Secagem (senão a vaca
+            # continuava recebendo pendência de mudar para o pré-parto mesmo
+            # depois de perder a prenhez, o pedido do produtor que este bloco
+            # existe para fechar).
+            perdeu_prenhez = bool(servico.get("data_perda_prenhez"))
+            gestante_vigente = diagnostico == "POSITIVO" and not perdeu_prenhez
+
+            # DEL (dias em lactação) AO VIVO — `Animal.del_dias` é zerado no
+            # instante do parto lançado no app (ver registrar_parto) mas fica
+            # congelado dali em diante, só voltando a bater com a realidade
+            # no próximo GERAL.csv (Ideagri); nunca reflete uma Secagem
+            # lançada no app depois. Sem isso, tanto a decisão "está em
+            # lactação, deve secar" (logo abaixo) quanto o DEL usado no BST
+            # (atual e projetado, mais abaixo no loop) ficavam presos ao
+            # valor congelado — um animal recém-parido pelo app nunca entrava
+            # para secar, e um animal recém-seco pelo app nunca saía da lista
+            # (ver auditoria ago/2026).
+            del_dias = _del_dias_ao_vivo(
+                animal.get("del_dias"), data_parto_real, ult_secagem_por_animal.get(numero), data_referencia,
+            )
 
             # ── PARTO PROVÁVEL (só para prenhes com serviço positivo)
             # Se já houve um parto após este serviço, a prenhez já se resolveu
@@ -291,7 +384,7 @@ class AgendaEngine:
                 for p in partos_por_animal.get(numero, [])
             )
             data_parto_provavel = None
-            if diagnostico == "POSITIVO" and data_servico and not ja_pariu_deste_servico:
+            if gestante_vigente and data_servico and not ja_pariu_deste_servico:
                 res_gest = calcular_parto_provavel(data_servico, raca)
                 data_parto_provavel = res_gest.data_parto_provavel
                 eventos.append(AgendaItem(
@@ -306,8 +399,12 @@ class AgendaEngine:
                 # movimentação de manejo, não depende de lactação nenhuma).
                 # Vem DEPOIS da Secagem (ver abaixo) — pre_parto_max é sempre
                 # menor que periodo_seco_dias, então esta data cai depois.
+                # Sem piso de data: um pré-parto vencido precisa continuar
+                # aparecendo (e cair em "Atrasados" no front) até o animal
+                # ser realmente movido — antes, a data passar simplesmente
+                # apagava o alerta da Agenda, como se tivesse sido resolvido.
                 data_pre_parto = data_parto_provavel - timedelta(days=pre_parto_max())
-                if data_pre_parto >= data_referencia:
+                if grupo not in grupos_ja_pre_parto:
                     eventos.append(AgendaItem(
                         data=data_pre_parto,
                         categoria="Reprodutivo",
@@ -320,7 +417,9 @@ class AgendaEngine:
                 # quem não está em lactação não tem o que secar; ver dry_off.py).
                 em_lactacao = bool(del_dias and del_dias > 0)
                 res_sec = calcular_secagem(numero, data_parto_provavel, ordem_parto, em_lactacao)
-                if res_sec.deve_secar and res_sec.data_secagem >= data_referencia:
+                # Sem piso de data (mesmo racional do Pré-parto acima) — uma
+                # secagem vencida precisa continuar aparecendo até ser feita.
+                if res_sec.deve_secar:
                     eventos.append(AgendaItem(
                         data=res_sec.data_secagem,
                         categoria="Produção",
@@ -328,8 +427,11 @@ class AgendaEngine:
                         numero_animal=numero,
                     ))
 
-            # ── SCRATCH (14 dias após último serviço)
-            if data_servico and diagnostico != "POSITIVO":
+            # ── SCRATCH (14 dias após último serviço) — também dispara quando
+            # a prenhez deste serviço já se perdeu (perdeu_prenhez): a vaca
+            # volta a precisar de detector de cio, mesmo com o diagnóstico
+            # antigo ainda marcado POSITIVO no registro.
+            if data_servico and not gestante_vigente:
                 res_scratch = calcular_scratch(numero, data_servico, servico.get("diagnostico"))
                 if res_scratch.ativo and res_scratch.data_scratch >= data_referencia:
                     eventos.append(AgendaItem(
@@ -380,6 +482,8 @@ class AgendaEngine:
                         del_dias=del_dias,
                         data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
                         data_referencia=data_referencia,
+                        del_atual=del_dias,
+                        del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
                     )
                     res_bst.motivo_exclusao = (
                         "Excluída manualmente do BST — revisar na próxima aplicação"
@@ -401,6 +505,8 @@ class AgendaEngine:
                     del_dias=del_dias_bst,
                     data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
                     data_referencia=data_referencia,
+                    del_atual=del_dias,
+                    del_projetado=_del_projetado_bst(del_dias, result.proxima_visita_bst, data_referencia),
                 )
                 if res_bst.elegivel:
                     bst_elegiveis.append(res_bst)

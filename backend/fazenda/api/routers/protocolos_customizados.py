@@ -10,17 +10,18 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id
+from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     ProtocoloCustomizado, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoEtapa, ProtocoloCustomizadoLancamento,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 
 router = APIRouter(prefix="/protocolos-customizados", tags=["protocolos-customizados"])
 
@@ -72,10 +73,9 @@ class LancarProtocoloCustomizadoIn(BaseModel):
 
 @router.post("/lancar", status_code=201)
 def lancar_protocolo_customizado(
-    dados: LancarProtocoloCustomizadoIn, session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: LancarProtocoloCustomizadoIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloCustomizado, dados.protocolo_id)
     if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo personalizado não encontrado")
@@ -92,12 +92,55 @@ def lancar_protocolo_customizado(
 
     animais = [n.strip() for n in dados.animais if n.strip()]
 
+    # Idempotência (mesmo padrão de producao.lancar_inducao_lactacao): duplo
+    # clique ou retry da fila offline não pode criar um segundo lançamento
+    # "Ativo" do mesmo molde/data/alvo. `animais` pode ser [] (tarefa da
+    # fazenda, sem animal específico — `numero_matriz` fica None em toda
+    # aplicação) — o conjunto vazio já compara certo com outro conjunto
+    # vazio, então não precisa de tratamento especial além do set() normal.
+    animais_set = set(animais)
+    candidatos = session.exec(
+        select(ProtocoloCustomizadoLancamento)
+        .where(ProtocoloCustomizadoLancamento.protocolo_id == protocolo.id)
+        .where(ProtocoloCustomizadoLancamento.data_inicio == dados.data_inicio)
+        .where(ProtocoloCustomizadoLancamento.ativo == True)  # noqa: E712
+        .where(ProtocoloCustomizadoLancamento.encerrado_em.is_(None))
+    ).all()
+    for candidato in candidatos:
+        # Estrito (== , não tolera fazenda_id nulo do candidato) — mesmo
+        # motivo do bloco equivalente em producao.lancar_inducao_lactacao:
+        # reaproveitar um lançamento órfão de outra fazenda por coincidência
+        # de data/molde/animais cruzaria tenant, contra o filtro do PR #488.
+        if fazenda_id is not None and candidato.fazenda_id != fazenda_id:
+            continue
+        animais_candidato = {
+            n for n in session.exec(
+                select(ProtocoloCustomizadoAplicacao.numero_matriz)
+                .where(ProtocoloCustomizadoAplicacao.lancamento_id == candidato.id)
+            ).all()
+            if n is not None
+        }
+        if animais_candidato == animais_set:
+            response.status_code = 200
+            return {
+                "criado": False, "lancamento_id": candidato.id, "eventos_criados": 0,
+                "animais": len(animais_set),
+                "aviso": (
+                    "Já existe um lançamento ativo idêntico deste protocolo (mesma data "
+                    "e mesmo(s) animal(is), ou mesma tarefa da fazenda) — reaproveitado em "
+                    "vez de criar um duplicado."
+                ),
+            }
+
     etapas_por_dia: dict[int, list[ProtocoloCustomizadoEtapa]] = {}
     for e in etapas:
         etapas_por_dia.setdefault(e.dia, []).append(e)
 
+    nome_protocolo = gerar_nome_lancamento(
+        protocolo.nome, dados.data_inicio, protocolo.dia_inicial, max(etapas_por_dia.keys()),
+    )
     lancamento = ProtocoloCustomizadoLancamento(
-        protocolo_id=protocolo.id, nome_protocolo=protocolo.nome, categoria=protocolo.categoria,
+        protocolo_id=protocolo.id, nome_protocolo=nome_protocolo, categoria=protocolo.categoria,
         dia_inicial=protocolo.dia_inicial, data_inicio=dados.data_inicio, lote=dados.lote,
         responsavel=dados.responsavel, observacao=dados.observacao,
         usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,

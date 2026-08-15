@@ -57,6 +57,17 @@ class TestCriarItemEstoque:
         r = c.post("/estoque/", json={"nome": "Ração X", "unidade": "kg"})
         assert r.status_code == 409
 
+    def test_flag_gera_patrimonio(self, client):
+        c, _ = client
+        r = c.post("/estoque/", json={"nome": "Trator Massey", "gera_patrimonio": True})
+        assert r.status_code == 201, r.text
+        assert r.json()["gera_patrimonio"] is True
+
+    def test_gera_patrimonio_padrao_false(self, client):
+        c, _ = client
+        r = c.post("/estoque/", json={"nome": "Ração Y", "unidade": "kg"})
+        assert r.json()["gera_patrimonio"] is False
+
 
 class TestAtualizarItemEstoque:
     def test_edita_todos_os_campos(self, client):
@@ -106,3 +117,37 @@ class TestAtualizarItemEstoque:
 
         r = c.put(f"/estoque/{item2['id']}", json={"nome": "Item 1", "unidade": "un"})
         assert r.status_code == 409
+
+
+class TestExcluirItemEstoque:
+    def test_exclui_item_sem_movimento(self, client):
+        c, _ = client
+        criado = c.post("/estoque/", json={"nome": "Item novo, nunca usado", "unidade": "un"}).json()
+
+        r = c.delete(f"/estoque/{criado['id']}")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"excluido": True}
+
+        itens = c.get("/estoque/").json()["itens"]
+        assert not any(i["id"] == criado["id"] for i in itens)
+
+    def test_404_para_item_inexistente(self, client):
+        c, _ = client
+        r = c.delete("/estoque/9999")
+        assert r.status_code == 404
+
+    def test_409_com_movimento_vinculado_e_item_continua_existindo(self, client):
+        c, _ = client
+        criado = c.post("/estoque/", json={"nome": "Ração com movimento", "unidade": "kg", "quantidade": 0}).json()
+        mov = c.post("/estoque/movimentar", json={
+            "nome": "Ração com movimento", "movimento": "Entrada de ajuste", "quantidade": 10,
+            "unidade": "kg", "data_movimento": "2026-08-01",
+        })
+        assert mov.status_code == 200, mov.text
+
+        r = c.delete(f"/estoque/{criado['id']}")
+        assert r.status_code == 409, r.text
+        assert "Ração com movimento" in r.json()["detail"]
+
+        itens = c.get("/estoque/").json()["itens"]
+        assert any(i["id"] == criado["id"] for i in itens)

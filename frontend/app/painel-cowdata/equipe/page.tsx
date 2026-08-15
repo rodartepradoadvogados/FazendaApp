@@ -1,39 +1,53 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2, UserPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Plus, Trash2, UserPlus } from "lucide-react";
 import {
   fetchCargosCowData, fetchEquipeCowData, criarMembroEquipeCowData, editarMembroEquipeCowData, excluirMembroEquipeCowData,
-  fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData,
-  type PessoaCowData, type FolhaCowData,
+  fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData, fetchTiposVinculoCowData,
+  baixarContratoMembroEquipe,
+  fetchUsuarioEquipeCowData, criarUsuarioEquipeCowData, editarUsuarioEquipeCowData,
+  AREAS_PAINEL_COWDATA, LABEL_AREA_PAINEL_COWDATA,
+  NIVEIS_SIGILO_EQUIPE_COWDATA, LABEL_NIVEL_SIGILO_EQUIPE_COWDATA, DESCRICAO_NIVEL_SIGILO_EQUIPE_COWDATA,
+  type PessoaCowData, type FolhaCowData, type UsuarioEquipeCowData, type AreaPainelCowData, type NivelSigiloEquipeCowData,
 } from "@/lib/api";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
-const inputStyle: React.CSSProperties = {
-  background: "#0a0e1a", border: `1px solid ${COR.borda}`, borderRadius: "6px", padding: "0.45rem 0.6rem",
-  color: COR.texto, fontSize: "0.82rem", width: "100%",
-};
-const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: COR.mudo, marginBottom: "0.25rem", display: "block" };
+const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
+const ESTADOS_CIVIS = ["Solteiro(a)", "Casado(a)", "União estável", "Divorciado(a)", "Viúvo(a)"];
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CampoMoeda } from "@/components/CampoMoeda";
+import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
 
 function mesAtual(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+const NOVO_VAZIO = {
+  nome: "", cargo: "", telefone: "", email: "", cpf_cnpj: "",
+  rg: "", genero: "", estado_civil: "",
+  cep: "", endereco_rua: "", endereco_numero: "", endereco_bairro: "", endereco_cidade: "", endereco_uf: "",
+  tipo_vinculo: "funcionario" as "funcionario" | "pj", subtipo_pj: "MEI",
+  data_admissao: "", salario_base: "", pagamento_mensal: "",
+};
+
 export default function EquipeCowData() {
+  const { cor: COR, inputStyle: inputBase, labelStyle } = usePainelCowDataEstilos();
+  const inputStyle: React.CSSProperties = { ...inputBase, width: "100%" };
   const [cargos, setCargos] = useState<string[]>([]);
+  const [subtiposPj, setSubtiposPj] = useState<string[]>([]);
   const [equipe, setEquipe] = useState<PessoaCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [expandidoId, setExpandidoId] = useState<number | null>(null);
 
-  const [novo, setNovo] = useState({ nome: "", cargo: "", telefone: "", email: "", cpf_cnpj: "", salario_base: "" });
+  const [novo, setNovo] = useState(NOVO_VAZIO);
 
   function carregar() {
     fetchEquipeCowData().then(setEquipe).catch((e) => setErro(e.message));
   }
   useEffect(() => {
     fetchCargosCowData().then((c) => { setCargos(c); setNovo((n) => ({ ...n, cargo: n.cargo || c[0] || "" })); }).catch((e) => setErro(e.message));
+    fetchTiposVinculoCowData().then((d) => setSubtiposPj(d.subtipos_pj)).catch(() => {});
     carregar();
   }, []);
 
@@ -44,9 +58,16 @@ export default function EquipeCowData() {
       await criarMembroEquipeCowData({
         nome: novo.nome.trim(), cargo: novo.cargo,
         telefones: novo.telefone ? [novo.telefone] : [], emails: novo.email ? [novo.email] : [],
-        cpf_cnpj: novo.cpf_cnpj || null, salario_base: novo.salario_base ? Number(novo.salario_base) : null,
+        cpf_cnpj: novo.cpf_cnpj || null,
+        rg: novo.rg || null, genero: novo.genero || null, estado_civil: novo.estado_civil || null,
+        cep: novo.cep || null, endereco_rua: novo.endereco_rua || null, endereco_numero: novo.endereco_numero || null,
+        endereco_bairro: novo.endereco_bairro || null, endereco_cidade: novo.endereco_cidade || null, endereco_uf: novo.endereco_uf || null,
+        tipo_vinculo: novo.tipo_vinculo, subtipo_pj: novo.tipo_vinculo === "pj" ? novo.subtipo_pj : null,
+        data_admissao: novo.data_admissao || null,
+        salario_base: novo.tipo_vinculo === "funcionario" && novo.salario_base ? Number(novo.salario_base) : null,
+        pagamento_mensal: novo.tipo_vinculo === "pj" && novo.pagamento_mensal ? Number(novo.pagamento_mensal) : null,
       });
-      setNovo({ nome: "", cargo: cargos[0] || "", telefone: "", email: "", cpf_cnpj: "", salario_base: "" });
+      setNovo({ ...NOVO_VAZIO, cargo: cargos[0] || "" });
       setMostrarForm(false);
       carregar();
     } catch (e: any) { setErro(e.message); }
@@ -58,6 +79,10 @@ export default function EquipeCowData() {
         nome: p.nome, cargo: p.cargo, telefones: p.telefones, emails: p.emails,
         cpf_cnpj: p.cpf_cnpj, cep: p.cep, salario_base: p.salario_base, data_admissao: p.data_admissao,
         observacoes: p.observacoes, ativo: !p.ativo,
+        rg: p.rg, genero: p.genero, estado_civil: p.estado_civil,
+        endereco_rua: p.endereco_rua, endereco_numero: p.endereco_numero, endereco_bairro: p.endereco_bairro,
+        endereco_cidade: p.endereco_cidade, endereco_uf: p.endereco_uf,
+        tipo_vinculo: p.tipo_vinculo, subtipo_pj: p.subtipo_pj, pagamento_mensal: p.pagamento_mensal,
       });
       carregar();
     } catch (e: any) { setErro(e.message); }
@@ -75,7 +100,7 @@ export default function EquipeCowData() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.2rem" }}>
         <h1 style={{ fontSize: "1.4rem", fontWeight: 700 }}>Equipe CowData</h1>
         <button onClick={() => setMostrarForm((v) => !v)}
-          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: `1px solid ${COR.dourado}`, background: "transparent", color: COR.dourado, cursor: "pointer" }}>
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.dourado}`, background: "transparent", color: COR.dourado, cursor: "pointer" }}>
           <UserPlus size={14} /> Novo membro
         </button>
       </div>
@@ -86,7 +111,8 @@ export default function EquipeCowData() {
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", marginBottom: "1rem" }}>{erro}</p>}
 
       {mostrarForm && (
-        <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "12px", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
+        <div style={{ background: COR.cartao, border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "1rem 1.2rem", marginBottom: "1.2rem" }}>
+          <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.5rem" }}>Identificação</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))", gap: "0.7rem" }}>
             <div>
               <label style={labelStyle}>Nome</label>
@@ -111,24 +137,105 @@ export default function EquipeCowData() {
               <input style={inputStyle} value={novo.cpf_cnpj} onChange={(e) => setNovo({ ...novo, cpf_cnpj: e.target.value })} />
             </div>
             <div>
-              <label style={labelStyle}>Salário base (R$)</label>
-              <input style={inputStyle} type="number" value={novo.salario_base} onChange={(e) => setNovo({ ...novo, salario_base: e.target.value })} />
+              <label style={labelStyle}>RG</label>
+              <input style={inputStyle} value={novo.rg} onChange={(e) => setNovo({ ...novo, rg: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Estado civil</label>
+              <select style={inputStyle} value={novo.estado_civil} onChange={(e) => setNovo({ ...novo, estado_civil: e.target.value })}>
+                <option value="">—</option>
+                {ESTADOS_CIVIS.map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Gênero (opcional)</label>
+              <input style={inputStyle} value={novo.genero} onChange={(e) => setNovo({ ...novo, genero: e.target.value })} />
             </div>
           </div>
+
+          <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", margin: "0.9rem 0 0.5rem" }}>Endereço</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(9rem, 1fr))", gap: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>CEP</label>
+              <input style={inputStyle} value={novo.cep} onChange={(e) => setNovo({ ...novo, cep: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Rua</label>
+              <input style={inputStyle} value={novo.endereco_rua} onChange={(e) => setNovo({ ...novo, endereco_rua: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Número</label>
+              <input style={inputStyle} value={novo.endereco_numero} onChange={(e) => setNovo({ ...novo, endereco_numero: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Bairro</label>
+              <input style={inputStyle} value={novo.endereco_bairro} onChange={(e) => setNovo({ ...novo, endereco_bairro: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Cidade</label>
+              <input style={inputStyle} value={novo.endereco_cidade} onChange={(e) => setNovo({ ...novo, endereco_cidade: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>UF</label>
+              <select style={inputStyle} value={novo.endereco_uf} onChange={(e) => setNovo({ ...novo, endereco_uf: e.target.value })}>
+                <option value="">—</option>
+                {UFS.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", margin: "0.9rem 0 0.5rem" }}>Vínculo</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(11rem, 1fr))", gap: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>Tipo de vínculo</label>
+              <select style={inputStyle} value={novo.tipo_vinculo} onChange={(e) => setNovo({ ...novo, tipo_vinculo: e.target.value as "funcionario" | "pj" })}>
+                <option value="funcionario">Funcionário</option>
+                <option value="pj">PJ</option>
+              </select>
+            </div>
+            {novo.tipo_vinculo === "pj" && (
+              <div>
+                <label style={labelStyle}>Tipo de PJ</label>
+                <select style={inputStyle} value={novo.subtipo_pj} onChange={(e) => setNovo({ ...novo, subtipo_pj: e.target.value })}>
+                  {(subtiposPj.length ? subtiposPj : ["MEI", "ME", "EPP", "Outros"]).map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+            <div>
+              <label style={labelStyle}>Data de admissão</label>
+              <input type="date" style={inputStyle} value={novo.data_admissao} onChange={(e) => setNovo({ ...novo, data_admissao: e.target.value })} />
+            </div>
+            {novo.tipo_vinculo === "funcionario" ? (
+              <div>
+                <label style={labelStyle}>Salário base (R$)</label>
+                <CampoMoeda style={inputStyle} value={Number(novo.salario_base) || 0} onChange={(v) => setNovo({ ...novo, salario_base: v ? String(v) : "" })} />
+              </div>
+            ) : (
+              <div>
+                <label style={labelStyle}>Pagamento mensal (R$)</label>
+                <CampoMoeda style={inputStyle} value={Number(novo.pagamento_mensal) || 0} onChange={(v) => setNovo({ ...novo, pagamento_mensal: v ? String(v) : "" })} />
+              </div>
+            )}
+          </div>
+          <p style={{ fontSize: "0.7rem", color: COR.mudo, marginTop: "0.6rem" }}>
+            Depois de cadastrar, o contrato ({novo.tipo_vinculo === "pj" ? "prestação de serviços PJ" : "CLT"}) fica disponível
+            em <b>Baixar contrato</b>, na ficha do membro. O que faltar no cadastro sai marcado como [PREENCHER] na minuta.
+          </p>
+
           <div style={{ marginTop: "0.8rem", display: "flex", gap: "0.5rem" }}>
             <button onClick={salvarNovo}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: "none", background: COR.dourado, color: "#0a0e1a", fontWeight: 700, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
               Cadastrar
             </button>
             <button onClick={() => setMostrarForm(false)}
-              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "6px", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
               Cancelar
             </button>
           </div>
         </div>
       )}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", overflowX: "auto", overflowY: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", minWidth: "40rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
@@ -158,6 +265,8 @@ export default function EquipeCowData() {
 function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }: {
   pessoa: PessoaCowData; expandido: boolean; onToggle: () => void; onAlternarAtivo: () => void; onExcluir: () => void;
 }) {
+  const { cor: COR, inputStyle: inputBase, labelStyle } = usePainelCowDataEstilos();
+  const inputStyle: React.CSSProperties = { ...inputBase, width: "100%" };
   const [folhas, setFolhas] = useState<FolhaCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [novaFolha, setNovaFolha] = useState({ competencia: mesAtual(), valor_bruto: String(pessoa.salario_base || ""), descontos: "0", status: "pendente" as "pendente" | "pago" });
@@ -178,6 +287,11 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
 
   async function excluirFolha(id: number) {
     try { await excluirFolhaCowData(id); setFolhas(await fetchFolhaMembroCowData(pessoa.id)); } catch (e: any) { setErro(e.message); }
+  }
+
+  async function baixarContrato() {
+    setErro(null);
+    try { await baixarContratoMembroEquipe(pessoa.id); } catch (e: any) { setErro(e.message); }
   }
 
   const ordFolhas = useOrdenacao(folhas ?? []);
@@ -204,11 +318,35 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
       </tr>
       {expandido && (
         <tr>
-          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: "#0a0e1a", borderBottom: `1px solid ${COR.borda}` }}>
+          <td colSpan={6} style={{ padding: "0.9rem 1.2rem", background: COR.bg, borderBottom: `1px solid ${COR.borda}` }}>
             {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.6rem" }}>{erro}</p>}
             <div style={{ fontSize: "0.75rem", color: COR.mudo, marginBottom: "0.6rem" }}>
               {pessoa.telefones.join(", ") || "sem telefone"} · {pessoa.emails.join(", ") || "sem e-mail"} · {pessoa.cpf_cnpj || "sem CPF"}
             </div>
+
+            {/* Contrato — CLT ou prestação de serviços PJ, escolhido pelo
+                tipo de vínculo do cadastro. Sem vínculo definido, o backend
+                recusa (400) em vez de gerar o contrato errado; por isso o
+                botão já avisa aqui, antes do clique. */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.8rem" }}>
+              <button onClick={baixarContrato} disabled={!pessoa.tipo_vinculo}
+                title={pessoa.tipo_vinculo ? "Abre a minuta pronta para revisar, imprimir e assinar" : "Defina o tipo de vínculo (funcionário ou PJ) para gerar o contrato"}
+                style={{
+                  display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.75rem",
+                  padding: "0.35rem 0.8rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`,
+                  background: "transparent", color: pessoa.tipo_vinculo ? COR.dourado : COR.mudo,
+                  fontWeight: 600, cursor: pessoa.tipo_vinculo ? "pointer" : "not-allowed",
+                }}>
+                <FileText size={13} /> Baixar contrato
+              </button>
+              <span style={{ fontSize: "0.7rem", color: COR.mudo }}>
+                {pessoa.tipo_vinculo === "funcionario" ? "Contrato individual de trabalho (CLT)"
+                  : pessoa.tipo_vinculo === "pj" ? `Prestação de serviços${pessoa.subtipo_pj ? ` — ${pessoa.subtipo_pj}` : ""}`
+                  : "Defina o tipo de vínculo para gerar o contrato"}
+              </span>
+            </div>
+
+            <LoginEquipe pessoa={pessoa} />
 
             <div style={{ display: "flex", gap: "0.6rem", alignItems: "flex-end", flexWrap: "wrap", marginBottom: "0.8rem" }}>
               <div>
@@ -217,11 +355,11 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
               </div>
               <div>
                 <label style={labelStyle}>Valor bruto</label>
-                <input style={{ ...inputStyle, width: "8rem" }} type="number" value={novaFolha.valor_bruto} onChange={(e) => setNovaFolha({ ...novaFolha, valor_bruto: e.target.value })} />
+                <CampoMoeda style={{ ...inputStyle, width: "8rem" }} value={Number(novaFolha.valor_bruto) || 0} onChange={(v) => setNovaFolha({ ...novaFolha, valor_bruto: v ? String(v) : "" })} />
               </div>
               <div>
                 <label style={labelStyle}>Descontos</label>
-                <input style={{ ...inputStyle, width: "7rem" }} type="number" value={novaFolha.descontos} onChange={(e) => setNovaFolha({ ...novaFolha, descontos: e.target.value })} />
+                <CampoMoeda style={{ ...inputStyle, width: "7rem" }} value={Number(novaFolha.descontos) || 0} onChange={(v) => setNovaFolha({ ...novaFolha, descontos: v ? String(v) : "" })} />
               </div>
               <div>
                 <label style={labelStyle}>Status</label>
@@ -231,7 +369,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
                 </select>
               </div>
               <button onClick={lancar}
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "6px", border: "none", background: COR.dourado, color: "#0a0e1a", fontWeight: 700, cursor: "pointer" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.45rem 0.7rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
                 <Plus size={12} /> Lançar folha
               </button>
             </div>
@@ -270,5 +408,195 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
         </tr>
       )}
     </>
+  );
+}
+
+const LOGIN_VAZIO = {
+  username: "", email: "", senha: "", ativo: true, areas: [] as AreaPainelCowData[],
+  // Padrão do formulário = o mais restritivo, mesmo raciocínio do backend
+  // (nunca abrir acesso "de graça" — quem cadastra escolhe conscientemente
+  // subir o nível se precisar).
+  nivel_sigilo: "basico" as NivelSigiloEquipeCowData,
+  pode_suspender_assinatura: false, pode_acessar_fazendas: false,
+  pode_alterar_cadastro: false, pode_modificar_suspender_plano: false, pode_emitir_auditar_contratos: false,
+  pode_emitir_cobrancas: false, pode_vincular_usuarios: false, pode_cadastrar_usuarios: false,
+};
+
+// Login + permissões do membro no próprio Painel CowData — pedido explícito
+// do usuário. Mostrado dentro da linha expandida (FichaLinha, acima), tanto
+// pra cadastrar um login novo quanto pra editar o existente.
+function LoginEquipe({ pessoa }: { pessoa: PessoaCowData }) {
+  const { cor: COR, inputStyle: inputBase, labelStyle } = usePainelCowDataEstilos();
+  const inputStyle: React.CSSProperties = { ...inputBase, width: "100%" };
+  const [usuario, setUsuario] = useState<UsuarioEquipeCowData | null | undefined>(undefined); // undefined = carregando
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState(LOGIN_VAZIO);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    fetchUsuarioEquipeCowData(pessoa.id).then(setUsuario).catch((e) => { setErro(e.message); setUsuario(null); });
+  }, [pessoa.id]);
+
+  function abrirEdicao() {
+    setForm(usuario ? {
+      username: usuario.username, email: usuario.email, senha: "", ativo: usuario.ativo,
+      areas: usuario.areas as AreaPainelCowData[],
+      nivel_sigilo: usuario.nivel_sigilo,
+      pode_suspender_assinatura: usuario.pode_suspender_assinatura, pode_acessar_fazendas: usuario.pode_acessar_fazendas,
+      pode_alterar_cadastro: usuario.pode_alterar_cadastro, pode_modificar_suspender_plano: usuario.pode_modificar_suspender_plano,
+      pode_emitir_auditar_contratos: usuario.pode_emitir_auditar_contratos, pode_emitir_cobrancas: usuario.pode_emitir_cobrancas,
+      pode_vincular_usuarios: usuario.pode_vincular_usuarios, pode_cadastrar_usuarios: usuario.pode_cadastrar_usuarios,
+    } : { ...LOGIN_VAZIO, email: pessoa.emails[0] || "" });
+    setErro(null);
+    setEditando(true);
+  }
+
+  function alternarArea(area: AreaPainelCowData) {
+    setForm((f) => ({ ...f, areas: f.areas.includes(area) ? f.areas.filter((a) => a !== area) : [...f.areas, area] }));
+  }
+
+  async function salvar() {
+    if (!form.username.trim() || !form.email.trim()) { setErro("Usuário e e-mail são obrigatórios."); return; }
+    if (!usuario && !form.senha.trim()) { setErro("Defina uma senha para criar o login."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const payload = { ...form, senha: form.senha.trim() || null };
+      const salvo = usuario ? await editarUsuarioEquipeCowData(pessoa.id, payload) : await criarUsuarioEquipeCowData(pessoa.id, payload);
+      setUsuario(salvo);
+      setEditando(false);
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  if (usuario === undefined) return null;
+
+  return (
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem", marginBottom: "0.8rem" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: editando ? "0.7rem" : 0 }}>
+        <p style={{ fontSize: "0.72rem", color: COR.dourado, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          Login no Painel CowData
+        </p>
+        {!editando && (
+          <button onClick={abrirEdicao} style={{ fontSize: "0.72rem", color: COR.dourado, background: "transparent", border: `1px solid ${COR.dourado}`, borderRadius: "var(--r-sm)", padding: "0.25rem 0.6rem", cursor: "pointer" }}>
+            {usuario ? "Editar login/permissões" : "Cadastrar login"}
+          </button>
+        )}
+      </div>
+
+      {!editando && usuario && (
+        <p style={{ fontSize: "0.78rem", color: COR.mudo }}>
+          {usuario.username} · {usuario.email} · {usuario.ativo ? <span style={{ color: COR.verde }}>ativo</span> : <span style={{ color: COR.vermelho }}>inativo</span>}
+          {" · áreas: "}{usuario.areas.length ? usuario.areas.map((a) => LABEL_AREA_PAINEL_COWDATA[a as AreaPainelCowData] || a).join(", ") : "nenhuma"}
+          {" · em fazenda-cliente (suporte): "}{LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[usuario.nivel_sigilo]}
+        </p>
+      )}
+      {!editando && !usuario && (
+        <p style={{ fontSize: "0.78rem", color: COR.mudo }}>Este membro ainda não tem login para o Painel CowData.</p>
+      )}
+
+      {editando && (
+        <div>
+          {erro && <p style={{ color: COR.vermelho, fontSize: "0.78rem", marginBottom: "0.5rem" }}>{erro}</p>}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))", gap: "0.6rem", marginBottom: "0.7rem" }}>
+            <div>
+              <label style={labelStyle}>Usuário (login)</label>
+              <input style={inputStyle} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>E-mail</label>
+              <input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>{usuario ? "Nova senha (opcional)" : "Senha"}</label>
+              <input type="password" style={inputStyle} value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
+            </div>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select style={inputStyle} value={form.ativo ? "1" : "0"} onChange={(e) => setForm({ ...form, ativo: e.target.value === "1" })}>
+                <option value="1">Ativo</option>
+                <option value="0">Inativo</option>
+              </select>
+            </div>
+          </div>
+
+          <p style={labelStyle}>Tipo — acesso a quais dados do Painel CowData</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "0.8rem" }}>
+            {AREAS_PAINEL_COWDATA.map((a) => (
+              <label key={a} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", color: COR.texto, cursor: "pointer" }}>
+                <input type="checkbox" checked={form.areas.includes(a)} onChange={() => alternarArea(a)} />
+                {LABEL_AREA_PAINEL_COWDATA[a]}
+              </label>
+            ))}
+          </div>
+
+          {/* Nível de sigilo (#132) — o que este membro enxerga DENTRO de
+              uma fazenda-cliente ao abrir uma sessão de suporte pelo Cofre
+              de acesso; diferente das áreas acima, que são sobre o próprio
+              Painel CowData. Cartões em vez de dropdown pra caber a
+              explicação de uma linha de cada nível — decidir sem precisar
+              ler documentação à parte. */}
+          <p style={labelStyle}>Nível de sigilo — o que ele vê dentro de uma fazenda-cliente, em modo suporte</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.8rem" }}>
+            {NIVEIS_SIGILO_EQUIPE_COWDATA.map((nivel) => (
+              <label key={nivel} style={{
+                display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "0.78rem", cursor: "pointer",
+                padding: "0.5rem 0.6rem", borderRadius: "var(--r-sm)",
+                border: `1px solid ${form.nivel_sigilo === nivel ? COR.dourado : COR.borda}`,
+                background: form.nivel_sigilo === nivel ? "rgba(212, 175, 55, 0.08)" : "transparent",
+              }}>
+                <input type="radio" name="nivel_sigilo" checked={form.nivel_sigilo === nivel} onChange={() => setForm({ ...form, nivel_sigilo: nivel })}
+                  style={{ marginTop: "0.15rem" }} />
+                <span>
+                  <span style={{ fontWeight: 700, color: COR.texto }}>{LABEL_NIVEL_SIGILO_EQUIPE_COWDATA[nivel]}</span>
+                  <br />
+                  <span style={{ color: COR.mudo }}>{DESCRICAO_NIVEL_SIGILO_EQUIPE_COWDATA[nivel]}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <p style={labelStyle}>Permissão de acesso</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginBottom: "0.5rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.pode_suspender_assinatura} onChange={(e) => setForm({ ...form, pode_suspender_assinatura: e.target.checked })} />
+              Pode suspender assinatura?
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.pode_acessar_fazendas} onChange={(e) => setForm({ ...form, pode_acessar_fazendas: e.target.checked })} />
+              Pode acessar fazendas?
+            </label>
+            {form.pode_acessar_fazendas && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginLeft: "1.4rem", paddingLeft: "0.7rem", borderLeft: `1px solid ${COR.borda}` }}>
+                {([
+                  ["pode_alterar_cadastro", "Pode alterar dados de cadastro?"],
+                  ["pode_modificar_suspender_plano", "Pode modificar e/ou suspender plano?"],
+                  ["pode_emitir_auditar_contratos", "Pode emitir e auditar contratos?"],
+                  ["pode_emitir_cobrancas", "Pode emitir cobranças?"],
+                  ["pode_vincular_usuarios", "Pode vincular usuários?"],
+                  ["pode_cadastrar_usuarios", "Pode cadastrar usuários para serem vinculados?"],
+                ] as const).map(([campo, texto]) => (
+                  <label key={campo} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.76rem", cursor: "pointer" }}>
+                    <input type="checkbox" checked={form[campo]} onChange={(e) => setForm({ ...form, [campo]: e.target.checked })} />
+                    {texto}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.8rem" }}>
+            <button onClick={salvar} disabled={salvando}
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: "none", background: COR.dourado, color: COR.bg, fontWeight: 700, cursor: "pointer" }}>
+              {salvando ? "Salvando…" : "Salvar login"}
+            </button>
+            <button onClick={() => setEditando(false)} disabled={salvando}
+              style={{ fontSize: "0.78rem", padding: "0.4rem 0.9rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.borda}`, background: "transparent", color: COR.mudo, cursor: "pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

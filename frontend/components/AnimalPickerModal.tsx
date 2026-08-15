@@ -5,6 +5,7 @@ import { AnimalRow } from "./AnimalModal";
 import { Modal } from "./Modal";
 import NovoAnimalRapido from "./NovoAnimalRapido";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { casaBusca } from "@/lib/busca";
 
 /**
  * Padrão único de seleção de VÁRIOS animais no site: um botão mostra quantos
@@ -45,11 +46,9 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   );
 
   const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
     return animaisComExtras.filter((a) => {
       if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
-      if (!q) return true;
-      return `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`.toLowerCase().includes(q);
+      return casaBusca(`${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`, busca);
     });
   }, [animaisComExtras, busca, filtroLote, rotuloDe]);
 
@@ -63,7 +62,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: selecionados.size ? "var(--text)" : "var(--text-muted)",
-    border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+    border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
     textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
   };
 
@@ -77,8 +76,11 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
       </button>
 
       {aberto && (
-        <div onClick={() => setAberto(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+        // Sem fechar ao clicar fora — clique perdido no fundo enquanto se
+        // marca vários animais fechava a janela e derrubava a seleção em
+        // andamento. Só fecha pelo X ou "Concluir" abaixo.
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
+          <div className="card" style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0 }}>
                 {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({selecionados.size}/{animaisComExtras.length})</span>
@@ -89,11 +91,11 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
               <div style={{ position: "relative", flex: "1 1 220px" }}>
                 <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
                 <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo, categoria…"
-                  style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
+                  style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
               </div>
               {lotes.length > 1 && (
                 <select value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)} title="Filtrar por lote"
-                  style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
+                  style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
                   <option value="">Todos os lotes</option>
                   {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>

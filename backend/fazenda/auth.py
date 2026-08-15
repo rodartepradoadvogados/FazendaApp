@@ -20,10 +20,37 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    ContratoConsultor, ContratoFazenda, ContratoFazendaModulo, SeedFlag, Usuario, UsuarioFazenda,
+    ContratoFazenda, ContratoFazendaModulo, Fazenda, Pessoa, SeedFlag, Usuario, UsuarioFazenda,
 )
+from fazenda.models.equipe_cowdata_acesso import NIVEL_SIGILO_PADRAO, PermissaoEquipeCowData
 
-SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
+# Segredo que assina TODO token de sessão. O valor abaixo é público (está no
+# repositório) e serve só para desenvolvimento/teste — quem o conhece consegue
+# forjar um token de qualquer usuário de qualquer fazenda, inclusive do dono.
+# Por isso `_exigir_segredo_de_producao()` (chamado no startup, ver main.py)
+# recusa subir com ele fora de dev.
+SECRET_DEV = "fazenda-estreito-ponte-de-pedra-troque-em-producao"
+SECRET = os.environ.get("AUTH_SECRET", SECRET_DEV)
+
+
+def _rodando_em_producao() -> bool:
+    """Produção = tem banco Postgres configurado e não é execução de teste.
+    O Railway injeta DATABASE_URL; local/teste usa SQLite ou FAZENDA_TESTING."""
+    if os.environ.get("FAZENDA_TESTING"):
+        return False
+    return os.environ.get("DATABASE_URL", "").startswith(("postgres://", "postgresql://"))
+
+
+def exigir_segredo_de_producao() -> None:
+    """Falha alto e cedo se o app subir em produção com o segredo de
+    desenvolvimento. Antes o fallback era silencioso: bastava a variável
+    AUTH_SECRET sumir do ambiente para todos os tokens passarem a ser
+    assinados com uma string pública, sem nenhum sinal de que isso aconteceu."""
+    if _rodando_em_producao() and SECRET == SECRET_DEV:
+        raise RuntimeError(
+            "AUTH_SECRET não está definida em produção — o app se recusa a subir assinando "
+            "sessões com o segredo público de desenvolvimento. Defina AUTH_SECRET no ambiente."
+        )
 PBKDF2_ITER = 120_000
 TOKEN_VALIDADE_S = 60 * 60 * 12  # 12 horas
 # "Manter conectado" (checkbox no login, marcada por padrão dentro do app
@@ -43,7 +70,25 @@ DESBLOQUEIO_VALIDADE_S = 15 * 60  # 15 minutos
 # acesso principal do proprietário; rodartepradoadvogados@gmail.com continua
 # funcionando como login/contato alternativo da mesma pessoa, só não é mais o
 # valor que `eh_dono` compara.
+#
+# Usado sozinho (não via EMAILS_DONO_EQUIVALENTE) em contextos que precisam de
+# UM único e-mail "de contato do proprietário" — VAPID_SUBJECT (push.py),
+# destinatário do backup semanal (rules/backup.py) e as seed_* que provisionam
+# a conta inicial — nunca em checagem de permissão.
 EMAIL_DONO = "jairodarte@gmail.com"
+
+# E-mails com o MESMO nível de acesso do proprietário (`eh_dono`) — hoje o
+# próprio dono e o Alexandre Scarpa, sócio, a pedido explícito do proprietário
+# ("ele precisa exatamente do mesmo acesso que eu dentro do site"). Lista
+# pequena e nomeada de propósito: Painel CowData administra TODAS as fazendas
+# clientes da SaaS, não só esta, então ampliar quem passa por `exigir_dono`
+# além de contas específicas e conhecidas seria abrir uma brecha de segurança
+# entre clientes (ver painel_cowdata.py, 100% gated por exigir_dono).
+EMAILS_DONO_EQUIVALENTE = {EMAIL_DONO, "alexandrescarpazoo@yahoo.com.br"}
+
+
+def eh_email_dono_equivalente(email: str | None) -> bool:
+    return (email or "").strip().lower() in EMAILS_DONO_EQUIVALENTE
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +120,10 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def criar_token(username: str, fazenda_id: int | None = None, manter_conectado: bool = False) -> str:
+def criar_token(
+    username: str, fazenda_id: int | None = None, manter_conectado: bool = False,
+    suporte: bool = False, sessao_suporte_id: int | None = None, nivel_sigilo: str | None = None,
+) -> str:
     """`fazenda_id` (piloto conservador de multi-fazenda, ver
     fazenda/models/multitenant.py) só é gravado quando já foi selecionado —
     login com um usuário vinculado a uma única fazenda auto-seleciona; um
@@ -86,12 +134,44 @@ def criar_token(username: str, fazenda_id: int | None = None, manter_conectado: 
     `manter_conectado` estende a validade para TOKEN_VALIDADE_LONGA_S e grava
     "lembrar" no payload — assim /auth/selecionar-fazenda (que reemite o
     token já com a fazenda escolhida) consegue preservar a mesma validade
-    longa em vez de voltar para as 12h padrão (ver token_manter_conectado)."""
-    payload_dict = {"sub": username, "exp": int(time.time()) + (TOKEN_VALIDADE_LONGA_S if manter_conectado else TOKEN_VALIDADE_S)}
+    longa em vez de voltar para as 12h padrão (ver token_manter_conectado).
+
+    `suporte`/`sessao_suporte_id`: token emitido ao entrar numa fazenda a
+    partir do Painel CowData (ver fazenda/api/routers/cofre_acesso.py) — o
+    request bloqueando_em_modo_suporte usa a claim "suporte" pra recusar
+    ações destrutivas, e a validade AQUI é sempre a da própria sessão de
+    suporte (DURACAO_SESSAO_MINUTOS, ver models/cofre_acesso.py), nunca a
+    longa de "manter conectado" — sessão de suporte é sempre curta, mesmo
+    que o dono tenha "manter conectado" marcado no login.
+
+    `nivel_sigilo`: carimbado JUNTO com "suporte" (#132) — quanto da fazenda
+    esta sessão enxerga (ver NIVEIS_SIGILO_EQUIPE_COWDATA em
+    models/equipe_cowdata_acesso.py). Vem no próprio token, não só no banco,
+    para _bloquear_modo_suporte (main.py) não precisar de uma consulta extra
+    a cada request só para saber o nível. Ignorado quando suporte=False —
+    só sessão de suporte tem nível de sigilo."""
+    from fazenda.models.cofre_acesso import DURACAO_SESSAO_MINUTOS
+
+    if suporte:
+        validade_s = DURACAO_SESSAO_MINUTOS * 60
+    elif manter_conectado:
+        validade_s = TOKEN_VALIDADE_LONGA_S
+    else:
+        validade_s = TOKEN_VALIDADE_S
+    payload_dict = {"sub": username, "exp": int(time.time()) + validade_s}
     if fazenda_id is not None:
         payload_dict["fid"] = fazenda_id
-    if manter_conectado:
+    if manter_conectado and not suporte:
         payload_dict["lembrar"] = True
+    if suporte:
+        payload_dict["suporte"] = True
+        if sessao_suporte_id is not None:
+            payload_dict["ssid"] = sessao_suporte_id
+        # Nunca omitido: sem isto, um token de suporte sem a claim cairia no
+        # default mais restritivo em _bloquear_modo_suporte de qualquer
+        # jeito (nsig ausente == "basico"), mas gravar explícito evita
+        # qualquer ambiguidade de "esqueceram de setar" vs "é básico mesmo".
+        payload_dict["nsig"] = nivel_sigilo or NIVEL_SIGILO_PADRAO
     payload = _b64(json.dumps(payload_dict).encode())
     sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
@@ -165,6 +245,92 @@ def get_fazenda_atual_id(
     return dados.get("fid") if dados else None
 
 
+def resolver_fazenda_id_escrita(session: Session, user: Usuario, fazenda_id_do_token: int | None) -> int | None:
+    """Resolve a fazenda de um lançamento novo — em qualquer ambiente onde o
+    multi-fazenda está de fato provisionado (tabela `fazenda` com pelo menos
+    uma linha — todo ambiente de produção, desde a migração
+    f1a2b3c4d5e6), NUNCA devolve None em silêncio (ao contrário de
+    `get_fazenda_atual_id`/`fazenda_id_seguro`, tolerantes de propósito para
+    leitura de dado legado). É a causa raiz do bug do D6 sumindo da Agenda
+    (ver PR claude/fazenda-id-raiz): toda rota de escrita gravava
+    `fazenda_id=fazenda_id` direto, e as 3 situações abaixo devolviam None
+    ali — o registro nascia órfão. Decisão do dono do produto: não pode
+    existir registro sem fazenda_id, então aqui não sobra caminho
+    silencioso, só resolve certo ou recusa.
+
+    1. Token já veio com "fid" (login normal, fazenda já escolhida) — usa.
+    2. Token legado (sem "fid" — emitido antes do multi-fazenda existir, ou
+       de uma sessão "manter conectado" de até 90 dias que nunca deslogou,
+       ver TOKEN_VALIDADE_LONGA_S) + usuário vinculado a EXATAMENTE uma
+       fazenda — resolve por ela, sem forçar reautenticação (é a imensa
+       maioria: hoje a instalação tem uma fazenda real de verdade).
+    3. Sem "fid" e usuário sem nenhuma fazenda vinculada, ou vinculado a mais
+       de uma (não dá pra saber qual sem o token dizer): se a tabela
+       `fazenda` está VAZIA, o multi-fazenda simplesmente não está em uso
+       neste ambiente — devolve None, exatamente o comportamento de sempre
+       (é o caso de toda a suíte de testes que não monta cenário de
+       multi-fazenda, e seria o de qualquer instalação anterior à migração
+       f1a2b3c4d5e6). Havendo QUALQUER fazenda cadastrada, recusa com 409 em
+       vez de adivinhar — o usuário precisa sair e entrar de novo para que o
+       login emita um token já com a fazenda escolhida.
+    """
+    if fazenda_id_do_token is not None:
+        return fazenda_id_do_token
+    fazendas = sorted({
+        fid for fid in session.exec(
+            select(UsuarioFazenda.fazenda_id).where(UsuarioFazenda.usuario_id == user.id)
+        ).all()
+    })
+    if len(fazendas) == 1:
+        return fazendas[0]
+    if session.exec(select(Fazenda.id).limit(1)).first() is None:
+        return None
+    if not fazendas:
+        raise HTTPException(
+            status_code=409,
+            detail="Seu usuário não está vinculado a nenhuma fazenda. Peça a um administrador para "
+                   "vincular seu acesso a uma fazenda antes de lançar dados.",
+        )
+    raise HTTPException(
+        status_code=409,
+        detail="Sua sessão não tem uma fazenda selecionada e seu usuário tem acesso a mais de uma. "
+               "Saia e entre novamente para escolher a fazenda antes de lançar dados.",
+    )
+
+
+def get_fazenda_id_escrita(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> int | None:
+    """Dependência FastAPI para rotas de ESCRITA — troca o `fazenda_id: int |
+    None = Depends(get_fazenda_atual_id)` tolerante por uma resolução que só
+    devolve None quando o multi-fazenda não está provisionado neste ambiente
+    (tabela `fazenda` vazia — nunca o caso em produção, ver
+    `resolver_fazenda_id_escrita`); em qualquer ambiente com fazenda
+    cadastrada, o valor aqui nunca chega None ao
+    `session.add(Modelo(fazenda_id=fazenda_id))` do endpoint. Composta EM
+    CIMA de `get_fazenda_atual_id` (não reimplementa a leitura do token) de
+    propósito: assim um `dependency_overrides[get_fazenda_atual_id]` de
+    teste continua valendo aqui também, sem precisar sobrescrever as duas."""
+    return resolver_fazenda_id_escrita(session, user, fazenda_id)
+
+
+def get_suporte_do_token(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Lê as claims "suporte"/"ssid"/"nsig" do token atual (ver criar_token)
+    — usado pelo middleware de bloqueio_modo_suporte (main.py) e por
+    /auth/me, pra o frontend saber se deve mostrar o aviso "modo suporte
+    CowData" e com que nível de sigilo (#132)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return {"ativo": False, "sessao_id": None, "nivel_sigilo": None}
+    dados = _validar_token_payload(authorization.split(" ", 1)[1])
+    if not dados or not dados.get("suporte"):
+        return {"ativo": False, "sessao_id": None, "nivel_sigilo": None}
+    return {"ativo": True, "sessao_id": dados.get("ssid"), "nivel_sigilo": dados.get("nsig") or NIVEL_SIGILO_PADRAO}
+
+
 def token_manter_conectado(
     authorization: str | None = Header(default=None),
 ) -> bool:
@@ -201,11 +367,68 @@ def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
 
 
 def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
-    """Restringe a UM único usuário — o proprietário — por e-mail cadastrado.
-    Independente de papel/admin: mesmo outro admin não passa por aqui."""
-    if (user.email or "").strip().lower() != EMAIL_DONO:
+    """Restringe a quem tem acesso equivalente ao do proprietário (ver
+    EMAILS_DONO_EQUIVALENTE), por e-mail cadastrado. Independente de
+    papel/admin: mesmo outro admin não passa por aqui."""
+    if not eh_email_dono_equivalente(user.email):
         raise HTTPException(status_code=403, detail="Acesso restrito ao proprietário")
     return user
+
+
+def eh_membro_equipe_cowdata(session: Session, user: Usuario) -> bool:
+    """True quando este Usuario pertence a um membro da Equipe CowData
+    (Pessoa cadastrada na fazenda interna eh_empresa_cowdata=True — ver
+    painel_cowdata.py). Não confundir com dono-equivalente: um membro comum
+    da equipe (Financeiro, Comercial, Consultor...) não é dono, só ganha
+    acesso ao que a PermissaoEquipeCowData dele liberar."""
+    if not user.pessoa_id:
+        return False
+    pessoa = session.get(Pessoa, user.pessoa_id)
+    if not pessoa or not pessoa.fazenda_id:
+        return False
+    fazenda = session.get(Fazenda, pessoa.fazenda_id)
+    return bool(fazenda and fazenda.eh_empresa_cowdata)
+
+
+def _permissao_equipe_cowdata(session: Session, usuario_id: int) -> PermissaoEquipeCowData | None:
+    return session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == usuario_id)).first()
+
+
+def nivel_sigilo_equipe_cowdata(session: Session, user: Usuario) -> str:
+    """Nível de sigilo (#132) que este usuário carrega para dentro de uma
+    fazenda-cliente ao abrir uma sessão de suporte — chamado UMA VEZ, na
+    abertura da sessão (ver cofre_acesso.py::_abrir_sessao), pra ser
+    carimbado no token (criar_token) e em SessaoAcessoSuporte.
+
+    Dono-equivalente sempre "total" (mesmo bypass de exigir_area_painel_
+    cowdata: o dono nunca teve PermissaoEquipeCowData nem precisa). Membro
+    da equipe sem nenhum PermissaoEquipeCowData gravado — não deveria
+    acontecer, já que abrir uma sessão exige a área "cofre" (que por sua vez
+    exige essa linha existir), mas por segurança cai no nível mais
+    restritivo em vez de estourar erro no meio do fluxo de suporte."""
+    if eh_email_dono_equivalente(user.email):
+        return "total"
+    perm = _permissao_equipe_cowdata(session, user.id)
+    return perm.nivel_sigilo if perm else NIVEL_SIGILO_PADRAO
+
+
+def exigir_area_painel_cowdata(area: str):
+    """Fábrica de dependência: dono-equivalente sempre passa (acesso total,
+    como sempre); senão exige ser membro da Equipe CowData com esta área
+    liberada em PermissaoEquipeCowData.areas. Usado nas rotas PRÓPRIAS do
+    Painel CowData (Equipe, Financeiro CowData, Suporte/Cofre) — ainda não
+    nas rotas de fazendas.py compartilhadas com o resto do sistema (ver
+    docstring de fazenda/models/equipe_cowdata_acesso.py)."""
+
+    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
+        if eh_email_dono_equivalente(user.email):
+            return user
+        perm = _permissao_equipe_cowdata(session, user.id)
+        if perm and area in (perm.areas or "").split(","):
+            return user
+        raise HTTPException(status_code=403, detail="Sem permissão para esta área do Painel CowData")
+
+    return _dep
 
 
 def exigir_contratante_ou_dono(
@@ -218,7 +441,7 @@ def exigir_contratante_ou_dono(
     vincular/desvincular usuários), mas não as ações reservadas só ao dono da
     plataforma (exigir_dono), como criar fazenda nova ou administrar News/Blog.
     O dono sempre passa, independente de fazenda selecionada."""
-    if (user.email or "").strip().lower() == EMAIL_DONO:
+    if eh_email_dono_equivalente(user.email):
         return user
     if fazenda_id is None:
         raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
@@ -309,6 +532,98 @@ def bloquear_escrita_contador():
     return _dep
 
 
+def exigir_nao_consultor():
+    """Dependência de endpoint (não de router inteiro) — bloqueia quem tem o
+    vínculo `consultor` (veterinário/agrônomo convidado, ver
+    fazenda/models/multitenant.py::UsuarioFazenda) mesmo já tendo acesso ao
+    módulo financeiro. Usada só em pontos sensíveis específicos (ex.: link
+    para o banco de dados externo em Relatórios financeiros) — o consultor
+    continua com o mesmo acesso de um funcionário comum no resto do sistema."""
+    def _dep(
+        user: Usuario = Depends(get_current_user),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is None:
+            return
+        vinculo = session.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
+        ).first()
+        if vinculo and vinculo.consultor:
+            raise HTTPException(status_code=403, detail="Consultores não têm acesso a esta funcionalidade")
+    return _dep
+
+
+def eh_consultor_cowdata(session: Session, usuario: Usuario) -> bool:
+    """True quando este login pertence a um membro da Equipe CowData com
+    cargo "Consultor" (ver painel_cowdata.py: cada membro é uma `Pessoa` da
+    fazenda lógica `eh_empresa_cowdata`, e o cargo mora em `Pessoa.tipo`).
+
+    É o que distingue o CONSULTOR COWDATA do consultor externo convidado
+    pelo próprio cliente — os dois usam `UsuarioFazenda.consultor` para o
+    vínculo com a fazenda, então o vínculo sozinho não diferencia."""
+    if not usuario.pessoa_id:
+        return False
+    pessoa = session.get(Pessoa, usuario.pessoa_id)
+    if not pessoa or (pessoa.tipo or "") != "Consultor":
+        return False
+    fazenda = session.get(Fazenda, pessoa.fazenda_id) if pessoa.fazenda_id else None
+    return bool(fazenda and fazenda.eh_empresa_cowdata)
+
+
+def exigir_admin_ou_consultor_fazenda():
+    """Formulação de Dietas: restrita ao dono-equivalente (Alexandre Rodarte
+    e Alexandre Scarpa, ver EMAILS_DONO_EQUIVALENTE) e aos CONSULTORES
+    COWDATA vinculados a ESTA fazenda — pedido explícito do usuário
+    (backlog #127).
+
+    Mudou em ago/2026: antes qualquer `papel == "admin"` e o `contratante`
+    da própria fazenda-cliente também entravam. Não entram mais — a
+    Formulação de Dietas é serviço prestado pela CowData, não ferramenta de
+    autoatendimento do cliente. Consultor EXTERNO convidado pelo cliente
+    (UsuarioFazenda.consultor sem ser da Equipe CowData) também não entra;
+    quem diferencia os dois é `eh_consultor_cowdata` (o vínculo sozinho não
+    diferencia — ver docstring dela).
+
+    O contador é bloqueado explicitamente (o Painel do Contador não inclui
+    Formulação de Dietas). Operador comum, mesmo com o módulo `alimentacao`
+    liberado, não passa — é um eixo de acesso à parte, não empilhado sobre a
+    permissão de módulo comum (ver tem_modulo/exigir_modulo).
+
+    Token sem fazenda selecionada (sem "fid") é sempre 403 aqui — ao
+    contrário do resto do sistema, este módulo não tem nenhum dado legado
+    para acomodar (nasceu depois do piloto de multi-fazenda), então não há
+    caso legítimo de operar sem fazenda selecionada.
+
+    Sessão de suporte CowData (token com claim "suporte") também passa
+    direto, igual ao dono-equivalente — sem vínculo NESTA fazenda-cliente, o
+    membro de suporte cairia sempre no 403 final apesar de precisar ver a
+    tela para ajudar o cliente (mesmo raciocínio de
+    exigir_modulo_contratado, logo abaixo)."""
+    def _dep(
+        user: Usuario = Depends(get_current_user),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        suporte: dict = Depends(get_suporte_do_token),
+        session: Session = Depends(get_session),
+    ) -> Usuario:
+        if eh_email_dono_equivalente(user.email) or suporte.get("ativo"):
+            return user
+        if fazenda_id is None:
+            raise HTTPException(status_code=403, detail="Selecione a fazenda antes de usar a Formulação de Dietas")
+        vinculo = session.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
+        ).first()
+        if vinculo and vinculo.contador:
+            raise HTTPException(status_code=403, detail="O Painel do Contador não inclui Formulação de Dietas")
+        if vinculo and vinculo.consultor and eh_consultor_cowdata(session, user):
+            return user
+        raise HTTPException(
+            status_code=403,
+            detail="Formulação de Dietas é restrita à CowData e ao Consultor CowData vinculado a esta fazenda.",
+        )
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Trava por PLANO CONTRATADO (fazenda/tenant) — camada ACIMA da permissão por
 # usuário acima (exigir_modulo/tem_modulo). Aquela decide o que um FUNCIONÁRIO
@@ -340,49 +655,53 @@ def exigir_contrato_ativo():
     return _dep
 
 
+def fazenda_tem_modulo_contratado(session: Session, fazenda_id: int | None, modulo: str) -> bool:
+    """A FAZENDA (não o usuário) tem este módulo comercial contratado e
+    ativo? Mesma regra usada por `exigir_modulo_contratado` (dependência de
+    rota), exposta aqui como função simples para quem precisa da mesma
+    checagem DENTRO do corpo de uma função já autenticada — ex.: a Agenda
+    decidindo se mostra ou não um card financeiro/de estoque sem recusar a
+    rota inteira (ver fazenda/api/routers/agenda.py). Sem fazenda selecionada,
+    não restringe — mesmo "sem retroatividade" de get_fazenda_atual_id."""
+    if fazenda_id is None:
+        return True
+    tem = session.exec(
+        select(ContratoFazendaModulo).where(
+            ContratoFazendaModulo.fazenda_id == fazenda_id,
+            ContratoFazendaModulo.modulo == modulo,
+            ContratoFazendaModulo.ativo == True,  # noqa: E712
+        )
+    ).first()
+    return tem is not None
+
+
 def exigir_modulo_contratado(modulo: str):
     """Dependência: exige que A FAZENDA (não o usuário) tenha este módulo
     comercial contratado e ativo, dentro de um contrato aprovado. Some junto
     com exigir_modulo/exigir_modulo_qualquer nos include_router (main.py) —
-    não substitui a permissão do funcionário, só adiciona a trava do tenant."""
-    def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
-        if fazenda_id is None:
+    não substitui a permissão do funcionário, só adiciona a trava do tenant.
+
+    Sessão de suporte CowData (token com claim "suporte", ver
+    get_suporte_do_token/entrarComoSuporte) pula esta trava: o time de
+    suporte precisa poder ABRIR qualquer módulo — inclusive um à-la-carte
+    como Formulação de Dietas, que não vem em nenhum pacote do catálogo
+    (ver fazenda/models/planos.py) — para ajudar/configurar em nome do
+    cliente mesmo antes de uma contratação formal, sem depender de a
+    fazenda-teste já ter o módulo cadastrado. Isto só libera LEITURA/uso;
+    escrita nas áreas sensíveis continua bloqueada pelo middleware
+    _bloquear_modo_suporte (main.py), e a permissão do FUNCIONÁRIO
+    (exigir_modulo, checada em paralelo) não é afetada por isto."""
+    def _dep(
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        suporte: dict = Depends(get_suporte_do_token),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is None or suporte.get("ativo"):
             return
         if not _contrato_ativo(session, fazenda_id):
             raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
-        tem = session.exec(
-            select(ContratoFazendaModulo).where(
-                ContratoFazendaModulo.fazenda_id == fazenda_id,
-                ContratoFazendaModulo.modulo == modulo,
-                ContratoFazendaModulo.ativo == True,  # noqa: E712
-            )
-        ).first()
-        if not tem:
+        if not fazenda_tem_modulo_contratado(session, fazenda_id, modulo):
             raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
-    return _dep
-
-
-# ---------------------------------------------------------------------------
-# Trava por assinatura do CONSULTOR (Fase 2C) — produto independente do
-# consultor (fazendas gerenciadas por importação de planilha, fora de
-# qualquer fazenda-tenant). Não confundir com exigir_modulo_contratado
-# ("consultor"), que é o módulo comercial de uma FAZENDA Diamond (Fase 2B).
-# ---------------------------------------------------------------------------
-def _contrato_consultor_ativo(session: Session, usuario_id: int) -> ContratoConsultor | None:
-    contrato = session.exec(select(ContratoConsultor).where(ContratoConsultor.usuario_id == usuario_id)).first()
-    if not contrato or contrato.status != "ativo":
-        return None
-    return contrato
-
-
-def exigir_consultor_ativo():
-    """Dependência: exige que o USUÁRIO LOGADO (não uma fazenda) tenha uma
-    assinatura de consultor ativa — usada pelo router de fazendas gerenciadas/
-    importação/indicadores (fazenda/api/routers/consultores.py)."""
-    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
-        if not _contrato_consultor_ativo(session, user.id):
-            raise HTTPException(status_code=403, detail="Assinatura de consultor sem contrato ativo — aguardando aprovação")
-        return user
     return _dep
 
 

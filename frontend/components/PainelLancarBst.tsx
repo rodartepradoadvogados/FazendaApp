@@ -1,11 +1,18 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
-import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas } from "@/lib/api";
+import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas, formatDate } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
 import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { EstoquePicker } from "@/components/EstoquePicker";
+
+// Mesmo padrão de nome usado no backend para reconhecer um item de estoque
+// como BST (ver MARCADORES_BST em fazenda/api/routers/agenda.py) — não há
+// categoria/princípio ativo dedicado ainda, então os dois lados casam pelo
+// nome do produto.
+const MARCADORES_BST = /\b(lactotropin|boostin|bst|somatotropina)\b/i;
 
 const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -20,6 +27,10 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
   const aptas: any[] = agenda?.bst_elegiveis ?? [];
   const nuncaAplicadas: any[] = agenda?.bst_nunca_aplicados ?? [];
   const inaptas: any[] = agenda?.bst_excluidos ?? [];
+  // Filtro "ver DEL de hoje / DEL projetado" (pedido do usuário — antes as
+  // duas colunas ficavam sempre lado a lado, sem opção de focar só numa).
+  // "ambos" (padrão) mantém o comportamento anterior.
+  const [verDel, setVerDel] = useState<"ambos" | "atual" | "projetado">("ambos");
 
   const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => {
     const ord = useOrdenacao(lista);
@@ -34,7 +45,12 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
               <th style={th}></th>
               <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
               <ThOrdenavel label="Lote" campo="grupo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-              <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+              {verDel !== "projetado" && (
+                <ThOrdenavel label="DEL atual" campo="del_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+              )}
+              {verDel !== "atual" && (
+                <ThOrdenavel label="DEL projetado" campo="del_projetado" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+              )}
               <th style={th}>Obs.</th>
             </tr></thead>
             <tbody>{ord.linhasOrdenadas.map((b: any) => (
@@ -47,7 +63,8 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
                 </td>
                 <td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td>
                 <td style={td}>{b.grupo || "—"}</td>
-                <td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td>
+                {verDel !== "projetado" && <td style={{ ...td, textAlign: "right" }}>{b.del_atual ?? "—"}</td>}
+                {verDel !== "atual" && <td style={{ ...td, textAlign: "right" }}>{b.del_projetado ?? "—"}</td>}
                 <td style={{ ...td, color: "var(--text-muted)", fontSize: "0.75rem" }}>
                   {b.requer_reanalise ? (b.motivo_exclusao || "Retirada do BST — revisar") : lista === nuncaAplicadas ? "Nunca aplicada — apta na próxima" : "—"}
                 </td>
@@ -60,11 +77,33 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
     );
   };
 
+  const opcoesVerDel: [typeof verDel, string][] = [
+    ["ambos", "Ambos"], ["atual", "Só DEL atual"], ["projetado", "Só DEL projetado"],
+  ];
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
-      <Tabela titulo="BST — Incluir no próximo BST" lista={nuncaAplicadas} cor="var(--amber)" />
-      <Tabela titulo="BST — Inaptas p/ próxima aplicação" lista={inaptas} cor="var(--red)" />
+    <div className="space-y-2">
+      <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
+        "DEL atual" é o DEL de hoje; "DEL projetado" é o DEL que o animal terá na data da próxima aplicação de BST
+        {agenda?.proxima_visita_bst ? <> (<strong>{formatDate(agenda.proxima_visita_bst)}</strong>)</> : null} — é essa
+        projeção que decide se a vaca chega apta na hora certa.
+      </p>
+      <div className="flex items-center gap-2">
+        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Ver:</span>
+        <div className="flex gap-1">
+          {opcoesVerDel.map(([valor, rotulo]) => (
+            <button key={valor} type="button" onClick={() => setVerDel(valor)}
+              className={verDel === valor ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem" }}>
+              {rotulo}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
+        <Tabela titulo="BST — Incluir no próximo BST" lista={nuncaAplicadas} cor="var(--amber)" />
+        <Tabela titulo="BST — Inaptas p/ próxima aplicação" lista={inaptas} cor="var(--red)" />
+      </div>
     </div>
   );
 }
@@ -105,16 +144,14 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
     fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
   }, []);
 
-  // Boostin só aparece como opção de produto se já tiver saldo em estoque —
-  // caso contrário o lançamento continua só com Lactotropin, mas o item já
-  // fica cadastrado (seed no backend) para quando o saldo for lançado.
-  const boostinDisponivel = useMemo(
-    () => estoqueItens.some((i) => (i.nome || "").trim().toLowerCase() === "boostin" && (i.quantidade || 0) > 0),
+  // Itens de estoque reconhecidos como BST (mesmo critério do backend) —
+  // Lactotropin/Boostin aparecem aqui só se já cadastrados, mas qualquer
+  // outro produto com nome batendo no padrão também entra (ex.: genérico
+  // cadastrado pelo usuário em Configurações > Cadastro > Estoque).
+  const itensBst = useMemo(
+    () => estoqueItens.filter((i) => MARCADORES_BST.test(i.nome || "")),
     [estoqueItens]
   );
-  useEffect(() => {
-    if (produto === "Boostin" && !boostinDisponivel) setProduto("Lactotropin");
-  }, [boostinDisponivel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pessoasAtivas = useMemo(
     () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
@@ -162,7 +199,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   };
 
   const futura = dataAplicacao > new Date().toISOString().slice(0, 10);
-  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
+  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   const lotesDisponiveis = useMemo(() => {
     const todos: any[] = [
@@ -212,11 +249,19 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
         <div className="flex items-end gap-3 flex-wrap">
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data da aplicação</label>
             <input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
-            <select style={{ ...inputStyle, width: "9rem" }} value={produto} onChange={(e) => setProduto(e.target.value)}>
-              <option value="Lactotropin">Lactotropin</option>
-              {boostinDisponivel && <option value="Boostin">Boostin</option>}
-            </select></div>
+          <div style={{ width: "13rem" }}><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
+            <EstoquePicker
+              itens={itensBst}
+              value={produto}
+              onChange={(nome) => {
+                setProduto(nome);
+                const item = itensBst.find((i) => i.nome === nome);
+                if (item?.unidade) setUnidade(item.unidade);
+              }}
+              placeholder="Selecionar produto…"
+              finalidades={["Medicamento"]}
+              incluirNaoEstocaveis
+            /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Dose</label>
             <input type="number" step="0.01" style={{ ...inputStyle, width: "5.5rem" }} value={dose} onChange={(e) => setDose(e.target.value)} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Unidade</label>

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
@@ -31,9 +31,10 @@ from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules import estoque_baixa
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
-from fazenda.rules.unidades import unidades_compativeis
+from fazenda.rules.unidades import UNIDADES_ENTREGA_LEITE, leite_para_kg, unidades_compativeis
 
 router = APIRouter(prefix="/producao", tags=["producao"])
 
@@ -77,9 +78,19 @@ def obter_producao(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Série temporal, curva de lactação e ranking por vaca do controle leiteiro."""
+    """Série temporal, curva de lactação e ranking por vaca do controle leiteiro.
+
+    Único consumidor é a Capa (fetchProducao em lib/api.ts), que só usa os
+    últimos 12 pontos de `serie_temporal` (ver `serieProd` em app/page.tsx).
+    Sem filtro de data essa query lia o histórico INTEIRO de controle
+    leiteiro da fazenda (anos de registros, potencialmente diários) só para
+    descartar quase tudo depois. A janela de 400 dias (~13 meses) cobre com
+    folga qualquer cadência de lançamento (mensal/DHI ou diária) e garante
+    os últimos 12 pontos exibidos, sem crescer sem limite com o histórico.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query = select(ControleLeiteiro)
+    janela_desde = date.today() - timedelta(days=400)
+    query = select(ControleLeiteiro).where(ControleLeiteiro.data_controle >= janela_desde)
     if fazenda_id is not None:
         query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
     controles = [c.model_dump() for c in session.exec(query).all()]
@@ -95,7 +106,9 @@ def listar_controles(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     animais_query = select(Animal)
     partos_query = select(Parto)
-    controles_query = select(ControleLeiteiro)
+    # G13 — mais recentes primeiro, para sustentar a lista "últimos lançados"
+    # em Lançamentos › Produção sem que o frontend precise reordenar.
+    controles_query = select(ControleLeiteiro).order_by(ControleLeiteiro.data_controle.desc(), ControleLeiteiro.id.desc())
     if fazenda_id is not None:
         animais_query = animais_query.where(Animal.fazenda_id == fazenda_id)
         partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
@@ -117,6 +130,7 @@ def listar_controles(
         d = c.data_controle
         ordem = c.ordem_parto or partos_por_numero.get(c.numero_matriz) or None
         registros.append({
+            "id": c.id,  # G13 — sustenta editar/excluir na lista "últimos lançados"
             "numero": c.numero_matriz,
             "raca": raca_por_numero.get(c.numero_matriz) or "",
             "data": d.isoformat() if d else None,
@@ -137,14 +151,13 @@ def listar_controles(
 @router.post("/controles")
 def criar_controles(
     dados: ControlesIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Registra a pesagem do dia para uma ou várias vacas de uma vez (lançamento
     individual ou em lote — o front manda uma entrada por vaca do lote).
     """
     usuario_id = _usuario_id_seguro(user)
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     criados = []
     for entrada in dados.entradas:
         if entrada.total_kg is not None:
@@ -250,9 +263,8 @@ def _resolver_lote(session: Session, valor: str, fazenda_id: int | None = None) 
 @router.post("/controle-leiteiro/importar")
 async def importar_controle_leiteiro(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     linhas = list(iter_planilha_rows(file.filename or "", content))
     if not linhas:
@@ -345,16 +357,19 @@ def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: dat
     pós-parto (recém-parida). Fora disso (ou recria), retorna None."""
     if not animal:
         return None
-    from fazenda.models import Servico
+    from fazenda.models import Parto, Servico
     from fazenda.rules.gestation import calcular_parto_provavel
+    from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
     # Recém-parida: DEL pequeno na data da pesagem → pós-parto.
     if animal.del_dias is not None and 0 <= animal.del_dias <= 30:
         return "pos_parto"
-    ultimo_pos = session.exec(
-        select(Servico).where(
-            Servico.numero_matriz == animal.numero, Servico.diagnostico == "POSITIVO"
-        ).order_by(Servico.data_servico.desc())
-    ).first()
+    # Serviço vigente positivo (não um "último positivo do histórico"
+    # qualquer) — sem isso, uma vaca reinseminada sem diagnóstico ainda, ou
+    # com a prenhez já perdida, continuava classificada por um diagnóstico
+    # antigo que não vale mais (ver fazenda.rules.perda_prenhez).
+    servicos_da_vaca = session.exec(select(Servico).where(Servico.numero_matriz == animal.numero)).all()
+    partos_da_vaca = session.exec(select(Parto).where(Parto.numero_matriz == animal.numero)).all()
+    ultimo_pos = servicos_positivos_vigentes(servicos_da_vaca, partos_da_vaca).get(animal.numero)
     if ultimo_pos and ultimo_pos.data_servico:
         parto_provavel = calcular_parto_provavel(ultimo_pos.data_servico, animal.raca).data_parto_provavel
         dias_para_parto = (parto_provavel - data_pesagem).days
@@ -396,6 +411,92 @@ def criar_pesagens(
         criados.append(registro)
     session.commit()
     return {"criados": len(criados)}
+
+
+# G7 — listagem individual de pesagens (com `id`), para sustentar editar/
+# excluir. O relatório abaixo (/pesagens/relatorio) agrega por animal e não
+# devolve id nenhum.
+@router.get("/pesagens")
+def listar_pesagens(
+    numero_matriz: str | None = None,
+    grupo: str | None = None,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    limite: int = 200,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query = query.where(PesagemCorporal.fazenda_id == fazenda_id)
+    if numero_matriz:
+        query = query.where(PesagemCorporal.numero_matriz == numero_matriz)
+    if grupo:
+        query = query.where(PesagemCorporal.grupo_primario == grupo)
+    if data_inicio:
+        query = query.where(PesagemCorporal.data_pesagem >= data_inicio)
+    if data_fim:
+        query = query.where(PesagemCorporal.data_pesagem <= data_fim)
+    pesagens = session.exec(query).all()
+    total = len(pesagens)
+    pesagens = sorted(pesagens, key=lambda p: (p.data_pesagem, p.id), reverse=True)
+    if limite:
+        pesagens = pesagens[:limite]
+    nomes = mapa_usuarios(session, {p.usuario_id for p in pesagens})
+    linhas = [
+        {
+            "id": p.id,
+            "numero_matriz": p.numero_matriz,
+            "data_pesagem": p.data_pesagem.isoformat(),
+            "peso_kg": p.peso_kg,
+            "del_dias": p.del_dias,
+            "idade_meses": p.idade_meses,
+            "grupo_primario": p.grupo_primario,
+            "fase": p.fase,
+            "usuario_nome": nomes.get(p.usuario_id),
+        }
+        for p in pesagens
+    ]
+    return {"pesagens": linhas, "total": total}
+
+
+class PesagemEditIn(BaseModel):
+    data_pesagem: date | None = None
+    peso_kg: float | None = None
+
+
+@router.put("/pesagens/{pesagem_id}")
+def atualizar_pesagem(
+    pesagem_id: int, dados: PesagemEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """`del_dias`/`idade_meses`/`grupo_primario` são a "foto do momento" do
+    lançamento e nunca são recalculados aqui. `fase` (transição) depende da
+    data — só é recalculada quando `data_pesagem` muda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pesagem = session.get(PesagemCorporal, pesagem_id)
+    if not pesagem or (fazenda_id is not None and pesagem.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pesagem não encontrada")
+
+    campos = dados.model_dump(exclude_unset=True)
+    if "peso_kg" in campos:
+        if campos["peso_kg"] is None or campos["peso_kg"] <= 0:
+            raise HTTPException(status_code=400, detail="Peso deve ser maior que zero.")
+        pesagem.peso_kg = campos["peso_kg"]
+    if campos.get("data_pesagem") is not None:
+        pesagem.data_pesagem = campos["data_pesagem"]
+        animal_query = select(Animal).where(Animal.numero == pesagem.numero_matriz)
+        if fazenda_id is not None:
+            animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(animal_query).first()
+        pesagem.fase = _fase_transicao(session, animal, pesagem.data_pesagem)
+
+    pesagem.atualizado_em = datetime.utcnow()
+    session.add(pesagem)
+    session.commit()
+    session.refresh(pesagem)
+    return pesagem.model_dump()
 
 
 @router.get("/pesagens/relatorio")
@@ -721,7 +822,20 @@ async def importar_qualidade_leite_planilha(
 class EntregaLeiteMensalIn(BaseModel):
     competencia: str  # "YYYY-MM"
     quantidade_litros: float
+    # "kg" (padrão) ou "L" — o laticínio contrata por um dos dois. A conversão
+    # para kg na hora de comparar com o controle leiteiro é feita em
+    # rules/unidades.leite_para_kg.
+    unidade: str = "kg"
     observacao: str | None = None
+
+
+def _unidade_entrega(valor: str | None) -> str:
+    """Normaliza a unidade da entrega. Qualquer coisa fora de kg/L cai em kg,
+    que é o padrão do sistema e o que os lançamentos antigos representam."""
+    u = (valor or "kg").strip()
+    if u.upper() == "L":
+        return "L"
+    return "kg" if u.lower() != "kg" else "kg"
 
 
 @router.get("/entrega-leite")
@@ -755,12 +869,55 @@ def criar_entrega_leite(
     existente = session.exec(existente_query).first()
     if existente:
         existente.quantidade_litros = dados.quantidade_litros
+        existente.unidade = _unidade_entrega(dados.unidade)
         existente.observacao = dados.observacao
         session.add(existente)
         session.commit()
         session.refresh(existente)
         return existente.model_dump()
     registro = EntregaLeiteMensal(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+_REGEX_COMPETENCIA = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+# G6 — o POST acima já é upsert por competência (editar o VALOR de um mês já
+# funciona); este PUT serve para corrigir a COMPETÊNCIA errada. Se a nova
+# competência já tiver outro registro na mesma fazenda, bloqueia com 409 em
+# vez de deixar o upsert do POST engolir os dois em silêncio.
+@router.put("/entrega-leite/{registro_id}")
+def atualizar_entrega_leite(
+    registro_id: int, dados: EntregaLeiteMensalIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(EntregaLeiteMensal, registro_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Entrega de leite não encontrada")
+    if not _REGEX_COMPETENCIA.match(dados.competencia):
+        raise HTTPException(status_code=400, detail="Competência inválida — use o formato AAAA-MM.")
+    if dados.quantidade_litros <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade entregue deve ser maior que zero.")
+    if dados.competencia != registro.competencia:
+        conflito_query = select(EntregaLeiteMensal).where(
+            EntregaLeiteMensal.competencia == dados.competencia,
+            EntregaLeiteMensal.id != registro.id,
+        )
+        if fazenda_id is not None:
+            conflito_query = conflito_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+        if session.exec(conflito_query).first():
+            raise HTTPException(
+                status_code=409,
+                detail=f"Já existe uma entrega lançada para a competência {dados.competencia} — exclua-a antes ou escolha outro mês.",
+            )
+    registro.competencia = dados.competencia
+    registro.quantidade_litros = dados.quantidade_litros
+    registro.unidade = _unidade_entrega(dados.unidade)
+    registro.observacao = dados.observacao
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -841,7 +998,12 @@ def relatorio_controle_entrega(
     if fazenda_id is not None:
         entrega_query = entrega_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
         conta_query = conta_query.where(ContaGerencial.fazenda_id == fazenda_id)
-    entregas = {e.competencia: e.quantidade_litros for e in session.exec(entrega_query).all()}
+    # Normaliza a entrega para kg — o controle leiteiro é sempre em kg, então
+    # subtrair litro de kg (o que acontecia antes) inflava o "não entregue".
+    entregas = {
+        e.competencia: leite_para_kg(e.quantidade_litros, e.unidade)
+        for e in session.exec(entrega_query).all()
+    }
     receita_por_mes: dict[str, float] = {}
     for c in session.exec(conta_query).all():
         if "italac" not in (c.fornecedor_cliente or "").lower():
@@ -999,11 +1161,14 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
 
-    ultimo_servico = session.exec(
-        select(Servico)
-        .where(Servico.numero_matriz == numero_matriz, Servico.diagnostico == "POSITIVO")
-        .order_by(Servico.data_servico.desc())
-    ).first()
+    # Serviço vigente positivo — não "o último diagnóstico positivo do
+    # histórico" (que continuaria valendo mesmo depois de uma reinseminação
+    # sem diagnóstico ainda, ou de uma perda de prenhez já registrada; ver
+    # fazenda.rules.perda_prenhez).
+    from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+    servicos_da_vaca = session.exec(select(Servico).where(Servico.numero_matriz == numero_matriz)).all()
+    partos_da_vaca = session.exec(select(Parto).where(Parto.numero_matriz == numero_matriz)).all()
+    ultimo_servico = servicos_positivos_vigentes(servicos_da_vaca, partos_da_vaca).get(numero_matriz)
 
     data_prevista = None
     deve_secar = None
@@ -1069,9 +1234,8 @@ class SecagemIn(BaseModel):
 @router.post("/secagem")
 def registrar_secagem(
     dados: SecagemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.motivo not in MOTIVOS_SECAGEM:
         raise HTTPException(status_code=400, detail=f"Motivo inválido (aceitos: {', '.join(MOTIVOS_SECAGEM)})")
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
@@ -1241,8 +1405,17 @@ def _descricao_medicamentos_dia(etapas: list[ProtocoloInducaoLactacaoEtapa]) -> 
     partes = []
     for e in etapas:
         if e.dose:
-            dose_txt = f"{e.dose:g}".rstrip("0").rstrip(".") if isinstance(e.dose, float) else str(e.dose)
-            partes.append(f"{dose_txt} {e.unidade or ''} {e.produto}".strip())
+            # `:g` sozinho já resolve o que se queria aqui: 30.0 vira "30",
+            # 2.5 continua "2.5". NÃO acrescentar .rstrip("0") — foi
+            # exatamente isso que, até ago/2026, comia o zero SIGNIFICATIVO
+            # de toda dose múltipla de 10 e mostrava "3 ml" onde o protocolo
+            # mandava 30 ml (e "2 ml" onde eram 20, "1 ml" onde eram 10 ou
+            # 100). O rstrip faz sentido depois de um f"{x:.2f}"
+            # ("30.00" → "30"), nunca depois de `:g`.
+            dose_txt = f"{e.dose:g}" if isinstance(e.dose, float) else str(e.dose)
+            # Junta só os pedaços que existem — medicamento sem unidade
+            # cadastrada saía com espaço duplo ("10  Dexametasona").
+            partes.append(" ".join(p for p in (dose_txt, e.unidade, e.produto) if p))
         else:
             partes.append(e.produto)
     return " + ".join(partes) if partes else "-"
@@ -1287,7 +1460,8 @@ class LancarInducaoLactacaoIn(BaseModel):
 
 @router.post("/inducao-lactacao", status_code=201)
 def lancar_inducao_lactacao(
-    dados: LancarInducaoLactacaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    dados: LancarInducaoLactacaoIn, response: Response, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     protocolo = session.get(ProtocoloInducaoLactacao, dados.protocolo_id)
     if not protocolo:
@@ -1303,13 +1477,68 @@ def lancar_inducao_lactacao(
     if not animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
+    # Idempotência: nada aqui impedia que a MESMA indução chegasse duas vezes —
+    # duplo clique no botão "Lançar", ou o retry da fila offline do app móvel
+    # reenviando um POST cujo 2xx de confirmação nunca voltou ao aparelho. Sem
+    # proteção, cada retry criava um SEGUNDO ProtocoloInducaoLancamento (mesmo
+    # molde, mesma data_d0, mesmo conjunto de animais) e os dois conviviam
+    # "Ativos" na Central de Protocolos — exatamente os pares de linha quase
+    # idênticas do relato original (uma com baixas já dadas, a outra "órfã",
+    # 0 etapas realizadas). Em vez de duplicar silenciosamente, reaproveita o
+    # lançamento equivalente já ativo: mesmo protocolo_id + mesma data_d0 +
+    # mesmo conjunto de animais + ainda ativo e não encerrado. As outras 4
+    # famílias de protocolo (IATF em reproducao.py, sanitário em sanidade.py —
+    # a rota REAL de lançamento; cadastro/protocolos_sanitarios.py e agenda.py
+    # só cadastram o molde/leem o lançamento, não criam um —, customizado em
+    # protocolos_customizados.py e lida em lida.py) ganharam a MESMA proteção,
+    # cada uma com o critério de equivalência adaptado à sua estrutura — ver
+    # o comentário "Idempotência:" em cada uma.
+    #
+    # `candidato.fazenda_id == fazenda_id` (não tolera `None` do lado do
+    # candidato): a checagem de "mesmo lançamento" cruza tenants se comparar
+    # incompleto — um lançamento órfão de `fazenda_id` nulo (resíduo raro que
+    # a migração 029227481e9e não conseguiu resolver por ambiguidade, nunca
+    # criado a partir daqui, já que a escrita usa get_fazenda_id_escrita) não
+    # deve ser "reaproveitado" por uma fazenda diferente só por coincidir em
+    # data/molde/animal — mesmo filtro ESTRITO do PR #488 (fazenda_id nulo:
+    # fecha a torneira...), que este bloco ainda não seguia.
+    animais_set = set(animais)
+    candidatos = session.exec(
+        select(ProtocoloInducaoLancamento)
+        .where(ProtocoloInducaoLancamento.protocolo_id == protocolo.id)
+        .where(ProtocoloInducaoLancamento.data_d0 == dados.data_d0)
+        .where(ProtocoloInducaoLancamento.ativo == True)  # noqa: E712
+        .where(ProtocoloInducaoLancamento.encerrado_em.is_(None))
+    ).all()
+    for candidato in candidatos:
+        if fazenda_id is not None and candidato.fazenda_id != fazenda_id:
+            continue
+        animais_candidato = set(session.exec(
+            select(ProtocoloInducaoAplicacao.numero_matriz)
+            .where(ProtocoloInducaoAplicacao.lancamento_id == candidato.id)
+        ).all())
+        if animais_candidato == animais_set:
+            response.status_code = 200
+            return {
+                "criado": False, "lancamento_id": candidato.id, "eventos_criados": 0,
+                "animais": len(animais_set),
+                "aviso": (
+                    "Já existe um lançamento ativo idêntico deste protocolo (mesma data D0 "
+                    "e mesmo(s) animal(is)) — reaproveitado em vez de criar um duplicado."
+                ),
+            }
+
     etapas_por_dia: dict[int, list[ProtocoloInducaoLactacaoEtapa]] = {}
     for e in etapas:
         etapas_por_dia.setdefault(e.dia, []).append(e)
 
+    nome_protocolo = gerar_nome_lancamento(
+        protocolo.nome, dados.data_d0, protocolo.dia_inicial, max(etapas_por_dia.keys()),
+    )
     lancamento = ProtocoloInducaoLancamento(
-        protocolo_id=protocolo.id, nome_protocolo=protocolo.nome, data_d0=dados.data_d0,
+        protocolo_id=protocolo.id, nome_protocolo=nome_protocolo, data_d0=dados.data_d0,
         responsavel=dados.responsavel, observacao=dados.observacao, usuario_id=_usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
     )
     session.add(lancamento)
     session.commit()
@@ -1320,6 +1549,7 @@ def lancar_inducao_lactacao(
             if e.tipo == "medicamento":
                 session.add(ProtocoloInducaoMedicamento(
                     lancamento_id=lancamento.id, dia=dia, produto=e.produto, dose=e.dose, unidade=e.unidade, via=e.via,
+                    fazenda_id=fazenda_id,
                 ))
 
     eventos_criados = 0
@@ -1331,6 +1561,7 @@ def lancar_inducao_lactacao(
                 descricao=_descricao_medicamentos_dia([e for e in etapas_dia if e.tipo == "medicamento"]),
                 observacao_manejo=_observacao_manejo_dia(etapas_dia),
                 data_prevista=data_prevista,
+                fazenda_id=fazenda_id,
             ))
             eventos_criados += 1
 
@@ -1339,17 +1570,42 @@ def lancar_inducao_lactacao(
 
 
 @router.get("/inducao-lactacao/ativos")
-def listar_inducao_lactacao_ativos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_inducao_lactacao_ativos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Lançamentos com pelo menos uma etapa ainda não realizada — para ver de
     relance em qual dia está cada animal em indução."""
-    lancamentos = session.exec(select(ProtocoloInducaoLancamento).order_by(ProtocoloInducaoLancamento.data_d0.desc())).all()
-    aplicacoes = session.exec(select(ProtocoloInducaoAplicacao)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_lancamentos = select(ProtocoloInducaoLancamento).order_by(ProtocoloInducaoLancamento.data_d0.desc())
+    query_aplicacoes = select(ProtocoloInducaoAplicacao)
+    if fazenda_id is not None:
+        # Filtro ESTRITO desde o PR claude/fazenda-id-raiz — mesma reversão
+        # de tolerância a `fazenda_id IS NULL` de agenda.py/central_
+        # protocolos.py (ver comentário em agenda.calcular_agenda::
+        # _da_fazenda): a escrita não deixa mais a coluna nula
+        # (fazenda.auth.get_fazenda_id_escrita) e a migração 029227481e9e
+        # preencheu o histórico, então a tolerância aqui só escondia dado que
+        # já devia estar correto.
+        query_lancamentos = query_lancamentos.where(ProtocoloInducaoLancamento.fazenda_id == fazenda_id)
+        query_aplicacoes = query_aplicacoes.where(ProtocoloInducaoAplicacao.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query_lancamentos).all()
+    aplicacoes = session.exec(query_aplicacoes).all()
     por_lancamento: dict[int, list[ProtocoloInducaoAplicacao]] = {}
     for ap in aplicacoes:
         por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
 
     ativos = []
     for lanc in lancamentos:
+        # Cancelado (ativo=False) ou encerrado sai da lista. Sem isto o
+        # cancelamento tinha o efeito INVERSO do esperado: ele devolve todas
+        # as aplicações para `realizada=False` (é o que significa "não
+        # deveria ter existido"), então um protocolo cancelado voltava aqui
+        # como 100% PENDENTE — mais "ativo" do que antes de ser cancelado.
+        # A Agenda já excluía encerrado (ver o filtro de aplicações em
+        # calcular_agenda); aqui não excluía nem um nem outro, e as duas
+        # telas discordavam sobre o que ainda está em andamento.
+        if not getattr(lanc, "ativo", True) or lanc.encerrado_em:
+            continue
         aps = por_lancamento.get(lanc.id, [])
         pendentes = [a for a in aps if not a.realizada]
         if not pendentes:
@@ -1380,7 +1636,7 @@ def listar_inducao_lactacao_ativos(session: Session = Depends(get_session)) -> l
 # aplicadas) já é calculada pela Agenda (GET /agenda/) — este endpoint cobre
 # só o lado histórico/gerencial que falta: quem recebeu, quando e quanto.
 # ---------------------------------------------------------------------------
-MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
 
 @router.get("/relatorio-bst")

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, PesagemCorporal, Servico
+from fazenda.models import Animal, Lote, Parto, PesagemCorporal, Servico
 
 HOJE = date(2026, 7, 8)
 
@@ -48,10 +48,11 @@ def client():
     main.app.dependency_overrides.clear()
 
 
-def _add_animal(engine, numero, categoria_abrev, sexo="F", eh_semen=False, ativo=True, idade_meses=None):
+def _add_animal(engine, numero, categoria_abrev, sexo="F", eh_semen=False, ativo=True, idade_meses=None,
+                 grupo_primario=None):
     with Session(engine) as s:
         s.add(Animal(numero=numero, categoria_abrev=categoria_abrev, sexo=sexo, eh_semen=eh_semen, ativo=ativo,
-                      idade_meses=idade_meses))
+                      idade_meses=idade_meses, grupo_primario=grupo_primario))
         s.commit()
 
 
@@ -64,6 +65,18 @@ def _add_peso(engine, numero, peso):
 def _add_servico(engine, numero, dias_atras, **kwargs):
     with Session(engine) as s:
         s.add(Servico(numero_matriz=numero, data_servico=HOJE - timedelta(days=dias_atras), **kwargs))
+        s.commit()
+
+
+def _add_parto(engine, numero, dias_atras, ordem_parto=1):
+    with Session(engine) as s:
+        s.add(Parto(numero_matriz=numero, data_parto=HOJE - timedelta(days=dias_atras), ordem_parto=ordem_parto))
+        s.commit()
+
+
+def _add_lote_pre_parto(engine, codigo, nome):
+    with Session(engine) as s:
+        s.add(Lote(codigo=codigo, nome=nome, pre_parto=True))
         s.commit()
 
 
@@ -189,6 +202,39 @@ class TestInseminadas:
         listas = r.json()["listas"]
         assert not any(a["numero_matriz"] == "13" for a in listas["inseminadas_60_mais"])
         assert any(a["numero_matriz"] == "13" for a in listas["vacas_gestantes"])
+
+    def test_pariu_depois_do_servico_sai_da_reconfirmacao_mesmo_sem_reconfirmar(self, client):
+        """Regressão (matriz 131, relato do produtor ago/2026): vaca tocada
+        positiva, NUNCA reconfirmada formalmente, mas que já pariu — o parto
+        prova a gestação sozinho; ela não deve continuar cobrada para
+        reconfirmar um serviço já resolvido, e sim aparecer como "precisa de
+        novo serviço" (voltou pro ciclo, aguardando IA)."""
+        c, engine = client
+        _add_animal(engine, "131", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "131", PESO_APTO)
+        _add_servico(engine, "131", 300, data_diagnostico=HOJE - timedelta(days=270), diagnostico="POSITIVO")
+        _add_parto(engine, "131", 56)  # pariu depois do serviço, antes de hoje
+        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
+        listas = r.json()["listas"]
+        assert not any(a["numero_matriz"] == "131" for a in listas["inseminadas_60_mais"])
+        assert not any(a["numero_matriz"] == "131" for a in listas["vacas_gestantes"])
+        assert any(a["numero_matriz"] == "131" for a in listas["vazias_por_diagnostico"])
+
+    def test_lote_pre_parto_sai_da_reconfirmacao_mesmo_sem_reconfirmar(self, client):
+        """Regressão (matrizes 145/429/430/432/433/435, relato do produtor
+        ago/2026): vaca tocada positiva, ainda sem reconfirmação formal, mas
+        já movida para um lote cadastrado com `pre_parto=True` — a mudança de
+        lote já reconhece a gestação como certa; ela não deve continuar
+        cobrada para reconfirmar."""
+        c, engine = client
+        _add_lote_pre_parto(engine, "09", "Pré-parto")
+        _add_animal(engine, "145", "Vaca", idade_meses=IDADE_APTA, grupo_primario="09 - Pré-parto")
+        _add_peso(engine, "145", PESO_APTO)
+        _add_servico(engine, "145", 70, data_diagnostico=HOJE - timedelta(days=40), diagnostico="POSITIVO")
+        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
+        listas = r.json()["listas"]
+        assert not any(a["numero_matriz"] == "145" for a in listas["inseminadas_60_mais"])
+        assert any(a["numero_matriz"] == "145" for a in listas["vacas_gestantes"])
 
 
 class TestNovilhas:

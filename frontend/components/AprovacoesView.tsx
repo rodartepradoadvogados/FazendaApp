@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Check, X, RefreshCw, Inbox, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, X, RefreshCw, Inbox, Pencil, Plus, Trash2, Undo2, ChevronDown, ChevronRight } from "lucide-react";
 import {
   fetchAprovacoes, aprovarLancamento, rejeitarLancamento, editarLancamentoPendente, ehAdmin, podePublicarMaterias,
   fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, type LancamentoPendente,
+  fetchAprovacoesDecididas, desfazerAprovacao, type LancamentoPendenteDecidido,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
@@ -45,7 +47,7 @@ const CAMPOS_FINANCEIROS_DEDICADOS = new Set([
 
 const inputStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.82rem", width: "100%",
+  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.82rem", width: "100%",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
@@ -98,9 +100,15 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
   const [formaPagamento, setFormaPagamento] = useState("");
   const [contaBancariaPag, setContaBancariaPag] = useState("");
   const [numeroDocPagamento, setNumeroDocPagamento] = useState("");
+  // G17 — "Decididos recentemente" (aprovados/rejeitados), com Desfazer.
+  const [decididos, setDecididos] = useState<LancamentoPendenteDecidido[] | null>(null);
+  const [mostrarDecididos, setMostrarDecididos] = useState(false);
+  const [desfazendo, setDesfazendo] = useState<number | null>(null);
+  const [erroDecididos, setErroDecididos] = useState<string | null>(null);
   const admin = ehAdmin();
 
   const carregar = () => fetchAprovacoes().then(setItens).catch((e) => setErro(e.message));
+  const carregarDecididos = () => fetchAprovacoesDecididas(30).then(setDecididos).catch((e) => setErroDecididos(e.message));
   useEffect(() => {
     if (!admin) return;
     carregar();
@@ -111,6 +119,11 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
     }).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
   }, [admin]);
+  useEffect(() => {
+    if (!admin || !mostrarDecididos) return;
+    carregarDecididos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin, mostrarDecididos]);
 
   if (!admin) {
     return <div className="card"><p style={{ color: "var(--text-muted)" }}>Só a conta principal pode ver e aprovar os lançamentos pendentes.</p></div>;
@@ -222,6 +235,24 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
       await carregar();
     } catch (e: any) { setErro(e.message); }
     finally { setOcupado(null); }
+  };
+
+  // G17 — desfaz uma decisão já tomada: rejeitado volta a pendente sem mais
+  // nada; aprovado apaga o que foi criado (mesma reversão de estoque/vale do
+  // motor de exclusões) e também volta a pendente.
+  const desfazer = async (it: LancamentoPendenteDecidido) => {
+    if (!it.pode_desfazer) return;
+    const msg = it.status === "aprovado"
+      ? `Desfazer a aprovação de "${it.rotulo}"? O que foi criado será apagado (com a mesma reversão de estoque/vale de uma exclusão normal) e o lançamento volta para a fila de pendentes.`
+      : `Desfazer a rejeição de "${it.rotulo}"? O lançamento volta para a fila de pendentes.`;
+    if (!window.confirm(msg)) return;
+    setDesfazendo(it.id); setErroDecididos(null);
+    try {
+      await desfazerAprovacao(it.id);
+      await carregarDecididos();
+      await carregar();
+    } catch (e: any) { setErroDecididos(e.message || "Erro ao desfazer"); }
+    finally { setDesfazendo(null); }
   };
 
   return (
@@ -354,11 +385,11 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
                           </button>
                         </div>
                         <div><label style={lbl}>Qtd.</label><input type="number" style={inputStyle} value={item.quantidade} onChange={(e) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, quantidade: e.target.value } : x))} /></div>
-                        <div><label style={lbl}>Vlr. unit.</label><input type="number" step="0.01" style={inputStyle} value={item.valor_unitario} onChange={(e) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_unitario: e.target.value } : x))} /></div>
+                        <div><label style={lbl}>Vlr. unit.</label><CampoMoeda style={inputStyle} value={Number(item.valor_unitario) || 0} onChange={(v) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_unitario: v ? String(v) : "" } : x))} /></div>
                         <div>
                           <label style={lbl}>Vlr. total (R$)</label>
                           <div className="flex items-center gap-1">
-                            <input type="number" step="0.01" style={inputStyle} value={item.valor_total} onChange={(e) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_total: e.target.value } : x))} />
+                            <CampoMoeda style={inputStyle} value={Number(item.valor_total) || 0} onChange={(v) => setEditItens((s) => s.map((x, i) => i === idx ? { ...x, valor_total: v ? String(v) : "" } : x))} />
                             <button type="button" className="btn-ghost" disabled={editItens.length <= 1} title="Remover item" style={{ padding: "0.3rem" }} onClick={() => setEditItens((s) => s.filter((_, i) => i !== idx))}>
                               <Trash2 size={13} />
                             </button>
@@ -409,7 +440,7 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
                                 <tr key={i}>
                                   <td>{i + 1}/{parcelas.length}</td>
                                   <td><input type="date" style={inputStyle} value={p.data_vencimento} onChange={(e) => setParcelas((s) => s.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
-                                  <td><input type="number" step="0.01" style={inputStyle} value={p.valor} onChange={(e) => setParcelas((s) => s.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                                  <td><CampoMoeda style={inputStyle} value={Number(p.valor) || 0} onChange={(v) => setParcelas((s) => s.map((x, j) => j === i ? { ...x, valor: v ? String(v) : "" } : x))} /></td>
                                 </tr>
                               ))}
                             </tbody>
@@ -474,6 +505,58 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
           </div>
           );
         })}
+      </div>
+
+      <div className="card mt-4">
+        <button
+          onClick={() => setMostrarDecididos((v) => !v)}
+          style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+        >
+          <span style={{ fontWeight: 700, fontSize: "0.88rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+            {mostrarDecididos ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Decididos recentemente
+          </span>
+          <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>aprovados/rejeitados — dá para desfazer</span>
+        </button>
+
+        {mostrarDecididos && (
+          <div style={{ marginTop: "0.8rem" }}>
+            {erroDecididos && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{erroDecididos}</p>}
+            {!decididos && !erroDecididos && <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Carregando…</p>}
+            {decididos && !decididos.length && <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nada decidido ainda.</p>}
+            {decididos && !!decididos.length && (
+              <div className="overflow-x-auto">
+                <table className="fazenda-table">
+                  <thead><tr><th>Lançamento</th><th>Status</th><th>Decidido</th><th></th></tr></thead>
+                  <tbody>
+                    {decididos.map((it) => (
+                      <tr key={it.id}>
+                        <td style={{ fontSize: "0.82rem" }}>
+                          {it.rotulo}<br /><span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{it.resumo}</span>
+                        </td>
+                        <td style={{ fontSize: "0.82rem", color: it.status === "aprovado" ? "var(--green-light)" : "var(--red)", fontWeight: 600 }}>
+                          {it.status === "aprovado" ? "Aprovado" : "Rejeitado"}
+                        </td>
+                        <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
+                          {it.decidido_por ? `${it.decidido_por} · ` : ""}{it.decidido_em ? new Date(it.decidido_em).toLocaleString("pt-BR") : ""}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            className="btn-ghost" style={{ fontSize: "0.78rem" }}
+                            disabled={!it.pode_desfazer || desfazendo === it.id}
+                            title={it.pode_desfazer ? "Desfazer esta decisão" : (it.motivo_nao_desfaz || "Não é possível desfazer")}
+                            onClick={() => desfazer(it)}
+                          >
+                            <Undo2 size={13} /> {desfazendo === it.id ? "…" : "Desfazer"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

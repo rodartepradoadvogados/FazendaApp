@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 
 # Precisa ser setado ANTES de qualquer import de fazenda.* — ver comentário
 # equivalente em test_multi_fazenda_isolamento.py.
@@ -79,6 +79,16 @@ def client(monkeypatch):
             descricao="Implante D0", data_prevista=date(2026, 1, 1), fazenda_id=1,
         )
         s.add(aplicacao)
+        # Etapa final (inseminação) com data prevista relativa a hoje — não
+        # pode ser uma data fixa no passado, senão o protocolo cai no ramo
+        # "abandonado" de listar_protocolos_iatf_ativos (D0/D7/D9/D11 já
+        # todos vencidos) e some da lista de ativos assim que os testes
+        # rodarem depois da data fixa original.
+        aplicacao_final = ProtocoloIatfAplicacao(
+            lancamento_id=lancamento.id, numero_matriz="9001", dia=11,
+            descricao="Inseminação (IATF) — D11", data_prevista=date.today() + timedelta(days=5), fazenda_id=1,
+        )
+        s.add(aplicacao_final)
         s.commit()
 
         s.refresh(tipo)

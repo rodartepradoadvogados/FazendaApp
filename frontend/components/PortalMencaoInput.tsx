@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { PortalDestinatario } from "@/lib/api";
+import { casaBusca } from "@/lib/busca";
 
 /**
  * Campo "Para:" do Portal — digitar "@" (ou simplesmente focar o campo) abre
@@ -27,8 +28,8 @@ export function PortalMencaoInput({ opcoes, selecionados, onChange, placeholder 
   }, []);
 
   const todosMarcados = opcoes.length > 0 && selecionados.length === opcoes.length;
-  const filtro = texto.replace(/^@/, "").toLowerCase();
-  const filtrados = opcoes.filter((o) => (o.nome || o.username).toLowerCase().includes(filtro));
+  const filtro = texto.replace(/^@/, "");
+  const filtrados = opcoes.filter((o) => casaBusca(o.nome || o.username, filtro));
 
   function alternarTodos() {
     onChange(todosMarcados ? [] : opcoes.map((o) => o.id));

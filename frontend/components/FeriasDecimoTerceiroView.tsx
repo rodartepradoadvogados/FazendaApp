@@ -4,13 +4,13 @@ import { Plus, Check } from "lucide-react";
 import {
   fetchPessoas, fetchFerias, criarFerias, atualizarFerias,
   fetchDecimoTerceiro, criarDecimoTerceiro, atualizarDecimoTerceiro,
-  simularRescisao, criarRescisao, fetchRescisoes,
-  formatBRL, type RegistroFerias, type RegistroDecimoTerceiro,
-  type TipoRescisao, type CalculoRescisao, type RegistroRescisao,
+  fetchContasCorrentes,
+  formatBRL, type RegistroFerias, type RegistroDecimoTerceiro, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import RescisaoView from "@/components/RescisaoView";
 
 /*
  * Férias e 13º salário — controle DENTRO do app (cálculo, lançamento e
@@ -23,7 +23,7 @@ type Pessoa = { id: number; nome: string; tipos: string[]; salario_base?: number
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 const inputSm: React.CSSProperties = {
   fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", width: "100%",
 };
 const hoje = () => new Date().toISOString().slice(0, 10);
 
@@ -38,7 +38,7 @@ function StatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 // Sub-seção: Férias
 // ---------------------------------------------------------------------------
-function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
+function FeriasSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
   const [itens, setItens] = useState<RegistroFerias[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,6 +51,7 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
   const [dataFimGozo, setDataFimGozo] = useState("");
   const [abonoDias, setAbonoDias] = useState("0");
   const [observacao, setObservacao] = useState("");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [calculo, setCalculo] = useState<{ valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number } | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -98,10 +99,11 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
         dias_direito: parseInt(diasDireito, 10) || 30, dias_gozados: parseInt(diasGozados, 10) || 0,
         data_inicio_gozo: dataInicioGozo, data_fim_gozo: dataFimGozo,
         abono_pecuniario_dias: parseInt(abonoDias, 10) || 0, observacao: observacao || undefined,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({ tipo: "sucesso", texto: "Férias lançadas." });
       setPessoaId(""); setPeriodoInicio(""); setPeriodoFim(""); setDataInicioGozo(""); setDataFimGozo("");
-      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null);
+      setDiasGozados("30"); setAbonoDias("0"); setObservacao(""); setCalculo(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar férias" });
@@ -119,6 +121,7 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
         data_inicio_gozo: r.data_inicio_gozo, data_fim_gozo: r.data_fim_gozo,
         abono_pecuniario_dias: r.abono_pecuniario_dias, observacao: r.observacao || undefined,
         status: "pago", data_pagamento: dataPagamento, centro_custo: r.centro_custo,
+        conta_corrente_id: r.conta_corrente_id,
       });
       setPagandoId(null);
       carregar();
@@ -171,6 +174,14 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
         </div>
         <div><label style={lbl}>Observação</label>
           <textarea style={{ ...inputSm, minHeight: "2.4rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+
+        <div className="mt-2" style={{ maxWidth: 320 }}>
+          <label style={lbl}>Conta bancária (opcional)</label>
+          <select style={inputSm} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+            <option value="">Não informar</option>
+            {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+          </select>
+        </div>
 
         <div className="flex items-center gap-2" style={{ marginTop: "0.6rem" }}>
           <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={calcular}>Calcular valor sugerido</button>
@@ -256,7 +267,7 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
 // ---------------------------------------------------------------------------
 // Sub-seção: 13º salário
 // ---------------------------------------------------------------------------
-function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
+function DecimoTerceiroSection({ pessoas, contasCorrentes }: { pessoas: Pessoa[]; contasCorrentes: ContaCorrenteCadastro[] }) {
   const [itens, setItens] = useState<RegistroDecimoTerceiro[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -265,6 +276,7 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
   const [parcela, setParcela] = useState("unica");
   const [mesesTrabalhados, setMesesTrabalhados] = useState("12");
   const [observacao, setObservacao] = useState("");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
 
   const [valorCalculado, setValorCalculado] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -315,9 +327,10 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
       await criarDecimoTerceiro({
         pessoa_id: Number(pessoaId), ano: parseInt(ano, 10), parcela, meses_trabalhados: meses,
         observacao: observacao || undefined,
+        conta_corrente_id: contaCorrenteId ? Number(contaCorrenteId) : undefined,
       });
       setMsg({ tipo: "sucesso", texto: "13º salário lançado." });
-      setPessoaId(""); setObservacao(""); setValorCalculado(null);
+      setPessoaId(""); setObservacao(""); setValorCalculado(null); setContaCorrenteId("");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar 13º salário" });
@@ -333,6 +346,7 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
         pessoa_id: r.pessoa_id, ano: r.ano, parcela: r.parcela, meses_trabalhados: r.meses_trabalhados,
         valor_inss: r.valor_inss, valor_ir: r.valor_ir, observacao: r.observacao || undefined,
         status: "pago", data_pagamento: dataPagamento, centro_custo: r.centro_custo,
+        conta_corrente_id: r.conta_corrente_id,
       });
       setPagandoId(null);
       carregar();
@@ -376,6 +390,14 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
         </div>
         <div><label style={lbl}>Observação</label>
           <textarea style={{ ...inputSm, minHeight: "2.4rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+
+        <div className="mt-2" style={{ maxWidth: 320 }}>
+          <label style={lbl}>Conta bancária (opcional)</label>
+          <select style={inputSm} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+            <option value="">Não informar</option>
+            {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+          </select>
+        </div>
 
         <div className="flex items-center gap-2" style={{ marginTop: "0.6rem" }}>
           <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={calcular}>Calcular valor sugerido</button>
@@ -456,225 +478,19 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-seção: Rescisão contratual (CLT) — saldo de salário, aviso prévio,
-// férias vencidas/proporcionais, 13º proporcional e multa de FGTS (ESTIMADA
-// — o sistema não guarda o extrato real de depósitos de FGTS). Diferente de
-// férias/13º, não há tabela de acompanhamento dedicada: o cálculo só vira
-// lançamento em Contas a Pagar (dar baixa depois na aba Contas a pagar).
-// ---------------------------------------------------------------------------
-const LABEL_TIPO_RESCISAO: Record<TipoRescisao, string> = {
-  sem_justa_causa: "Dispensa sem justa causa",
-  pedido_demissao: "Pedido de demissão",
-  justa_causa: "Dispensa por justa causa",
-  acordo_mutuo: "Acordo mútuo (distrato)",
-};
-
-function RescisaoSection({ pessoas }: { pessoas: Pessoa[] }) {
-  const [itens, setItens] = useState<RegistroRescisao[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const [pessoaId, setPessoaId] = useState("");
-  const [tipoRescisao, setTipoRescisao] = useState<TipoRescisao>("sem_justa_causa");
-  const [dataDesligamento, setDataDesligamento] = useState(hoje());
-  const [diasFeriasVencidas, setDiasFeriasVencidas] = useState("0");
-  const [avisoPrevioTrabalhado, setAvisoPrevioTrabalhado] = useState(false);
-  const [observacao, setObservacao] = useState("");
-  const [statusLancamento, setStatusLancamento] = useState("pendente");
-  const [dataPagamento, setDataPagamento] = useState(hoje());
-
-  const [calculo, setCalculo] = useState<CalculoRescisao | null>(null);
-  const [calculando, setCalculando] = useState(false);
-  const [salvando, setSalvando] = useState(false);
-  const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
-
-  const carregar = () => fetchRescisoes().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); }, []);
-
-  const pessoaSelecionada = useMemo(() => pessoas.find((p) => String(p.id) === pessoaId), [pessoas, pessoaId]);
-
-  function montarDados() {
-    return {
-      pessoa_id: Number(pessoaId), tipo_rescisao: tipoRescisao, data_desligamento: dataDesligamento,
-      dias_ferias_vencidas: parseInt(diasFeriasVencidas, 10) || 0, aviso_previo_trabalhado: avisoPrevioTrabalhado,
-      observacao: observacao || undefined,
-    };
-  }
-
-  async function calcular() {
-    setMsg(null); setCalculo(null);
-    if (!pessoaId) { setMsg({ tipo: "erro", texto: "Selecione o funcionário." }); return; }
-    if (!pessoaSelecionada?.salario_base) { setMsg({ tipo: "erro", texto: "Selecione um funcionário com salário base cadastrado." }); return; }
-    if (!pessoaSelecionada?.data_admissao) { setMsg({ tipo: "erro", texto: "Funcionário sem data de admissão cadastrada." }); return; }
-    setCalculando(true);
-    try {
-      const resultado = await simularRescisao(montarDados());
-      setCalculo(resultado);
-    } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao calcular rescisão" });
-    } finally {
-      setCalculando(false);
-    }
-  }
-
-  async function salvar() {
-    setMsg(null);
-    if (!calculo) { setMsg({ tipo: "erro", texto: "Calcule antes de lançar." }); return; }
-    setSalvando(true);
-    try {
-      await criarRescisao({
-        ...montarDados(), status: statusLancamento,
-        data_pagamento: statusLancamento === "pago" ? dataPagamento : undefined,
-      });
-      setMsg({ tipo: "sucesso", texto: "Rescisão lançada em Contas a Pagar." });
-      setPessoaId(""); setDiasFeriasVencidas("0"); setAvisoPrevioTrabalhado(false);
-      setObservacao(""); setCalculo(null); setStatusLancamento("pendente");
-      carregar();
-    } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar rescisão" });
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
-
-  return (
-    <div>
-      <SecaoRecolhivel titulo="Calcular rescisão" icon={Plus} defaultAberta={false}
-        descricao="Saldo de salário, aviso prévio, férias vencidas/proporcionais, 13º proporcional e multa de FGTS (estimada)">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-          <div>
-            <label style={lbl}>Funcionário</label>
-            <select style={inputSm} value={pessoaId} onChange={(e) => { setPessoaId(e.target.value); setCalculo(null); }}>
-              <option value="">Selecione…</option>
-              {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={lbl}>Modalidade</label>
-            <select style={inputSm} value={tipoRescisao}
-              onChange={(e) => { setTipoRescisao(e.target.value as TipoRescisao); setCalculo(null); }}>
-              {Object.entries(LABEL_TIPO_RESCISAO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={lbl}>Data de desligamento</label>
-            <input type="date" style={inputSm} value={dataDesligamento}
-              onChange={(e) => { setDataDesligamento(e.target.value); setCalculo(null); }} />
-          </div>
-          <div>
-            <label style={lbl}>Dias de férias vencidas</label>
-            <input type="number" min={0} max={30} style={inputSm} value={diasFeriasVencidas}
-              onChange={(e) => { setDiasFeriasVencidas(e.target.value); setCalculo(null); }} />
-          </div>
-          {(tipoRescisao === "sem_justa_causa" || tipoRescisao === "acordo_mutuo") && (
-            <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: "0.3rem" }}>
-              <label style={{ ...lbl, marginBottom: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                <input type="checkbox" checked={avisoPrevioTrabalhado}
-                  onChange={(e) => { setAvisoPrevioTrabalhado(e.target.checked); setCalculo(null); }} />
-                Aviso prévio já foi trabalhado
-              </label>
-            </div>
-          )}
-        </div>
-        <div><label style={lbl}>Observação</label>
-          <textarea style={{ ...inputSm, minHeight: "2.4rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
-
-        <div className="flex items-center gap-2" style={{ marginTop: "0.6rem" }}>
-          <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={calcular} disabled={calculando}>
-            {calculando ? "Calculando…" : "Calcular verbas rescisórias"}
-          </button>
-        </div>
-
-        {calculo && (
-          <div className="card mt-2" style={{ padding: "0.6rem 0.8rem", fontSize: "0.8rem" }}>
-            <div>Saldo de salário ({calculo.saldo_salario.dias_trabalhados_mes} dias): <strong>{formatBRL(calculo.saldo_salario.valor)}</strong></div>
-            {calculo.aviso_previo.devido && (
-              <div>Aviso prévio indenizado ({calculo.aviso_previo.dias_indenizados} de {calculo.aviso_previo.dias} dias): <strong>{formatBRL(calculo.aviso_previo.valor)}</strong></div>
-            )}
-            {calculo.ferias_vencidas.valor_total > 0 && (
-              <div>Férias vencidas + 1/3: <strong>{formatBRL(calculo.ferias_vencidas.valor_total)}</strong></div>
-            )}
-            {calculo.ferias_proporcionais.valor_total > 0 && (
-              <div>Férias proporcionais + 1/3 ({calculo.ferias_proporcionais.meses} meses): <strong>{formatBRL(calculo.ferias_proporcionais.valor_total)}</strong></div>
-            )}
-            {calculo.decimo_terceiro_proporcional.valor > 0 && (
-              <div>13º proporcional ({calculo.decimo_terceiro_proporcional.meses} meses): <strong>{formatBRL(calculo.decimo_terceiro_proporcional.valor)}</strong></div>
-            )}
-            {calculo.fgts.multa > 0 && (
-              <div>Multa de {Math.round(calculo.fgts.percentual_multa * 100)}% do FGTS: <strong>{formatBRL(calculo.fgts.multa)}</strong></div>
-            )}
-            <div style={{ marginTop: "0.3rem" }}>Total: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(calculo.valor_total)}</strong></div>
-            <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem" }}>
-              A multa do FGTS é uma ESTIMATIVA ({Math.round(calculo.fgts.percentual_mensal_estimado * 100)}% do salário/mês × {calculo.fgts.meses_considerados} meses de casa) —
-              o sistema não guarda o extrato real de depósitos. Confira com o extrato oficial do FGTS antes de pagar.
-              Sem envio ao eSocial/TRCT — só o cálculo interno e o lançamento financeiro.
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <div>
-                <label style={lbl}>Status do lançamento</label>
-                <select style={inputSm} value={statusLancamento} onChange={(e) => setStatusLancamento(e.target.value)}>
-                  <option value="pendente">Pendente</option>
-                  <option value="pago">Já pago</option>
-                </select>
-              </div>
-              {statusLancamento === "pago" && (
-                <div>
-                  <label style={lbl}>Data do pagamento</label>
-                  <input type="date" style={inputSm} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", margin: "0.5rem 0" }}>{msg.texto}</p>}
-        <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "0.5rem" }} onClick={salvar} disabled={salvando || !calculo}>
-          {salvando ? "Salvando…" : "Lançar rescisão em Contas a Pagar"}
-        </button>
-      </SecaoRecolhivel>
-
-      <div className="card mt-4">
-        <div className="card-header mb-3">Rescisões lançadas</div>
-        {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-        {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma rescisão lançada ainda.</p>}
-        {itens && itens.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
-              <thead>
-                <tr><th>Descrição</th><th>Competência</th><th>Valor total</th><th>Status</th></tr>
-              </thead>
-              <tbody>
-                {itens.map((r) => (
-                  <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.descricao}</td>
-                    <td>{r.data_competencia}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(r.valor_total)}</td>
-                    <td><StatusBadge status={r.valor_pago != null ? "pago" : "pendente"} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem" }}>
-              Para dar baixa em pagamento pendente, use a aba Contas a pagar.
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Componente principal — chaveado internamente entre Férias, 13º salário e
 // Rescisão.
 // ---------------------------------------------------------------------------
 export default function FeriasDecimoTerceiroView() {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [subaba, setSubaba] = useState<"ferias" | "decimo" | "rescisao">("ferias");
+  // Contas correntes (id + rótulo) — para o seletor opcional "Conta bancária"
+  // de Férias/13º/Rescisão, mesmo padrão do Vale de funcionário: carregado
+  // uma vez aqui e repassado às 3 sub-seções.
+  const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
 
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
+  useEffect(() => { carregarPessoas(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
 
   return (
     <div>
@@ -683,9 +499,15 @@ export default function FeriasDecimoTerceiroView() {
         <button className={subaba === "decimo" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("decimo")}>13º salário</button>
         <button className={subaba === "rescisao" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.8rem" }} onClick={() => setSubaba("rescisao")}>Rescisão</button>
       </div>
-      {subaba === "ferias" && <FeriasSection pessoas={pessoas} />}
-      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} />}
-      {subaba === "rescisao" && <RescisaoSection pessoas={pessoas} />}
+      {subaba === "ferias" && <FeriasSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
+      {subaba === "decimo" && <DecimoTerceiroSection pessoas={pessoas} contasCorrentes={contasCorrentes} />}
+      {/* onPessoaInativada: fechar rescisão com "marcar como inativo" muda
+          Pessoa.ativo no banco (confirmado em backend/tests/test_rescisao_fluxo.py),
+          mas esta lista `pessoas` só era buscada 1x no mount — sem isso, o
+          funcionário recém-inativado continuava aparecendo como ativo em
+          qualquer dropdown desta página (Férias/13º/nova Rescisão) até um
+          F5, dando a falsa impressão de que a caixinha não fez nada. */}
+      {subaba === "rescisao" && <RescisaoView pessoas={pessoas} onPessoaInativada={carregarPessoas} />}
     </div>
   );
 }

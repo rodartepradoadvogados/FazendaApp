@@ -8,6 +8,8 @@ fazenda/rules/protocolo_customizado.py.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -16,6 +18,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import fazenda.database as database
 from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Sanidade
 from fazenda.models.planos import MODULOS_COMERCIAIS
+from fazenda.models.protocolo_customizado import ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento
+from fazenda.rules.protocolo_customizado import JANELA_ATRASO_DIAS, eventos_agenda
 
 
 class _FakeUser:
@@ -222,7 +226,7 @@ class TestLancamento:
         with Session(engine) as s:
             lanc = s.exec(select(ProtocoloCustomizadoLancamento)).first()
             ap = s.exec(select(ProtocoloCustomizadoAplicacao)).first()
-        assert lanc.nome_protocolo == "Original"
+        assert lanc.nome_protocolo == "ORIGINAL - 01/03/26 A 01/03/26 (D0 A D0 - 1 DIAS)"
         assert ap.descricao == "Evento original"
 
 
@@ -261,7 +265,9 @@ class TestAgenda:
         r = c.get("/agenda/", params={"data": "2026-03-01", "dias": 30})
         eventos = [e for e in r.json()["eventos"] if e.get("tipo") == "protocolo_customizado"]
         ev_d0 = next(e for e in eventos if e["dia"] == 0)
-        assert criado["nome"] in ev_d0["descricao"]
+        # Nome vira automático (nome cadastrado + data D0 + último dia) — não
+        # digitado mais na hora do lançamento.
+        assert criado["nome"].upper() in ev_d0["descricao"]
         assert "D0" in ev_d0["descricao"]
         assert "Vacina X" in (ev_d0["observacao"] or "")
         assert ev_d0["cor"] == "var(--dourado)"
@@ -404,3 +410,44 @@ class TestIsolamentoFazenda:
             "nome": "X", "categoria": "Atividades", "dia_inicial": 0, "etapas": [_etapa(0)],
         })
         assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# JANELA_ATRASO_DIAS via `eventos_agenda` — teste direto da função de regra,
+# sem passar pela API. `data` é parâmetro OBRIGATÓRIO (sem fallback interno
+# para date.today()) propositalmente: é isso que torna este teste imune ao
+# defeito que já quebrou 7 testes deste repositório (ver PR #492) — asserção
+# com data absoluta escrita à mão, comparada contra o relógio real, passa em
+# alguns dias do mês e falha em outros. Aqui a "data" É a referência fixa;
+# não há relógio real envolvido em lugar nenhum da asserção.
+# ---------------------------------------------------------------------------
+def test_janela_atraso_dias_inclui_ate_o_limite_e_exclui_um_dia_depois():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    referencia = date(2030, 1, 1)
+
+    with Session(engine) as session:
+        lanc = ProtocoloCustomizadoLancamento(
+            protocolo_id=1, nome_protocolo="Molde X", categoria="Atividades",
+            data_inicio=referencia - timedelta(days=JANELA_ATRASO_DIAS + 5),
+        )
+        session.add(lanc)
+        session.commit()
+        session.refresh(lanc)
+
+        # Etapa vencida há exatamente JANELA_ATRASO_DIAS: ainda aparece —
+        # `data_prevista >= limite` inclui a borda.
+        session.add(ProtocoloCustomizadoAplicacao(
+            lancamento_id=lanc.id, dia=0, descricao="Dentro da janela",
+            data_prevista=referencia - timedelta(days=JANELA_ATRASO_DIAS),
+        ))
+        # Etapa vencida há JANELA_ATRASO_DIAS + 1: já saiu da Agenda.
+        session.add(ProtocoloCustomizadoAplicacao(
+            lancamento_id=lanc.id, dia=1, descricao="Fora da janela",
+            data_prevista=referencia - timedelta(days=JANELA_ATRASO_DIAS + 1),
+        ))
+        session.commit()
+
+        eventos = eventos_agenda(session, referencia, realizados=set())
+        descricoes = {e["descricao"].rsplit(" — ", 1)[-1] for e in eventos}
+        assert descricoes == {"Dentro da janela"}

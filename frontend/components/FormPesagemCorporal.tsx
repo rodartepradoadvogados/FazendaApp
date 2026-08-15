@@ -1,12 +1,13 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Scale } from "lucide-react";
-import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, formatDate, baixarModeloPesagemCorporal, importarPesagemCorporalPlanilha } from "@/lib/api";
+import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, fetchPesagens, type PesagemLinha, formatDate, baixarModeloPesagemCorporal, importarPesagemCorporalPlanilha } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
+import { UltimosLancados } from "@/components/lancamentos/UltimosLancados";
 
 const COLUNAS_PESAGEM = [
   { header: "Nº", key: "numero_matriz" }, { header: "Lote", key: "grupo_primario" },
@@ -17,7 +18,7 @@ const COLUNAS_PESAGEM = [
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
+  border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 const nota: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.35rem" };
@@ -47,6 +48,14 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
   const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
   const ordVacas = useOrdenacao(vacasDoLote);
 
+  // G13 — "últimos lançados": conferir/corrigir as pesagens recém-digitadas
+  // sem sair da tela de Lançamentos.
+  const [recentes, setRecentes] = useState<PesagemLinha[]>([]);
+  const carregarRecentes = useCallback(() => {
+    fetchPesagens({ limite: 10 }).then((d) => setRecentes(d.pesagens)).catch(() => setRecentes([]));
+  }, []);
+  useEffect(carregarRecentes, [carregarRecentes]);
+
   function limpar() {
     setPeso("");
     setPorVaca({});
@@ -64,6 +73,7 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
       setSucesso(`${r.criados} ${r.criados === 1 ? "pesagem lançada" : "pesagens lançadas"} com sucesso.`);
       limpar();
       atualizarRelatorio();
+      carregarRecentes();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar pesagem corporal");
     } finally {
@@ -233,6 +243,18 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
         )}
         <p style={nota}>GMD: ganho médio diário entre a primeira e a última pesagem do período. GPD: média dos ganhos diários entre pesagens consecutivas.</p>
       </div>
+
+      <UltimosLancados<PesagemLinha>
+        titulo="Últimas pesagens lançadas"
+        linhas={recentes}
+        colunas={[
+          { label: "Animal", render: (l) => <span style={{ fontWeight: 700 }}>{l.numero_matriz}</span> },
+          { label: "Data", render: (l) => formatDate(l.data_pesagem) },
+          { label: "kg", render: (l) => l.peso_kg, alinhar: "right" },
+        ]}
+        tipoExclusao="pesagem_corporal"
+        onExcluido={() => { carregarRecentes(); atualizarRelatorio(); }}
+      />
     </>
   );
 }

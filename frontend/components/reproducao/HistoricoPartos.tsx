@@ -3,11 +3,13 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo, ordem de
 // parto). Ordem de tentativa/método/diagnóstico não fazem sentido aqui.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
-import { fetchPartosHistorico, atualizarParto, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { fetchPartosHistorico, atualizarParto, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import type { AnimalRow } from "@/components/AnimalModal";
 
 type PartoReg = {
   id: number;
@@ -21,12 +23,14 @@ type PartoReg = {
 const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const ddmm = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
 export default function HistoricoPartos() {
   const [regs, setRegs] = useState<PartoReg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [animal, setAnimal] = useState("");
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [ordemParto, setOrdemParto] = useState<string[]>([]);
@@ -45,6 +49,7 @@ export default function HistoricoPartos() {
   });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
 
   const abrirEdicao = (p: PartoReg) => {
     setEditando(p);
@@ -68,6 +73,32 @@ export default function HistoricoPartos() {
       carregar();
     } catch (e: any) {
       setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
+
+  // Passa pelo fluxo central e auditado de exclusão (POST /exclusoes/confirmar),
+  // igual ao botão de frontend/app/sanidade/page.tsx:960-982 — admin exclui na
+  // hora, operador vira uma solicitação pendente de aprovação. Excluir o
+  // parto NÃO apaga a ficha da(s) cria(s) já cadastrada(s) — só o registro
+  // do parto em si.
+  const excluir = async (p: PartoReg) => {
+    const msg = admin
+      ? `Excluir o parto de "${p.numero}" em ${fmtDia(p.data)}? A ficha da(s) cria(s) já cadastrada(s) NÃO é apagada — só o registro do parto. Isso não pode ser desfeito.`
+      : `Solicitar a exclusão do parto de "${p.numero}" em ${fmtDia(p.data)}? Um administrador precisa aprovar antes de ser excluído de fato.`;
+    if (!window.confirm(msg)) return;
+    setSalvandoEdicao(true); setErroEdicao(null); setAvisoExclusao(null);
+    try {
+      const r = await confirmarExclusao("parto", String(p.id));
+      if (r.status === "excluido") {
+        setEditando(null);
+        carregar();
+      } else {
+        setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
+      }
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao excluir");
     } finally {
       setSalvandoEdicao(false);
     }
@@ -105,13 +136,13 @@ export default function HistoricoPartos() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((s) =>
-      (!animal || s.numero.toLowerCase().includes(animal.toLowerCase())) &&
+      (animaisSel.size === 0 || animaisSel.has(s.numero)) &&
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
       (!ordemParto.length || ordemParto.includes(String(s.ordem_parto)))
     );
-  }, [regs, animal, ini, fim, ordemParto, modo, janelas]);
+  }, [regs, animaisSel, ini, fim, ordemParto, modo, janelas]);
 
   const ordPartos = useOrdenacao(filtrados);
   const pagPartos = usePaginacao(ordPartos.linhasOrdenadas);
@@ -124,6 +155,7 @@ export default function HistoricoPartos() {
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && <>
@@ -138,8 +170,17 @@ export default function HistoricoPartos() {
             onChange={setModo}
           />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={animal} onChange={(e) => setAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
+              <AnimalPickerModal
+                animais={animais} selecionados={animaisSel}
+                onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                placeholder="Todos" titulo="Filtrar por animal(is) — inclui seleção por lote"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                ]}
+              /></div>
             {modo === "data" ? (
               <>
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label><input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
@@ -202,7 +243,7 @@ export default function HistoricoPartos() {
       </>}
 
       {editando && (
-        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "380px", maxWidth: "95vw" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar parto — matriz {editando.numero}</div>
@@ -239,9 +280,19 @@ export default function HistoricoPartos() {
               </label>
             </div>
             {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
-            <div className="flex items-center gap-3 mt-4">
-              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
-              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            <div className="flex items-center justify-between gap-3 mt-4">
+              <div className="flex items-center gap-3">
+                <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+                <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+              </div>
+              <button
+                className="btn-ghost"
+                style={{ color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => excluir(editando)}
+                disabled={salvandoEdicao}
+              >
+                <Trash2 size={14} /> Excluir
+              </button>
             </div>
           </div>
         </div>

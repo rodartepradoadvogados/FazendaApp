@@ -68,6 +68,18 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "data": ds.isoformat() if isinstance(ds, date) else None,
             "del_servico": _del_servico(ds, s.get("data_ult_parto")),
             "diagnostico": diag,
+            # "reinseminacao" = o sistema concluiu que não pegou porque veio
+            # uma nova tentativa, não porque alguém tocou a vaca. A tela marca
+            # essa diferença para o veterinário não achar que houve exame.
+            "origem_diagnostico": s.get("origem_diagnostico"),
+            # 2º exame (reconfirmação) — distinto do 1º toque acima. `retoque`
+            # true e sem `diagnostico_reconfirmacao` = ainda aguardando o 2º
+            # exame; com `diagnostico_reconfirmacao` = já reconfirmado
+            # (positivo ou negativo). Sem isso, o Histórico nunca mostrava se
+            # (e quando) a reconfirmação aconteceu.
+            "retoque": bool(s.get("retoque")),
+            "data_reconfirmacao": s["data_reconfirmacao"].isoformat() if isinstance(s.get("data_reconfirmacao"), date) else None,
+            "diagnostico_reconfirmacao": s.get("diagnostico_reconfirmacao"),
             "diagnosticado": diagnosticado,
             "positivo": diag == "POSITIVO",
             "perda": bool(s.get("data_perda_prenhez")),

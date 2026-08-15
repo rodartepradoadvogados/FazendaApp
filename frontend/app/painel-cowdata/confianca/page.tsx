@@ -1,19 +1,20 @@
 "use client";
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
-
-const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", texto: "#e8ecf5" };
+import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 
 function Bloco({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  const COR = usePainelCowDataCor();
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.2rem 1.4rem" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.2rem 1.4rem" }}>
       <h2 style={{ fontSize: "0.92rem", fontWeight: 700, marginBottom: "0.5rem" }}>{titulo}</h2>
-      <div style={{ fontSize: "0.82rem", color: "#c3cbde", lineHeight: 1.55 }}>{children}</div>
+      <div style={{ fontSize: "0.82rem", color: COR.texto, lineHeight: 1.55 }}>{children}</div>
     </div>
   );
 }
 
 export default function ConfiancaLgpdCowData() {
+  const COR = usePainelCowDataCor();
   return (
     <div className="animate-in">
       <h1 style={{ fontSize: "1.4rem", fontWeight: 700, marginBottom: "0.2rem" }}>Confiança e LGPD</h1>
@@ -24,7 +25,7 @@ export default function ConfiancaLgpdCowData() {
       <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem", maxWidth: "48rem" }}>
         <Bloco titulo="Isolamento por fazenda">
           Cada fazenda-cliente cadastrada só enxerga os próprios dados. Todo modelo de negócio do sistema (animais,
-          reprodutivo, sanitário, produção, financeiro, estoque, pessoal) carrega um <code style={{ background: "#0a0e1a", padding: "0.05rem 0.35rem", borderRadius: "4px" }}>fazenda_id</code> obrigatório,
+          reprodutivo, sanitário, produção, financeiro, estoque, pessoal) carrega um <code style={{ background: COR.bg, padding: "0.05rem 0.35rem", borderRadius: "var(--r-sm)" }}>fazenda_id</code> obrigatório,
           denormalizado propositalmente para tornar "toda consulta filtra por fazenda_id" uma regra mecânica e
           auditável — desde a fundação multi-fazenda do sistema.
         </Bloco>
@@ -38,18 +39,20 @@ export default function ConfiancaLgpdCowData() {
           consolidada de sessões ativas, pedidos e auditoria de todas as fazendas.
         </Bloco>
 
-        <Bloco titulo="Próximo passo: nível de sigilo por conta">
-          O modelo de dados para um controle de sigilo mais fino — por conta da Equipe CowData — já existe
-          (<code style={{ background: "#0a0e1a", padding: "0.05rem 0.35rem", borderRadius: "4px" }}>Usuario.nivel_sigilo_maximo</code>),
-          mas ainda não está ativo em nenhuma tela.
-          <br /><br />
-          É aditivo e dormente: hoje ninguém alcança nível de sigilo diferenciado por causa dele, e nenhum
-          comportamento muda até uma fase futura ligar esse controle de verdade — quando a Equipe CowData (ver
-          Equipe CowData) ganhar contas de login próprias, além dos cadastros de folha de pagamento que já existem.
+        <Bloco titulo="Nível de sigilo por conta">
+          Cada membro da Equipe CowData tem, além das áreas do próprio Painel, um nível de sigilo que limita o que
+          ele enxerga DENTRO de uma fazenda-cliente ao abrir uma sessão de suporte: "Somente operação da fazenda"
+          (rebanho, reprodução, sanidade, produção, estoque — nada financeiro nem de pessoas), "Operação +
+          financeiro e custos" (o anterior mais lançamentos, estoque valorado e indicadores de custo — ainda sem
+          folha de pagamento) ou "Acesso completo". O nível é definido pelo proprietário em{" "}
+          <Link href="/painel-cowdata/equipe" style={{ color: COR.dourado }}>Equipe CowData</Link> e fica gravado no
+          token da sessão no momento em que ela abre — mudar o nível de alguém depois não altera sessões já
+          abertas. Controla a LEITURA das áreas acima do nível; a ESCRITA em folha de pagamento e financeiro fica
+          sempre bloqueada em modo suporte, em qualquer nível (ver bloco acima).
         </Bloco>
       </div>
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", padding: "1.4rem", display: "flex", flexDirection: "column", gap: "0.7rem", marginTop: "1.4rem", maxWidth: "48rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "1.4rem", display: "flex", flexDirection: "column", gap: "0.7rem", marginTop: "1.4rem", maxWidth: "48rem" }}>
         <p style={{ fontSize: "0.78rem", color: COR.mudo, marginBottom: "0.1rem" }}>
           Compromissos contratuais (ver Cláusula 6 do contrato-modelo, em Fazendas → Contrato → Baixar contrato) —
           o que a CowData se compromete a respeitar sobre os dados de cada fazenda-cliente:
@@ -65,7 +68,7 @@ export default function ConfiancaLgpdCowData() {
             <ShieldCheck size={15} style={{ color: COR.dourado, flexShrink: 0, marginTop: "0.15rem" }} />
             <div>
               <b style={{ fontSize: "0.85rem" }}>{titulo}.</b>{" "}
-              <span style={{ fontSize: "0.82rem", color: "#c3cbde" }}>{texto}</span>
+              <span style={{ fontSize: "0.82rem", color: COR.texto }}>{texto}</span>
             </div>
           </div>
         ))}

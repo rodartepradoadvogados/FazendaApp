@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
-from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_raca
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.parametros import (
     BENCHMARK_METAS,
@@ -22,6 +22,10 @@ from fazenda.rules.parametros import (
     gestacao_dias_referencia,
     get_param,
     idade_apta_min_meses,
+    meta_concepcao_novilha,
+    meta_taxa_concepcao,
+    meta_taxa_prenhez,
+    meta_taxa_servico,
     peso_apta_min,
     pev_dias,
 )
@@ -165,7 +169,23 @@ _BENCH_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dict], desde: date) -> list[dict]:
+def _metas_benchmark(categoria: str) -> dict[str, dict]:
+    """Metas do benchmark reprodutivo por categoria. taxa_servico/
+    taxa_concepcao/taxa_prenhez_ciclo vêm de Configurações > Parâmetros
+    (editáveis, ver `parametros.meta_taxa_servico/meta_taxa_prenhez/
+    meta_taxa_concepcao/meta_concepcao_novilha`) — as demais ainda usam a
+    referência fixa de `BENCHMARK_METAS` (sem parâmetro equivalente hoje).
+    Novilha usa sua própria meta de concepção, distinta da meta de vacas."""
+    metas = {chave: dict(valor) for chave, valor in BENCHMARK_METAS.items()}
+    metas["taxa_servico"]["meta"] = meta_taxa_servico()
+    metas["taxa_prenhez_ciclo"]["meta"] = meta_taxa_prenhez()
+    metas["taxa_concepcao"]["meta"] = meta_concepcao_novilha() if categoria == "novilha" else meta_taxa_concepcao()
+    return metas
+
+
+def _repro_benchmark(
+    animais: list[dict], servicos: list[dict], partos: list[dict], desde: date, categoria: str = "todas",
+) -> list[dict]:
     """Painel de benchmark reprodutivo (Prenhez = Serviço × Concepção) para um
     subconjunto do rebanho — usado para 'todas', 'vaca' e 'novilha'."""
     prenhes = vazias = inseminadas = 0
@@ -217,9 +237,10 @@ def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dic
         "servicos_por_prenhez": servicos_por_prenhez, "del_1a_ia": del_1a,
         "dias_abertos": dias_abertos, "iep_meses": iep_meses,
     }
+    metas = _metas_benchmark(categoria)
     lista = []
     for chave, (label, unidade) in _BENCH_LABELS.items():
-        m = BENCHMARK_METAS.get(chave, {})
+        m = metas.get(chave, {})
         lista.append({
             "chave": chave, "label": label, "unidade": unidade,
             "valor": valores.get(chave), "meta": m.get("meta"),
@@ -237,9 +258,9 @@ def _benchmark_categorias(
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
     serv_novilha = [s for s in servicos if (s.get("ordem_parto") or 0) < 1]
     return {
-        "todas": _repro_benchmark(animais, servicos, partos, desde),
-        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde),
-        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde),
+        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas"),
+        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca"),
+        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha"),
     }
 
 
@@ -431,6 +452,7 @@ def calcular_indicadores(
     peso_por_animal: dict[str, float] | None = None,
     lotes: list[dict] | None = None,
     aplicacoes_iatf: list[dict] | None = None,
+    controles: list[dict] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
 
@@ -487,12 +509,21 @@ def calcular_indicadores(
         animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal, vacas_nums, hoje,
     )
 
+    # Números das gestantes pelo MESMO critério ao vivo usado para contar
+    # `prenhes` logo abaixo — reaproveitado no drill-down (`gestantes_detalhe`/
+    # `partos_previstos`) mais adiante para o card e a lista baterem sempre.
+    # Antes o card usava este critério (estado ao vivo, com fallback pro
+    # sit_rep congelado do CSV) e o drill-down usava só o sit_rep cru — uma
+    # matriz cujo estado ao vivo virou "gestante" antes do próximo import do
+    # CSV entrava no card mas sumia da lista que abre ao clicar nele.
+    numeros_gestantes_vivo: set[str] = set()
     prenhes = vazias = inseminadas = 0
     for a in animais:
         estado = estados_por_animal.get(a.get("numero"))
         if estado is not None:
             if estado == "gestante":
                 prenhes += 1
+                numeros_gestantes_vivo.add(a.get("numero"))
             elif estado == "inseminada":
                 inseminadas += 1
             else:
@@ -501,6 +532,7 @@ def calcular_indicadores(
         sit = (a.get("sit_rep") or "").strip()
         if sit == "Ges.":
             prenhes += 1
+            numeros_gestantes_vivo.add(a.get("numero"))
         elif sit.startswith("Vaz."):
             vazias += 1
         elif sit == "Ins.":
@@ -541,11 +573,36 @@ def calcular_indicadores(
     ]
     del_medio = _media([float(d) for d in del_lactacao])
 
-    producoes = [
-        a.get("ult_cl_kg")
-        for a in animais
-        if a.get("ult_cl_kg") and a.get("ult_cl_kg") > 0
-    ]
+    # Produção do ÚLTIMO CONTROLE de cada animal, lida dos controles leiteiros
+    # de verdade. `Animal.ult_cl_kg` (o campo que isto usava sozinho) só era
+    # escrito pelo parser do GERAL.csv do Ideagri — quem lança pelo app via
+    # este número congelado na data do último CSV importado, enquanto o
+    # gráfico de produção ao lado já mostrava os valores novos. Com a
+    # importação do Ideagri aposentada, `ult_cl_kg` nunca mais seria escrito.
+    # Ele segue como fallback por animal, para as fazendas cujo histórico só
+    # existe no campo importado.
+    ultimo_controle_kg: dict[str, float] = {}
+    data_do_ultimo: dict[str, date] = {}
+    for c in controles or []:
+        numero = c.get("numero_matriz") or c.get("numero")
+        producao = c.get("producao_kg")
+        data_c = c.get("data")
+        if not numero or not producao or producao <= 0:
+            continue
+        anterior = data_do_ultimo.get(numero)
+        if anterior is None or (isinstance(data_c, date) and data_c >= anterior):
+            ultimo_controle_kg[numero] = float(producao)
+            if isinstance(data_c, date):
+                data_do_ultimo[numero] = data_c
+
+    producoes = []
+    for a in animais:
+        numero = a.get("numero")
+        valor = ultimo_controle_kg.get(numero) if numero else None
+        if valor is None:
+            valor = a.get("ult_cl_kg")
+        if valor and valor > 0:
+            producoes.append(valor)
     producao_media = _media([float(p) for p in producoes])
     producao_total_dia = round(sum(float(p) for p in producoes), 1) if producoes else 0.0
 
@@ -575,7 +632,10 @@ def calcular_indicadores(
     iep_meses = round(iep_dias / 30.44, 1) if iep_dias else None
 
     # ---------------------------------------------------------------
-    # Partos previstos — só matrizes ATUALMENTE prenhes (sit_rep = "Ges.").
+    # Partos previstos — só matrizes ATUALMENTE prenhes, pelo mesmo critério
+    # ao vivo de `numeros_gestantes_vivo` (não o sit_rep cru — ver comentário
+    # acima de onde o set é montado, é o que faz o card "Gestantes" bater com
+    # esta lista).
     # Parto provável = data do último serviço POSITIVO + gestacao_dias_referencia()
     # (ponto médio da faixa editável gestacao_dias_min/max).
     # Uma matriz por linha (não conta serviços antigos nem vazias/PEV).
@@ -598,13 +658,18 @@ def calcular_indicadores(
     # não importa o quão distante esteja do parto.
     gestantes_detalhe: list[dict] = []
     for a in animais:
-        if (a.get("sit_rep") or "").strip() != "Ges.":
-            continue
         num = a.get("numero")
+        if num not in numeros_gestantes_vivo:
+            continue
         data_serv = ult_pos.get(num)
         if not data_serv:
             continue
-        parto = data_serv + timedelta(days=gestacao_prevista_dias)
+        # Gestação da RAÇA do animal (Holandês 280, Girolando 287, Gir/Zebu
+        # 295); só cai no ponto médio da faixa configurável quando a raça não
+        # é conhecida. Fixar um valor único adiantava em 7-15 dias o parto
+        # previsto de Girolando e Gir — e com ele a secagem e o pré-parto.
+        dias_ate_parto = dias_gestacao_da_raca(a.get("raca"), gestacao_prevista_dias)
+        parto = data_serv + timedelta(days=dias_ate_parto)
         dias = (parto - hoje).days
         gestantes_detalhe.append({
             "numero": num,

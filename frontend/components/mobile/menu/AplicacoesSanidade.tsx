@@ -14,6 +14,7 @@ import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob 
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+import { casaBusca } from "@/lib/busca";
 
 const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
   { chave: "data", rotulo: "Data" },
@@ -32,7 +33,7 @@ const UNIDADES = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 
 const inp: React.CSSProperties = {
   width: "100%", background: "var(--mob-surface-2)", color: "var(--mob-text)",
-  border: "1px solid var(--mob-border)", borderRadius: 10, padding: "0.55rem 0.7rem", fontSize: "0.9rem",
+  border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.55rem 0.7rem", fontSize: "0.9rem",
 };
 const rotulo: React.CSSProperties = { display: "block", fontSize: "0.74rem", fontWeight: 600, color: "var(--mob-muted)", marginBottom: "0.2rem" };
 
@@ -57,11 +58,7 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
     const todas = (dados?.aplicacoes || []).slice();
     // Mais recentes primeiro (aplicações sem data vão para o fim).
     todas.sort((a, b) => (b.data || "").localeCompare(a.data || ""));
-    const q = busca.trim().toLowerCase();
-    const filt = q
-      ? todas.filter((a) => a.numero.toLowerCase().includes(q) || a.produto.toLowerCase().includes(q))
-      : todas;
-    return filt;
+    return todas.filter((a) => casaBusca(`${a.numero} ${a.produto}`, busca));
   }, [dados, busca]);
   // useOrdenacao assume o controle só depois que o usuário escolhe um campo em
   // SeletorOrdenacao; até lá, `lista` já vem em ordem (mais recentes primeiro).
@@ -151,11 +148,11 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                       </div>
                       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
                         <button type="button" onClick={() => iniciar(a)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: 10, padding: "0.55rem", cursor: "pointer" }}>
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.55rem", cursor: "pointer" }}>
                           <Pencil size={15} /> Editar
                         </button>
                         <button type="button" disabled={ocupado === a.id} onClick={() => excluir(a)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: 10, padding: "0.55rem", cursor: "pointer" }}>
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: "var(--r-app)", padding: "0.55rem", cursor: "pointer" }}>
                           <Trash2 size={15} /> Excluir
                         </button>
                       </div>
@@ -194,11 +191,11 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                         <input style={inp} value={vals.obs} onChange={(e) => setVals((s) => ({ ...s, obs: e.target.value }))} /></div>
                       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
                         <button type="button" disabled={ocupado === a.id} onClick={() => salvar(a)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "#fff", background: "var(--mob-verde)", border: "none", borderRadius: 10, padding: "0.6rem", cursor: "pointer" }}>
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-verde-fg)", background: "var(--mob-verde)", border: "none", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
                           <Check size={16} /> {ocupado === a.id ? "…" : "Salvar"}
                         </button>
                         <button type="button" disabled={ocupado === a.id} onClick={() => setEditId(null)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: 10, padding: "0.6rem", cursor: "pointer" }}>
+                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
                           <X size={16} /> Cancelar
                         </button>
                       </div>
