@@ -18,12 +18,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
-  LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
+  LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
   Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
-import { usePendentes, sincronizar, descartarPendente, lerCache } from "@/lib/offline";
+import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
@@ -231,26 +231,27 @@ function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
 
 export default function Pagina() {
   const router = useRouter();
-  const [montado, setMontado] = useState(false);
-  const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(new Set());
+  const montado = typeof window !== "undefined";
+  const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const salvo = window.localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
+      return salvo ? new Set(JSON.parse(salvo)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   // Telas de tela cheia fora do inventário SUBTELAS (módulos, administração,
   // Aparência, News, sincronização) — mesmo mecanismo de estado interno
   // (sem navegar de rota), só que sem passar pelo mapa SUBTELAS/SubKey.
   const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | "sincronizacao" | null>(null);
-  const [sub, setSub] = useState<SubKey | null>(null);
+  const [sub, setSub] = useState<SubKey | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.location.hash === "#calendario-sanitario" ? "calendario" : null;
+  });
   const fila = usePendentes();
-  const [sincronizando, setSincronizando] = useState(false);
-  const [resultadoEnvio, setResultadoEnvio] = useState<{ tipo: "ok" | "parcial"; msg: string } | null>(null);
   const [confirmarSair, setConfirmarSair] = useState(false);
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setMontado(true);
-    try {
-      const salvo = localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
-      if (salvo) setSecoesColapsadas(new Set(JSON.parse(salvo)));
-    } catch { /* localStorage indisponível ou valor corrompido — segue com tudo expandido */ }
-  }, []);
 
   function alternarSecao(chave: string) {
     setSecoesColapsadas((atual) => {
@@ -283,29 +284,14 @@ export default function Pagina() {
   // rota a página monta do zero, então o hash já está certo no 1º render;
   // sem 'hashchange' aqui porque não há como cair já em /app/menu antes.
   useEffect(() => {
-    if (window.location.hash === "#calendario-sanitario") setSub("calendario");
-  }, []);
+    const abrirSeHashCalendario = () => {
+      if (window.location.hash === "#calendario-sanitario") setSub("calendario");
+    };
 
-  async function enviarAgora() {
-    setSincronizando(true);
-    setResultadoEnvio(null);
-    try {
-      const { enviados, restantes } = await sincronizar();
-      if (restantes === 0) {
-        setResultadoEnvio({ tipo: "ok", msg: enviados > 0 ? `Tudo enviado (${enviados}).` : "Tudo já estava enviado." });
-      } else if (enviados > 0) {
-        setResultadoEnvio({ tipo: "parcial", msg: `${enviados} enviado(s) — ${restantes} ainda aguardando.` });
-      } else {
-        // Nenhum item saiu — provavelmente ainda sem conexão de verdade com
-        // o servidor (mesmo caso do card "Última falha" de cada item, mas
-        // muita gente só olha o botão, não os cards). Sem isso, tocar
-        // "Enviar agora" e falhar parecia não fazer nada (relato recorrente).
-        setResultadoEnvio({ tipo: "parcial", msg: "Não conseguiu enviar agora — sem conexão com o servidor. Vai tentar de novo sozinho." });
-      }
-    } finally {
-      setSincronizando(false);
-    }
-  }
+    abrirSeHashCalendario();
+    window.addEventListener("hashchange", abrirSeHashCalendario);
+    return () => window.removeEventListener("hashchange", abrirSeHashCalendario);
+  }, []);
 
   const usuario = montado ? getUsuario() : null;
 
