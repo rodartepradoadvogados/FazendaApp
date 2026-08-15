@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
   Milk, FlaskConical, Droplet, Droplets, Scale,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
@@ -51,9 +51,8 @@ import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
 import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
+import Sincronizacao from "@/components/mobile/menu/Sincronizacao";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
-  | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
@@ -121,7 +120,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | "sincronizacao" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const [sincronizando, setSincronizando] = useState(false);
@@ -195,6 +194,10 @@ export default function Pagina() {
     return <Assistente onVoltar={() => setSecaoAberta(null)} />;
   }
 
+  if (secaoAberta === "sincronizacao") {
+    return <Sincronizacao onVoltar={() => setSecaoAberta(null)} />;
+  }
+
   // 2º nível: itens da sessão escolhida, em quadrados.
   if (secaoAberta === "aparencia") {
     return (
@@ -228,6 +231,7 @@ export default function Pagina() {
     ...(montado && ehAdmin() ? [{ id: "assistente", label: "Assistente Virtual", icone: <Sparkles size={26} />, cor: "var(--mob-dourado)" }] : []),
     { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
+    { id: "sincronizacao", label: "Sincronização", icone: <WifiOff size={26} />, cor: fila.length > 0 ? "var(--mob-ambar)" : "var(--mob-dourado)" },
     // Escape hatch para as áreas que só existem no site (Configurações,
     // Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios
     // avançados etc.) — mesma sessão (localStorage é da mesma origem), sem
@@ -248,6 +252,7 @@ export default function Pagina() {
           if (id === "sair") { logout(); return; }
           if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
           if (id === "siteCompleto") { router.push("/"); return; }
+          if (id === "sincronizacao") { setSecaoAberta("sincronizacao"); return; }
           setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso");
         }}
       />
