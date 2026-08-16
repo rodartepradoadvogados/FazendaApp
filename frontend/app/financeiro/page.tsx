@@ -83,7 +83,7 @@ type Lanc = {
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
   mes_competencia: string | null; mes_caixa: string | null;
-  itens?: { id: number; produto: string; valor_total: number; descricao?: string | null;
+  itens?: { id: number; produto: string; tipo_item?: string | null; valor_total: number; descricao?: string | null;
             eh_vale: boolean; vale_tipo: "funcionario" | "avulso" | null; vale_id: number | null;
             vale_pessoa_id: number | null; vale_pessoa_nome: string | null }[];
   usuario_nome?: string | null;
@@ -2635,10 +2635,17 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [tipoItem, setTipoItem] = useState<"produto" | "servico">("produto");
   const [modoProduto, setModoProduto] = useState<"estoque" | "livre">("estoque");
   const [produtosEstoqueEdicao, setProdutosEstoqueEdicao] = useState<EstoqueItemPicker[]>([]);
-  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
-    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
-    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
-  })))).catch(() => {});
+  // Lista completa (model_dump() do Estoque, não só o formato reduzido do
+  // picker) — precisa dela pra abrir "editar cadastro" de um item já
+  // registrado direto da lista de itens da nota (ver `editarItemEstoque`).
+  const [estoqueCompletoEdicao, setEstoqueCompletoEdicao] = useState<Record<string, any>[]>([]);
+  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => {
+    setEstoqueCompletoEdicao(d.itens || []);
+    setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
+      nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+      estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+    })));
+  }).catch(() => {});
   useEffect(() => { carregarEstoqueEdicao(); }, []);
   const [servicosEdicao, setServicosEdicao] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const carregarServicosEdicao = () => fetchServicosCadastro().then(setServicosEdicao).catch(() => {});
@@ -2647,6 +2654,21 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     () => servicosEdicao.filter((s) => s.ativo).map((s) => s.nome).sort((a, b) => a.localeCompare(b, "pt-BR")),
     [servicosEdicao]
   );
+  // Um item da nota "existe de verdade" no catálogo quando o nome bate
+  // (exato, sem diferenciar maiúsculas) com um Estoque ou ServicoCadastro
+  // ativo — vale não entra nessa checagem (não é produto/serviço de
+  // catálogo, é adiantamento a uma pessoa). Sem isso, um item lido de XML/
+  // OCR que não batia com nada do catálogo (ex.: "TEATSEAL") ficava salvo
+  // como texto solto: sem estocável, sem centro de custo padrão, invisível
+  // pras telas de aplicação — e sem jeito de perceber isso na edição.
+  function itemCadastrado(it: { produto: string; eh_vale: boolean; tipo_item?: string | null }): boolean {
+    if (it.eh_vale || !it.produto?.trim()) return true;
+    const nome = it.produto.trim().toLowerCase();
+    if (it.tipo_item === "servico") return sugestoesServicoEdicao.some((s) => s.toLowerCase() === nome);
+    return produtosEstoqueEdicao.some((p) => p.nome.toLowerCase() === nome);
+  }
+  const [catalogarItem, setCatalogarItem] = useState<{ nome: string; tipo: "produto" | "servico" } | null>(null);
+  const [editarItemEstoque, setEditarItemEstoque] = useState<Record<string, any> | null>(null);
   // Chute do tipo (produto × serviço) a partir do nome já salvo — só uma vez,
   // assim que o cadastro de serviços carrega; depois disso quem manda é o
   // toggle clicado pelo usuário (evita "brigar" com a escolha dele).
@@ -2784,7 +2806,14 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       )}
       <div className="grid grid-cols-2 gap-3">
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyleLote}>Descrição</label>
-          <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} /></div>
+          <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+          {itensDoLanc.length > 0 && (
+            <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+              Gerada automaticamente a partir dos itens — edite aqui só se quiser um resumo diferente para os relatórios.
+              Veja/edite cada item em &ldquo;Produtos/serviços desta nota&rdquo;, abaixo.
+            </p>
+          )}
+        </div>
         <div><label style={labelStyleLote}>{tipoConta === "receita" ? "Cliente" : "Fornecedor"}</label>
           <div className="flex items-center gap-2">
             <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
@@ -2854,25 +2883,54 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={labelStyleLote}>Produtos/serviços desta nota</label>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", marginTop: "0.3rem" }}>
-              {itensDoLanc.map((it) => (
-                <div key={it.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", flexWrap: "wrap" }}>
-                  {tipoConta === "despesa" && (
-                    <input type="checkbox" checked={it.eh_vale}
-                      onChange={(e) => e.target.checked ? setValeModalItem(it) : setConfirmarDesmarcar(it)} />
-                  )}
-                  <span>{it.produto} — {formatBRL(it.valor_total)}</span>
-                  {it.eh_vale && (
-                    <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
-                      → vale de {it.vale_pessoa_nome}
-                      {" "}
-                      <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }}
-                        onClick={() => onVerRelatorioVales?.()}>
-                        ver no relatório de vales
+              {itensDoLanc.map((it) => {
+                const cadastrado = itemCadastrado(it);
+                return (
+                  <div key={it.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", flexWrap: "wrap",
+                    ...(cadastrado ? {} : { background: "rgba(180,120,0,0.12)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }) }}>
+                    {tipoConta === "despesa" && (
+                      <input id={`vale-lanc-item-${it.id}`} type="checkbox" checked={it.eh_vale}
+                        onChange={(e) => e.target.checked ? setValeModalItem(it) : setConfirmarDesmarcar(it)} />
+                    )}
+                    {tipoConta === "despesa" && (
+                      <label htmlFor={`vale-lanc-item-${it.id}`} style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>É vale de funcionário?</label>
+                    )}
+                    {cadastrado ? (
+                      <button type="button" className="btn-ghost" style={{ fontSize: "0.8rem", padding: 0, textDecoration: "underline" }}
+                        title="Abrir o cadastro deste produto/serviço"
+                        onClick={() => {
+                          if (it.tipo_item === "servico") return; // sem tela de edição de serviço avulsa ainda
+                          const item = estoqueCompletoEdicao.find((e) => (e.nome || "").toLowerCase() === it.produto.trim().toLowerCase());
+                          if (item) setEditarItemEstoque(item);
+                        }}>
+                        {it.produto}
                       </button>
-                    </span>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <span style={{ color: "var(--amber)" }}>
+                        <AlertTriangle size={12} style={{ display: "inline", marginRight: "0.25rem", verticalAlign: "-1px" }} />
+                        {it.produto} — não cadastrado
+                      </span>
+                    )}
+                    <span>— {formatBRL(it.valor_total)}</span>
+                    {!cadastrado && (
+                      <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                        onClick={() => setCatalogarItem({ nome: it.produto, tipo: it.tipo_item === "servico" ? "servico" : "produto" })}>
+                        <Plus size={12} /> Cadastrar {it.tipo_item === "servico" ? "serviço" : "produto"} novo
+                      </button>
+                    )}
+                    {it.eh_vale && (
+                      <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
+                        → vale de {it.vale_pessoa_nome}
+                        {" "}
+                        <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }}
+                          onClick={() => onVerRelatorioVales?.()}>
+                          ver no relatório de vales
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -3013,6 +3071,40 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
               onCancelar={() => setAdicionarNovoAberto(false)}
             />
           )}
+        </Modal>
+      )}
+
+      {catalogarItem && (
+        // Cadastro rápido pra um item específico da nota que veio sem
+        // correspondência no catálogo (ex.: "TEATSEAL" lido de um XML/PDF) —
+        // pré-preenchido com o nome já lançado, pra virar exatamente o mesmo
+        // texto salvo em LancamentoItem.produto (é por igualdade de nome que
+        // o resto do sistema — aplicação, filtros — passa a reconhecer o item).
+        <Modal title={`Cadastrar ${catalogarItem.tipo === "servico" ? "serviço" : "produto"} — ${catalogarItem.nome}`}
+          onClose={() => setCatalogarItem(null)} width="700px" zIndex={100}>
+          {catalogarItem.tipo === "servico" ? (
+            <NovoServicoRapido
+              prefillNome={catalogarItem.nome}
+              onCriado={() => { carregarServicosEdicao(); setCatalogarItem(null); }}
+              onCancelar={() => setCatalogarItem(null)}
+            />
+          ) : (
+            <NovoItemEstoque
+              prefill={{ nome: catalogarItem.nome }}
+              onCriado={() => { carregarEstoqueEdicao(); setCatalogarItem(null); }}
+              onCancelar={() => setCatalogarItem(null)}
+            />
+          )}
+        </Modal>
+      )}
+
+      {editarItemEstoque && (
+        <Modal title={`Editar cadastro — ${editarItemEstoque.nome}`} onClose={() => setEditarItemEstoque(null)} width="700px" zIndex={100}>
+          <NovoItemEstoque
+            editando={editarItemEstoque as any}
+            onCriado={() => { carregarEstoqueEdicao(); setEditarItemEstoque(null); }}
+            onCancelar={() => setEditarItemEstoque(null)}
+          />
         </Modal>
       )}
 

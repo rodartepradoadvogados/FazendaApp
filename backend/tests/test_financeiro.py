@@ -301,6 +301,24 @@ class TestCentroCustoPorItem:
         lanc = next(l for l in lista["lancamentos"] if l["numero_lancamento"] == numero)
         assert lanc["itens"][0]["centro_custo"] == "Agricultura"
 
+    def test_listar_lancamentos_traz_o_tipo_item(self, client):
+        """A edição do lançamento (frontend) precisa saber se cada item é
+        produto ou serviço pra checar o item contra o catálogo certo
+        (Estoque × ServicoCadastro) — sem isso, não dava pra distinguir."""
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [
+                {"produto": "Ração concentrada", "tipo_item": "produto", "valor_total": 500.0},
+                {"produto": "Frete", "tipo_item": "servico", "valor_total": 150.0},
+            ],
+        })
+        numero = r.json()["numero_lancamento"]
+        lista = c.get("/financeiro/lancamentos").json()
+        lanc = next(l for l in lista["lancamentos"] if l["numero_lancamento"] == numero)
+        por_produto = {i["produto"]: i["tipo_item"] for i in lanc["itens"]}
+        assert por_produto == {"Ração concentrada": "produto", "Frete": "servico"}
+
 
 class TestDescontoAcrescimo:
     def test_desconto_reduz_o_valor_liquido(self, client):
