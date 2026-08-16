@@ -2312,6 +2312,15 @@ export async function fetchParametros() {
   return res.json();
 }
 
+// Secagem/Parto sugerem mover o animal para o lote de secas/lote 03 — este
+// parâmetro (Configurações > Parâmetros) decide se o formulário pergunta
+// (padrão) ou move sozinho, sem popup de confirmação.
+export async function fetchTransferenciaLoteAutomatica(): Promise<boolean> {
+  const res = await authFetch(`${API}/parametros/transferencia-lote-automatica`, { cache: "no-store" });
+  if (!res.ok) return false;
+  return (await res.json()).automatica === true;
+}
+
 export async function atualizarParametro(chave: string, valor: number | string | boolean) {
   const res = await authFetch(`${API}/parametros/${chave}`, {
     method: "PUT",

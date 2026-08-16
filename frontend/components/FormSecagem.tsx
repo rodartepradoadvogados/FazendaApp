@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import {
-  fetchSecagemInfo, criarSecagem, criarMovimentacao, fetchMedicamentos, formatDate,
+  fetchSecagemInfo, criarSecagem, criarMovimentacao, fetchMedicamentos, formatDate, fetchTransferenciaLoteAutomatica,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -75,6 +75,11 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
   const [filaTransferencia, setFilaTransferencia] = useState<{ numero: string; lote: { codigo: string; rotulo: string } }[]>([]);
   const transferenciaPendente = filaTransferencia[0] || null;
   const [transferindo, setTransferindo] = useState(false);
+  // Configurações > Parâmetros > "transferir para o lote sugerido
+  // automaticamente" — quando ligado, pula a janela de confirmação abaixo e
+  // move sozinho.
+  const [transferenciaAutomatica, setTransferenciaAutomatica] = useState(false);
+  useEffect(() => { fetchTransferenciaLoteAutomatica().then(setTransferenciaAutomatica).catch(() => {}); }, []);
 
   useEffect(() => {
     if (!matriz) { setInfo(null); return; }
@@ -159,10 +164,25 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         }
       } else {
         setSucesso(`Secagem lançada com sucesso para ${salvos.length} animal(is).`);
-        // Fila de confirmação, uma de cada vez — inclusive quando várias
-        // vacas foram secadas juntas, cada uma pode precisar de um lote
-        // diferente (ou nenhum, se já estiver no lote certo).
-        if (pendentes.length) setFilaTransferencia(pendentes);
+        if (pendentes.length && transferenciaAutomatica) {
+          // "Transferir automaticamente" ligado em Configurações > Parâmetros
+          // — move sozinho, sem abrir a janela de confirmação abaixo.
+          const movidos: string[] = []; const falhasMov: string[] = [];
+          for (const p of pendentes) {
+            try {
+              const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: p.lote.codigo, animais: [p.numero], origem: "sugestao_automatica" });
+              if ((r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(p.numero)) movidos.push(`${p.numero} → ${p.lote.rotulo}`);
+              else falhasMov.push(p.numero);
+            } catch { falhasMov.push(p.numero); }
+          }
+          if (movidos.length) setSucesso((s) => `${s} Transferido(s) automaticamente: ${movidos.join(", ")}.`);
+          if (falhasMov.length) setErro(`Não foi possível transferir automaticamente: ${falhasMov.join(", ")}.`);
+        } else if (pendentes.length) {
+          // Fila de confirmação, uma de cada vez — inclusive quando várias
+          // vacas foram secadas juntas, cada uma pode precisar de um lote
+          // diferente (ou nenhum, se já estiver no lote certo).
+          setFilaTransferencia(pendentes);
+        }
         setSelecionados(new Set()); setLotesSelecionados([]);
         setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]); setModoDosagem({});
         setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
