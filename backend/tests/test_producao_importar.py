@@ -117,6 +117,76 @@ class TestImportarControleLeiteiroPorAnimal:
         assert len(d["erros"]) == 1
 
 
+class TestPreVisualizarEConfirmarControleLeiteiro:
+    """Fluxo novo: enviar a planilha só devolve as linhas normalizadas (sem
+    gravar nada) para o usuário revisar/editar; a gravação de verdade só
+    acontece em /confirmar, com as linhas (já editadas ou não)."""
+
+    def test_pre_visualizar_nao_grava_nada(self, client):
+        conteudo = _xlsx_bytes(
+            ["Número", "Data", "Primeira ordenha (kg)", "Segunda ordenha (kg)"],
+            [["101", "05/07/2026", "14,5", "13,0"]],
+        )
+        r = client.post(
+            "/producao/controle-leiteiro/pre-visualizar",
+            files={"file": ("controle.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["modo"] == "animal" and d["erros"] == []
+        assert d["linhas"] == [{
+            "numero_matriz": "101", "data_controle": "2026-07-05",
+            "ordenha1_kg": 14.5, "ordenha2_kg": 13.0, "ordenha3_kg": None, "total_kg": None,
+        }]
+        assert client.get("/producao/controles").json()["controles"] == []
+
+    def test_pre_visualizar_por_lote_ja_distribui_por_animal(self, client):
+        conteudo = _xlsx_bytes(
+            ["Lote", "Data", "Total"],
+            [["01 - Alta", "05/07/2026", "36"]],
+        )
+        r = client.post(
+            "/producao/controle-leiteiro/pre-visualizar",
+            files={"file": ("controle.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["modo"] == "lote"
+        assert {l["numero_matriz"]: l["total_kg"] for l in d["linhas"]} == {"101": 18.0, "102": 18.0}
+
+    def test_confirmar_grava_as_linhas_editadas(self, client):
+        conteudo = _xlsx_bytes(
+            ["Número", "Data", "Primeira ordenha (kg)", "Segunda ordenha (kg)"],
+            [["101", "05/07/2026", "14,5", "13,0"]],
+        )
+        preview = client.post(
+            "/producao/controle-leiteiro/pre-visualizar",
+            files={"file": ("controle.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        ).json()
+        linhas = preview["linhas"]
+        # Usuário corrige um valor digitado errado na planilha antes de confirmar.
+        linhas[0]["ordenha1_kg"] = 15.0
+
+        r = client.post("/producao/controle-leiteiro/confirmar", json={"linhas": linhas})
+        assert r.status_code == 200, r.text
+        assert r.json()["criados"] == 1
+
+        registro = next(c for c in client.get("/producao/controles").json()["controles"] if c["numero"] == "101")
+        assert registro["producao_kg"] == 28.0  # 15 + 13, valor corrigido
+
+    def test_confirmar_agrupa_por_data_mesmo_com_datas_diferentes_na_planilha(self, client):
+        linhas = [
+            {"numero_matriz": "101", "data_controle": "2026-07-05", "ordenha1_kg": 14.0, "ordenha2_kg": None, "ordenha3_kg": None, "total_kg": None},
+            {"numero_matriz": "102", "data_controle": "2026-07-06", "ordenha1_kg": 12.0, "ordenha2_kg": None, "ordenha3_kg": None, "total_kg": None},
+        ]
+        r = client.post("/producao/controle-leiteiro/confirmar", json={"linhas": linhas})
+        assert r.status_code == 200, r.text
+        assert r.json()["criados"] == 2
+        controles = client.get("/producao/controles").json()["controles"]
+        assert next(c for c in controles if c["numero"] == "101")["data"] == "2026-07-05"
+        assert next(c for c in controles if c["numero"] == "102")["data"] == "2026-07-06"
+
+
 class TestImportarControleLeiteiroPorLote:
     def test_planilha_por_lote_distribui_igualmente_entre_animais(self, client):
         conteudo = _xlsx_bytes(

@@ -15,7 +15,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    AlimentacaoEstado, Alimento, AnaliseBromatologica, Animal, CategoriaAlimento, Dieta, Estoque,
+    AlimentacaoEstado, Alimento, AnaliseBromatologica, Animal, CategoriaAlimento, ControleLeiteiro, Dieta, Estoque,
     IngredienteMS, Lote, MovimentoEstoque,
 )
 
@@ -445,6 +445,44 @@ class TestDietaContextoApresentacao:
         # Última dieta: total/dia 400 → por cabeça 200.
         assert ctx["ultima_dieta"]["itens"][0]["total_dia"] == 400.0
         assert ctx["ultima_dieta"]["itens"][0]["por_cabeca"] == 200.0
+
+    def test_contexto_reflete_controle_leiteiro_lancado_pelo_app_nao_o_campo_congelado(self, client):
+        """Bug relatado: Animal.ult_cl_kg/data_ult_leite só é escrito pelo
+        parser do GERAL.csv (aposentado) — lançar um controle leiteiro novo
+        pelo próprio app (POST /producao/controles) não atualiza esses
+        campos, então o contexto da dieta continuava mostrando a produção e
+        a data do último CSV importado. Precisa refletir o controle mais
+        recente de verdade (tabela controle_leiteiro)."""
+        c, engine = client
+        self._seed_lote(engine)
+        with Session(engine) as s:
+            # Controle leiteiro lançado pelo app, bem mais recente que o
+            # campo congelado (2026-07-01) semeado em _seed_lote.
+            s.add(ControleLeiteiro(numero_matriz="10", data_controle=date(2026, 8, 13), producao_kg=40.0))
+            s.add(ControleLeiteiro(numero_matriz="11", data_controle=date(2026, 8, 13), producao_kg=30.0))
+            s.commit()
+
+        r = c.get("/alimentacao/dietas/contexto/1")
+        assert r.status_code == 200
+        ctx = r.json()
+        # Média/data vêm do controle leiteiro AO VIVO (40+30)/2 = 35, não do
+        # campo congelado (32+24)/2 = 28.
+        assert ctx["media_cl"] == 35.0
+        assert ctx["data_ult_cl"] == "2026-08-13"
+        assert {a["numero"]: a["ult_cl_kg"] for a in ctx["animais"]} == {"10": 40.0, "11": 30.0}
+
+    def test_contexto_cai_no_campo_congelado_so_para_quem_nao_tem_controle_ao_vivo(self, client):
+        c, engine = client
+        self._seed_lote(engine)
+        with Session(engine) as s:
+            # Só o animal 10 tem controle ao vivo — o 11 continua no fallback.
+            s.add(ControleLeiteiro(numero_matriz="10", data_controle=date(2026, 8, 13), producao_kg=40.0))
+            s.commit()
+
+        r = c.get("/alimentacao/dietas/contexto/1").json()
+        por_numero = {a["numero"]: a["ult_cl_kg"] for a in r["animais"]}
+        assert por_numero["10"] == 40.0
+        assert por_numero["11"] == 24.0  # fallback do campo congelado
 
     def test_apresentacao_para_o_funcionario(self, client):
         c, engine = client

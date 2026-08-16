@@ -260,15 +260,40 @@ def _resolver_lote(session: Session, valor: str, fazenda_id: int | None = None) 
     return None
 
 
-@router.post("/controle-leiteiro/importar")
-async def importar_controle_leiteiro(
-    file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int = Depends(get_fazenda_id_escrita),
-) -> dict:
-    content = await file.read()
-    linhas = list(iter_planilha_rows(file.filename or "", content))
+class ControleLeiteiroLinhaPreview(BaseModel):
+    """Uma linha já normalizada (sempre por animal, mesmo quando a planilha
+    original era "por lote" — a distribuição já foi feita na leitura) —
+    formato comum entre a pré-visualização e a confirmação, para que editar
+    um valor na tela antes de salvar seja só mudar este mesmo objeto."""
+    numero_matriz: str
+    data_controle: date
+    ordenha1_kg: float | None = None
+    ordenha2_kg: float | None = None
+    ordenha3_kg: float | None = None
+    total_kg: float | None = None
+
+
+def _linha_para_ordenha_in(linha: ControleLeiteiroLinhaPreview) -> OrdenhaIn:
+    if linha.total_kg is not None:
+        return OrdenhaIn(numero_matriz=linha.numero_matriz, total_kg=linha.total_kg)
+    ordenhas = [linha.ordenha1_kg, linha.ordenha2_kg]
+    if linha.ordenha3_kg is not None:
+        ordenhas.append(linha.ordenha3_kg)
+    return OrdenhaIn(numero_matriz=linha.numero_matriz, ordenhas=ordenhas)
+
+
+def _parsear_planilha_controle_leiteiro(
+    conteudo: bytes, nome_arquivo: str, session: Session, fazenda_id: int | None,
+) -> tuple[list[ControleLeiteiroLinhaPreview], list[str], str]:
+    """Lê a planilha (por animal ou por lote — o parser identifica sozinho
+    pelo cabeçalho) e devolve linhas já normalizadas POR ANIMAL (uma pesagem
+    de lote vira N linhas, uma por vaca do lote, com o valor já dividido),
+    sem gravar nada — mesma lógica de leitura usada tanto pela
+    pré-visualização (edição antes de confirmar) quanto pelo caminho antigo
+    de importar direto."""
+    linhas = list(iter_planilha_rows(nome_arquivo or "", conteudo))
     if not linhas:
-        return {"criados": 0, "erros": ["Planilha vazia ou em formato não reconhecido."]}
+        return [], ["Planilha vazia ou em formato não reconhecido."], "animal"
 
     linhas_norm = [{normalizar_cabecalho(k): v for k, v in row.items()} for row in linhas]
     cabecalho_norm = set(linhas_norm[0].keys())
@@ -282,7 +307,7 @@ async def importar_controle_leiteiro(
         )
 
     erros: list[str] = []
-    por_data: dict[date, list[OrdenhaIn]] = {}
+    resultado: list[ControleLeiteiroLinhaPreview] = []
 
     def _ordenhas_ou_total(row_norm: dict) -> tuple[list[float | None], float | None] | None:
         o1 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha1_kg"]))
@@ -297,21 +322,26 @@ async def importar_controle_leiteiro(
         for i, row_norm in enumerate(linhas_norm, start=2):
             numero = valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["numero_matriz"]).strip()
             data_linha = parse_date(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["data_controle"]))
-            resultado = _ordenhas_ou_total(row_norm)
-            if not numero or not data_linha or resultado is None:
+            achado = _ordenhas_ou_total(row_norm)
+            if not numero or not data_linha or achado is None:
                 erros.append(f"Linha {i}: número, data e ao menos uma ordenha (ou o total) são obrigatórios.")
                 continue
-            ordenhas, total = resultado
-            por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=numero, ordenhas=ordenhas, total_kg=total))
+            ordenhas, total = achado
+            resultado.append(ControleLeiteiroLinhaPreview(
+                numero_matriz=numero, data_controle=data_linha, total_kg=total,
+                ordenha1_kg=ordenhas[0] if len(ordenhas) > 0 else None,
+                ordenha2_kg=ordenhas[1] if len(ordenhas) > 1 else None,
+                ordenha3_kg=ordenhas[2] if len(ordenhas) > 2 else None,
+            ))
     else:
         for i, row_norm in enumerate(linhas_norm, start=2):
             lote_valor = valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["lote"]).strip()
             data_linha = parse_date(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["data_controle"]))
-            resultado = _ordenhas_ou_total(row_norm)
-            if not lote_valor or not data_linha or resultado is None:
+            achado = _ordenhas_ou_total(row_norm)
+            if not lote_valor or not data_linha or achado is None:
                 erros.append(f"Linha {i}: lote, data e ao menos uma ordenha (ou o total) são obrigatórios.")
                 continue
-            ordenhas, total = resultado
+            ordenhas, total = achado
             lote = _resolver_lote(session, lote_valor, fazenda_id=fazenda_id)
             if not lote:
                 erros.append(f'Linha {i}: lote "{lote_valor}" não encontrado no cadastro.')
@@ -328,17 +358,76 @@ async def importar_controle_leiteiro(
             if total is not None:
                 total_por_vaca = round(total / n, 2)
                 for a in animais_lote:
-                    por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, total_kg=total_por_vaca))
+                    resultado.append(ControleLeiteiroLinhaPreview(numero_matriz=a.numero, data_controle=data_linha, total_kg=total_por_vaca))
             else:
                 ordenhas_por_vaca = [round(v / n, 2) if v is not None else None for v in ordenhas]
                 for a in animais_lote:
-                    por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, ordenhas=ordenhas_por_vaca))
+                    resultado.append(ControleLeiteiroLinhaPreview(
+                        numero_matriz=a.numero, data_controle=data_linha,
+                        ordenha1_kg=ordenhas_por_vaca[0] if len(ordenhas_por_vaca) > 0 else None,
+                        ordenha2_kg=ordenhas_por_vaca[1] if len(ordenhas_por_vaca) > 1 else None,
+                        ordenha3_kg=ordenhas_por_vaca[2] if len(ordenhas_por_vaca) > 2 else None,
+                    ))
+
+    return resultado, erros, "animal" if tem_numero else "lote"
+
+
+@router.post("/controle-leiteiro/pre-visualizar")
+async def pre_visualizar_controle_leiteiro(
+    file: UploadFile, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Lê a planilha e devolve as linhas normalizadas SEM gravar nada — o
+    usuário revisa/edita na tela e só confirma de fato em
+    POST /controle-leiteiro/confirmar. Substitui o antigo caminho de
+    importar direto (que salvava assim que o arquivo era enviado, sem
+    chance de corrigir um valor digitado errado na planilha)."""
+    content = await file.read()
+    linhas, erros, modo = _parsear_planilha_controle_leiteiro(content, file.filename or "", session, fazenda_id)
+    return {"linhas": [l.model_dump(mode="json") for l in linhas], "erros": erros, "modo": modo}
+
+
+class ControleLeiteiroConfirmarIn(BaseModel):
+    linhas: list[ControleLeiteiroLinhaPreview]
+
+
+@router.post("/controle-leiteiro/confirmar")
+def confirmar_controle_leiteiro(
+    dados: ControleLeiteiroConfirmarIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava as linhas já revisadas/editadas pelo usuário na tela de
+    pré-visualização (ver pre_visualizar_controle_leiteiro acima)."""
+    por_data: dict[date, list[OrdenhaIn]] = {}
+    for linha in dados.linhas:
+        por_data.setdefault(linha.data_controle, []).append(_linha_para_ordenha_in(linha))
 
     criados = 0
     for dia, entradas in por_data.items():
         resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
-    return {"criados": criados, "erros": erros, "modo": "animal" if tem_numero else "lote"}
+    return {"criados": criados}
+
+
+@router.post("/controle-leiteiro/importar")
+async def importar_controle_leiteiro(
+    file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Mantido por compatibilidade (importa direto, sem revisão) — a tela
+    de Lançamentos > Produção > Controle leiteiro agora usa
+    pre_visualizar/confirmar acima, que permite corrigir a planilha antes
+    de gravar."""
+    content = await file.read()
+    linhas, erros, modo = _parsear_planilha_controle_leiteiro(content, file.filename or "", session, fazenda_id)
+    por_data: dict[date, list[OrdenhaIn]] = {}
+    for linha in linhas:
+        por_data.setdefault(linha.data_controle, []).append(_linha_para_ordenha_in(linha))
+
+    criados = 0
+    for dia, entradas in por_data.items():
+        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user, fazenda_id=fazenda_id)
+        criados += resultado["criados"]
+    return {"criados": criados, "erros": erros, "modo": modo}
 
 
 class PesoIn(BaseModel):

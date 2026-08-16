@@ -13,10 +13,10 @@
 //     fazenda (MS, PB, FDN, FDA, NDT, EE, cinzas, Ca, P) — diferente da
 //     Tabela Nutricional (referência padrão) e da Matéria seca (só %MS).
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical, Tag, Wheat, Pencil, Check, X, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical, Tag, Wheat, Pencil, Check, X, AlertTriangle, Import } from "lucide-react";
 import {
   fetchLotes, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta, fetchEstoque,
-  criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin,
+  criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin, moduloFormulacaoDietasAtivo,
   fetchAnaliseBromatologica, criarAnaliseBromatologica, type AnaliseBromatologica,
   type ContextoDieta, type ApresentacaoDieta,
   fetchCategoriasAlimento, criarCategoriaAlimento, atualizarCategoriaAlimento, excluirCategoriaAlimento, type CategoriaAlimento,
@@ -28,6 +28,8 @@ import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./Tabel
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { pedirCadastroDeEstoque, onPedidoCadastroDeAlimento, type PrefillNovoAlimento } from "@/lib/alimentoEstoqueBridge";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { Modal } from "@/components/Modal";
+import { listarSimulacoes, obterSimulacao, type SimulacaoResumo } from "@/lib/dietas";
 
 const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
@@ -533,6 +535,9 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
+  // Popup "importar dieta formulada" (Formulação de Dietas) — qual lote está
+  // com o popup aberto, ou null se nenhum.
+  const [importarAberto, setImportarAberto] = useState<number | null>(null);
 
   useEffect(() => {
     fetchLotes().then((ls: LoteRow[]) => setLotes(ls.filter((l) => /^\d\d/.test(l.codigo)))).catch((e) => setErro(e.message));
@@ -651,123 +656,143 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
               </button>
 
               {isOpen && (
-                <div style={{ padding: "0.9rem" }}>
-                  {ctx === undefined || ctx === null ? (
-                    <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{ln in contextos ? "Carregando contexto do lote…" : ""}</p>
-                  ) : (
-                    <ContextoLoteBox ctx={ctx} />
-                  )}
-
-                  {/* ── Lançamento da nova dieta ── */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                    <div>
-                      <label style={lbl}>Responsável (nutricionista)</label>
-                      <select style={input} value={f?.responsavel || ""} onChange={(e) => patchForm(ln, { responsavel: e.target.value })}>
-                        <option value="">—</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={lbl}>Data de início</label>
-                      <input type="date" style={input} value={f?.dataAbertura || ""} onChange={(e) => patchForm(ln, { dataAbertura: e.target.value })} />
-                    </div>
-                    <div>
-                      <label style={lbl}>Provável data de fim</label>
-                      <input type="date" style={input} value={f?.dataPrevista || ""} onChange={(e) => patchForm(ln, { dataPrevista: e.target.value })} />
-                    </div>
-                    <div>
-                      <label style={lbl}>Quantidades informadas</label>
-                      <select style={input} value={f?.baseQuantidade || "total"} onChange={(e) => patchForm(ln, { baseQuantidade: e.target.value })}>
-                        <option value="total">Total do lote/dia</option>
-                        <option value="animal">Por animal/dia</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={lbl}>Leite por bezerro (L/dia)</label>
-                      <input type="number" inputMode="decimal" min={0} style={input} value={f?.leitePorBezerroLDia || ""}
-                        onChange={(e) => {
-                          const porBezerro = e.target.value;
-                          const total = porBezerro && nAnimais ? String(Math.round(Number(porBezerro) * nAnimais * 100) / 100) : f?.leiteBezerros || "";
-                          patchForm(ln, { leitePorBezerroLDia: porBezerro, leiteBezerros: total });
-                        }}
-                        placeholder="ex.: 2 (bezerreiro 1) ou 3 (bezerreiro 2)" />
-                      <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>
-                        {nAnimais ? `Calcula o total do lote: ${nAnimais} animal(is) × valor informado.` : "Informe a quantidade por bezerro; o total do lote é calculado automaticamente."}
-                      </span>
-                    </div>
-                    <div>
-                      <label style={lbl}>Leite para bezerros (kg/dia) — total do lote</label>
-                      <input type="number" inputMode="decimal" min={0} style={input} value={f?.leiteBezerros || ""} onChange={(e) => patchForm(ln, { leiteBezerros: e.target.value, leitePorBezerroLDia: "" })} placeholder="ex.: 120" />
-                      <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>Total do lote/dia — alimenta o relatório Controle × Entregue. Editável direto se preferir não usar o campo por bezerro.</span>
-                    </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3" style={{ padding: "0.9rem" }}>
+                  {/* Coluna esquerda — visualização da dieta atual e dados
+                      básicos, rolagem própria, nunca editável aqui. */}
+                  <div style={{ maxHeight: "640px", overflowY: "auto", paddingRight: "0.3rem" }}>
+                    {ctx === undefined || ctx === null ? (
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{ln in contextos ? "Carregando contexto do lote…" : ""}</p>
+                    ) : (
+                      <ContextoLoteBox ctx={ctx} />
+                    )}
                   </div>
 
-                  <div className="space-y-2 mt-3">
-                    {(f?.itens || []).map((it, idx) => {
-                      const qLancado = Number(it.quantidade) || 0;
-                      const qFisica = quantidadeFisica(it);
-                      const porCab = nAnimais ? qFisica / nAnimais : null;
-                      const porTrato = qFisica / NUM_TRATOS;
-                      const msConhecido = it.alimento in msPorAlimento;
-                      const semMsCadastrado = it.base === "MS" && msConhecido && !msPorAlimento[it.alimento];
-                      return (
-                        <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.6rem", position: "relative" }}>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                            <div>
-                              <label style={lbl}>Produto {idx + 1}</label>
-                              <EstoquePicker
-                                itens={estoqueItens}
-                                value={it.alimento}
-                                onChange={(v) => patchItem(ln, idx, { alimento: v, ms_pct: msPorAlimento[v] ?? null })}
-                                finalidades={["Ração/Alimento"]}
-                                somenteVinculadosAlimento
-                                placeholder="Selecionar silagem/alimento…"
-                              />
+                  {/* Coluna direita — lançar a dieta nova: formulação
+                      (produto/quantidade/unidade/base/vagão), com rolagem
+                      própria, independente da coluna esquerda. */}
+                  <div style={{ maxHeight: "640px", overflowY: "auto", paddingRight: "0.3rem" }}>
+                    {moduloFormulacaoDietasAtivo() && (
+                      <div style={{ background: "rgba(94,26,46,0.12)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.6rem 0.75rem", marginBottom: "0.75rem" }}>
+                        <div className="flex items-center justify-between gap-2" style={{ flexWrap: "wrap" }}>
+                          <span style={{ fontSize: "0.8rem" }}>Deseja importar uma dieta formulada para este lote?</span>
+                          <button type="button" className="btn-primary" style={{ fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.35rem" }}
+                            onClick={() => setImportarAberto(ln)}>
+                            <Import size={13} /> Importar dieta formulada
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label style={lbl}>Responsável (nutricionista)</label>
+                        <select style={input} value={f?.responsavel || ""} onChange={(e) => patchForm(ln, { responsavel: e.target.value })}>
+                          <option value="">—</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={lbl}>Data de início</label>
+                        <input type="date" style={input} value={f?.dataAbertura || ""} onChange={(e) => patchForm(ln, { dataAbertura: e.target.value })} />
+                      </div>
+                      <div>
+                        <label style={lbl}>Provável data de fim</label>
+                        <input type="date" style={input} value={f?.dataPrevista || ""} onChange={(e) => patchForm(ln, { dataPrevista: e.target.value })} />
+                      </div>
+                      <div>
+                        <label style={lbl}>Quantidades informadas</label>
+                        <select style={input} value={f?.baseQuantidade || "total"} onChange={(e) => patchForm(ln, { baseQuantidade: e.target.value })}>
+                          <option value="total">Total do lote/dia</option>
+                          <option value="animal">Por animal/dia</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={lbl}>Leite por bezerro (L/dia)</label>
+                        <input type="number" inputMode="decimal" min={0} style={input} value={f?.leitePorBezerroLDia || ""}
+                          onChange={(e) => {
+                            const porBezerro = e.target.value;
+                            const total = porBezerro && nAnimais ? String(Math.round(Number(porBezerro) * nAnimais * 100) / 100) : f?.leiteBezerros || "";
+                            patchForm(ln, { leitePorBezerroLDia: porBezerro, leiteBezerros: total });
+                          }}
+                          placeholder="ex.: 2 (bezerreiro 1) ou 3 (bezerreiro 2)" />
+                        <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>
+                          {nAnimais ? `Calcula o total do lote: ${nAnimais} animal(is) × valor informado.` : "Informe a quantidade por bezerro; o total do lote é calculado automaticamente."}
+                        </span>
+                      </div>
+                      <div>
+                        <label style={lbl}>Leite para bezerros (kg/dia) — total do lote</label>
+                        <input type="number" inputMode="decimal" min={0} style={input} value={f?.leiteBezerros || ""} onChange={(e) => patchForm(ln, { leiteBezerros: e.target.value, leitePorBezerroLDia: "" })} placeholder="ex.: 120" />
+                        <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>Total do lote/dia — alimenta o relatório Controle × Entregue. Editável direto se preferir não usar o campo por bezerro.</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 mt-3">
+                      {(f?.itens || []).map((it, idx) => {
+                        const qLancado = Number(it.quantidade) || 0;
+                        const qFisica = quantidadeFisica(it);
+                        const porCab = nAnimais ? qFisica / nAnimais : null;
+                        const porTrato = qFisica / NUM_TRATOS;
+                        const msConhecido = it.alimento in msPorAlimento;
+                        const semMsCadastrado = it.base === "MS" && msConhecido && !msPorAlimento[it.alimento];
+                        return (
+                          <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.6rem", position: "relative" }}>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div style={{ gridColumn: "1 / -1" }}>
+                                <label style={lbl}>Produto {idx + 1}</label>
+                                <EstoquePicker
+                                  itens={estoqueItens}
+                                  value={it.alimento}
+                                  onChange={(v) => patchItem(ln, idx, { alimento: v, ms_pct: msPorAlimento[v] ?? null })}
+                                  finalidades={["Ração/Alimento"]}
+                                  somenteVinculadosAlimento
+                                  placeholder="Selecionar silagem/alimento…"
+                                />
+                              </div>
+                              <div>
+                                <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
+                                <input type="number" inputMode="decimal" style={input} value={it.quantidade} onChange={(e) => patchItem(ln, idx, { quantidade: e.target.value })} />
+                              </div>
+                              <div>
+                                <label style={lbl}>Unidade</label>
+                                <select style={input} value={it.unidade} onChange={(e) => patchItem(ln, idx, { unidade: e.target.value })}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select>
+                              </div>
+                              <div style={{ gridColumn: "1 / -1" }}>
+                                <label style={lbl}>Base</label>
+                                <select style={input} value={it.base} onChange={(e) => patchItem(ln, idx, { base: e.target.value })}>
+                                  <option value="MN">Matéria natural (MN)</option>
+                                  <option value="MS">Matéria seca (MS)</option>
+                                </select>
+                              </div>
                             </div>
-                            <div>
-                              <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
-                              <input type="number" inputMode="decimal" style={input} value={it.quantidade} onChange={(e) => patchItem(ln, idx, { quantidade: e.target.value })} />
+                            {/* Cálculo automático enquanto edita — já convertido para o físico
+                                (matéria natural) quando lançado em base MS. */}
+                            <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap", fontSize: "0.76rem" }}>
+                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{num(porTrato)} {it.unidade}/trato</span>
+                              <span style={{ color: "var(--amber)", fontWeight: 600 }}>{num(qFisica)} {it.unidade}/dia</span>
+                              <span style={{ color: "var(--text-muted)" }}>{porCab != null ? `${num(porCab, 3)} ${it.unidade}/cab` : "—/cab"}</span>
+                              {it.base === "MS" && it.ms_pct && qFisica !== qLancado && (
+                                <span style={{ color: "var(--text-muted)" }}>({num(qLancado)} {it.unidade} MS a {num(it.ms_pct, 1)}% MS)</span>
+                              )}
                             </div>
-                            <div>
-                              <label style={lbl}>Unidade</label>
-                              <select style={input} value={it.unidade} onChange={(e) => patchItem(ln, idx, { unidade: e.target.value })}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select>
-                            </div>
-                            <div>
-                              <label style={lbl}>Base</label>
-                              <select style={input} value={it.base} onChange={(e) => patchItem(ln, idx, { base: e.target.value })}>
-                                <option value="MN">Matéria natural (MN)</option>
-                                <option value="MS">Matéria seca (MS)</option>
-                              </select>
-                            </div>
-                          </div>
-                          {/* Cálculo automático enquanto edita — já convertido para o físico
-                              (matéria natural) quando lançado em base MS. */}
-                          <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap", fontSize: "0.76rem" }}>
-                            <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{num(porTrato)} {it.unidade}/trato</span>
-                            <span style={{ color: "var(--amber)", fontWeight: 600 }}>{num(qFisica)} {it.unidade}/dia</span>
-                            <span style={{ color: "var(--text-muted)" }}>{porCab != null ? `${num(porCab, 3)} ${it.unidade}/cab` : "—/cab"}</span>
-                            {it.base === "MS" && it.ms_pct && qFisica !== qLancado && (
-                              <span style={{ color: "var(--text-muted)" }}>({num(qLancado)} {it.unidade} MS a {num(it.ms_pct, 1)}% MS)</span>
+                            {semMsCadastrado && (
+                              <p style={{ color: "var(--red)", fontSize: "0.72rem", marginTop: "0.3rem" }}>
+                                Cadastre o % de matéria seca de "{it.alimento}" na aba Matéria seca antes de salvar em base MS.
+                              </p>
+                            )}
+                            {(f?.itens.length || 0) > 1 && (
+                              <button onClick={() => delItem(ln, idx)} title="Remover produto" aria-label="Remover produto" className="btn-ghost"
+                                style={{ position: "absolute", top: "0.4rem", right: "0.4rem", color: "var(--red)" }}><Trash2 size={13} /></button>
                             )}
                           </div>
-                          {semMsCadastrado && (
-                            <p style={{ color: "var(--red)", fontSize: "0.72rem", marginTop: "0.3rem" }}>
-                              Cadastre o % de matéria seca de "{it.alimento}" na aba Matéria seca antes de salvar em base MS.
-                            </p>
-                          )}
-                          {(f?.itens.length || 0) > 1 && (
-                            <button onClick={() => delItem(ln, idx)} title="Remover produto" aria-label="Remover produto" className="btn-ghost"
-                              style={{ position: "absolute", top: "0.4rem", right: "0.4rem", color: "var(--red)" }}><Trash2 size={13} /></button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center justify-between mt-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-                    <button onClick={() => addItem(ln)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
-                    <span style={{ fontSize: "0.8rem", fontWeight: 700 }}>
-                      Vagão: <span style={{ color: "var(--dourado-light)" }}>{num(vagaoKg)} kg/dia</span>
-                      <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {num(vagaoKg / NUM_TRATOS)} kg/trato</span>
-                    </span>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-between mt-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+                      <button onClick={() => addItem(ln)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
+                      <span style={{ fontSize: "0.8rem", fontWeight: 700 }}>
+                        Vagão: <span style={{ color: "var(--dourado-light)" }}>{num(vagaoKg)} kg/dia</span>
+                        <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {num(vagaoKg / NUM_TRATOS)} kg/trato</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -776,6 +801,15 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
         })}
         {!lotes.length && <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Nenhum lote cadastrado.</p>}
       </div>
+
+      {importarAberto !== null && (
+        <ImportarDietaFormuladaModal
+          lote={importarAberto}
+          nAnimais={contextos[importarAberto]?.qtd_animais ?? lotes.find((l) => loteNum(l) === importarAberto)?.qtd_animais ?? 0}
+          onFechar={() => setImportarAberto(null)}
+          onImportar={(itens) => { patchForm(importarAberto, { itens }); setImportarAberto(null); }}
+        />
+      )}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.8rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.8rem" }}>{sucesso}</p>}
@@ -789,8 +823,14 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   );
 }
 
+const ROTULO_BASE_QUANTIDADE: Record<string, string> = { total: "Total do lote/dia", animal: "Por animal/dia" };
+
+// Coluna ESQUERDA do card do lote — só visualização (dados básicos + a
+// dieta atualmente ativa), nunca editável aqui; a coluna direita
+// (formulário) é quem lança a dieta nova.
 function ContextoLoteBox({ ctx }: { ctx: ContextoDieta }) {
   const [verAnimais, setVerAnimais] = useState(false);
+  const ud = ctx.ultima_dieta;
   return (
     <div style={{ background: "var(--surface-2)", borderRadius: 8, padding: "0.75rem" }}>
       {/* Relatório simplificado */}
@@ -800,19 +840,31 @@ function ContextoLoteBox({ ctx }: { ctx: ContextoDieta }) {
         <Metrica titulo="Data do último CL" valor={formatDate(ctx.data_ult_cl)} />
       </div>
 
-      {/* Última dieta */}
+      {/* Última dieta — dados básicos do lançamento ativo, só visualização */}
       <div style={{ marginBottom: "0.5rem" }}>
         <div style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
-          Última dieta{ctx.ultima_dieta ? ` (desde ${formatDate(ctx.ultima_dieta.data_abertura)})` : ""}
+          Última dieta{ud ? ` (desde ${formatDate(ud.data_abertura)})` : ""}
         </div>
-        {ctx.ultima_dieta && ctx.ultima_dieta.itens.length ? (
-          <div className="flex flex-wrap gap-2">
-            {ctx.ultima_dieta.itens.map((it, i) => (
-              <span key={i} style={{ fontSize: "0.74rem", padding: "0.15rem 0.5rem", borderRadius: 6, background: "var(--surface)", border: "1px solid var(--border)" }}>
-                <strong>{it.alimento}</strong>: {num(it.total_dia)} {it.unidade}/dia{it.por_cabeca != null ? ` · ${num(it.por_cabeca, 3)}/cab` : ""}
-              </span>
-            ))}
-          </div>
+        {ud ? (
+          <>
+            <div className="grid grid-cols-2 gap-2" style={{ marginBottom: "0.5rem" }}>
+              <Metrica titulo="Responsável" valor={ud.responsavel || "—"} />
+              <Metrica titulo="Data de início" valor={formatDate(ud.data_abertura)} />
+              <Metrica titulo="Provável data de fim" valor={formatDate(ud.data_prevista_encerramento)} />
+              <Metrica titulo="Quantidades informadas" valor={ud.base_quantidade ? (ROTULO_BASE_QUANTIDADE[ud.base_quantidade] || ud.base_quantidade) : "—"} />
+              <Metrica titulo="Leite por bezerro" valor={ud.leite_por_bezerro_kg_dia != null ? `${num(ud.leite_por_bezerro_kg_dia, 2)} kg/dia` : "—"} />
+              <Metrica titulo="Leite para bezerros" valor={ud.leite_bezerros_kg_dia != null ? `${num(ud.leite_bezerros_kg_dia, 1)} kg/dia` : "—"} />
+            </div>
+            {ud.itens.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {ud.itens.map((it, i) => (
+                  <span key={i} style={{ fontSize: "0.74rem", padding: "0.15rem 0.5rem", borderRadius: 6, background: "var(--surface)", border: "1px solid var(--border)" }}>
+                    <strong>{it.alimento}</strong>: {num(it.total_dia)} {it.unidade}/dia{it.por_cabeca != null ? ` · ${num(it.por_cabeca, 3)}/cab` : ""}
+                  </span>
+                ))}
+              </div>
+            ) : <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Sem produtos lançados.</span>}
+          </>
         ) : <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Sem dieta ativa registrada.</span>}
       </div>
 
@@ -839,6 +891,87 @@ function ContextoLoteBox({ ctx }: { ctx: ContextoDieta }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Popup de "dietas formuladas" salvas em Formulação de Dietas — só
+// visualização dos números (nunca edição/nova simulação aqui). Selecionar
+// uma importa os produtos calculados dela na formulação do lote (coluna da
+// direita) — o usuário ainda confirma/edita antes de salvar o lançamento.
+function ImportarDietaFormuladaModal({ lote, nAnimais, onFechar, onImportar }: {
+  lote: number; nAnimais: number; onFechar: () => void; onImportar: (itens: ItemForm[]) => void;
+}) {
+  const [incluirTodas, setIncluirTodas] = useState(false);
+  const [simulacoes, setSimulacoes] = useState<SimulacaoResumo[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [importando, setImportando] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSimulacoes(null);
+    listarSimulacoes(incluirTodas ? {} : { lote })
+      .then(setSimulacoes)
+      .catch((e) => setErro(e.message || "Erro ao listar dietas formuladas"));
+  }, [lote, incluirTodas]);
+
+  async function usar(s: SimulacaoResumo) {
+    setImportando(s.id); setErro(null);
+    try {
+      const detalhe = await obterSimulacao(s.id);
+      if (!detalhe.resultado) { setErro(`"${s.nome}" ainda não foi calculada — abra em Formulação de Dietas antes de importar.`); return; }
+      const itens: ItemForm[] = detalhe.resultado.ingredientes.map((ing) => ({
+        alimento: ing.nome, unidade: "kg", base: "MN",
+        // kg_materia_natural_dia do motor é POR ANIMAL — a formulação do
+        // lote aqui trabalha em total do lote/dia, mesma conversão que
+        // "por cabeça" já faz no resto da tela (ver quantidadeFisica/porCab).
+        quantidade: nAnimais ? String(Math.round(ing.kg_materia_natural_dia * nAnimais * 100) / 100) : String(ing.kg_materia_natural_dia),
+        ms_pct: null,
+      }));
+      if (!itens.length) { setErro(`"${s.nome}" não tem ingredientes calculados.`); return; }
+      onImportar(itens);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao importar a dieta formulada");
+    } finally {
+      setImportando(null);
+    }
+  }
+
+  return (
+    <Modal title={`Dietas formuladas — Lote ${lote}`} onClose={onFechar} width="640px">
+      <label className="flex items-center gap-2 mb-3" style={{ fontSize: "0.8rem" }}>
+        <input type="checkbox" checked={incluirTodas} onChange={(e) => setIncluirTodas(e.target.checked)} />
+        Incluir todas as dietas salvas (não só as deste lote)
+      </label>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{erro}</p>}
+      {simulacoes === null && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>}
+      {simulacoes && !simulacoes.length && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+          {incluirTodas ? "Nenhuma dieta formulada salva ainda." : "Nenhuma dieta formulada salva para este lote — marque \"incluir todas\" para ver de outros lotes."}
+        </p>
+      )}
+      <div className="space-y-2" style={{ maxHeight: "420px", overflowY: "auto" }}>
+        {(simulacoes || []).map((s) => (
+          <div key={s.id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.6rem 0.75rem" }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: "0.35rem" }}>
+              <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{s.nome}</span>
+              <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                Lote {s.lote ?? "—"} · {s.status}
+              </span>
+            </div>
+            <div className="grid grid-cols-4 gap-2" style={{ marginBottom: "0.5rem" }}>
+              <Metrica titulo="CMS" valor={s.cms_kg_dia != null ? `${num(s.cms_kg_dia, 1)} kg` : "—"} />
+              <Metrica titulo="Balanço ELl" valor={s.balanco_ell_mcal != null ? `${num(s.balanco_ell_mcal, 1)}` : "—"} />
+              <Metrica titulo="Balanço PM" valor={s.balanco_pm_g != null ? `${num(s.balanco_pm_g, 0)} g` : "—"} />
+              <Metrica titulo="Custo/dia" valor={s.custo_dia != null ? `R$ ${num(s.custo_dia, 2)}` : "—"} />
+            </div>
+            <button type="button" className="btn-primary" style={{ fontSize: "0.76rem" }}
+              disabled={s.cms_kg_dia == null || importando === s.id} onClick={() => usar(s)}>
+              {importando === s.id ? "Importando…" : "Usar esta dieta"}
+            </button>
+            {s.cms_kg_dia == null && <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginLeft: "0.5rem" }}>ainda não calculada</span>}
+          </div>
+        ))}
+      </div>
+    </Modal>
   );
 }
 

@@ -1,13 +1,161 @@
 "use client";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import dynamic from "next/dynamic";
-import { baixarModeloControleLeiteiro, criarControlesLeiteiros, importarControleLeiteiroPlanilha, fetchControles, formatDate } from "@/lib/api";
+import { Download, Trash2 } from "lucide-react";
+import {
+  baixarModeloControleLeiteiro, criarControlesLeiteiros, fetchControles, formatDate,
+  preVisualizarControleLeiteiroPlanilha, confirmarControleLeiteiroPlanilha, type LinhaControleLeiteiroPreview,
+} from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal } from "@/components/lancamentos/_shared";
 import { UltimosLancados } from "@/components/lancamentos/UltimosLancados";
-const UploadPlanilha = dynamic(() => import("@/components/UploadPlanilha").then((m) => m.UploadPlanilha), { ssr: false });
+
+// Planilha (Excel/.xlsx ou CSV) de controle leiteiro (por animal ou por
+// lote): baixa o modelo, o usuário preenche fora do app e reanexa aqui —
+// mas em vez de salvar direto ao enviar, mostra as linhas lidas numa
+// tabela editável para revisar/corrigir antes de confirmar de fato.
+function RevisarPlanilhaControleLeiteiro({ onConfirmado }: { onConfirmado: () => void }) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [lendo, setLendo] = useState(false);
+  const [linhas, setLinhas] = useState<LinhaControleLeiteiroPreview[] | null>(null);
+  const [errosLeitura, setErrosLeitura] = useState<string[]>([]);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [resultado, setResultado] = useState<{ criados: number } | null>(null);
+
+  async function lerPlanilha() {
+    if (!arquivo) return;
+    setLendo(true); setErro(null); setResultado(null);
+    try {
+      const r = await preVisualizarControleLeiteiroPlanilha(arquivo);
+      setLinhas(r.linhas);
+      setErrosLeitura(r.erros);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao ler a planilha");
+    } finally {
+      setLendo(false);
+    }
+  }
+
+  function atualizarLinha(idx: number, patch: Partial<LinhaControleLeiteiroPreview>) {
+    setLinhas((prev) => (prev ? prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)) : prev));
+  }
+  function removerLinha(idx: number) {
+    setLinhas((prev) => (prev ? prev.filter((_, i) => i !== idx) : prev));
+  }
+
+  async function confirmar() {
+    if (!linhas || !linhas.length) return;
+    setSalvando(true); setErro(null);
+    try {
+      const r = await confirmarControleLeiteiroPlanilha(linhas);
+      setResultado(r);
+      setLinhas(null); setArquivo(null); setErrosLeitura([]);
+      onConfirmado();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  const num = (v: string) => (v.trim() === "" ? null : Number(v));
+
+  return (
+    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+      <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>
+        Importar de planilha (Excel ou CSV)
+      </p>
+
+      {!linhas && (
+        <>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => baixarModeloControleLeiteiro("animal").catch(() => setErro("Erro ao baixar o modelo."))}>
+              <Download size={13} /> Modelo por animal
+            </button>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => baixarModeloControleLeiteiro("lote").catch(() => setErro("Erro ao baixar o modelo."))}>
+              <Download size={13} /> Modelo por lote
+            </button>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+            Baixe o modelo, preencha fora do app e anexe aqui — antes de salvar, você revisa e pode corrigir os valores lidos.
+          </p>
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <input type="file" accept=".xlsx,.xlsm,.csv" onChange={(e) => { setArquivo(e.target.files?.[0] || null); setResultado(null); setErro(null); }} style={{ fontSize: "0.8rem" }} />
+            <button type="button" className="btn-primary" disabled={!arquivo || lendo} onClick={lerPlanilha}>{lendo ? "Lendo…" : "Ler planilha"}</button>
+          </div>
+        </>
+      )}
+
+      {resultado && (
+        <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: "var(--green-light)" }}>
+          {resultado.criados} lançamento(s) salvo(s) com sucesso.
+        </p>
+      )}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
+
+      {linhas && (
+        <div className="mt-2">
+          {errosLeitura.length > 0 && (
+            <p style={{ fontSize: "0.76rem", color: "var(--amber)", marginBottom: "0.5rem" }}>
+              {errosLeitura.length} linha(s) da planilha não puderam ser lidas e foram ignoradas:
+              <span style={{ display: "block", color: "var(--text-muted)" }}>{errosLeitura.slice(0, 5).join("; ")}</span>
+            </p>
+          )}
+          <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+            Revise os valores lidos abaixo — edite o que precisar antes de confirmar. Nada foi salvo ainda.
+          </p>
+          <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead>
+                <tr>
+                  <th>Nº</th><th>Data</th>
+                  <th style={{ textAlign: "right" }}>1ª ordenha (kg)</th>
+                  <th style={{ textAlign: "right" }}>2ª ordenha (kg)</th>
+                  <th style={{ textAlign: "right" }}>3ª ordenha (kg)</th>
+                  <th style={{ textAlign: "right" }}>Total (kg)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {linhas.map((l, idx) => (
+                  <tr key={idx}>
+                    <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
+                    <td>
+                      <input type="date" style={inputStyle} value={l.data_controle}
+                        onChange={(e) => atualizarLinha(idx, { data_controle: e.target.value })} />
+                    </td>
+                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
+                      value={l.ordenha1_kg ?? ""} onChange={(e) => atualizarLinha(idx, { ordenha1_kg: num(e.target.value) })} /></td>
+                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
+                      value={l.ordenha2_kg ?? ""} onChange={(e) => atualizarLinha(idx, { ordenha2_kg: num(e.target.value) })} /></td>
+                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
+                      value={l.ordenha3_kg ?? ""} onChange={(e) => atualizarLinha(idx, { ordenha3_kg: num(e.target.value) })} /></td>
+                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
+                      value={l.total_kg ?? ""} onChange={(e) => atualizarLinha(idx, { total_kg: num(e.target.value) })} /></td>
+                    <td>
+                      <button type="button" className="btn-ghost" title="Remover esta linha" onClick={() => removerLinha(idx)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!linhas.length && <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma linha restante.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-2 mt-3">
+            <button type="button" className="btn-primary" disabled={!linhas.length || salvando} onClick={confirmar}>
+              {salvando ? "Salvando…" : `Confirmar e salvar (${linhas.length})`}
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => { setLinhas(null); setErrosLeitura([]); }}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // G13 — "últimos lançados": conferir/corrigir os controles recém-digitados
 // sem sair da tela de Lançamentos. GET /producao/controles já vem ordenado
@@ -118,13 +266,7 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
       </div>
 
       {modo === "planilha" && (
-        <UploadPlanilha
-          modelos={[
-            { label: "Modelo por animal", baixar: () => baixarModeloControleLeiteiro("animal") },
-            { label: "Modelo por lote", baixar: () => baixarModeloControleLeiteiro("lote") },
-          ]}
-          onImportar={importarControleLeiteiroPlanilha}
-        />
+        <RevisarPlanilhaControleLeiteiro onConfirmado={carregarRecentes} />
       )}
 
       {modo !== "planilha" && (modo === "vaca" ? (
