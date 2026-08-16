@@ -891,6 +891,14 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
   const [soComEstoque, setSoComEstoque] = useState(false);
   const admin = ehAdmin();
 
+  // Exclusão múltipla — marca vários registros (individuais ou dentro de um
+  // card de lote expandido) e exclui de uma vez. `expandidos` controla quais
+  // cards de lote (BST, protocolo... qualquer grupo de aplicações lançadas
+  // juntas) estão abertos para seleção individual, em vez do card recolhido.
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const [excluindoLote, setExcluindoLote] = useState(false);
+
   useEffect(() => {
     fetchMedicamentos({ incluir_sem_estoque: true })
       .then((m: any[]) => setProdutosCatalogo(m.map((x) => ({ nome: x.nome, quantidade: x.quantidade, unidade: x.unidade }))))
@@ -984,6 +992,33 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
     finally { setOcupado(null); }
   };
 
+  const excluirVarias = async (ids: number[]) => {
+    if (!ids.length) return;
+    const msg = admin
+      ? `Excluir ${ids.length} aplicação(ões)? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão de ${ids.length} aplicação(ões)? Um administrador precisa aprovar antes de serem excluídas de fato.`;
+    if (!window.confirm(msg)) return;
+    setExcluindoLote(true); setError(null); setAvisoExclusao(null);
+    let excluidas = 0, pendentes = 0;
+    for (const id of ids) {
+      try {
+        const r = await confirmarExclusao("sanidade", String(id));
+        if (r.status === "excluido") excluidas++; else pendentes++;
+      } catch (e: any) { setError(e.message); }
+    }
+    setSelecionados(new Set());
+    setExcluindoLote(false);
+    if (excluidas) await carregar();
+    if (pendentes) setAvisoExclusao(`${pendentes} solicitação(ões) de exclusão enviada(s) — aguardando aprovação de um administrador.`);
+  };
+
+  const toggleSelecionado = (id: number) => setSelecionados((prev) => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const toggleExpandido = (chave: string) => setExpandidos((prev) => {
+    const n = new Set(prev); n.has(chave) ? n.delete(chave) : n.add(chave); return n;
+  });
+
   const opc = (f: (a: Aplic) => string | null) => {
     const s = new Set<string>(); (regs ?? []).forEach((a) => { const v = f(a); if (v) s.add(v); });
     return Array.from(s).sort();
@@ -1039,7 +1074,39 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
       (fOrdemParto.length === 0 || (a.ordem_parto !== null && fOrdemParto.includes(String(a.ordem_parto))))
     );
   }, [regs, fCat, ini, fim, buscaProd, animaisSel, lotesSel, selDosLotes, categoriasAnimalSel, selDasCategorias, fOrdemParto]);
-  const pagAplicacoes = usePaginacao(filtrados);
+
+  // Agrupa em "cards de lote" as aplicações que vieram do MESMO lançamento em
+  // lote (BST, protocolo...) — mesma data/produto/atividade/responsável/dose/
+  // unidade/usuário, ≥2 animais. Não há um id de lote explícito no banco;
+  // esta é a mesma combinação de campos que só bate por coincidência entre
+  // duas ações manuais DIFERENTES na prática (data+produto+responsável+dose
+  // exatamente iguais). Um card recolhido oferece excluir tudo de uma vez;
+  // expandido, mostra cada linha para marcar/excluir uma por uma.
+  type ItemAplic = { tipo: "grupo"; chave: string; linhas: Aplic[] } | { tipo: "individual"; linha: Aplic };
+  const itensExibicao = useMemo<ItemAplic[]>(() => {
+    const porChave = new Map<string, Aplic[]>();
+    for (const a of filtrados) {
+      const chave = [a.data, a.produto, a.atividade, a.responsavel, a.dose, a.unidade, a.usuario_nome].join("␟");
+      const lista = porChave.get(chave) || [];
+      lista.push(a);
+      porChave.set(chave, lista);
+    }
+    const itens: ItemAplic[] = [];
+    for (const [chave, linhas] of porChave.entries()) {
+      if (linhas.length > 1) itens.push({ tipo: "grupo", chave, linhas });
+      else itens.push({ tipo: "individual", linha: linhas[0] });
+    }
+    // Mantém a ordem geral por data desc (mesma ordem que `filtrados`/`regs`
+    // já trazem) — usa a posição do primeiro item de cada grupo/individual.
+    const posicao = new Map(filtrados.map((a, i) => [a.id, i]));
+    itens.sort((x, y) => {
+      const px = x.tipo === "grupo" ? Math.min(...x.linhas.map((l) => posicao.get(l.id) ?? 0)) : (posicao.get(x.linha.id) ?? 0);
+      const py = y.tipo === "grupo" ? Math.min(...y.linhas.map((l) => posicao.get(l.id) ?? 0)) : (posicao.get(y.linha.id) ?? 0);
+      return px - py;
+    });
+    return itens;
+  }, [filtrados]);
+  const pagAplicacoes = usePaginacao(itensExibicao);
 
   // Quando há filtro por período (de/até), as linhas SEM data ficam de fora — conta quantas para avisar o usuário.
   const semDataExcluidas = useMemo(() => {
@@ -1198,20 +1265,86 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
         <SecaoRecolhivel titulo="Aplicações" badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} registro(s)</span>}
           descricao="Lista completa das aplicações que atendem aos filtros acima">
           {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
-          <div className="flex justify-end mb-2">
+          <div className="flex justify-between items-center mb-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            <button className="btn-ghost" style={{ fontSize: "0.78rem", color: "var(--red)" }}
+              disabled={!selecionados.size || excluindoLote}
+              onClick={() => excluirVarias(Array.from(selecionados))}>
+              <Trash2 size={14} /> {excluindoLote ? "Excluindo…" : `Excluir selecionados (${selecionados.size})`}
+            </button>
             <ExportarBotoes titulo="Sanidade — Aplicações" nomeArquivoBase="sanidade" colunas={COLUNAS_SANIDADE} linhas={filtrados} />
           </div>
           <div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th style={{ textAlign: "right" }}>Ações</th></tr></thead>
+                <thead><tr><th></th><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th style={{ textAlign: "right" }}>Ações</th></tr></thead>
                 <tbody>
-                  {pagAplicacoes.linhasPagina.map((a) => {
+                  {pagAplicacoes.linhasPagina.map((item) => {
+                    if (item.tipo === "grupo") {
+                      const { chave, linhas } = item;
+                      const aberto = expandidos.has(chave);
+                      const primeira = linhas[0];
+                      const idsDoGrupo = linhas.map((l) => l.id);
+                      const todasMarcadas = idsDoGrupo.every((id) => selecionados.has(id));
+                      if (!aberto) {
+                        return (
+                          <tr key={chave} style={{ background: "var(--surface-2)", cursor: "pointer" }} onClick={() => toggleExpandido(chave)}>
+                            <td onClick={(e) => e.stopPropagation()}>
+                              <input type="checkbox" checked={todasMarcadas} onChange={() => setSelecionados((prev) => {
+                                const n = new Set(prev);
+                                if (todasMarcadas) idsDoGrupo.forEach((id) => n.delete(id)); else idsDoGrupo.forEach((id) => n.add(id));
+                                return n;
+                              })} />
+                            </td>
+                            <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{primeira.data ? new Date(primeira.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                            <td colSpan={2} style={{ fontWeight: 700 }}>
+                              <span className="flex items-center gap-1"><ChevronRight size={13} /> {primeira.produto}{primeira.atividade ? ` — ${primeira.atividade}` : ""}
+                                <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: "0.75rem" }}> · {linhas.length} animais (lançados juntos)</span></span>
+                            </td>
+                            <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{primeira.categoria}</td>
+                            <td style={{ textAlign: "right" }}>{primeira.dose ?? "—"}{primeira.unidade ? ` ${primeira.unidade}` : ""}</td>
+                            {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{primeira.usuario_nome ?? "—"}</td>}
+                            <td style={{ textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                              <button title={admin ? "Excluir todos deste lote" : "Solicitar exclusão de todos deste lote"} disabled={excluindoLote}
+                                onClick={() => excluirVarias(idsDoGrupo)}
+                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}>
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
+                        <Fragment key={chave}>
+                          <tr style={{ background: "var(--surface-2)", cursor: "pointer" }} onClick={() => toggleExpandido(chave)}>
+                            <td colSpan={admin ? 8 : 7} style={{ fontSize: "0.78rem", fontWeight: 600 }}>
+                              <span className="flex items-center gap-1"><ChevronDown size={13} /> {primeira.produto}{primeira.atividade ? ` — ${primeira.atividade}` : ""} · {linhas.length} animais — clique para recolher</span>
+                            </td>
+                          </tr>
+                          {linhas.map((a) => (
+                            <tr key={a.id}>
+                              <td><input type="checkbox" checked={selecionados.has(a.id)} onChange={() => toggleSelecionado(a.id)} /></td>
+                              <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                              <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                              <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
+                              <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
+                              <td style={{ textAlign: "right" }}>{a.dose ?? "—"}{a.unidade ? ` ${a.unidade}` : ""}</td>
+                              {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.usuario_nome ?? "—"}</td>}
+                              <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                                <button title={admin ? "Excluir" : "Solicitar exclusão"} disabled={ocupado === a.id} onClick={() => excluir(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </Fragment>
+                      );
+                    }
+
+                    const a = item.linha;
                     const editando = editId === a.id;
                     const inp: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
                     return (
                     <Fragment key={a.id}>
                       <tr>
+                        <td><input type="checkbox" checked={selecionados.has(a.id)} onChange={() => toggleSelecionado(a.id)} /></td>
                         <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                         <td style={{ fontWeight: 700 }}>{a.numero}</td>
                         <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
@@ -1229,7 +1362,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                       </tr>
                       {editando && (
                         <tr>
-                          <td colSpan={admin ? 7 : 6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                          <td colSpan={admin ? 8 : 7} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
                                 <input type="date" style={inp} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
