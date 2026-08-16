@@ -215,102 +215,101 @@ export function CadastroProtocolosSanitarios() {
   const ordProtocolos = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos sanitários</span>
-        <div className="flex items-center gap-2">
-          <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={baixarModelo} title="Baixar planilha-modelo para preencher e importar">
-            <Download size={13} /> Baixar modelo
-          </button>
-          <button
-            className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-            onClick={() => inputImportRef.current?.click()} disabled={importando}
-            title="Importar protocolo(s) de uma planilha Excel/CSV"
-          >
-            <Upload size={13} /> {importando ? "Importando…" : "Importar Excel"}
-          </button>
-          <input ref={inputImportRef} type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) importarArquivo(f); }} />
-          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-            <Plus size={14} /> Novo
-          </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos sanitários</span>
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={baixarModelo} title="Baixar planilha-modelo para preencher e importar">
+                <Download size={13} /> Baixar modelo
+              </button>
+              <button
+                className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                onClick={() => inputImportRef.current?.click()} disabled={importando}
+                title="Importar protocolo(s) de uma planilha Excel/CSV"
+              >
+                <Upload size={13} /> {importando ? "Importando…" : "Importar Excel"}
+              </button>
+              <input ref={inputImportRef} type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) importarArquivo(f); }} />
+              <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+                <Plus size={14} /> Novo
+              </button>
+            </div>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Tratamento com múltiplas etapas (produto, dosagem, via e dia de aplicação), a exemplo do tratamento de
+            mastite. Os dias começam em D0, como todos os protocolos do sistema (inclusive o protocolo hormonal IATF).
+            Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
+            classificação (clínica/subclínica/ambiental). Para cadastrar vários protocolos de uma vez, baixe o modelo,
+            preencha uma linha por etapa (várias linhas com o mesmo nome formam um único protocolo) e importe.
+          </p>
+
+          {msgImport && (
+            <p style={{ color: msgImport.erro ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+              {msgImport.texto}
+            </p>
+          )}
+          {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" title="Buscar por nome ou doença" />
+              </div>
+              <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <ThOrdenavel label="Finalidade" campo="finalidade" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <ThOrdenavel label="Mastite" campo="eh_mastite" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <th>Etapas</th><th></th>
+                </tr></thead>
+                <tbody>
+                  {ordProtocolos.linhasOrdenadas.map((p) => (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{(p.finalidade || "curativo") === "preventivo" ? "Preventivo" : "Curativo"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                          onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
+                          <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
+                  {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            </>
+          )}
         </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Tratamento com múltiplas etapas (produto, dosagem, via e dia de aplicação), a exemplo do tratamento de
-        mastite. Os dias começam em D0, como todos os protocolos do sistema (inclusive o protocolo hormonal IATF).
-        Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
-        classificação (clínica/subclínica/ambiental). Para cadastrar vários protocolos de uma vez, baixe o modelo,
-        preencha uma linha por etapa (várias linhas com o mesmo nome formam um único protocolo) e importe.
-      </p>
-
-      {msgImport && (
-        <p style={{ color: msgImport.erro ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-          {msgImport.texto}
-        </p>
-      )}
-      {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormProtocolo
-          form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" title="Buscar por nome ou doença" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormProtocolo
+            form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
           </div>
-          <div className="overflow-x-auto">
-          <table className="fazenda-table">
-            <thead><tr>
-              <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <ThOrdenavel label="Finalidade" campo="finalidade" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <ThOrdenavel label="Mastite" campo="eh_mastite" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <th>Etapas</th><th></th>
-            </tr></thead>
-            <tbody>
-              {ordProtocolos.linhasOrdenadas.map((p) => (
-                <Fragment key={p.id}>
-                  <tr>
-                    <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{(p.finalidade || "curativo") === "preventivo" ? "Preventivo" : "Curativo"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                        <Pencil size={13} /> Editar
-                      </button>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
-                        onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
-                        <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
-                      </button>
-                    </td>
-                  </tr>
-                  {editando === p.id && (
-                    <tr><td colSpan={6} style={{ padding: 0 }}>
-                      <FormProtocolo
-                        form={form} setForm={setForm} doencas={doencas} estoque={estoque} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                        acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-                      />
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
-              {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -516,76 +515,75 @@ export function CadastroProtocolosInducao() {
   const ordProtocolos = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><Milk size={16} /> Protocolos de indução de lactação</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><Milk size={16} /> Protocolos de indução de lactação</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+              <Plus size={14} /> Novo
+            </button>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Cronograma por dia (D0, D1, D2...) com 3 tipos de etapa: medicamento (produto/dose/via), dispositivo
+            (colocar/retirar o implante de progesterona) e manejo (uma ação livre, ex.: "Adaptação na ordenha"). Usado
+            em Lançamentos › Produção › Indução de lactação.
+          </p>
+
+          {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+              </div>
+              <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+                  <th>Duração</th><th>Etapas</th><th></th>
+                </tr></thead>
+                <tbody>
+                  {ordProtocolos.linhasOrdenadas.map((p) => (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.length ? `D${p.dia_inicial} a D${Math.max(...p.etapas.map((e) => e.dia))}` : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.length} etapa(s)</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                          <Pencil size={13} /> Editar
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
+                          onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
+                          <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
+                  {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                </tbody>
+              </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Cronograma por dia (D0, D1, D2...) com 3 tipos de etapa: medicamento (produto/dose/via), dispositivo
-        (colocar/retirar o implante de progesterona) e manejo (uma ação livre, ex.: "Adaptação na ordenha"). Usado
-        em Lançamentos › Produção › Indução de lactação.
-      </p>
-
-      {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{erroExclusao}</p>}
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormProtocoloInducao
-          form={form} setForm={setForm} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormProtocoloInducao
+            form={form} setForm={setForm} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
           </div>
-          <div className="overflow-x-auto">
-          <table className="fazenda-table">
-            <thead><tr>
-              <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
-              <th>Duração</th><th>Etapas</th><th></th>
-            </tr></thead>
-            <tbody>
-              {ordProtocolos.linhasOrdenadas.map((p) => (
-                <Fragment key={p.id}>
-                  <tr>
-                    <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.length ? `D${p.dia_inicial} a D${Math.max(...p.etapas.map((e) => e.dia))}` : "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.length} etapa(s)</td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                        <Pencil size={13} /> Editar
-                      </button>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--red)", marginLeft: "0.4rem" }}
-                        onClick={() => excluir(p)} disabled={excluindo === p.id} title="Excluir protocolo — só é possível se ele nunca foi lançado">
-                        <Trash2 size={13} /> {excluindo === p.id ? "Excluindo…" : "Excluir"}
-                      </button>
-                    </td>
-                  </tr>
-                  {editando === p.id && (
-                    <tr><td colSpan={4} style={{ padding: 0 }}>
-                      <FormProtocoloInducao
-                        form={form} setForm={setForm} principios={principios} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                        acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-                      />
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
-              {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-            </tbody>
-          </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

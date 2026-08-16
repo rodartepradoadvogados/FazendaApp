@@ -175,45 +175,55 @@ function CadastroIatf() {
   }
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-2">
-        <div className="card-header" style={{ padding: 0 }}>Protocolos IATF cadastrados</div>
-        {editando === null && (
-          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => setEditando("novo")}>
-            <Plus size={13} /> Novo
-          </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="flex items-center justify-between mb-2">
+            <div className="card-header" style={{ padding: 0 }}>Protocolos IATF cadastrados</div>
+            {editando === null && (
+              <button className="btn-primary" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={() => setEditando("novo")}>
+                <Plus size={13} /> Novo
+              </button>
+            )}
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Define os hormônios em dias livres (o clássico é D0/D7/D9, mas aceita outro espaçamento, ex.: D0/D8/D10/D12).
+            A inseminação nunca faz parte do molde — é sempre 2 dias depois da última etapa cadastrada.
+            Lançar sem escolher um molde continua funcionando (hormônios digitados na hora, cronograma clássico D0/D7/D9/D11), como sempre foi.
+          </p>
+          <table className="fazenda-table">
+            <thead><tr><th>Nome</th><th>Etapas</th><th></th></tr></thead>
+            <tbody>
+              {(moldesIatf || []).map((m) => (
+                <tr key={m.id}>
+                  <td style={{ fontWeight: 600 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.etapas.map((e) => `D${e.dia}`).join(", ") || "—"}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <button className="btn-ghost" style={{ fontSize: "0.74rem", marginRight: "0.5rem" }} onClick={() => setEditando(m)}>Editar</button>
+                    <button className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluir(m.id)}>Excluir</button>
+                  </td>
+                </tr>
+              ))}
+              {moldesIatf && !moldesIatf.length && (
+                <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF cadastrado — lançar continua funcionando sem molde (hormônios digitados na hora).</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <EditorMoldeIatf
+            molde={editando === "novo" ? null : editando}
+            onSalvo={() => { setEditando(null); carregar(); }}
+            onCancelar={() => setEditando(null)}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
+          </div>
         )}
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Define os hormônios em dias livres (o clássico é D0/D7/D9, mas aceita outro espaçamento, ex.: D0/D8/D10/D12).
-        A inseminação nunca faz parte do molde — é sempre 2 dias depois da última etapa cadastrada.
-        Lançar sem escolher um molde continua funcionando (hormônios digitados na hora, cronograma clássico D0/D7/D9/D11), como sempre foi.
-      </p>
-      {editando !== null && (
-        <EditorMoldeIatf
-          molde={editando === "novo" ? null : editando}
-          onSalvo={() => { setEditando(null); carregar(); }}
-          onCancelar={() => setEditando(null)}
-        />
-      )}
-      <table className="fazenda-table">
-        <thead><tr><th>Nome</th><th>Etapas</th><th></th></tr></thead>
-        <tbody>
-          {(moldesIatf || []).map((m) => (
-            <tr key={m.id}>
-              <td style={{ fontWeight: 600 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-              <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{m.etapas.map((e) => `D${e.dia}`).join(", ") || "—"}</td>
-              <td style={{ textAlign: "right" }}>
-                <button className="btn-ghost" style={{ fontSize: "0.74rem", marginRight: "0.5rem" }} onClick={() => setEditando(m)}>Editar</button>
-                <button className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluir(m.id)}>Excluir</button>
-              </td>
-            </tr>
-          ))}
-          {moldesIatf && !moldesIatf.length && (
-            <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF cadastrado — lançar continua funcionando sem molde (hormônios digitados na hora).</td></tr>
-          )}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -849,6 +859,8 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
 
   return (
     <div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="mb-3">
         <label style={labelStyle}>Buscar por nome do protocolo</label>
         <input style={inputStyle} list={datalistId} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: mastite, IATF…" />
@@ -860,12 +872,17 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
       {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
 
       {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {linhas && (
+        <div className="flex items-center justify-between mb-2">
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhasFiltradas.length} protocolo(s)</span>
+          {historico && <ExportarBotoes titulo="Central de Protocolos — Histórico" nomeArquivoBase="central_protocolos_historico" colunas={COLUNAS_EXPORT} linhas={linhasExport} />}
+        </div>
+      )}
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       {!linhas ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
         <>
-          <div className="flex items-center justify-between mb-2">
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{linhasFiltradas.length} protocolo(s)</span>
-            {historico && <ExportarBotoes titulo="Central de Protocolos — Histórico" nomeArquivoBase="central_protocolos_historico" colunas={COLUNAS_EXPORT} linhas={linhasExport} />}
-          </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
               <thead><tr>
@@ -905,6 +922,8 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
           </div>
         </>
       )}
+      </div>
+      </div>
 
       {aberto && (
         <DetalheProtocolo origem={aberto.origem} origemId={aberto.id}

@@ -89,74 +89,73 @@ export default function CadastroProtocolosCustomizados() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos personalizados</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos personalizados</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+              <Plus size={14} /> Novo
+            </button>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Crie um roteiro próprio de etapas (dia, o que fazer e insumo sugerido) para qualquer rotina que não se encaixe
+            nos protocolos prontos do sistema — ex.: um checklist de recepção de bezerras, uma rotina de pastejo rotacionado
+            ou um calendário de manutenção. Depois de cadastrado, o protocolo fica disponível em <strong>Lançamentos</strong>
+            para aplicar contra animais, um lote ou como tarefa geral da fazenda, e as pendências aparecem na <strong>Agenda</strong>.
+            Os dias começam em D0, como os demais protocolos do sistema.
+          </p>
+
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="fazenda-table">
+                  <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Tipo</th><th>Etapas</th><th></th></tr></thead>
+                  <tbody>
+                    {linhasOrdenadas.map((p) => (
+                      <tr key={p.id}>
+                        <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{categoriaLabel(p.categoria)}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{p.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === p.tipo)?.[1] || p.tipo) : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - p.dia_inicial}`).join(", ")}</td>
+                        <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(p)}>
+                            <Trash2 size={13} /> Excluir
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
+                    {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Crie um roteiro próprio de etapas (dia, o que fazer e insumo sugerido) para qualquer rotina que não se encaixe
-        nos protocolos prontos do sistema — ex.: um checklist de recepção de bezerras, uma rotina de pastejo rotacionado
-        ou um calendário de manutenção. Depois de cadastrado, o protocolo fica disponível em <strong>Lançamentos</strong>
-        para aplicar contra animais, um lote ou como tarefa geral da fazenda, e as pendências aparecem na <strong>Agenda</strong>.
-        Os dias começam em D0, como os demais protocolos do sistema.
-      </p>
-
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormProtocoloCustomizado
-          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormProtocoloCustomizado
+            form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione um protocolo para editar, ou clique em Novo.</p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Tipo</th><th>Etapas</th><th></th></tr></thead>
-              <tbody>
-                {linhasOrdenadas.map((p) => (
-                  <Fragment key={p.id}>
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{categoriaLabel(p.categoria)}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{p.tipo ? (TIPOS_PROTOCOLO_CUSTOM.find(([v]) => v === p.tipo)?.[1] || p.tipo) : <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - p.dia_inicial}`).join(", ")}</td>
-                      <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
-                          <Pencil size={13} /> Editar
-                        </button>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(p)}>
-                          <Trash2 size={13} /> Excluir
-                        </button>
-                      </td>
-                    </tr>
-                    {editando === p.id && (
-                      <tr><td colSpan={5} style={{ padding: 0 }}>
-                        <FormProtocoloCustomizado
-                          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
-                        />
-                      </td></tr>
-                    )}
-                  </Fragment>
-                ))}
-                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo personalizado cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }
