@@ -469,7 +469,8 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       </div>
 
       {modo !== "animal" ? (
-        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {modo === "lote" ? (
               <Campo label="Lote">
@@ -498,7 +499,9 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
               </select>
             </Campo>
           </div>
+        </div>
 
+        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
           {(modo === "lote" ? !!loteBatch : categoriasSel.size > 0) ? (
             <div className="card mt-3" style={{ padding: 0 }}>
               <div className="card-header m-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
@@ -555,9 +558,11 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           <div className="flex items-center gap-3 mt-4">
             <button className="btn-primary" onClick={salvarLote} disabled={salvandoBatch}>{salvandoBatch ? "Salvando…" : "Salvar todos"}</button>
           </div>
-        </>
+        </div>
+        </div>
       ) : (
-        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz que pariu…" /></Campo>
         <Campo label="Data do parto"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
@@ -585,7 +590,9 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           </>
         )}
       </div>
+        </div>
 
+        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       {ehAborto ? (
         <p style={nota}>
           Aborto não é um parto — nenhuma cria é cadastrada. Ao salvar, registra a perda de prenhez da matriz (mesmo
@@ -714,7 +721,8 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
-        </>
+        </div>
+        </div>
       )}
 
       {abortoPendente && (

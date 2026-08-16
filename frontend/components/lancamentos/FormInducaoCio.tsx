@@ -89,6 +89,8 @@ export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; est
         que some sozinho assim que uma inseminação for lançada para o animal.
       </p>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <Campo label="Matriz(es) — animal(is) ou lote(s)" full>
         <TabBar<"animal" | "lote">
           abas={[
@@ -149,32 +151,6 @@ export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; est
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-        <Campo label="Data da aplicação"><input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} /></Campo>
-        <Campo label="Produto"><EstoquePicker itens={estoqueParaPicker} value={produto} onChange={setProduto} placeholder="Cloprostenol / PGF2α…" /></Campo>
-        <Campo label="Dose (opcional)"><input type="number" inputMode="decimal" style={inputStyle} value={dose} onChange={(e) => setDose(e.target.value)} /></Campo>
-        <Campo label="Unidade"><select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} disabled={!dose}><option value="ml">ml</option><option value="unidade">unidade</option><option value="dose">dose</option></select></Campo>
-        <Campo label="Via">
-          <select style={inputStyle} value={via} onChange={(e) => setVia(e.target.value)}>
-            <option value="">Selecione…</option>
-            {VIAS_APLICACAO.map((o) => <option key={o}>{o}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Responsável">
-          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
-            <option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Observação (opcional)" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
-      </div>
-
-      <p style={nota}>Se dose e unidade forem informadas, dá baixa no estoque do produto ao salvar.</p>
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-      </div>
-
       {historico.length > 0 && (
         <div className="mt-4">
           <label style={lbl}>Últimas induções de cio lançadas</label>
@@ -202,6 +178,36 @@ export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; est
           </div>
         </div>
       )}
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Data da aplicação"><input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} /></Campo>
+        <Campo label="Produto"><EstoquePicker itens={estoqueParaPicker} value={produto} onChange={setProduto} placeholder="Cloprostenol / PGF2α…" /></Campo>
+        <Campo label="Dose (opcional)"><input type="number" inputMode="decimal" style={inputStyle} value={dose} onChange={(e) => setDose(e.target.value)} /></Campo>
+        <Campo label="Unidade"><select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} disabled={!dose}><option value="ml">ml</option><option value="unidade">unidade</option><option value="dose">dose</option></select></Campo>
+        <Campo label="Via">
+          <select style={inputStyle} value={via} onChange={(e) => setVia(e.target.value)}>
+            <option value="">Selecione…</option>
+            {VIAS_APLICACAO.map((o) => <option key={o}>{o}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Responsável">
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+            <option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Observação (opcional)" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+      </div>
+
+      <p style={nota}>Se dose e unidade forem informadas, dá baixa no estoque do produto ao salvar.</p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+      </div>
+      </div>
     </>
   );
 }
