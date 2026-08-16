@@ -319,6 +319,26 @@ class TestCentroCustoPorItem:
         por_produto = {i["produto"]: i["tipo_item"] for i in lanc["itens"]}
         assert por_produto == {"Ração concentrada": "produto", "Frete": "servico"}
 
+    def test_dre_rateia_pelo_centro_de_custo_do_item(self, client):
+        """A nota nasce em "Pecuária Leiteira", mas um item de R$ 300 tem
+        override pra "Agricultura" — o DRE filtrado por cada centro só pode
+        contar a fatia correspondente, nunca a nota inteira nos dois."""
+        c, _ = client
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira", "data_competencia": "2026-07-05",
+            "itens": [
+                {"produto": "Ração concentrada", "valor_total": 700.0},
+                {"produto": "Adubo", "valor_total": 300.0, "centro_custo": "Agricultura"},
+            ],
+        })
+        params = {"data_inicio": "2026-07-01", "data_fim": "2026-07-31"}
+        pl = c.get("/financeiro/dre", params={**params, "centro_custo": "Pecuária Leiteira"}).json()
+        agro = c.get("/financeiro/dre", params={**params, "centro_custo": "Agricultura"}).json()
+        sem_filtro = c.get("/financeiro/dre", params=params).json()
+        assert pl["despesas_total"] == 700.0
+        assert agro["despesas_total"] == 300.0
+        assert sem_filtro["despesas_total"] == 1000.0
+
 
 class TestDescontoAcrescimo:
     def test_desconto_reduz_o_valor_liquido(self, client):

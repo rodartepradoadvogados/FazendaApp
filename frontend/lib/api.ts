@@ -5027,7 +5027,30 @@ export type SugestaoCadastroItem = {
   texto: string; candidato: string; score: number; confianca: "provavel";
   tipo?: "produto" | "servico"; indice?: number;
 };
-export type SugestoesCadastro = { fornecedor: SugestaoCadastroItem | null; itens: SugestaoCadastroItem[] };
+// fornecedor_confianca vai sempre (não só quando há sugestão) — "exato" não
+// precisa de nada (já bate sozinho), "provavel"/"incerto" são os dois casos
+// em que o texto bruto da nota não é, ele mesmo, um nome já cadastrado —
+// gatilho pra oferecer "salvar como apelido padrão" (ver
+// criarFornecedorApelido) quando o usuário corrige/confirma o fornecedor.
+export type SugestoesCadastro = {
+  fornecedor: SugestaoCadastroItem | null;
+  fornecedor_confianca: "exato" | "provavel" | "incerto" | null;
+  itens: SugestaoCadastroItem[];
+};
+
+// Ensina o sistema a reconhecer um nome de fornecedor/cliente como aparece
+// BRUTO num documento (razão social completa da nota) como um nome já
+// cadastrado — usado quando fornecedor_confianca acima não é "exato". Por
+// fazenda (nunca cruza tenants). Chamar de novo com o mesmo nomeBruto
+// ATUALIZA o apelido em vez de duplicar.
+export async function criarFornecedorApelido(nomeBruto: string, nomeCanonico: string) {
+  const res = await authFetch(`${API}/financeiro/fornecedor-apelidos`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nome_bruto: nomeBruto, nome_canonico: nomeCanonico }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar apelido de fornecedor"); }
+  return res.json();
+}
 
 export async function importarXmlFinanceiro(xml: string) {
   const res = await authFetch(`${API}/financeiro/importar-xml`, {

@@ -79,6 +79,7 @@ from .financeiro import (
 from .estoque import (
     Estoque,
     Fornecedor,
+    FornecedorClienteApelido,
     MovimentoEstoque,
     EstoqueSemen,
     CompraSemen,
@@ -333,6 +334,7 @@ __all__ = [
     "LancamentoCartao",
     "Estoque",
     "Fornecedor",
+    "FornecedorClienteApelido",
     "MovimentoEstoque",
     "EstoqueSemen",
     "CompraSemen",

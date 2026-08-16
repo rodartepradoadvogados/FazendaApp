@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, ContaGerencial, ControleLeiteiro
+from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, LancamentoItem
 from fazenda.rules.custo_producao import calcular_custo_por_lote, calcular_custo_por_vaca
 
 
@@ -121,3 +121,24 @@ def test_endpoint_filtra_por_centro_custo_customizado(client):
     })
     assert r.status_code == 200, r.text
     assert r.json()["despesas_total"] == 500.0
+
+
+def test_endpoint_item_com_centro_de_custo_proprio_e_rateado(client):
+    """Nota de R$ 1.000 em "Pecuária Leiteira", mas R$ 250 (um item) tem
+    override pra "Arrendamento" — o custo/vaca só pode contar os R$ 750
+    restantes."""
+    c, engine = client
+    with Session(engine) as s:
+        s.add(Animal(numero="1", grupo_primario="01"))
+        s.add(ControleLeiteiro(numero_matriz="1", data_controle=date(2026, 7, 5), producao_kg=30))
+        s.add(ContaGerencial(
+            numero_lancamento="LC-2026-00001", tipo="despesa", centro_custo="Pecuária Leiteira",
+            data_competencia=date(2026, 7, 20), valor_total=1000.0,
+        ))
+        s.add(LancamentoItem(numero_lancamento="LC-2026-00001", produto="Ração", valor_total=750.0))
+        s.add(LancamentoItem(numero_lancamento="LC-2026-00001", produto="Aluguel de pasto", valor_total=250.0, centro_custo="Arrendamento"))
+        s.commit()
+
+    r = c.get("/financeiro/custo-vaca-lote", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+    assert r.status_code == 200, r.text
+    assert r.json()["despesas_total"] == 750.0
