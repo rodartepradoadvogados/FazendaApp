@@ -1840,6 +1840,16 @@ class AplicarBstIn(BaseModel):
     # (ou aplicado=False), NADA é baixado do estoque agora — fica programada
     # na Agenda até a visita ser confirmada.
     aplicado: bool = True
+    # `dose` acima é sempre A DOSE DE UM ANIMAL (comportamento histórico) —
+    # este campo deixa explícito, em vez de assumir, e permite que quem
+    # lança informe a dose já como TOTAL do lote selecionado (ex.: mediu
+    # 40 ml no total para 20 vacas) sem ter que fazer a conta na mão.
+    # True (padrão) = `dose` é por animal, gravada e baixada assim mesmo.
+    # False = `dose` é o total do lote; dividimos por `len(numeros_matriz)`
+    # antes de gravar/baixar, para não confundir "total" com "por animal"
+    # no estoque nem no relatório (cada Sanidade grava a dose por animal,
+    # nunca o total bruto).
+    dose_por_animal: bool = True
 
 
 @router.post("/bst/aplicar")
@@ -1859,11 +1869,20 @@ def aplicar_bst_lote(
     usuario_id = usuario_id_seguro(user)
     materializar = dados.aplicado and dados.data_aplicacao <= date.today()
 
+    # `dose` sempre vira "dose de UM animal" antes de gravar/baixar — quando
+    # veio como total do lote (dose_por_animal=False), divide pelo nº de
+    # animais selecionados agora, uma única vez. Cada Sanidade/AplicacaoAgendada
+    # grava e baixa só a fatia daquele animal, nunca o total bruto (senão o
+    # estoque cairia N vezes o total real e o relatório por animal ficaria
+    # inflado).
+    n = len(dados.numeros_matriz)
+    dose_individual = dados.dose if (dados.dose_por_animal or not dados.dose or not n) else round(dados.dose / n, 4)
+
     if not materializar:
         for numero in dados.numeros_matriz:
             session.add(AplicacaoAgendada(
                 numero_matriz=numero, data=dados.data_aplicacao, produto=dados.produto,
-                dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel,
+                dose=dose_individual, unidade=dados.unidade, responsavel=dados.responsavel,
                 usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
             ))
         session.commit()
@@ -1874,17 +1893,17 @@ def aplicar_bst_lote(
     for numero in dados.numeros_matriz:
         sanidade = Sanidade(
             numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
-            dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
+            dose=dose_individual, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
             usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
         )
         session.add(sanidade)
         session.flush()
-        if dados.dose and dados.unidade:
+        if dose_individual and dados.unidade:
             # Antes esta baixa não gravava MovimentoEstoque nenhum — saldo caía
             # sem deixar rastro no histórico/RMCA (ver auditoria).
             estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=dados.produto)
             avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=dados.dose, unidade=dados.unidade, data=dados.data_aplicacao,
+                session, item=estoque_item, quantidade=dose_individual, unidade=dados.unidade, data=dados.data_aplicacao,
                 fazenda_id=fazenda_id, observacao=f"BST — matriz {numero}", usuario_id=usuario_id,
                 origem_tipo="bst", origem_id=sanidade.id, produto=dados.produto,
             ))

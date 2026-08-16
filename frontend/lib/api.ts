@@ -1088,6 +1088,10 @@ export async function desmarcarEventoRealizado(eventoId: string) {
 
 export async function aplicarBstLote(dados: {
   numeros_matriz: string[]; data_aplicacao: string; produto?: string; dose?: number | null; unidade?: string | null; responsavel?: string; aplicado?: boolean;
+  // true (padrão) = `dose` é a dose de UM animal; false = `dose` é o TOTAL do
+  // lote selecionado, e o backend divide por numeros_matriz.length antes de
+  // gravar/baixar — evita confundir total com por-animal no estoque/relatório.
+  dose_por_animal?: boolean;
 }) {
   const res = await authFetch(`${API}/agenda/bst/aplicar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
