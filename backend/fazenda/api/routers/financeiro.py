@@ -224,6 +224,9 @@ class ValeItemNovoIn(BaseModel):
 class ItemIn(BaseModel):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
+    # Override do centro de custo da nota (dados.centro_custo, abaixo) só
+    # para este item — None (a maioria) usa o centro de custo da nota inteira.
+    centro_custo: Optional[str] = None
     produto: str
     tipo_item: Optional[str] = None  # "produto" | "servico"
     descricao: Optional[str] = None
@@ -485,6 +488,7 @@ def listar_lancamentos(
             "id": it.id,
             "codigo_conta_gerencial": it.codigo_conta_gerencial,
             "nome_conta_gerencial": it.nome_conta_gerencial,
+            "centro_custo": it.centro_custo,
             "produto": it.produto,
             "descricao": it.descricao,
             "quantidade": it.quantidade,
@@ -1681,6 +1685,7 @@ def criar_lancamento(
             data_competencia=data_competencia,
             codigo_conta_gerencial=item.codigo_conta_gerencial,
             nome_conta_gerencial=item.nome_conta_gerencial,
+            centro_custo=mapear_centro_custo(item.centro_custo) if item.centro_custo else None,
             produto=item.produto,
             tipo_item=item.tipo_item,
             descricao=item.descricao,

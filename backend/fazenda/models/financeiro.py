@@ -98,6 +98,11 @@ class LancamentoItem(SQLModel, table=True):
     data_competencia: Optional[date] = None  # herdado, p/ DRE por conta
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
+    # Override do centro de custo da nota (ContaGerencial.centro_custo) SÓ
+    # para este item — permite que uma nota com vários itens (um boleto,
+    # uma compra) distribua cada item para um centro de custo diferente.
+    # None (a maioria dos itens) = usa o centro de custo da nota inteira.
+    centro_custo: Optional[str] = None
     produto: str
     tipo_item: Optional[str] = None  # "produto" | "servico" — escolha exclusiva no lançamento
     descricao: Optional[str] = None

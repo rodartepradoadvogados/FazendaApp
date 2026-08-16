@@ -47,6 +47,10 @@ type TipoItem = "produto" | "servico";
 type ModoValor = "unitario" | "total";
 type Item = {
   codigo_conta_gerencial: string; nome_conta_gerencial: string;
+  // Override do centro de custo da nota (centroCusto, abaixo) só para este
+  // item — "" (a maioria) usa o centro de custo da nota inteira. Útil quando
+  // uma mesma nota/comprovante cobre itens de centros de custo diferentes.
+  centro_custo: string;
   tipo_item: TipoItem; produto: string; descricao: string;
   quantidade: string; valor_unitario: string; valor_total: string; modoValor: ModoValor;
   // "estoque" escolhe de um item já cadastrado (EstoquePicker); "livre" digita
@@ -62,7 +66,7 @@ type Item = {
   vale: ValeItemDados | null;
 };
 const itemVazio = (): Item => ({
-  codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto", produto: "", descricao: "",
+  codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto", produto: "", descricao: "",
   quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario", modoProduto: "estoque",
   vale: null,
 });
@@ -554,7 +558,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     setTipoDocumento("Nota fiscal");
     if (Array.isArray(dados.itens) && dados.itens.length) {
       setItens(dados.itens.map((it: any) => ({
-        codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto",
+        codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto",
         produto: it.produto || "", descricao: "",
         quantidade: it.quantidade != null ? String(it.quantidade) : "",
         valor_unitario: it.valor_unitario != null ? String(it.valor_unitario) : "",
@@ -743,6 +747,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         .map((i) => ({
           codigo_conta_gerencial: i.codigo_conta_gerencial || null,
           nome_conta_gerencial: i.nome_conta_gerencial || null,
+          centro_custo: i.centro_custo || null,
           produto: i.produto.trim(),
           tipo_item: i.tipo_item,
           descricao: i.descricao || null,
@@ -1011,6 +1016,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   onSelect={(codigo, nome) => atualizarItem(idx, { codigo_conta_gerencial: codigo, nome_conta_gerencial: nome })}
                   placeholder="Escolha a conta (só o galho mais baixo)…"
                 />
+              </Campo>
+              <Campo label="Centro de custo (opcional — só este item)">
+                <select style={inputStyle} value={it.centro_custo || ""} onChange={(e) => atualizarItem(idx, { centro_custo: e.target.value })}
+                  title="Deixe em branco para usar o centro de custo da nota inteira (acima). Preencha só quando este item, especificamente, for de outro centro.">
+                  <option value="">— Usar o da nota ({centroCusto || "—"}) —</option>
+                  {it.centro_custo && !opcoes.centros_custo.includes(it.centro_custo) && <option value={it.centro_custo}>{it.centro_custo}</option>}
+                  {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
               </Campo>
               <Campo label="Descrição (opcional)">
                 <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
