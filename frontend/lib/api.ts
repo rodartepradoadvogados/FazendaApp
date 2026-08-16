@@ -5326,6 +5326,13 @@ export async function excluirPedido(id: number) {
   const res = await authFetch(`${API}/pedidos/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pedido"); }
 }
+export async function atualizarRastreioPedido(id: number, dados: { enviado: boolean; codigo_rastreio?: string | null; link_rastreio?: string | null }) {
+  const res = await authFetch(`${API}/pedidos/${id}/rastreio`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar rastreio do pedido"); }
+  return res.json();
+}
 
 export async function fetchModelosImportar() {
   const res = await authFetch(`${API}/importar/modelos`, { cache: "no-store" });

@@ -118,6 +118,7 @@ class TestIsolamentoPedidos:
         assert c.get(f"/pedidos/{pedido_id}").status_code == 404
         assert c.put(f"/pedidos/{pedido_id}", json=_pedido_payload()).status_code == 404
         assert c.put(f"/pedidos/{pedido_id}/status", json={"status": "cancelado"}).status_code == 404
+        assert c.put(f"/pedidos/{pedido_id}/rastreio", json={"enviado": True, "codigo_rastreio": "X"}).status_code == 404
         assert c.delete(f"/pedidos/{pedido_id}").status_code == 404
 
     def test_fazenda_2_pode_gerenciar_seu_proprio_pedido(self, client):

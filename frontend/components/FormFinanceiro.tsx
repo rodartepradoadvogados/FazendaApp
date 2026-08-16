@@ -96,7 +96,17 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura, apresentacaoModais }: {
+export type PrefillPedido = {
+  id: number;
+  fornecedorCliente?: string | null;
+  itens: {
+    produto: string; tipo_item: "produto" | "servico"; quantidade?: number | null;
+    valor_unitario_estimado?: number | null; valor_total_estimado: number;
+    codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null;
+  }[];
+};
+
+export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura, apresentacaoModais, prefillPedido }: {
   tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void;
   // Recebe a mesma mensagem de sucesso mostrada dentro do formulário — o pai
   // (contas a pagar/receber) reaproveita pra mostrar a confirmação no topo da
@@ -112,6 +122,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // Default "modal": os demais usos deste formulário fora do app não passam
   // a prop e continuam com o pop-up.
   apresentacaoModais?: "modal" | "tela";
+  // Pré-preenche a partir de um Pedido — vincula pedido_id e carrega os itens
+  // dele, prontos pra só completar o que é exclusivo do financeiro (pagamento,
+  // parcelamento, anexo). Ver botão "Lançar pagamento" em app/pedidos/page.tsx.
+  prefillPedido?: PrefillPedido | null;
 }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
@@ -254,6 +268,35 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       .then((lista: any[]) => setPedidosAbertos(lista.filter((p) => p.status !== "cancelado" && p.status !== "atendido")))
       .catch(() => {});
   }, [tipo]);
+  // Pré-preenchimento vindo de um Pedido (ver app/pedidos/page.tsx, botão
+  // "Lançar pagamento"/"Transformar em compra") — vincula o pedido_id e já
+  // traz os itens dele, faltando só o que é exclusivo do financeiro
+  // (pagamento, parcelamento, anexo). Um pedido já "atendido" fica de fora de
+  // `pedidosAbertos` (linha acima) — sem isto o seletor mostraria em branco
+  // mesmo com o vínculo funcionando por baixo.
+  useEffect(() => {
+    if (!prefillPedido) return;
+    setPedidoId(String(prefillPedido.id));
+    setPedidosAbertos((prev) => (prev.some((p) => p.id === prefillPedido.id) ? prev : [
+      ...prev,
+      { id: prefillPedido.id, numero_pedido: `Pedido #${prefillPedido.id}`, fornecedor_cliente: prefillPedido.fornecedorCliente || null, valor_total_estimado: prefillPedido.itens.reduce((a, i) => a + i.valor_total_estimado, 0) },
+    ]));
+    if (prefillPedido.fornecedorCliente) setFornecedor(prefillPedido.fornecedorCliente);
+    if (prefillPedido.itens.length) {
+      setItens(prefillPedido.itens.map((i) => ({
+        ...itemVazio(),
+        tipo_item: i.tipo_item,
+        produto: i.produto,
+        codigo_conta_gerencial: i.codigo_conta_gerencial || "",
+        nome_conta_gerencial: i.nome_conta_gerencial || "",
+        quantidade: i.quantidade != null ? String(i.quantidade) : "",
+        valor_unitario: i.valor_unitario_estimado != null ? String(i.valor_unitario_estimado) : "",
+        valor_total: String(i.valor_total_estimado),
+        modoValor: i.valor_unitario_estimado != null ? "unitario" : "total",
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillPedido?.id]);
   const [desconto, setDesconto] = useState("");
   const [acrescimo, setAcrescimo] = useState("");
 
