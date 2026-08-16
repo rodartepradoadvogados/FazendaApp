@@ -195,6 +195,8 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       {semen && (semen.abaixo_minimo.convencional || semen.abaixo_minimo.sexado) && (
         <div className="mb-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "0.6rem 0.8rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--red)", marginTop: "0.1rem" }} />
@@ -354,8 +356,10 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
           ))}
         </div>
       )}
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Data da inseminação"><input type="date" style={inputStyle} value={dataServico} onChange={(e) => setDataServico(e.target.value)} /></Campo>
         <Campo label="Categoria do touro / sêmen">
           <select style={inputStyle} value={categoria} onChange={(e) => { setCategoria(e.target.value as typeof categoria); setTouro(""); }}>
@@ -434,6 +438,8 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+      </div>
       </div>
     </>
   );

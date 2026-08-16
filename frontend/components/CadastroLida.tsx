@@ -117,73 +117,72 @@ export default function CadastroLida() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><ClipboardList size={16} /> Lida — tarefas gerais da fazenda</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Nova
-        </button>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2"><ClipboardList size={16} /> Lida — tarefas gerais da fazenda</span>
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+              <Plus size={14} /> Nova
+            </button>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Trabalho da fazenda que não é protocolo de animal — limpar um cocho a cada tantos dias, acompanhar uma obra
+            com foto diária, manutenção. Sem Tipo produtivo/reprodutivo/sanitário: fica sempre fora desses filtros da
+            Central de Protocolos, mas aparece normalmente na Agenda e no Acompanhamento/Histórico.
+          </p>
+
+          {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+          {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+          {itens && (
+            <>
+              <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+                <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+                <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar lida…" />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="fazenda-table">
+                  <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Modo</th><th>Detalhe</th><th></th></tr></thead>
+                  <tbody>
+                    {linhasOrdenadas.map((l) => (
+                      <tr key={l.id}>
+                        <td style={{ fontWeight: 700 }}>{l.nome}{!l.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{l.modo === "frequencia" ? "Por frequência" : "Por período"}</td>
+                        <td style={{ fontSize: "0.78rem" }}>
+                          {l.modo === "frequencia" ? `A cada ${l.frequencia_dias} dias` : `D0 a D${l.duracao_dias ?? "?"}`}
+                        </td>
+                        <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(l)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(l)}>
+                            <Trash2 size={13} /> Excluir
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma lida cadastrada ainda.</td></tr>}
+                    {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Trabalho da fazenda que não é protocolo de animal — limpar um cocho a cada tantos dias, acompanhar uma obra
-        com foto diária, manutenção. Sem Tipo produtivo/reprodutivo/sanitário: fica sempre fora desses filtros da
-        Central de Protocolos, mas aparece normalmente na Agenda e no Acompanhamento/Histórico.
-      </p>
-
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && (
-        <FormLida
-          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa} estoque={estoque}
-        />
-      )}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar lida…" />
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        {editando !== null ? (
+          <FormLida
+            form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+            acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa} estoque={estoque}
+          />
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma lida para editar, ou clique em Nova.</p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th>Modo</th><th>Detalhe</th><th></th></tr></thead>
-              <tbody>
-                {linhasOrdenadas.map((l) => (
-                  <Fragment key={l.id}>
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{l.nome}{!l.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{l.modo === "frequencia" ? "Por frequência" : "Por período"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>
-                        {l.modo === "frequencia" ? `A cada ${l.frequencia_dias} dias` : `D0 a D${l.duracao_dias ?? "?"}`}
-                      </td>
-                      <td style={{ textAlign: "right", display: "flex", justifyContent: "flex-end", gap: "0.4rem" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(l)}>
-                          <Pencil size={13} /> Editar
-                        </button>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => excluir(l)}>
-                          <Trash2 size={13} /> Excluir
-                        </button>
-                      </td>
-                    </tr>
-                    {editando === l.id && (
-                      <tr><td colSpan={4} style={{ padding: 0 }}>
-                        <FormLida
-                          form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                          acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa} estoque={estoque}
-                        />
-                      </td></tr>
-                    )}
-                  </Fragment>
-                ))}
-                {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma lida cadastrada ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

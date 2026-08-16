@@ -487,6 +487,22 @@ export default function FinanceiroPage() {
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
   const resultado = receitas - despesas;
 
+  // Panorama da coluna esquerda de Contas a pagar/a receber (ver tela
+  // "Consultar" do plano de duas colunas) — só faz sentido "vencido"/"a
+  // vencer" nessas duas abas (contas ainda em aberto); pagas/recebidas/
+  // extrato mostram só o total do período filtrado.
+  const kpisContas = useMemo(() => {
+    if (!CONTAS_IDS.has(rel)) return null;
+    const total = filtrados.reduce((s, r) => s + (r.valor || 0), 0);
+    if (rel !== "a_pagar" && rel !== "a_receber") return { total, vencido: null as number | null, aVencer: null as number | null };
+    const hoje = new Date().toISOString().slice(0, 10);
+    const em7dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const abertos = filtrados.filter((r) => r.valor_pago == null);
+    const vencido = abertos.filter((r) => r.data_vencimento && r.data_vencimento < hoje).reduce((s, r) => s + (r.valor || 0), 0);
+    const aVencer = abertos.filter((r) => r.data_vencimento && r.data_vencimento >= hoje && r.data_vencimento <= em7dias).reduce((s, r) => s + (r.valor || 0), 0);
+    return { total, vencido, aVencer };
+  }, [filtrados, rel]);
+
   // Fluxo de caixa mensal (com saldo acumulado)
   const fluxoMensal = useMemo(() => {
     const by = new Map<string, { mes: string; entradas: number; saidas: number }>();
@@ -605,6 +621,70 @@ export default function FinanceiroPage() {
 
   const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
+  // Cartão de filtros — reaproveitado tanto na coluna esquerda de Contas
+  // (a pagar/a receber/pagas/recebidas/extrato, ver kpisContas acima) quanto
+  // no layout de coluna única dos outros relatórios (Fluxo/DRE/Livro...).
+  const filtrosCard = (
+    <div className="card mb-4">
+      <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+      <div className="mb-3">
+        <FiltrosSalvos tela={`financeiro_${rel}`} valor={filtrosAtuais()} aoAplicar={aplicarFiltrosSalvos} />
+      </div>
+      <div className="flex flex-wrap gap-3 items-end">
+        {CONTAS_IDS.has(rel) ? (
+          <div>
+            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Período por</label>
+            <div className="flex gap-2">
+              <select style={inputStyle} value={campoPeriodoContas} onChange={(e) => setCampoPeriodoContas(e.target.value as any)}>
+                <option value="emissao">Emissão</option>
+                <option value="vencimento">Vencimento</option>
+                {rel !== "a_pagar" && rel !== "a_receber" && <option value="pagamento">Pagamento</option>}
+              </select>
+              <input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} title="De" />
+              <input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} title="Até" />
+            </div>
+          </div>
+        ) : <>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+        </>}
+        <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Centro de custo</label>
+          <select style={inputStyle} value={centro} onChange={(e) => setCentro(e.target.value)}><option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}</select></div>
+        {CONTAS_IDS.has(rel) && (
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta bancária</label>
+            <select style={inputStyle} value={contaBanco} onChange={(e) => setContaBanco(e.target.value)}><option value="">Todas</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}</select></div>
+        )}
+        {!CONTAS_IDS.has(rel) && <>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Tipo</label>
+            <select style={inputStyle} value={relTipo} onChange={(e) => setRelTipo(e.target.value as any)}>
+              <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fornecedor / cliente</label>
+            <select style={inputStyle} value={relFornecedor} onChange={(e) => setRelFornecedor(e.target.value)}>
+              <option value="">Todos</option>{opcoesRel.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Produto / serviço</label>
+            <select style={inputStyle} value={relProduto} onChange={(e) => setRelProduto(e.target.value)}>
+              <option value="">Todos</option>{opcoesProdutoRel.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
+            <div style={{ position: "relative" }}>
+              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+              <input style={{ ...inputStyle, paddingLeft: "1.6rem" }} value={relDocumento} onChange={(e) => setRelDocumento(e.target.value)} placeholder="ex.: 4521" /></div></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta gerencial</label>
+            <FiltroContaGerencial contas={planoContas}
+              tipos={relTipo === "receita" ? ["receita"] : relTipo === "despesa" ? ["despesa"] : ["despesa", "receita"]}
+              codigo={relConta} nome={relContaNome}
+              onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
+        </>}
+        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
+          {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · </>}
+          {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
+        </span>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
@@ -650,73 +730,32 @@ export default function FinanceiroPage() {
           : rel === "compra_semen" ? <RelatorioCompraSemenView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
-        {/* Filtros */}
-        <div className="card mb-4">
-          <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-          <div className="mb-3">
-            <FiltrosSalvos tela={`financeiro_${rel}`} valor={filtrosAtuais()} aoAplicar={aplicarFiltrosSalvos} />
-          </div>
-          <div className="flex flex-wrap gap-3 items-end">
-            {CONTAS_IDS.has(rel) ? (
-              <div>
-                <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Período por</label>
-                <div className="flex gap-2">
-                  <select style={inputStyle} value={campoPeriodoContas} onChange={(e) => setCampoPeriodoContas(e.target.value as any)}>
-                    <option value="emissao">Emissão</option>
-                    <option value="vencimento">Vencimento</option>
-                    {rel !== "a_pagar" && rel !== "a_receber" && <option value="pagamento">Pagamento</option>}
-                  </select>
-                  <input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} title="De" />
-                  <input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} title="Até" />
-                </div>
-              </div>
-            ) : <>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
-            </>}
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Centro de custo</label>
-              <select style={inputStyle} value={centro} onChange={(e) => setCentro(e.target.value)}><option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}</select></div>
-            {CONTAS_IDS.has(rel) && (
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta bancária</label>
-                <select style={inputStyle} value={contaBanco} onChange={(e) => setContaBanco(e.target.value)}><option value="">Todas</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}</select></div>
-            )}
-            {!CONTAS_IDS.has(rel) && <>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Tipo</label>
-                <select style={inputStyle} value={relTipo} onChange={(e) => setRelTipo(e.target.value as any)}>
-                  <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fornecedor / cliente</label>
-                <select style={inputStyle} value={relFornecedor} onChange={(e) => setRelFornecedor(e.target.value)}>
-                  <option value="">Todos</option>{opcoesRel.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Produto / serviço</label>
-                <select style={inputStyle} value={relProduto} onChange={(e) => setRelProduto(e.target.value)}>
-                  <option value="">Todos</option>{opcoesProdutoRel.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...inputStyle, paddingLeft: "1.6rem" }} value={relDocumento} onChange={(e) => setRelDocumento(e.target.value)} placeholder="ex.: 4521" /></div></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta gerencial</label>
-                <FiltroContaGerencial contas={planoContas}
-                  tipos={relTipo === "receita" ? ["receita"] : relTipo === "despesa" ? ["despesa"] : ["despesa", "receita"]}
-                  codigo={relConta} nome={relContaNome}
-                  onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
-            </>}
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
-              {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · </>}
-              {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
-            </span>
-          </div>
-        </div>
-
         {CONTAS_IDS.has(rel) ? (
-          <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
-            onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
-            onEditar={(l) => setEditando(l)}
-            onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
-            onEstornado={recarregar} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+              <div className={kpisContas?.vencido != null ? "grid grid-cols-3 gap-2 mb-4" : "grid grid-cols-1 gap-2 mb-4"}>
+                {kpisContas?.vencido != null ? (
+                  <>
+                    <KPI v={formatBRL(kpisContas.total)} l={rel === "a_pagar" ? "Total em aberto" : "Total a receber"} c="var(--dourado-light)" />
+                    <KPI v={formatBRL(kpisContas.vencido)} l="Vencido" c="var(--red)" />
+                    <KPI v={formatBRL(kpisContas.aVencer ?? 0)} l="Vence em 7 dias" c="var(--amber)" />
+                  </>
+                ) : (
+                  <KPI v={formatBRL(kpisContas?.total ?? 0)} l="Total do período" c="var(--dourado-light)" />
+                )}
+              </div>
+              {filtrosCard}
+            </div>
+            <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
+              <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
+                onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
+                onEditar={(l) => setEditando(l)}
+                onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })}
+                onEstornado={recarregar} />
+            </div>
+          </div>
         ) : <>
+        {filtrosCard}
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           {rel === "fluxo" && <>
@@ -1240,6 +1279,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
           <span style={{ fontSize: "0.85rem" }}>
@@ -1250,7 +1291,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
             {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
           </button>
         </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+        <div className="overflow-x-auto">
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead style={theadStickyStyle}><tr>
               <th style={theadStickyStyle}></th>
@@ -1291,8 +1332,10 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           </table>
         </div>
       </div>
+      </div>
 
-      {selecionados.size > 0 && (
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {selecionados.size > 0 ? (
         <div className="card">
           <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
             <span>Baixa de {selecionados.size} lançamento(s) — {formatBRL(totalSelecionado)}</span>
@@ -1406,7 +1449,14 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
         </div>
+      ) : (
+        <div className="card" style={{ textAlign: "center", padding: "2.4rem 1rem" }}>
+          <Check size={22} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma ou mais notas à esquerda para ver os dados da baixa.</p>
+        </div>
       )}
+      </div>
+      </div>
     </div>
   );
 }
@@ -3738,11 +3788,13 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
           <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
+        <div className="overflow-x-auto">
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead style={theadStickyStyle}><tr>
               <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
@@ -3784,8 +3836,10 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
           </div>
         )}
       </div>
+      </div>
 
-      {notaSelecionada && (
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {notaSelecionada ? (
         <div className="card">
           <div className="card-header mb-3">
             Tratar {tipo === "receita" ? "recebimento" : "pagamento"} — {notaSelecionada.descricao} · {formatBRL(notaSelecionada.valor)}
@@ -3901,7 +3955,14 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
         </div>
+      ) : (
+        <div className="card" style={{ textAlign: "center", padding: "2.4rem 1rem" }}>
+          <Circle size={22} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma nota à esquerda para tratar {tipo === "receita" ? "o recebimento" : "o pagamento"}.</p>
+        </div>
       )}
+      </div>
+      </div>
     </div>
   );
 }

@@ -230,6 +230,8 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Modalidade">
           <select style={inputStyle} value={modo} onChange={(e) => { setModo(e.target.value as any); setErro(null); setSucesso(null); }}>
@@ -265,6 +267,20 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
         )}
       </div>
 
+      <UltimosLancados<ControleRecente>
+        titulo="Últimos controles lançados"
+        linhas={recentes}
+        colunas={[
+          { label: "Animal", render: (l) => <span style={{ fontWeight: 700 }}>{l.numero}</span> },
+          { label: "Data", render: (l) => (l.data ? formatDate(l.data) : "—") },
+          { label: "kg", render: (l) => l.producao_kg ?? "—", alinhar: "right" },
+        ]}
+        tipoExclusao="controle"
+        onExcluido={carregarRecentes}
+      />
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       {modo === "planilha" && (
         <RevisarPlanilhaControleLeiteiro onConfirmado={carregarRecentes} />
       )}
@@ -333,18 +349,8 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
           <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
         </div>
       )}
-
-      <UltimosLancados<ControleRecente>
-        titulo="Últimos controles lançados"
-        linhas={recentes}
-        colunas={[
-          { label: "Animal", render: (l) => <span style={{ fontWeight: 700 }}>{l.numero}</span> },
-          { label: "Data", render: (l) => (l.data ? formatDate(l.data) : "—") },
-          { label: "kg", render: (l) => l.producao_kg ?? "—", alinhar: "right" },
-        ]}
-        tipoExclusao="controle"
-        onExcluido={carregarRecentes}
-      />
+      </div>
+      </div>
     </>
   );
 }

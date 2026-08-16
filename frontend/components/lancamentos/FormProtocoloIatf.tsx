@@ -109,9 +109,15 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
     }
   }
 
-  if (!ativos || !ativos.length) return null;
+  if (!ativos || !ativos.length) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo IATF em andamento.</p>
+      </div>
+    );
+  }
   return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+    <div className="card" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
         Protocolos IATF em andamento ({ativos.length})
       </div>
@@ -222,7 +228,12 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         onChange={setModo}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Seleção">
           <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
             <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
@@ -314,11 +325,12 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
           )}
         </>
       )}
-      <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+      </div>
       </div>
     </>
   );

@@ -225,6 +225,8 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <Campo label="Matriz / novilha (servidas) — animal(is), lote(s) ou Agenda do veterinário" full>
         <TabBar<"animal" | "lote" | "agenda">
           abas={[
@@ -326,8 +328,10 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
           <strong>{numeroUltimo}:</strong> {resumoUltimoDiagnostico(ultimoServicoAnimal)}
         </p>
       )}
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
         <Campo label="Método">
           <select style={inputStyle} value={metodo} onChange={(e) => setMetodo(e.target.value)}>
@@ -377,6 +381,8 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+      </div>
       </div>
 
       {popupOrigem && (
