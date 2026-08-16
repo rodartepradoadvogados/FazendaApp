@@ -149,6 +149,11 @@ class Secagem(SQLModel, table=True):
     motivo: str  # doente | baixa_producao | comportamento | mastite | casco | rotina | outros
     escore_condicao_corporal: Optional[float] = None  # 1 a 5, passo 0,25
     observacao: Optional[str] = None
+    # Resposta explícita de "aplicar vacina pré-parto?" no momento da secagem
+    # (ver POST /producao/secagem) — None é dado legado/sem resposta; True/
+    # False fica gravado no histórico da vaca mesmo quando a resposta é "não"
+    # (nesse caso não gera pendência nenhuma na Agenda, só o registro aqui).
+    vacina_pre_parto: Optional[bool] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

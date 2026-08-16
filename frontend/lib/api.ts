@@ -4111,6 +4111,7 @@ export async function criarSecagem(dados: {
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
   vacinas_pre_parto?: string[];
   vacina_pre_parto_aplicada_agora?: boolean;
+  vacina_pre_parto?: boolean | null;
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

@@ -288,6 +288,57 @@ class TestVacinaPreParto:
             assert mov is not None
             assert mov.origem_tipo == "vacina_pre_parto"
 
+    def test_resposta_nao_fica_gravada_no_historico_sem_gerar_pendencia(self, client):
+        """"Não" não pode virar pendência na Agenda, mas precisa continuar
+        registrado na secagem — antes essa resposta simplesmente não era
+        gravada em lugar nenhum."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="501", raca="Girolando", del_dias=220, ativo=True))
+            s.commit()
+
+        r = c.post("/producao/secagem", json={
+            "numero_matriz": "501", "data_secagem": "2026-07-08", "motivo": "rotina", "vacina_pre_parto": False,
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "501")).first()
+            assert secagem.vacina_pre_parto is False
+            pendencia = s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.numero_matriz == "501")).first()
+            assert pendencia is None
+
+    def test_resposta_sim_fica_gravada_junto_com_a_pendencia(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="502", raca="Girolando", del_dias=220, ativo=True))
+            s.commit()
+
+        c.post("/producao/secagem", json={
+            "numero_matriz": "502", "data_secagem": "2026-07-08", "motivo": "rotina",
+            "vacina_pre_parto": True, "vacinas_pre_parto": ["Bovilis"],
+        })
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "502")).first()
+            assert secagem.vacina_pre_parto is True
+
+    def test_sem_resposta_fica_nulo(self, client):
+        """Dado legado/sem resposta explícita — não confunde com "não"."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="503", raca="Girolando", del_dias=220, ativo=True))
+            s.commit()
+
+        c.post("/producao/secagem", json={"numero_matriz": "503", "data_secagem": "2026-07-08", "motivo": "rotina"})
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "503")).first()
+            assert secagem.vacina_pre_parto is None
+
 
 class TestSugestaoLoteEvento:
     def test_sugere_lote_de_bezerras_ao_nascer(self, client):

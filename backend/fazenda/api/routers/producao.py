@@ -1229,6 +1229,11 @@ class SecagemIn(BaseModel):
     # baixa de estoque direto, sem duplicar a pendência na Agenda.
     vacinas_pre_parto: list[str] = []
     vacina_pre_parto_aplicada_agora: bool = False
+    # Resposta explícita de "aplicar vacina pré-parto?" (sim/não) — diferente
+    # de `vacinas_pre_parto` (a lista de quais vacinas, só preenchida se a
+    # resposta for sim): grava no histórico da secagem mesmo quando a
+    # resposta é "não", sem gerar pendência nenhuma na Agenda nesse caso.
+    vacina_pre_parto: bool | None = None
 
 
 @router.post("/secagem")
@@ -1248,6 +1253,7 @@ def registrar_secagem(
         motivo=dados.motivo,
         escore_condicao_corporal=dados.escore_condicao_corporal,
         observacao=dados.observacao,
+        vacina_pre_parto=dados.vacina_pre_parto,
         usuario_id=_usuario_id_seguro(user),
     ))
 
