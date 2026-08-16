@@ -3,11 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package } from "lucide-react";
 import {
   fetchPedidos, fetchPedido, criarPedido, atualizarPedido, atualizarStatusPedido, excluirPedido, fetchOpcoesPedidos,
-  fetchCentrosCusto, fetchPlanoContas, formatBRL, formatDate,
+  fetchCentrosCusto, fetchPlanoContas, fetchEstoque, fetchFornecedores, formatBRL, formatDate,
   type PedidoPayload, type PedidoItemPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import NovoItemEstoque from "@/components/NovoItemEstoque";
+import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -283,7 +286,29 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  const opcoesContraparte = tipo === "compra" ? opcoes.fornecedores : opcoes.clientes;
+  // Produtos do estoque (pra não deixar o campo "produto" em texto livre —
+  // mesmo picker + "cadastrar novo" que Financeiro já usa) e fornecedores/
+  // clientes recém-cadastrados (a lista `opcoes` só é buscada uma vez lá em
+  // cima em PedidosPage; sem isto, cadastrar um fornecedor novo aqui dentro
+  // não aparecia no seletor até recarregar a página inteira).
+  const [produtosEstoque, setProdutosEstoque] = useState<EstoqueItemPicker[]>([]);
+  const carregarEstoque = () => fetchEstoque().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+  })))).catch(() => {});
+  useEffect(() => { carregarEstoque(); }, []);
+  const [fornecedoresCadastro, setFornecedoresCadastro] = useState<{ nome: string; tipo: string }[]>([]);
+  const carregarFornecedores = () => fetchFornecedores().then((d: any[]) => setFornecedoresCadastro((d || []).map((f) => ({ nome: f.nome, tipo: f.tipo })))).catch(() => {});
+  useEffect(() => { carregarFornecedores(); }, []);
+  const [abrirNovoProduto, setAbrirNovoProduto] = useState<number | null>(null);
+  const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
+
+  const opcoesContraparte = useMemo(() => {
+    const doProp = tipo === "compra" ? opcoes.fornecedores : opcoes.clientes;
+    const tiposAlvo = tipo === "compra" ? ["fornecedor", "fabricante"] : ["cliente"];
+    const doCadastro = fornecedoresCadastro.filter((f) => tiposAlvo.includes(f.tipo)).map((f) => f.nome);
+    return Array.from(new Set([...doProp, ...doCadastro])).sort();
+  }, [tipo, opcoes, fornecedoresCadastro]);
   const tipoConta = tipo === "compra" ? "despesa" : "receita";
 
   function atualizarItem(idx: number, patch: Partial<PedidoItemPayload>) {
@@ -323,9 +348,15 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
             <option value="compra">Compra</option><option value="venda">Venda</option>
           </select></div>
         <div><label style={labelStyle}>Fornecedor / Cliente</label>
-          <select style={{ ...inputStyle, minWidth: "12rem" }} value={fornecedorCliente} onChange={(e) => setFornecedorCliente(e.target.value)}>
-            <option value="">— Nenhum —</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
-          </select></div>
+          <div className="flex items-center gap-2">
+            <select style={{ ...inputStyle, minWidth: "12rem" }} value={fornecedorCliente} onChange={(e) => setFornecedorCliente(e.target.value)}>
+              <option value="">— Nenhum —</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" title={`Cadastrar novo ${tipo === "compra" ? "fornecedor" : "cliente"}`} style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
+              <Plus size={13} /> Novo
+            </button>
+          </div>
+        </div>
         <div><label style={labelStyle}>Centro de custo</label>
           <select style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
             <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
@@ -357,7 +388,16 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
                       <option value="">Selecione…</option>{opcoes.servicos.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   ) : (
-                    <input style={{ ...inputStyle, width: "100%" }} value={item.produto_servico} onChange={(e) => atualizarItem(idx, { produto_servico: e.target.value })} placeholder="Nome do produto" />
+                    <div className="flex items-center gap-2">
+                      <div style={{ flex: 1 }}>
+                        <EstoquePicker itens={produtosEstoque} value={item.produto_servico} todasFinalidades incluirNaoEstocaveis
+                          placeholder="Selecionar produto…"
+                          onChange={(nome) => atualizarItem(idx, { produto_servico: nome })} />
+                      </div>
+                      <button type="button" className="btn-ghost" title="Cadastrar novo produto" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoProduto(idx)}>
+                        <Plus size={13} /> Novo
+                      </button>
+                    </div>
                   )}
                 </div>
                 <button title="Remover item" onClick={() => removerItem(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}><Trash2 size={15} /></button>
@@ -385,6 +425,32 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
         <button className="btn-secondary" onClick={onCancelar}>Cancelar</button>
         <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
+
+      {abrirNovoProduto !== null && (
+        <Modal title="Novo produto (estoque)" onClose={() => setAbrirNovoProduto(null)} width="900px" zIndex={95}>
+          <NovoItemEstoque
+            onCriado={(item) => {
+              if (item?.nome && abrirNovoProduto !== null) atualizarItem(abrirNovoProduto, { produto_servico: item.nome });
+              carregarEstoque();
+              setAbrirNovoProduto(null);
+            }}
+            onCancelar={() => setAbrirNovoProduto(null)}
+          />
+        </Modal>
+      )}
+      {abrirNovoFornecedor && (
+        <Modal title={`Novo ${tipo === "compra" ? "fornecedor" : "cliente"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px" zIndex={95}>
+          <NovoFornecedorRapido
+            tipoSugerido={tipo === "compra" ? "despesa" : "receita"}
+            onCriado={(f) => {
+              if (f?.nome) setFornecedorCliente(f.nome);
+              carregarFornecedores();
+              setAbrirNovoFornecedor(false);
+            }}
+            onCancelar={() => setAbrirNovoFornecedor(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
