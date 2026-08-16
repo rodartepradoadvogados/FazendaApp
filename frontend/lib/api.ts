@@ -5334,6 +5334,38 @@ export async function atualizarRastreioPedido(id: number, dados: { enviado: bool
   return res.json();
 }
 
+// Anexos de Pedido — orçamento, ordem de serviço ou outro documento, com
+// validade opcional (ver PedidoAnexo no backend); quando há validade, a
+// Agenda alerta 2 dias antes do vencimento enquanto o pedido segue aberto/
+// parcialmente atendido.
+export const CATEGORIAS_PEDIDO_ANEXO = ["Orçamento", "Ordem de serviço", "Outro documento"];
+export type AnexoPedido = {
+  id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;
+  data_validade?: string | null; criado_em?: string;
+};
+export async function anexarArquivoPedido(pedidoId: number, file: File, categoria: string, dataValidade?: string | null): Promise<AnexoPedido> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("categoria", categoria);
+  if (dataValidade) form.append("data_validade", dataValidade);
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+export async function listarAnexosPedido(pedidoId: number): Promise<AnexoPedido[]> {
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos do pedido");
+  return res.json();
+}
+export function urlAnexoPedido(anexoId: number): string {
+  return `${API}/pedidos/anexos/${anexoId}`;
+}
+export async function excluirAnexoPedido(anexoId: number) {
+  const res = await authFetch(`${API}/pedidos/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
+  return res.json();
+}
+
 export async function fetchModelosImportar() {
   const res = await authFetch(`${API}/importar/modelos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Modelos de importação error: ${res.status}`);

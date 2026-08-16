@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package, AlertTriangle, Truck, CreditCard } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package, AlertTriangle, Truck, CreditCard, FileText, Upload, X } from "lucide-react";
 import {
   fetchPedidos, fetchPedido, criarPedido, atualizarPedido, atualizarStatusPedido, atualizarRastreioPedido, excluirPedido, fetchOpcoesPedidos,
   fetchCentrosCusto, fetchPlanoContas, fetchEstoque, fetchFornecedores, formatBRL, formatDate,
+  CATEGORIAS_PEDIDO_ANEXO, anexarArquivoPedido, listarAnexosPedido, excluirAnexoPedido, urlAnexoPedido, type AnexoPedido,
   type PedidoPayload, type PedidoItemPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -427,6 +428,27 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
   const [abrirNovoProduto, setAbrirNovoProduto] = useState<number | null>(null);
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
 
+  // Anexos (orçamento/OS/outro documento) — se tem validade, a Agenda avisa
+  // 2 dias antes do vencimento enquanto o pedido seguir aberto/parcialmente
+  // atendido. Igual ao bloco de anexo do FormFinanceiro: arquivo novo fica
+  // "staged" e só sobe de fato depois que o pedido é salvo (precisa do id).
+  type AnexoStagedPedido = { file: File; categoria: string; data_validade: string };
+  const [anexosStaged, setAnexosStaged] = useState<AnexoStagedPedido[]>([]);
+  const [anexosExistentes, setAnexosExistentes] = useState<AnexoPedido[]>([]);
+  const [categoriaAnexoPadrao, setCategoriaAnexoPadrao] = useState(CATEGORIAS_PEDIDO_ANEXO[0]);
+  const anexoInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (pedido) listarAnexosPedido(pedido.id).then(setAnexosExistentes).catch(() => {});
+  }, [pedido?.id]);
+  function adicionarAnexosStaged(files: File[]) {
+    if (!files.length) return;
+    setAnexosStaged((arr) => [...arr, ...files.map((file) => ({ file, categoria: categoriaAnexoPadrao, data_validade: "" }))]);
+  }
+  async function excluirAnexoExistente(id: number) {
+    if (!confirm("Excluir este anexo do pedido?")) return;
+    try { await excluirAnexoPedido(id); setAnexosExistentes((arr) => arr.filter((a) => a.id !== id)); } catch (e: any) { setErro(e.message); }
+  }
+
   const opcoesContraparte = useMemo(() => {
     const doProp = tipo === "compra" ? opcoes.fornecedores : opcoes.clientes;
     const tiposAlvo = tipo === "compra" ? ["fornecedor", "fabricante"] : ["cliente"];
@@ -459,7 +481,12 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
       responsavel: responsavel || null, itens,
     };
     try {
-      if (pedido) await atualizarPedido(pedido.id, dados); else await criarPedido(dados);
+      let id: number;
+      if (pedido) { await atualizarPedido(pedido.id, dados); id = pedido.id; }
+      else { id = (await criarPedido(dados)).id; }
+      if (anexosStaged.length) {
+        await Promise.all(anexosStaged.map((a) => anexarArquivoPedido(id, a.file, a.categoria, a.data_validade || undefined)));
+      }
       onSalvo();
     } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
   }
@@ -543,6 +570,74 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
       </div>
 
       <div><label style={labelStyle}>Observação (opcional)</label><input style={{ ...inputStyle, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+
+      <div>
+        <label style={{ ...labelStyle, margin: "0 0 0.3rem" }}>Anexos (orçamento, ordem de serviço ou outro documento)</label>
+        {anexosExistentes.length > 0 && (
+          <ul style={{ marginBottom: "0.5rem", fontSize: "0.78rem", listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            {anexosExistentes.map((a) => (
+              <li key={a.id} className="card" style={{ padding: "0.4rem 0.6rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <FileText size={13} style={{ flexShrink: 0, color: "var(--dourado-light)" }} />
+                <a href={urlAnexoPedido(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {a.nome_arquivo}
+                </a>
+                <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{a.categoria}</span>
+                {a.data_validade && <span style={{ color: "var(--amber)", flexShrink: 0 }}>válido até {formatDate(a.data_validade)}</span>}
+                <button type="button" className="btn-ghost" title="Excluir anexo" onClick={() => excluirAnexoExistente(a.id)} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                  <X size={12} style={{ color: "var(--red)" }} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div
+          onDrop={(e) => { e.preventDefault(); adicionarAnexosStaged(Array.from(e.dataTransfer.files || [])); }}
+          onDragOver={(e) => e.preventDefault()}
+          className="card"
+          style={{ border: "1px dashed var(--border)", background: "var(--surface-2)", padding: "0.7rem", textAlign: "center" }}
+        >
+          <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
+            <FileText size={15} style={{ color: "var(--dourado-light)" }} />
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Arraste orçamento/OS/documento aqui, ou</span>
+            <select style={{ ...inputStyle, fontSize: "0.76rem" }} value={categoriaAnexoPadrao} onChange={(e) => setCategoriaAnexoPadrao(e.target.value)}>
+              {CATEGORIAS_PEDIDO_ANEXO.map((c) => <option key={c}>{c}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={() => anexoInputRef.current?.click()}>
+              <Upload size={12} /> selecionar arquivo(s)
+            </button>
+          </div>
+          <input ref={anexoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
+            onChange={(e) => { adicionarAnexosStaged(Array.from(e.target.files || [])); e.target.value = ""; }}
+            style={{ display: "none" }} />
+          {anexosStaged.length > 0 && (
+            <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
+              {anexosStaged.map((a, i) => (
+                <li key={i} className="card" style={{ padding: "0.4rem 0.5rem", marginBottom: "0.35rem", background: "var(--surface)" }}>
+                  <div className="flex items-center justify-between" style={{ gap: "0.4rem" }}>
+                    <a href={URL.createObjectURL(a.file)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {a.file.name}
+                    </a>
+                    <button type="button" className="btn-ghost" title="Remover" onClick={() => setAnexosStaged((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                      <X size={12} style={{ color: "var(--red)" }} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2" style={{ marginTop: "0.3rem" }}>
+                    <select style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} value={a.categoria} title="Tipo deste documento"
+                      onChange={(e) => setAnexosStaged((arr) => arr.map((x, j) => j === i ? { ...x, categoria: e.target.value } : x))}>
+                      {CATEGORIAS_PEDIDO_ANEXO.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                    <input type="date" style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} title="Data de validade (orçamento/OS) — opcional"
+                      value={a.data_validade} onChange={(e) => setAnexosStaged((arr) => arr.map((x, j) => j === i ? { ...x, data_validade: e.target.value } : x))} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+            Data de validade opcional — se preenchida, a Agenda avisa 2 dias antes do vencimento enquanto o pedido seguir aberto/parcialmente atendido.
+          </p>
+        </div>
+      </div>
 
       {erro && <div className="alert-critico"><span>{erro}</span></div>}
       <div className="flex gap-2 justify-end">

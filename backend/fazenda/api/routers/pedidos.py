@@ -11,17 +11,20 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.config import settings
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaGerencial, Fornecedor, MovimentoEstoque, Pedido, PedidoItem, ServicoCadastro, Usuario,
+    CATEGORIAS_PEDIDO_ANEXO, ContaGerencial, Fornecedor, MovimentoEstoque, Pedido, PedidoAnexo, PedidoItem, ServicoCadastro, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -349,6 +352,121 @@ def atualizar_rastreio_pedido(
     return {"id": pedido.id, "enviado": pedido.enviado, "codigo_rastreio": pedido.codigo_rastreio, "link_rastreio": pedido.link_rastreio}
 
 
+# Tamanho máximo por anexo — mesmo limite de LancamentoAnexo (ver financeiro.py).
+TAMANHO_MAXIMO_ANEXO_PEDIDO = 15 * 1024 * 1024  # 15 MB
+
+
+def _caminho_anexo_pedido(session: Session, fazenda_id: int | None, pedido_id: int, nome_arquivo: str) -> str:
+    """fazenda-X/pedidos/{pedido_id}/0001_nome.ext — sequencial dentro do pedido."""
+    pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/pedidos/{pedido_id}"
+    existentes = session.exec(select(PedidoAnexo).where(PedidoAnexo.pedido_id == pedido_id)).all()
+    seq = 1 + len(existentes)
+    return f"{pasta}/{seq:04d}_{nome_arquivo}"
+
+
+@router.post("/{pedido_id}/anexos", status_code=201)
+async def anexar_arquivo_pedido(
+    pedido_id: int, file: UploadFile, categoria: str = Form(...),
+    data_validade: Optional[date] = Form(None),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Anexa um orçamento, ordem de serviço ou outro documento a um pedido já
+    criado. Se `data_validade` for informada, a Agenda passa a alertar 2 dias
+    antes do vencimento enquanto o pedido seguir aberto ou parcialmente
+    atendido (ver fazenda/rules/agenda_engine.py)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pedido = session.get(Pedido, pedido_id)
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    if categoria not in CATEGORIAS_PEDIDO_ANEXO:
+        raise HTTPException(status_code=400, detail=f"categoria deve ser uma de: {', '.join(CATEGORIAS_PEDIDO_ANEXO)}")
+    conteudo = await file.read()
+    if len(conteudo) > TAMANHO_MAXIMO_ANEXO_PEDIDO:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    nome_arquivo = file.filename or "arquivo"
+    caminho = _caminho_anexo_pedido(session, fazenda_id, pedido_id, nome_arquivo)
+    try:
+        enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream", bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    anexo = PedidoAnexo(
+        pedido_id=pedido_id,
+        nome_arquivo=nome_arquivo,
+        mime_type=file.content_type or "application/octet-stream",
+        tamanho_bytes=len(conteudo),
+        categoria=categoria,
+        data_validade=data_validade,
+        caminho_storage=caminho,
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+        fazenda_id=fazenda_id,
+    )
+    session.add(anexo)
+    session.commit()
+    session.refresh(anexo)
+    return {
+        "id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type,
+        "tamanho_bytes": anexo.tamanho_bytes, "categoria": anexo.categoria,
+        "data_validade": anexo.data_validade.isoformat() if anexo.data_validade else None,
+    }
+
+
+@router.get("/{pedido_id}/anexos")
+def listar_anexos_pedido(
+    pedido_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pedido = session.get(Pedido, pedido_id)
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    anexos = session.exec(select(PedidoAnexo).where(PedidoAnexo.pedido_id == pedido_id)).all()
+    return [
+        {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
+         "categoria": a.categoria, "data_validade": a.data_validade.isoformat() if a.data_validade else None,
+         "criado_em": a.criado_em.isoformat()}
+        for a in anexos
+    ]
+
+
+@router.get("/anexos/{anexo_id}")
+def baixar_anexo_pedido(
+    anexo_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> Response:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    anexo = session.get(PedidoAnexo, anexo_id)
+    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    try:
+        conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return Response(
+        content=conteudo, media_type=anexo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
+    )
+
+
+@router.delete("/anexos/{anexo_id}")
+def excluir_anexo_pedido(
+    anexo_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    anexo = session.get(PedidoAnexo, anexo_id)
+    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    if anexo.caminho_storage:
+        try:
+            excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    session.delete(anexo)
+    session.commit()
+    return {"excluido": True}
+
+
 @router.delete("/{pedido_id}", status_code=204)
 def excluir_pedido(
     pedido_id: int,
@@ -362,6 +480,13 @@ def excluir_pedido(
     vinculado = session.exec(select(ContaGerencial).where(ContaGerencial.pedido_id == pedido_id)).first()
     if vinculado:
         raise HTTPException(status_code=400, detail="Este pedido já tem lançamento financeiro vinculado — não pode ser excluído")
+    for a in session.exec(select(PedidoAnexo).where(PedidoAnexo.pedido_id == pedido_id)).all():
+        if a.caminho_storage:
+            try:
+                excluir_arquivo(a.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+            except RuntimeError:
+                pass
+        session.delete(a)
     for i in session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id)).all():
         session.delete(i)
     session.delete(pedido)

@@ -19,7 +19,7 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Patrimonio, Pedido, PedidoAnexo, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Secagem, SeedFlag, Servico,
@@ -331,6 +331,30 @@ def calcular_agenda(
             )
         ).all()
     ]
+    # Orçamento/OS anexados a pedido ainda aberto/parcialmente atendido, com
+    # validade — dispara o alerta "vence em breve" (ver AgendaEngine.calcular,
+    # param `pedidos_documentos_vencendo`). Junta com Pedido pra pegar
+    # numero_pedido/status/fornecedor_cliente sem duas idas ao banco por item.
+    _rotulo_status_pedido = {"aberto": "em aberto", "parcialmente_atendido": "parcialmente atendido"}
+    query_docs_pedido = (
+        select(PedidoAnexo, Pedido)
+        .join(Pedido, PedidoAnexo.pedido_id == Pedido.id)
+        .where(PedidoAnexo.data_validade.is_not(None), Pedido.status.in_(("aberto", "parcialmente_atendido")))
+    )
+    if fazenda_id is not None:
+        query_docs_pedido = query_docs_pedido.where(Pedido.fazenda_id == fazenda_id)
+    pedidos_documentos_vencendo = [
+        {
+            "pedido_id": pedido.id,
+            "numero_pedido": pedido.numero_pedido,
+            "categoria": anexo.categoria,
+            "data_validade": anexo.data_validade,
+            "fornecedor_cliente": pedido.fornecedor_cliente,
+            "status_label": _rotulo_status_pedido.get(pedido.status, pedido.status),
+        }
+        for anexo, pedido in session.exec(query_docs_pedido).all()
+    ]
+
     # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
     # ver AgendaEngine.calcular, param `lotes`) para não repetir o alerta
     # "Pré-parto" de quem já foi movido para esse lote.
@@ -388,6 +412,7 @@ def calcular_agenda(
         proxima_visita_bst_real=proxima_visita_bst_real,
         lotes=lotes,
         secagens=secagens,
+        pedidos_documentos_vencendo=pedidos_documentos_vencendo,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que

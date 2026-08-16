@@ -131,6 +131,7 @@ class AgendaEngine:
         proxima_visita_bst_real: date | None = None,
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
+        pedidos_documentos_vencendo: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -152,6 +153,10 @@ class AgendaEngine:
             secagens: Lista de dicts com campos do modelo Secagem — usada para
                 calcular o DEL de cada animal AO VIVO (ver `_del_dias_ao_vivo`),
                 em vez do `Animal.del_dias` congelado no último GERAL.csv.
+            pedidos_documentos_vencendo: Anexos de Pedido (orçamento/ordem de
+                serviço) com `data_validade`, já filtrados em agenda.py para
+                pedidos "aberto"/"parcialmente_atendido" — dispara alerta 2
+                dias antes do vencimento (ver PedidoAnexo/PUT /pedidos/{id}/anexos).
 
         Returns:
             AgendaResult com todos os blocos da agenda calculados.
@@ -571,6 +576,25 @@ class AgendaEngine:
                 data=data_referencia,
                 categoria="Gestão/Financeiro",
                 descricao=f"Comprar {item['nome']} — estoque abaixo do mínimo ({qtd} de {minimo} {item.get('unidade') or ''})",
+            ))
+
+        # 5c. PEDIDOS — orçamento/ordem de serviço vencendo (2 dias antes),
+        # enquanto o pedido segue aberto/parcialmente atendido (já filtrado
+        # em agenda.py, ver PedidoAnexo).
+        for doc in (pedidos_documentos_vencendo or []):
+            validade = doc.get("data_validade")
+            if not validade:
+                continue
+            alerta_em = validade - timedelta(days=2)
+            if not (data_referencia <= alerta_em <= limite_contas):
+                continue
+            eventos.append(AgendaItem(
+                data=alerta_em,
+                categoria="Gestão/Financeiro",
+                descricao=f"{doc.get('categoria', 'Documento')} do pedido {doc.get('numero_pedido', '')} vence em {validade.strftime('%d/%m/%Y')} — pedido ainda {doc.get('status_label', 'em aberto')}",
+                observacao=doc.get("fornecedor_cliente"),
+                ref=doc.get("numero_pedido"),
+                link=f"/pedidos?id={doc.get('pedido_id')}" if doc.get("pedido_id") else None,
             ))
 
         # 6. EVENTOS MANUAIS

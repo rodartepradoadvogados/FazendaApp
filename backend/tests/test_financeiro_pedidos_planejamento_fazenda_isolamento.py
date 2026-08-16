@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda, PedidoAnexo
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
@@ -143,6 +143,30 @@ class TestIsolamentoPedidos:
         observacoes = {p.get("observacao") for p in r.json()}
         assert "Fazenda 1 legado" in observacoes
         assert "Fazenda 2 legado" in observacoes
+
+
+class TestIsolamentoPedidoAnexo:
+    def test_fazenda_1_nao_acessa_anexo_de_pedido_da_fazenda_2(self, client, monkeypatch):
+        c, _ = client
+        import fazenda.api.routers.pedidos as pedidos_mod
+        _bucket: dict[str, bytes] = {}
+        monkeypatch.setattr(pedidos_mod, "enviar_arquivo", lambda caminho, conteudo, *a, **k: _bucket.__setitem__(caminho, conteudo))
+        monkeypatch.setattr(pedidos_mod, "baixar_arquivo", lambda caminho, *a, **k: _bucket[caminho])
+        monkeypatch.setattr(pedidos_mod, "excluir_arquivo", lambda caminho, *a, **k: _bucket.pop(caminho, None))
+
+        _como_fazenda(2)
+        pedido_id = c.post("/pedidos/", json=_pedido_payload()).json()["id"]
+        anexo_id = c.post(
+            f"/pedidos/{pedido_id}/anexos",
+            files={"file": ("orcamento.pdf", b"%PDF-1.4", "application/pdf")},
+            data={"categoria": "Orçamento"},
+        ).json()["id"]
+
+        _como_fazenda(1)
+        assert c.post(f"/pedidos/{pedido_id}/anexos", files={"file": ("x.pdf", b"x", "application/pdf")}, data={"categoria": "Orçamento"}).status_code == 404
+        assert c.get(f"/pedidos/{pedido_id}/anexos").status_code == 404
+        assert c.get(f"/pedidos/anexos/{anexo_id}").status_code == 404
+        assert c.delete(f"/pedidos/anexos/{anexo_id}").status_code == 404
 
 
 class TestIsolamentoOrcamento:

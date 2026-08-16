@@ -384,6 +384,32 @@ class PedidoItem(SQLModel, table=True):
     valor_atendido: float = 0
 
 
+CATEGORIAS_PEDIDO_ANEXO = ["Orçamento", "Ordem de serviço", "Outro documento"]
+
+
+class PedidoAnexo(SQLModel, table=True):
+    """Documento anexado a um Pedido — orçamento, ordem de serviço ou outro
+    documento (ver CATEGORIAS_PEDIDO_ANEXO). Mesmo padrão de armazenamento
+    de LancamentoAnexo (conteúdo no Supabase Storage, só metadados aqui),
+    mas com `data_validade` própria: é dela que a Agenda tira o alerta de
+    vencimento (2 dias antes, ver fazenda/rules/agenda_engine.py) enquanto
+    o pedido segue "aberto" ou "parcialmente_atendido"."""
+
+    __tablename__ = "pedido_anexo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    pedido_id: int = Field(foreign_key="pedido.id", index=True)
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    categoria: str  # um de CATEGORIAS_PEDIDO_ANEXO
+    data_validade: Optional[date] = None
+    caminho_storage: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
 # ---------------------------------------------------------------------------
 # Patrimônio
 # ---------------------------------------------------------------------------
