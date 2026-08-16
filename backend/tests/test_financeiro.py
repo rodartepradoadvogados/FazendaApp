@@ -436,6 +436,58 @@ class TestNumeroOsOrcamentoENumeroBoleto:
         assert r2.json()["numero_boleto"] == "999"
 
 
+class TestContextoFornecedor:
+    """GET /financeiro/contexto-fornecedor — coluna de histórico na tela de
+    lançamento (ver FormFinanceiro): em aberto, último lançamento, últimos
+    lançamentos e documentos já anexados a alguma nota daquele fornecedor."""
+
+    def test_sem_nome_devolve_vazio(self, client):
+        c, _ = client
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": ""})
+        assert r.status_code == 200
+        assert r.json() == {"em_aberto": 0.0, "ultimo_lancamento": None, "ultimos_lancamentos": [], "documentos_anexados": []}
+
+    def test_fornecedor_sem_lancamentos_devolve_vazio(self, client):
+        c, _ = client
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": "Fornecedor Fantasma"})
+        assert r.status_code == 200
+        assert r.json()["ultimos_lancamentos"] == []
+
+    def test_em_aberto_soma_so_o_que_nao_foi_pago(self, client):
+        c, _ = client
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Comigo",
+            "itens": [{"produto": "Ração", "valor_total": 1000.0}], "data_emissao": "2026-08-01",
+        })
+        pago = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Comigo",
+            "itens": [{"produto": "Sal mineral", "valor_total": 300.0}], "data_emissao": "2026-07-01",
+        }).json()
+        lanc_id = pago["ids"][0]
+        c.put(f"/financeiro/lancamentos/{lanc_id}/pagar", json={"data_pagamento": "2026-07-05", "valor_pago": 300.0})
+
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": "Comigo"})
+        corpo = r.json()
+        assert corpo["em_aberto"] == 1000.0
+        assert corpo["ultimo_lancamento"] == "2026-08-01"
+        assert len(corpo["ultimos_lancamentos"]) == 2
+        pagos = {l["valor"]: l["pago"] for l in corpo["ultimos_lancamentos"]}
+        assert pagos == {1000.0: False, 300.0: True}
+
+    def test_documentos_anexados_do_fornecedor(self, client):
+        c, _ = client
+        numero = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Comigo",
+            "itens": [{"produto": "Ração", "valor_total": 500.0}],
+        }).json()["numero_lancamento"]
+        c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("nf.pdf", b"conteudo", "application/pdf")})
+
+        r = c.get("/financeiro/contexto-fornecedor", params={"nome": "Comigo"})
+        docs = r.json()["documentos_anexados"]
+        assert len(docs) == 1
+        assert docs[0]["nome_arquivo"] == "nf.pdf"
+
+
 class TestAnexosLancamento:
     def _criar_lancamento(self, c) -> str:
         r = c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": [{"produto": "Insumo", "valor_total": 500.0}]})

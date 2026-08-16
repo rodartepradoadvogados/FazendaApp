@@ -5,6 +5,7 @@ import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
   type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido, criarClassificacao,
+  fetchContextoFornecedor, type ContextoFornecedor as ContextoFornecedorTipo,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload,
 } from "@/lib/api";
@@ -275,6 +276,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [novaClassificacaoNome, setNovaClassificacaoNome] = useState("");
   const [salvandoClassificacao, setSalvandoClassificacao] = useState(false);
   const [fornecedor, setFornecedor] = useState("");
+  // Coluna de contexto (esquerda): histórico do fornecedor/cliente escolhido
+  // acima — em aberto, último lançamento, últimos lançamentos, documentos já
+  // anexados. Só leitura; recarrega sempre que o fornecedor muda.
+  const [contextoFornecedor, setContextoFornecedor] = useState<ContextoFornecedorTipo | null>(null);
+  useEffect(() => {
+    const nome = fornecedor.trim();
+    if (!nome) { setContextoFornecedor(null); return; }
+    let cancelado = false;
+    fetchContextoFornecedor(nome, tipo).then((ctx) => { if (!cancelado) setContextoFornecedor(ctx); }).catch(() => { if (!cancelado) setContextoFornecedor(null); });
+    return () => { cancelado = true; };
+  }, [fornecedor, tipo]);
   const [responsavel, setResponsavel] = useState("");
   const [tipoDocumento, setTipoDocumento] = useState("");
   const [numeroDocumento, setNumeroDocumento] = useState("");
@@ -1081,6 +1093,214 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </div>
       )}
 
+      {/* Duas colunas, cada uma com rolagem própria: esquerda = dados do
+          lançamento (editável) + contexto/histórico do fornecedor (só
+          leitura); direita = produtos/serviços, pagamento e anexos — mesmo
+          padrão já usado em Alimentação > Nova dieta. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+
+      {/* Dados da nota (uma vez por lançamento) */}
+      <div className="card" style={{ background: "var(--fin-nota-bg)" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label={tipo === "receita" ? "Cliente" : "Fornecedor"}>
+          <div className="flex items-center gap-2">
+            <select style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
+              <option value="">Selecione…</option>
+              {fornecedoresDisponiveis.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" title={`Cadastrar novo ${tipo === "receita" ? "cliente" : "fornecedor"}`} style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
+              <Plus size={13} /> Novo
+            </button>
+          </div>
+        </Campo>
+        <Campo label="Centro de custo">
+          <select style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+            <option value="">Selecione…</option>
+            {/* Valor legado que não esteja mais na lista canônica — preservado para não perder o dado. */}
+            {centroCusto && !opcoes.centros_custo.includes(centroCusto) && <option value={centroCusto}>{centroCusto}</option>}
+            {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Classificação">
+          {!novaClassificacaoAberta ? (
+            <div className="flex items-center gap-2">
+              <select style={inputStyle} value={classificacao} onChange={(e) => setClassificacao(e.target.value)}>
+                <option value="">Selecione…</option>
+                {classificacao && !opcoes.classificacoes.includes(classificacao) && <option value={classificacao}>{classificacao}</option>}
+                {opcoes.classificacoes.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button type="button" className="btn-ghost" title="Cadastrar nova classificação" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setNovaClassificacaoAberta(true)}>
+                <Plus size={13} /> Nova
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input style={inputStyle} value={novaClassificacaoNome} onChange={(e) => setNovaClassificacaoNome(e.target.value)} placeholder="ex.: Medicamentos" autoFocus />
+              <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} disabled={salvandoClassificacao || !novaClassificacaoNome.trim()} onClick={async () => {
+                setSalvandoClassificacao(true);
+                try {
+                  await criarClassificacao({ nome: novaClassificacaoNome.trim() });
+                  const nome = novaClassificacaoNome.trim();
+                  setClassificacao(nome);
+                  await carregarOpcoes();
+                  setNovaClassificacaoNome(""); setNovaClassificacaoAberta(false);
+                } catch (e: any) {
+                  setErro(e.message || "Erro ao criar classificação");
+                } finally {
+                  setSalvandoClassificacao(false);
+                }
+              }}>{salvandoClassificacao ? "Salvando…" : "Salvar"}</button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setNovaClassificacaoAberta(false); setNovaClassificacaoNome(""); }}>Cancelar</button>
+            </div>
+          )}
+        </Campo>
+        <Campo label="Responsável pelo lançamento">
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+            <option value="">Selecione…</option>
+            {responsaveis.map((r) => <option key={r}>{r}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Tipo de documento">
+          <select style={inputStyle} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)}>
+            <option value="">Selecione…</option>
+            {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
+          </select>
+        </Campo>
+
+        <Campo label="Número do documento"><input style={inputStyle} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></Campo>
+        <Campo label="Nº da OS/Orçamento">
+          <input style={inputStyle} value={numeroOsOrcamento} onChange={(e) => setNumeroOsOrcamento(e.target.value)} placeholder="ex.: OS-123 ou ORC-45" />
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+            Item de consulta à parte do número do documento — nº da ordem de serviço ou do orçamento, se houver.
+          </span>
+        </Campo>
+        <Campo label="Número do boleto">
+          <input style={inputStyle} value={numeroBoleto} onChange={(e) => setNumeroBoleto(e.target.value)} placeholder="linha digitável (opcional)" />
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+            {parcelado
+              ? "Ao parcelar, vale como o boleto da 1ª parcela — as demais são informadas na tabela de parcelas abaixo."
+              : "Linha digitável do boleto único deste lançamento (opcional)."}
+          </span>
+        </Campo>
+        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>
+        {!parcelado && (
+          <Campo label="Data de vencimento">
+            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
+            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+              Usada para lançar em Contas a pagar e na Agenda.
+            </span>
+          </Campo>
+        )}
+        <Campo label="Data prevista de entrada"><input type="date" style={inputStyle} value={dataPrevistaEntrada} onChange={(e) => setDataPrevistaEntrada(e.target.value)} /></Campo>
+        <Campo label="Data do pedido"><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Campo>
+        <Campo label="Vincular a um pedido (opcional)">
+          <select style={inputStyle} value={pedidoId} onChange={(e) => setPedidoId(e.target.value)}>
+            <option value="">— Nenhum —</option>
+            {pedidosAbertos.map((p) => (
+              <option key={p.id} value={p.id}>{p.numero_pedido} — {p.fornecedor_cliente || "sem contraparte"} ({formatBRL(p.valor_total_estimado)})</option>
+            ))}
+          </select>
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+            É só a partir deste vínculo que o pedido passa a refletir aqui em Financeiro.
+          </span>
+        </Campo>
+
+        <Campo label="Entregue?">
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", marginTop: "0.4rem" }}>
+            <input type="checkbox" checked={entregue} onChange={(e) => { entregueTocadoRef.current = true; setEntregue(e.target.checked); }} /> Já entregue / recebido
+          </label>
+        </Campo>
+        <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
+        <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
+        <div>
+          <label style={lbl}>Valor líquido da nota</label>
+          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+        </div>
+      </div>
+      {(Number(desconto) > 0 || Number(acrescimo) > 0) && (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          Bruto dos produtos: {formatBRL(valorBruto)}
+          {Number(desconto) > 0 && <> · desconto de {formatBRL(Number(desconto))}</>}
+          {Number(acrescimo) > 0 && <> · acréscimo de {formatBRL(Number(acrescimo))}</>}
+        </p>
+      )}
+      </div>
+
+      {/* Contexto do fornecedor/cliente — só leitura, histórico pra decidir
+          antes de lançar (em aberto, último lançamento, últimos
+          lançamentos, documentos já anexados a alguma nota dele). */}
+      {fornecedor.trim() && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Contexto do {tipo === "receita" ? "cliente" : "fornecedor"}
+          </p>
+          {!contextoFornecedor ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Carregando…</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.65rem" }}>
+                  <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Em aberto</div>
+                  <div style={{ fontSize: "0.9rem", fontWeight: 700 }}>{formatBRL(contextoFornecedor.em_aberto)}</div>
+                </div>
+                <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.65rem" }}>
+                  <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Último lançamento</div>
+                  <div style={{ fontSize: "0.9rem", fontWeight: 700 }}>
+                    {contextoFornecedor.ultimo_lancamento ? new Date(contextoFornecedor.ultimo_lancamento + "T00:00:00").toLocaleDateString("pt-BR") : "—"}
+                  </div>
+                </div>
+              </div>
+              {contextoFornecedor.ultimos_lancamentos.length > 0 && (
+                <>
+                  <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>
+                    Últimos lançamentos
+                  </p>
+                  <div style={{ overflowX: "auto", marginBottom: "0.7rem" }}>
+                    <table className="fazenda-table" style={{ margin: 0, fontSize: "0.78rem" }}>
+                      <thead><tr><th>Data</th><th>Nº doc.</th><th style={{ textAlign: "right" }}>Valor</th><th>Situação</th></tr></thead>
+                      <tbody>
+                        {contextoFornecedor.ultimos_lancamentos.map((l, i) => (
+                          <tr key={i}>
+                            <td>{l.data ? new Date(l.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                            <td>{l.numero_documento || "—"}</td>
+                            <td style={{ textAlign: "right" }}>{formatBRL(l.valor)}</td>
+                            <td>
+                              <span style={{ fontSize: "0.7rem", fontWeight: 700, color: l.pago ? "var(--green-light)" : "var(--amber)" }}>
+                                {l.pago ? "Pago" : "Em aberto"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              {contextoFornecedor.documentos_anexados.length > 0 && (
+                <>
+                  <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>
+                    Documentos já anexados
+                  </p>
+                  {contextoFornecedor.documentos_anexados.map((d, i) => (
+                    <div key={i} className="card" style={{ padding: "0.4rem 0.6rem", marginBottom: "0.3rem", background: "var(--surface)" }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 600 }}>{d.nome_arquivo}</div>
+                      <div style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{d.categoria || "—"} · {new Date(d.criado_em).toLocaleDateString("pt-BR")}</div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {!contextoFornecedor.ultimos_lancamentos.length && !contextoFornecedor.documentos_anexados.length && (
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum lançamento anterior com este nome.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+
       {/* Anexo e leitura automática — UM local só pra qualquer documento
           deste lançamento (nota, boleto, orçamento, comprovante de
           pagamento...). Cada arquivo é lido (extrai dados) E fica anexado —
@@ -1336,133 +1556,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </button>
       </div>
 
-      {/* Dados da nota (uma vez por lançamento) */}
-      <div className="card mt-4" style={{ background: "var(--fin-nota-bg)" }}>
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Campo label={tipo === "receita" ? "Cliente" : "Fornecedor"}>
-          <div className="flex items-center gap-2">
-            <select style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
-              <option value="">Selecione…</option>
-              {fornecedoresDisponiveis.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select>
-            <button type="button" className="btn-ghost" title={`Cadastrar novo ${tipo === "receita" ? "cliente" : "fornecedor"}`} style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
-              <Plus size={13} /> Novo
-            </button>
-          </div>
-        </Campo>
-        <Campo label="Centro de custo">
-          <select style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
-            <option value="">Selecione…</option>
-            {/* Valor legado que não esteja mais na lista canônica — preservado para não perder o dado. */}
-            {centroCusto && !opcoes.centros_custo.includes(centroCusto) && <option value={centroCusto}>{centroCusto}</option>}
-            {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Classificação">
-          {!novaClassificacaoAberta ? (
-            <div className="flex items-center gap-2">
-              <select style={inputStyle} value={classificacao} onChange={(e) => setClassificacao(e.target.value)}>
-                <option value="">Selecione…</option>
-                {classificacao && !opcoes.classificacoes.includes(classificacao) && <option value={classificacao}>{classificacao}</option>}
-                {opcoes.classificacoes.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <button type="button" className="btn-ghost" title="Cadastrar nova classificação" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setNovaClassificacaoAberta(true)}>
-                <Plus size={13} /> Nova
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <input style={inputStyle} value={novaClassificacaoNome} onChange={(e) => setNovaClassificacaoNome(e.target.value)} placeholder="ex.: Medicamentos" autoFocus />
-              <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} disabled={salvandoClassificacao || !novaClassificacaoNome.trim()} onClick={async () => {
-                setSalvandoClassificacao(true);
-                try {
-                  await criarClassificacao({ nome: novaClassificacaoNome.trim() });
-                  const nome = novaClassificacaoNome.trim();
-                  setClassificacao(nome);
-                  await carregarOpcoes();
-                  setNovaClassificacaoNome(""); setNovaClassificacaoAberta(false);
-                } catch (e: any) {
-                  setErro(e.message || "Erro ao criar classificação");
-                } finally {
-                  setSalvandoClassificacao(false);
-                }
-              }}>{salvandoClassificacao ? "Salvando…" : "Salvar"}</button>
-              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setNovaClassificacaoAberta(false); setNovaClassificacaoNome(""); }}>Cancelar</button>
-            </div>
-          )}
-        </Campo>
-        <Campo label="Responsável pelo lançamento">
-          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
-            <option value="">Selecione…</option>
-            {responsaveis.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Tipo de documento">
-          <select style={inputStyle} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)}>
-            <option value="">Selecione…</option>
-            {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
-          </select>
-        </Campo>
-
-        <Campo label="Número do documento"><input style={inputStyle} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></Campo>
-        <Campo label="Nº da OS/Orçamento">
-          <input style={inputStyle} value={numeroOsOrcamento} onChange={(e) => setNumeroOsOrcamento(e.target.value)} placeholder="ex.: OS-123 ou ORC-45" />
-          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
-            Item de consulta à parte do número do documento — nº da ordem de serviço ou do orçamento, se houver.
-          </span>
-        </Campo>
-        <Campo label="Número do boleto">
-          <input style={inputStyle} value={numeroBoleto} onChange={(e) => setNumeroBoleto(e.target.value)} placeholder="linha digitável (opcional)" />
-          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
-            {parcelado
-              ? "Ao parcelar, vale como o boleto da 1ª parcela — as demais são informadas na tabela de parcelas abaixo."
-              : "Linha digitável do boleto único deste lançamento (opcional)."}
-          </span>
-        </Campo>
-        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>
-        {!parcelado && (
-          <Campo label="Data de vencimento">
-            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
-            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
-              Usada para lançar em Contas a pagar e na Agenda.
-            </span>
-          </Campo>
-        )}
-        <Campo label="Data prevista de entrada"><input type="date" style={inputStyle} value={dataPrevistaEntrada} onChange={(e) => setDataPrevistaEntrada(e.target.value)} /></Campo>
-        <Campo label="Data do pedido"><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Campo>
-        <Campo label="Vincular a um pedido (opcional)">
-          <select style={inputStyle} value={pedidoId} onChange={(e) => setPedidoId(e.target.value)}>
-            <option value="">— Nenhum —</option>
-            {pedidosAbertos.map((p) => (
-              <option key={p.id} value={p.id}>{p.numero_pedido} — {p.fornecedor_cliente || "sem contraparte"} ({formatBRL(p.valor_total_estimado)})</option>
-            ))}
-          </select>
-          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
-            É só a partir deste vínculo que o pedido passa a refletir aqui em Financeiro.
-          </span>
-        </Campo>
-
-        <Campo label="Entregue?">
-          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", marginTop: "0.4rem" }}>
-            <input type="checkbox" checked={entregue} onChange={(e) => { entregueTocadoRef.current = true; setEntregue(e.target.checked); }} /> Já entregue / recebido
-          </label>
-        </Campo>
-        <Campo label="Desconto (R$)"><CampoMoeda style={inputStyle} value={Number(desconto) || 0} onChange={(v) => setDesconto(v ? String(v) : "")} /></Campo>
-        <Campo label="Acréscimo (R$)"><CampoMoeda style={inputStyle} value={Number(acrescimo) || 0} onChange={(v) => setAcrescimo(v ? String(v) : "")} /></Campo>
-        <div>
-          <label style={lbl}>Valor líquido da nota</label>
-          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
-        </div>
-      </div>
-      {(Number(desconto) > 0 || Number(acrescimo) > 0) && (
-        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-          Bruto dos produtos: {formatBRL(valorBruto)}
-          {Number(desconto) > 0 && <> · desconto de {formatBRL(Number(desconto))}</>}
-          {Number(acrescimo) > 0 && <> · acréscimo de {formatBRL(Number(acrescimo))}</>}
-        </p>
-      )}
-      </div>
-
       {/* Parcelamento */}
       <div className="card mt-3" style={{ background: "var(--fin-parcelamento-bg)" }}>
         <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", fontWeight: 600 }}>
@@ -1599,6 +1692,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando || verificandoDuplicado}>
           {salvando ? "Salvando…" : verificandoDuplicado ? "Verificando…" : "Salvar lançamento"}
         </button>
+      </div>
+
+      </div>
       </div>
 
       {categoriaPopupFile && (() => {

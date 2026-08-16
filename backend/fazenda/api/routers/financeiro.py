@@ -777,6 +777,58 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
     }
 
 
+@router.get("/contexto-fornecedor")
+def contexto_fornecedor(
+    nome: str, tipo: str = "despesa", session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Histórico de um fornecedor/cliente para a coluna de contexto da tela
+    de lançamento (ver FormFinanceiro): quanto está em aberto com ele, o
+    último lançamento, os últimos lançamentos e os documentos já anexados a
+    alguma nota dele — tudo só leitura, para decidir antes de lançar."""
+    nome = (nome or "").strip()
+    vazio = {"em_aberto": 0.0, "ultimo_lancamento": None, "ultimos_lancamentos": [], "documentos_anexados": []}
+    if not nome:
+        return vazio
+    query = select(ContaGerencial).where(ContaGerencial.fornecedor_cliente == nome, ContaGerencial.tipo == tipo)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query.order_by(ContaGerencial.data_emissao.desc(), ContaGerencial.id.desc())).all()
+    if not contas:
+        return vazio
+
+    em_aberto = round(sum(c.valor_total or 0 for c in contas if c.valor_pago is None), 2)
+    ultimo = contas[0]
+
+    numeros_lancamento = {c.numero_lancamento for c in contas if c.numero_lancamento}
+    documentos_anexados: list[dict] = []
+    if numeros_lancamento:
+        query_anexos = select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento.in_(numeros_lancamento))
+        if fazenda_id is not None:
+            query_anexos = query_anexos.where(LancamentoAnexo.fazenda_id == fazenda_id)
+        anexos = session.exec(query_anexos.order_by(LancamentoAnexo.criado_em.desc())).all()
+        documentos_anexados = [
+            {"nome_arquivo": a.nome_arquivo, "categoria": a.categoria, "criado_em": a.criado_em.isoformat()}
+            for a in anexos[:8]
+        ]
+
+    return {
+        "em_aberto": em_aberto,
+        "ultimo_lancamento": ultimo.data_emissao.isoformat() if ultimo.data_emissao else None,
+        "ultimos_lancamentos": [
+            {
+                "numero_lancamento": c.numero_lancamento,
+                "numero_documento": c.numero_nota,
+                "data": c.data_emissao.isoformat() if c.data_emissao else None,
+                "valor": c.valor_total or 0.0,
+                "pago": c.valor_pago is not None,
+            }
+            for c in contas[:6]
+        ],
+        "documentos_anexados": documentos_anexados,
+    }
+
+
 @router.get("/plano-contas")
 def plano_contas(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),

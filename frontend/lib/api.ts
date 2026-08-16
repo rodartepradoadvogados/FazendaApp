@@ -4633,6 +4633,21 @@ export async function fetchOpcoesFinanceiro() {
   return res.json();
 }
 
+// Coluna de contexto (histórico) do fornecedor/cliente na tela de
+// lançamento — em aberto, último lançamento, últimos lançamentos e
+// documentos já anexados a alguma nota dele. Só leitura.
+export type ContextoFornecedor = {
+  em_aberto: number;
+  ultimo_lancamento: string | null;
+  ultimos_lancamentos: { numero_lancamento: string | null; numero_documento: string | null; data: string | null; valor: number; pago: boolean }[];
+  documentos_anexados: { nome_arquivo: string; categoria: string | null; criado_em: string }[];
+};
+export async function fetchContextoFornecedor(nome: string, tipo: "despesa" | "receita" = "despesa"): Promise<ContextoFornecedor> {
+  const res = await authFetch(`${API}/financeiro/contexto-fornecedor?nome=${encodeURIComponent(nome)}&tipo=${tipo}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contexto do fornecedor error: ${res.status}`);
+  return res.json();
+}
+
 // Link pro painel do Supabase (Table Editor) — botão em Relatórios
 // financeiros; backend bloqueia consultor (ver fazenda.auth.exigir_nao_consultor).
 // url: null quando o Supabase não está configurado.
