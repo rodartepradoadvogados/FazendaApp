@@ -218,6 +218,8 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <Campo label="Vaca(s) — animal(is) ou lote(s)" full>
         <TabBar<"animal" | "lote">
           abas={[
@@ -281,20 +283,24 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-        {numerosAlvo.size === 1 && (
-          <>
-            <Campo label="DEL atual">
-              <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={carregandoInfo ? "Carregando…" : info?.del_atual != null ? `${info.del_atual} dias` : "—"} />
-            </Campo>
-            <Campo label="Dias de gestação">
-              <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.dias_gestacao != null ? `${info.dias_gestacao} dias` : "—"} />
-            </Campo>
-            <Campo label="Data prevista de secagem (60 dias antes do parto)">
-              <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.data_prevista_secagem ? formatDate(info.data_prevista_secagem) : "—"} />
-            </Campo>
-          </>
-        )}
+      {numerosAlvo.size === 1 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+          <Campo label="DEL atual">
+            <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={carregandoInfo ? "Carregando…" : info?.del_atual != null ? `${info.del_atual} dias` : "—"} />
+          </Campo>
+          <Campo label="Dias de gestação">
+            <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.dias_gestacao != null ? `${info.dias_gestacao} dias` : "—"} />
+          </Campo>
+          <Campo label="Data prevista de secagem (60 dias antes do parto)" full>
+            <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.data_prevista_secagem ? formatDate(info.data_prevista_secagem) : "—"} />
+          </Campo>
+        </div>
+      )}
+      {info?.motivo_exclusao && <p style={{ ...nota, color: "var(--amber)" }}>{info.motivo_exclusao}</p>}
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Data da secagem (pode ser retroativa)"><input type="date" style={inputStyle} value={dataSecagem} onChange={(e) => setDataSecagem(e.target.value)} /></Campo>
         <Campo label="Motivo da secagem">
           <select style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
@@ -308,7 +314,6 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
-      {info?.motivo_exclusao && <p style={{ ...nota, color: "var(--amber)" }}>{info.motivo_exclusao}</p>}
 
       <Secao>Produto(s) de secagem (opcional)</Secao>
       <div className="space-y-3">
@@ -439,6 +444,8 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size || (aplicarVacinaPreParto && !vacinasPreParto.length)}>
           {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} ${numerosAlvo.size !== 1 ? "animais" : "animal"})`}
         </button>
+      </div>
+      </div>
       </div>
 
       {transferenciaPendente && (

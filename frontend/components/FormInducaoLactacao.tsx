@@ -18,9 +18,15 @@ function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.Mutable
   const carregar = () => fetchInducaoLactacaoAtivos().then(setAtivos).catch(() => setAtivos([]));
   useEffect(() => { carregar(); recarregarRef.current = carregar; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!ativos || !ativos.length) return null;
+  if (!ativos || !ativos.length) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "2.2rem 1rem" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indução de lactação em andamento.</p>
+      </div>
+    );
+  }
   return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+    <div className="card" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
         Induções de lactação em andamento ({ativos.length})
       </div>
@@ -122,6 +128,11 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+        <InducaoLactacaoAtivos recarregarRef={recarregarAtivosRef} />
+      </div>
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Protocolo" full>
           <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
@@ -219,13 +230,14 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
           </div>
         </div>
       )}
-      <InducaoLactacaoAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size}>
           {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} ${numerosAlvo.size !== 1 ? "animais" : "animal"})`}
         </button>
+      </div>
+      </div>
       </div>
     </>
   );

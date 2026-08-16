@@ -103,6 +103,8 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Modalidade">
           <select style={inputStyle} value={modo} onChange={(e) => { setModo(e.target.value as any); setErro(null); setSucesso(null); }}>
@@ -180,7 +182,21 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
         </div>
       )}
 
-      <div className="card mt-4">
+      <UltimosLancados<PesagemLinha>
+        titulo="Últimas pesagens lançadas"
+        linhas={recentes}
+        colunas={[
+          { label: "Animal", render: (l) => <span style={{ fontWeight: 700 }}>{l.numero_matriz}</span> },
+          { label: "Data", render: (l) => formatDate(l.data_pesagem) },
+          { label: "kg", render: (l) => l.peso_kg, alinhar: "right" },
+        ]}
+        tipoExclusao="pesagem_corporal"
+        onExcluido={() => { carregarRecentes(); atualizarRelatorio(); }}
+      />
+      </div>
+
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="card">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span className="flex items-center gap-2"><Scale size={14} /> Relatório de crescimento (GMD / GPD)</span>
           <ExportarBotoes
@@ -243,18 +259,8 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
         )}
         <p style={nota}>GMD: ganho médio diário entre a primeira e a última pesagem do período. GPD: média dos ganhos diários entre pesagens consecutivas.</p>
       </div>
-
-      <UltimosLancados<PesagemLinha>
-        titulo="Últimas pesagens lançadas"
-        linhas={recentes}
-        colunas={[
-          { label: "Animal", render: (l) => <span style={{ fontWeight: 700 }}>{l.numero_matriz}</span> },
-          { label: "Data", render: (l) => formatDate(l.data_pesagem) },
-          { label: "kg", render: (l) => l.peso_kg, alinhar: "right" },
-        ]}
-        tipoExclusao="pesagem_corporal"
-        onExcluido={() => { carregarRecentes(); atualizarRelatorio(); }}
-      />
+      </div>
+      </div>
     </>
   );
 }
