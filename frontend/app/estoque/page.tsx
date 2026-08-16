@@ -46,8 +46,10 @@ type MovimentoRow = MovimentoEstoqueRow & { origem_tipo?: string | null; pedido_
 // e no resumo por produto, sem precisar de um endpoint novo.
 // "Entrada de compra" faltava aqui — compra de produto/sêmen (Financeiro ou
 // Comprar sêmen) já gerava esse movimento no backend, mas sumia dos 3 mapas
-// abaixo porque nenhum deles reconhecia o tipo como entrada.
-const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia", "Entrada de compra"];
+// abaixo porque nenhum deles reconhecia o tipo como entrada. "Saldo inicial"
+// é o mesmo caso: o cadastro de um item de Estoque com saldo > 0 gera esse
+// movimento (ver criar_item_estoque em fazenda/api/routers/estoque.py).
+const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia", "Entrada de compra", "Saldo inicial"];
 const MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"];
 
 type Item = {

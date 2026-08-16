@@ -1,12 +1,13 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown } from "lucide-react";
+import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope } from "lucide-react";
 import {
   fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
   fetchCentrosCusto, criarCentroCusto, atualizarCentroCusto,
   fetchPlanoContas, criarContaGerencial, atualizarContaGerencial,
   fetchTiposDocumentoCadastro, criarTipoDocumento, atualizarTipoDocumento,
   fetchFormasPagamentoCadastro, criarFormaPagamentoCadastro, atualizarFormaPagamentoCadastro,
+  fetchClassificacoesCadastro, criarClassificacao, atualizarClassificacao,
 } from "@/lib/api";
 import { nivelDaConta, estiloNivel, filhosDiretos } from "@/lib/contaGerencial";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -17,6 +18,7 @@ const ABAS = [
   ["gerenciais", "Conta gerencial", BookOpen],
   ["tipos-documento", "Tipo de documento", FileText],
   ["formas-pagamento", "Forma de pagamento", CreditCard],
+  ["classificacoes", "Classificação", Stethoscope],
 ] as const;
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
@@ -51,6 +53,7 @@ export default function ParametrosFinanceiros() {
       {aba === "gerenciais" && <ContasGerenciais />}
       {aba === "tipos-documento" && <TiposDocumento />}
       {aba === "formas-pagamento" && <FormasPagamento />}
+      {aba === "classificacoes" && <Classificacoes />}
     </div>
   );
 }
@@ -368,6 +371,13 @@ function FormasPagamento() {
   return (
     <NomeAtivoTab icon={CreditCard} titulo="Formas de pagamento" semNenhum="Nenhuma forma de pagamento cadastrada ainda."
       fetchFn={fetchFormasPagamentoCadastro} criarFn={criarFormaPagamentoCadastro} atualizarFn={atualizarFormaPagamentoCadastro} />
+  );
+}
+
+function Classificacoes() {
+  return (
+    <NomeAtivoTab icon={Stethoscope} titulo="Classificações" semNenhum="Nenhuma classificação cadastrada ainda — ex.: Medicamentos, Ração, Manutenção."
+      fetchFn={fetchClassificacoesCadastro} criarFn={criarClassificacao} atualizarFn={atualizarClassificacao} />
   );
 }
 

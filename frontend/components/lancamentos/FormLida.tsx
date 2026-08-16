@@ -2,9 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import {
-  fetchLidasParaLancar, lancarLida, fetchLidasAtivas, cancelarProtocolo, formatDate, fetchPessoas,
+  fetchLidasParaLancar, lancarLida, fetchLidasAtivas, cancelarProtocolo, formatDate,
   type Lida,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -105,15 +106,10 @@ export function FormLida({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => { fetchLidasParaLancar().then(setLidas).catch(() => setLidas([])); }, []);
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const lida = lidas.find((l) => String(l.id) === lidaId);
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
 
   async function salvar() {
     setErro(null); setSucesso(null);

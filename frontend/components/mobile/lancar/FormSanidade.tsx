@@ -12,7 +12,8 @@ import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
   MobPill, LinhaPills, SeletorAnimal, unidadesCompativeis, GradeAcoes,
@@ -131,6 +132,7 @@ export function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: T
   const [unidade, setUnidade] = useState("");
   const [via, setVia] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [aplicado, setAplicado] = useState(true);
   // Filtrar o medicamento por doença / princípio ativo (abre só os que casam).
   const [filtrarPor, setFiltrarPor] = useState<"todos" | "principio_ativo" | "doenca">("todos");
@@ -325,7 +327,7 @@ export function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: T
       <MobCampo label="Responsável">
         <select className="mob-input" value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
           <option value="">Selecione…</option>
-          {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+          {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </MobCampo>
       {tipo === "aplicacao" && (

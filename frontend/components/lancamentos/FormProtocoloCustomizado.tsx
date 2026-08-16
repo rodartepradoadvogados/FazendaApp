@@ -3,9 +3,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import {
   fetchProtocolosCustomizadosParaLancar, lancarProtocoloCustomizado, fetchProtocolosCustomizadosAtivos,
-  cancelarLancamentoProtocoloCustomizado, formatDate, fetchPessoas,
+  cancelarLancamentoProtocoloCustomizado, formatDate,
   type ProtocoloCustomizado,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -106,15 +107,10 @@ export function FormProtocoloCustomizado({ animais }: { animais: AnimalRow[] }) 
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => { fetchProtocolosCustomizadosParaLancar().then(setProtocolos).catch(() => setProtocolos([])); }, []);
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
 
   async function salvar() {
     setErro(null); setSucesso(null);

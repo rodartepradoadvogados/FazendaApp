@@ -25,7 +25,7 @@ import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -212,6 +212,7 @@ function FormModelo({ form, setForm, onSalvar, onCancelar, salvando, msg, opcoes
   opcoes: { centros_custo: string[]; contas_bancarias: string[]; tipos_documento: string[]; formas_pagamento: string[] };
   planoContas: ContaPlano[]; fornecedores: string[];
 }) {
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
@@ -305,7 +306,7 @@ function FormModelo({ form, setForm, onSalvar, onCancelar, salvando, msg, opcoes
           <label style={labelStyle}>Responsável padrão</label>
           <select style={inputStyle} value={form.responsavel_padrao} onChange={(e) => setForm({ ...form, responsavel_padrao: e.target.value })}>
             <option value="">Selecione…</option>
-            {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+            {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div className="flex items-end">

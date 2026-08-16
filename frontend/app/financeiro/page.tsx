@@ -24,6 +24,7 @@ import {
   marcarItemComoVale, desmarcarItemComoVale,
   estornarPagamentoLancamento, type EstornoLancamentoOut,
   fetchEstoque, fetchServicosCadastro,
+  vincularProdutoItem, fetchClassificacoesCadastro, criarClassificacao,
 } from "@/lib/api";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
@@ -48,7 +49,7 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
 import { DocumentosFiscais } from "@/components/DocumentosFiscais";
@@ -73,7 +74,7 @@ const COLUNAS_LIVRO = [
 type Lanc = {
   id: number; numero_lancamento: string | null;
   tipo: string; valor: number; valor_pago: number | null; desconto_acrescimo: number | null;
-  centro_custo: string; codigo_conta: string; conta_completa: string;
+  centro_custo: string; classificacao?: string | null; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
   tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
   // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
@@ -1030,6 +1031,7 @@ const theadStickyStyle: React.CSSProperties = { position: "sticky", top: 0, zInd
 export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
 
@@ -1232,7 +1234,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
 
       {anexarAberto && (
         <ModalDivididoDocumento title="Novo lançamento — leitura automática" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={RESPONSAVEIS}
+          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={nomesResponsaveis}
             onArquivoParaLeitura={setArquivoPreview}
             onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
         </ModalDivididoDocumento>
@@ -2667,7 +2669,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     if (it.tipo_item === "servico") return sugestoesServicoEdicao.some((s) => s.toLowerCase() === nome);
     return produtosEstoqueEdicao.some((p) => p.nome.toLowerCase() === nome);
   }
-  const [catalogarItem, setCatalogarItem] = useState<{ nome: string; tipo: "produto" | "servico" } | null>(null);
+  const [catalogarItem, setCatalogarItem] = useState<{ id: number; nome: string; tipo: "produto" | "servico" } | null>(null);
   const [editarItemEstoque, setEditarItemEstoque] = useState<Record<string, any> | null>(null);
   // Chute do tipo (produto × serviço) a partir do nome já salvo — só uma vez,
   // assim que o cadastro de serviços carrega; depois disso quem manda é o
@@ -2682,6 +2684,18 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   const [adicionarNovoAberto, setAdicionarNovoAberto] = useState(false);
   const [modoAdicionarEdicao, setModoAdicionarEdicao] = useState<"produto" | "servico">("produto");
   const [centroCusto, setCentroCusto] = useState(lanc.centro_custo || "");
+  const [classificacao, setClassificacao] = useState(lanc.classificacao || "");
+  const [classificacoes, setClassificacoes] = useState<string[]>([]);
+  const [novaClassificacaoAberta, setNovaClassificacaoAberta] = useState(false);
+  const [novaClassificacaoNome, setNovaClassificacaoNome] = useState("");
+  const [salvandoClassificacao, setSalvandoClassificacao] = useState(false);
+  // Associar um item já lançado (não cadastrado no catálogo) a um produto/
+  // serviço JÁ EXISTENTE — alternativa a "cadastrar novo" (ver catalogarItem
+  // abaixo). `avisoAssociar` mostra o retorno do backend (ex.: entrada de
+  // estoque retroativa dada na hora de associar).
+  const [associarItem, setAssociarItem] = useState<{ id: number; nome: string; tipo: "produto" | "servico" } | null>(null);
+  const [salvandoAssociar, setSalvandoAssociar] = useState(false);
+  const [avisoAssociar, setAvisoAssociar] = useState<string[] | null>(null);
   const [codigoConta, setCodigoConta] = useState(lanc.codigo_conta || "");
   const [nomeConta, setNomeConta] = useState(lanc.conta_completa || "");
   const [valor, setValor] = useState(String(lanc.valor ?? ""));
@@ -2750,7 +2764,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       setDesmarcando(false);
     }
   }
-  useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
+  useEffect(() => { fetchOpcoesFinanceiro().then((d) => { setTiposDocumento(d.tipos_documento || []); setClassificacoes(d.classificacoes || []); }).catch(() => {}); }, []);
   useEffect(() => {
     listarAnexosLancamentoPorId(lanc.id).then(setAnexos).catch(() => setAnexos([]));
   }, [lanc.id]);
@@ -2772,11 +2786,24 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     } catch (e: any) { setErro(e.message); }
   };
 
+  // Associa um item já lançado (LancamentoItem) a um produto/serviço do
+  // catálogo — usado tanto por "cadastrar novo" quanto por "associar
+  // existente" acima. Explícito (por id), não depende do nome bater sozinho.
+  async function vincularProduto(itemId: number, nomeProduto: string) {
+    try {
+      const r = await vincularProdutoItem(itemId, nomeProduto);
+      setAvisoAssociar(r.avisos_estoque || []);
+      onSalvo();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao associar o produto/serviço a este item");
+    }
+  }
+
   const salvar = async () => {
     setSalvando(true); setErro("");
     try {
       await atualizarLancamentoFinanceiro(lanc.id, {
-        descricao, fornecedor_cliente: fornecedor, centro_custo: centroCusto || null,
+        descricao, fornecedor_cliente: fornecedor, centro_custo: centroCusto || null, classificacao: classificacao || null,
         codigo_conta: codigoConta || null, valor_total: parseFloat(valor.replace(",", ".")) || 0,
         data_emissao: dataEmissao || null, data_vencimento: dataVencimento || null,
         data_competencia: dataCompetencia || null, numero_nota: numeroNota || null,
@@ -2913,10 +2940,16 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
                     )}
                     <span>— {formatBRL(it.valor_total)}</span>
                     {!cadastrado && (
-                      <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
-                        onClick={() => setCatalogarItem({ nome: it.produto, tipo: it.tipo_item === "servico" ? "servico" : "produto" })}>
-                        <Plus size={12} /> Cadastrar {it.tipo_item === "servico" ? "serviço" : "produto"} novo
-                      </button>
+                      <>
+                        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                          onClick={() => setCatalogarItem({ id: it.id, nome: it.produto, tipo: it.tipo_item === "servico" ? "servico" : "produto" })}>
+                          <Plus size={12} /> Cadastrar {it.tipo_item === "servico" ? "serviço" : "produto"} novo
+                        </button>
+                        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                          onClick={() => setAssociarItem({ id: it.id, nome: it.produto, tipo: it.tipo_item === "servico" ? "servico" : "produto" })}>
+                          Associar a {it.tipo_item === "servico" ? "serviço" : "produto"} já existente
+                        </button>
+                      </>
                     )}
                     {it.eh_vale && (
                       <span style={{ color: "var(--dourado-light)", fontSize: "0.74rem" }}>
@@ -2955,6 +2988,39 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             {tipoDocumento && !tiposDocumento.includes(tipoDocumento) && <option value={tipoDocumento}>{tipoDocumento}</option>}
             {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
           </select></div>
+        <div><label style={labelStyleLote}>Classificação</label>
+          {!novaClassificacaoAberta ? (
+            <div className="flex items-center gap-2">
+              <select style={selStyleLote} value={classificacao} onChange={(e) => setClassificacao(e.target.value)}>
+                <option value="">—</option>
+                {classificacao && !classificacoes.includes(classificacao) && <option value={classificacao}>{classificacao}</option>}
+                {classificacoes.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button type="button" className="btn-ghost" title="Cadastrar nova classificação" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setNovaClassificacaoAberta(true)}>
+                <Plus size={13} /> Nova
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input style={selStyleLote} value={novaClassificacaoNome} onChange={(e) => setNovaClassificacaoNome(e.target.value)} placeholder="ex.: Medicamentos" autoFocus />
+              <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} disabled={salvandoClassificacao || !novaClassificacaoNome.trim()} onClick={async () => {
+                setSalvandoClassificacao(true);
+                try {
+                  await criarClassificacao({ nome: novaClassificacaoNome.trim() });
+                  const nome = novaClassificacaoNome.trim();
+                  setClassificacao(nome);
+                  setClassificacoes((prev) => Array.from(new Set([...prev, nome])).sort());
+                  setNovaClassificacaoNome(""); setNovaClassificacaoAberta(false);
+                } catch (e: any) {
+                  setErro(e.message || "Erro ao criar classificação");
+                } finally {
+                  setSalvandoClassificacao(false);
+                }
+              }}>{salvandoClassificacao ? "Salvando…" : "Salvar"}</button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setNovaClassificacaoAberta(false); setNovaClassificacaoNome(""); }}>Cancelar</button>
+            </div>
+          )}
+        </div>
         <div><label style={labelStyleLote}>Nº do documento</label>
           <input style={selStyleLote} value={numeroNota} onChange={(e) => setNumeroNota(e.target.value)} /></div>
         <div><label style={labelStyleLote}>Nº da OS/Orçamento</label>
@@ -3077,24 +3143,92 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       {catalogarItem && (
         // Cadastro rápido pra um item específico da nota que veio sem
         // correspondência no catálogo (ex.: "TEATSEAL" lido de um XML/PDF) —
-        // pré-preenchido com o nome já lançado, pra virar exatamente o mesmo
-        // texto salvo em LancamentoItem.produto (é por igualdade de nome que
-        // o resto do sistema — aplicação, filtros — passa a reconhecer o item).
+        // pré-preenchido com o nome já lançado. Depois de cadastrar, o item
+        // da nota é EXPLICITAMENTE associado ao produto/serviço recém-criado
+        // (PUT /financeiro/itens/{id}/vincular-produto) — não depende do
+        // nome bater sozinho (o usuário pode ter ajustado o nome no cadastro).
+        // Para produto, isso também dá entrada retroativa no estoque com a
+        // quantidade já lançada nesta nota, se ainda não tiver dado entrada.
         <Modal title={`Cadastrar ${catalogarItem.tipo === "servico" ? "serviço" : "produto"} — ${catalogarItem.nome}`}
           onClose={() => setCatalogarItem(null)} width="700px" zIndex={100}>
           {catalogarItem.tipo === "servico" ? (
             <NovoServicoRapido
               prefillNome={catalogarItem.nome}
-              onCriado={() => { carregarServicosEdicao(); setCatalogarItem(null); }}
+              onCriado={(servico) => {
+                const id = catalogarItem.id;
+                carregarServicosEdicao();
+                setCatalogarItem(null);
+                if (servico?.nome) vincularProduto(id, servico.nome);
+              }}
               onCancelar={() => setCatalogarItem(null)}
             />
           ) : (
-            <NovoItemEstoque
-              prefill={{ nome: catalogarItem.nome }}
-              onCriado={() => { carregarEstoqueEdicao(); setCatalogarItem(null); }}
-              onCancelar={() => setCatalogarItem(null)}
-            />
+            <>
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                A quantidade deste item já lançada nesta nota entra automaticamente como entrada de estoque ao cadastrar —
+                deixe o &ldquo;saldo inicial&rdquo; abaixo em branco, a menos que a fazenda já tivesse estoque deste produto
+                ANTES desta compra.
+              </p>
+              <NovoItemEstoque
+                prefill={{ nome: catalogarItem.nome }}
+                onCriado={(item) => {
+                  const id = catalogarItem.id;
+                  carregarEstoqueEdicao();
+                  setCatalogarItem(null);
+                  if (item?.nome) vincularProduto(id, item.nome);
+                }}
+                onCancelar={() => setCatalogarItem(null)}
+              />
+            </>
           )}
+        </Modal>
+      )}
+
+      {associarItem && (
+        // "Associar a produto/serviço já existente" — alternativa a
+        // cadastrar novo, para quando o item da nota (ex.: nome vindo de
+        // XML/OCR ligeiramente diferente) na verdade já corresponde a algo
+        // do catálogo. Mesmo endpoint de vínculo do fluxo de cadastro acima.
+        <Modal title={`Associar "${associarItem.nome}" a um ${associarItem.tipo === "servico" ? "serviço" : "produto"} já existente`}
+          onClose={() => setAssociarItem(null)} width="600px" zIndex={100}>
+          {associarItem.tipo === "servico" ? (
+            <ServicoPicker servicos={sugestoesServicoEdicao.map((nome) => ({ nome }))}
+              value="" onChange={(nomeEscolhido) => {
+                if (!nomeEscolhido) return;
+                const id = associarItem.id;
+                setAssociarItem(null);
+                vincularProduto(id, nomeEscolhido);
+              }} />
+          ) : (
+            <EstoquePicker itens={produtosEstoqueEdicao} value="" todasFinalidades incluirNaoEstocaveis
+              onChange={(nomeEscolhido) => {
+                if (!nomeEscolhido) return;
+                const id = associarItem.id;
+                setAssociarItem(null);
+                vincularProduto(id, nomeEscolhido);
+              }} />
+          )}
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Se for produto de estoque com quantidade já lançada nesta nota e ainda sem entrada registrada, a entrada é
+            dada automaticamente ao associar.
+          </p>
+          <div className="flex justify-end mt-2">
+            <button type="button" className="btn-ghost" onClick={() => setAssociarItem(null)}>Cancelar</button>
+          </div>
+        </Modal>
+      )}
+      {avisoAssociar && (
+        <Modal title="Estoque atualizado" onClose={() => setAvisoAssociar(null)} width="480px" zIndex={110}>
+          {avisoAssociar.length === 0 ? (
+            <p style={{ fontSize: "0.85rem" }}>Produto/serviço associado a esta nota.</p>
+          ) : (
+            <ul style={{ fontSize: "0.82rem", paddingLeft: "1.1rem" }}>
+              {avisoAssociar.map((a, i) => <li key={i} style={{ marginBottom: "0.3rem" }}>{a}</li>)}
+            </ul>
+          )}
+          <div className="flex justify-end mt-2">
+            <button type="button" className="btn-primary" onClick={() => setAvisoAssociar(null)}>Entendi</button>
+          </div>
         </Modal>
       )}
 
@@ -3403,6 +3537,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   const [numeroDocumento, setNumeroDocumento] = useState("");
   const [fornecedor, setFornecedor] = useState("");
@@ -3597,7 +3732,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       {anexarAberto && (
         <ModalDivididoDocumento title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`}
           onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo={tipo} responsaveis={RESPONSAVEIS}
+          <FormFinanceiro tipo={tipo} responsaveis={nomesResponsaveis}
             onArquivoParaLeitura={setArquivoPreview}
             onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
         </ModalDivididoDocumento>

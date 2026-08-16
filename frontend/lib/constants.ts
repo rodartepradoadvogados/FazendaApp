@@ -1,10 +1,6 @@
-// Pessoas que podem aparecer como responsável / inseminador nos lançamentos
-// (ordem alfabética pelo nome).
-export const RESPONSAVEIS = [
-  "Alane dos Santos (funcionária)", "Alexandre Rodarte (CEO)", "Alexandre Scarpa (consultor)",
-  "Carlos Alpha/ABS (veterinário Alpha/ABS)", "Huerik (veterinário COMIGO)", "Jairo Nasser (proprietário)",
-  "Jorbeson Nunes (funcionário)", "Leomir Bonfim (funcionário)", "Valéria Bonfim (funcionária)",
-];
+// Pessoas que podem aparecer como responsável / inseminador nos lançamentos:
+// ver lib/usePessoasAtivas.ts (busca Pessoa ativas do cadastro, em vez da
+// antiga lista estática RESPONSAVEIS que morava aqui e ignorava Pessoa.ativo).
 
 // Rótulo amigável da origem de um MovimentoLote (Rebanho > Movimentação de
 // lote, na Ficha do animal) — ver os valores possíveis e o porquê de cada um

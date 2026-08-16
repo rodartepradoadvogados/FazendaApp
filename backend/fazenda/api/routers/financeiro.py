@@ -16,7 +16,7 @@ from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, g
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
+    CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
     FornecedorClienteApelido,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, Usuario, ValeAvulso, ValeFuncionario,
@@ -267,6 +267,7 @@ class LancamentoIn(BaseModel):
     tipo: str  # "receita" | "despesa"
     itens: list[ItemIn]  # um ou mais produtos/serviços da mesma nota
     centro_custo: Optional[str] = None
+    classificacao: Optional[str] = None
     fornecedor_cliente: Optional[str] = None
     responsavel: Optional[str] = None
     tipo_documento: Optional[str] = None
@@ -534,6 +535,7 @@ def listar_lancamentos(
             "desconto_nota": c.desconto_nota,
             "acrescimo_nota": c.acrescimo_nota,
             "centro_custo": c.centro_custo or "Sem centro de custo",
+            "classificacao": c.classificacao,
             "codigo_conta": (c.codigo_conta or "").split(".")[0] or "(sem conta)",
             "conta_completa": c.codigo_conta or "",
             "descricao": c.descricao or "",
@@ -755,11 +757,14 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
     contas_correntes = session.exec(query_contas_correntes.order_by(ContaCorrente.banco)).all()
     query_tipos_doc = select(TipoDocumento).where(TipoDocumento.ativo == True)
     query_formas_pgto = select(FormaPagamentoCadastro).where(FormaPagamentoCadastro.ativo == True)
+    query_classificacoes = select(ClassificacaoLancamento).where(ClassificacaoLancamento.ativo == True)
     if fazenda_id is not None:
         query_tipos_doc = query_tipos_doc.where(TipoDocumento.fazenda_id == fazenda_id)
         query_formas_pgto = query_formas_pgto.where(FormaPagamentoCadastro.fazenda_id == fazenda_id)
+        query_classificacoes = query_classificacoes.where(ClassificacaoLancamento.fazenda_id == fazenda_id)
     tipos_doc_cadastrados = [t.nome for t in session.exec(query_tipos_doc.order_by(TipoDocumento.nome)).all()]
     formas_pgto_cadastradas = [f.nome for f in session.exec(query_formas_pgto.order_by(FormaPagamentoCadastro.nome)).all()]
+    classificacoes_cadastradas = [c.nome for c in session.exec(query_classificacoes.order_by(ClassificacaoLancamento.nome)).all()]
     return {
         "contas_gerenciais": contas_gerenciais,
         "centros_custo": centros_custo,
@@ -768,6 +773,7 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
         "contas_bancarias": [rotulo_conta_corrente(c) for c in contas_correntes],
         "tipos_documento": tipos_doc_cadastrados or TIPOS_DOCUMENTO,
         "formas_pagamento": formas_pgto_cadastradas or FORMAS_PAGAMENTO,
+        "classificacoes": classificacoes_cadastradas,
     }
 
 
@@ -965,6 +971,11 @@ _listar_formas_pgto, _criar_forma_pgto, _atualizar_forma_pgto = _crud_nome_ativo
 router.get("/formas-pagamento-cadastro")(_listar_formas_pgto)
 router.post("/formas-pagamento-cadastro")(_criar_forma_pgto)
 router.put("/formas-pagamento-cadastro/{item_id}")(_atualizar_forma_pgto)
+
+_listar_classificacoes, _criar_classificacao, _atualizar_classificacao = _crud_nome_ativo_financeiro(ClassificacaoLancamento, "classificação")
+router.get("/classificacoes")(_listar_classificacoes)
+router.post("/classificacoes")(_criar_classificacao)
+router.put("/classificacoes/{item_id}")(_atualizar_classificacao)
 
 
 # Seed inicial — migra as listas fixas que existiam antes (TIPOS_DOCUMENTO,
@@ -1718,6 +1729,7 @@ def criar_lancamento(
         # (perfil típico da fazenda) em vez de deixar a conta sem centro,
         # sempre editável depois em Financeiro.
         centro_custo=mapear_centro_custo(dados.centro_custo) or "Pecuária Leiteira",
+        classificacao=dados.classificacao,
         fornecedor_cliente=dados.fornecedor_cliente,
         responsavel=dados.responsavel,
         tipo_documento=dados.tipo_documento,
@@ -2097,6 +2109,7 @@ class LancamentoEditIn(BaseModel):
     descricao: Optional[str] = None
     codigo_conta: Optional[str] = None
     centro_custo: Optional[str] = None
+    classificacao: Optional[str] = None
     fornecedor_cliente: Optional[str] = None
     numero_nota: Optional[str] = None
     numero_os_orcamento: Optional[str] = None
@@ -2366,6 +2379,71 @@ def editar_lancamento(
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
+
+
+class ItemVincularIn(BaseModel):
+    produto: str
+
+
+@router.put("/itens/{item_id}/vincular-produto")
+def vincular_produto_item(
+    item_id: int, dados: ItemVincularIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), user=Depends(get_current_user),
+) -> dict:
+    """
+    Renomeia/associa o produto/serviço de UM item já lançado (LancamentoItem)
+    a um nome do catálogo — usado tanto para "associar a produto já
+    existente" quanto para o passo seguinte a "cadastrar produto novo" na
+    tela de edição (ver FormEditarLancamento). Diferente de PUT
+    /lancamentos/{id} (que só edita o produto quando a nota tem exatamente 1
+    item), este mexe no item certo mesmo em notas com vários itens.
+
+    Quando o item é um PRODUTO de estoque, não é vale, tem quantidade > 0 e
+    ainda não gerou nenhuma entrada de estoque (o caso comum: item veio de
+    XML/OCR sem bater com nada do cadastro — na criação do lançamento
+    `estoque_baixa.movimentar` não achou o item e só avisou, sem baixar) —
+    dá entrada retroativa agora que o produto finalmente tem um Estoque
+    correspondente. Mesma regra "só quando NÃO vinculado a Pedido" da
+    criação (ver criar_lancamento), pra não duplicar a entrada física.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(LancamentoItem, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+
+    nome = dados.produto.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    item.produto = nome
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+
+    avisos_estoque: list[str] = []
+    ja_deu_entrada = session.exec(
+        select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == "compra_financeiro", MovimentoEstoque.origem_id == item.id,
+        )
+    ).first() is not None
+    if item.tipo_item == "produto" and not eh_item_de_vale(item) and item.quantidade and item.quantidade > 0 and not ja_deu_entrada:
+        query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == item.numero_lancamento)
+        if fazenda_id is not None:
+            query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
+        conta = session.exec(query_conta).first()
+        if conta is not None and conta.tipo == "despesa" and conta.pedido_id is None:
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=nome)
+            if estoque_item is not None and estoque_item.estocavel is not False:
+                data_movimento = conta.data_emissao or conta.data_competencia or date.today()
+                avisos_estoque += estoque_baixa.movimentar(
+                    session, item=estoque_item, quantidade=item.quantidade,
+                    unidade=estoque_item.unidade, data=data_movimento, fazenda_id=fazenda_id,
+                    movimento="Entrada de compra", observacao=f"Entrada por compra — lançamento {item.numero_lancamento}",
+                    usuario_id=user.id if isinstance(user, Usuario) else None,
+                    origem_tipo="compra_financeiro", origem_id=item.id, sinal=+1, produto=nome,
+                )
+
+    session.commit()
+    session.refresh(item)
+    return {**item.model_dump(), "avisos_estoque": avisos_estoque}
 
 
 # G2 — `ContaGerencial` que NASCEM já pagas, espelhando a baixa de outro

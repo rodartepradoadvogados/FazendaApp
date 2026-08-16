@@ -22,7 +22,7 @@ import {
   fetchCategoriasAlimento, criarCategoriaAlimento, atualizarCategoriaAlimento, excluirCategoriaAlimento, type CategoriaAlimento,
   fetchAlimentos, criarAlimento, atualizarAlimento, excluirAlimento, type Alimento,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { casaBusca } from "@/lib/busca";
 import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
@@ -532,6 +532,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   useEffect(() => {
     fetchLotes().then((ls: LoteRow[]) => setLotes(ls.filter((l) => /^\d\d/.test(l.codigo)))).catch((e) => setErro(e.message));
@@ -662,7 +663,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                     <div>
                       <label style={lbl}>Responsável (nutricionista)</label>
                       <select style={input} value={f?.responsavel || ""} onChange={(e) => patchForm(ln, { responsavel: e.target.value })}>
-                        <option value="">—</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+                        <option value="">—</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
                       </select>
                     </div>
                     <div>

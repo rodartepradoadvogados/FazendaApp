@@ -348,6 +348,7 @@ class EstoqueIn(BaseModel):
 @router.post("/", status_code=201)
 def criar_item_estoque(
     dados: EstoqueIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Cadastra um item de estoque novo (não existe ainda um com esse nome)."""
     query_existente = select(Estoque).where(Estoque.nome == dados.nome)
@@ -395,6 +396,17 @@ def criar_item_estoque(
     session.add(item)
     session.commit()
     session.refresh(item)
+
+    if item.estocavel is not False and item.quantidade and item.quantidade > 0:
+        session.add(MovimentoEstoque(
+            nome_item=item.nome, movimento="Saldo inicial", quantidade=item.quantidade, unidade=item.unidade,
+            data_movimento=item.data_inicio_controle or date.today(), observacao="Saldo inicial do cadastro",
+            usuario_id=user.id if isinstance(user, Usuario) else None, fazenda_id=fazenda_id,
+            estoque_id=item.id, origem_tipo="cadastro_estoque", origem_id=item.id,
+        ))
+        session.commit()
+        session.refresh(item)
+
     return item.model_dump()
 
 

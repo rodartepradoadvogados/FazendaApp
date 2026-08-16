@@ -22,7 +22,7 @@ import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { Dropzone } from "@/components/Dropzone";
 import { SecaoRecolhivel, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
@@ -106,6 +106,7 @@ function CampoRetencao({
 export default function FolhaPagamentoView() {
   const admin = ehAdmin();
   const [pessoas, setPessoas] = useState<PessoaFolha[]>([]);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [regs, setRegs] = useState<RegistroFolha[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -851,7 +852,7 @@ export default function FolhaPagamentoView() {
       <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
       {anexarAberto && (
         <ModalDivididoDocumento title="Anexar comprovante — leitura automática (despesa)" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
-          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onArquivoParaLeitura={setArquivoPreview}
+          <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onArquivoParaLeitura={setArquivoPreview}
             onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); carregarUnificada(); }} />
         </ModalDivididoDocumento>
       )}

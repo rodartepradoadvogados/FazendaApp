@@ -6,7 +6,7 @@ import {
   fetchEstoqueSemen, fetchTouros, criarCompraSemen, fetchComprasSemen,
   formatBRL, ehAdmin, type Touro, type ItemCompraSemen,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { SeletorContaGerencial } from "./SeletorContaGerencial";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
@@ -90,6 +90,7 @@ export default function CompraSemenForm() {
   const [data, setData] = useState(hoje());
   const [responsavel, setResponsavel] = useState("");
   const [observacao, setObservacao] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [opcoes, setOpcoes] = useState<{ centros_custo: string[]; contas_bancarias: string[]; tipos_documento: string[] }>({ centros_custo: [], contas_bancarias: [], tipos_documento: [] });
@@ -505,7 +506,7 @@ export default function CompraSemenForm() {
             <Campo label="Responsável pelo lançamento">
               <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
                 <option value="">Selecione...</option>
-                {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+                {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
               </select>
             </Campo>
             <Campo label="Tipo de documento">

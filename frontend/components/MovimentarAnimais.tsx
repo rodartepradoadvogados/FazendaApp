@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchLotes, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { casaBusca } from "@/lib/busca";
 
@@ -34,6 +34,7 @@ export default function MovimentarAnimais() {
   const [motivo, setMotivo] = useState("");
   const [motivoLivre, setMotivoLivre] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
@@ -168,7 +169,7 @@ export default function MovimentarAnimais() {
             <div><label style={labelStyle}>Responsável</label>
               <select style={selStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
                 <option value="">Selecione...</option>
-                {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+                {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
               </select></div>
           </div>
 

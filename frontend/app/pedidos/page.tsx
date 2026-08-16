@@ -13,7 +13,7 @@ import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicke
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { FormFinanceiro, type PrefillPedido } from "@/components/FormFinanceiro";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -56,6 +56,7 @@ function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
 
 export default function PedidosPage() {
   const [pedidos, setPedidos] = useState<PedidoRow[] | null>(null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [erro, setErro] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; clientes: string[]; servicos: string[] }>({ fornecedores: [], clientes: [], servicos: [] });
   const [centros, setCentros] = useState<string[]>([]);
@@ -165,7 +166,7 @@ export default function PedidosPage() {
                 <PedidoLinha key={p.id} pedido={p}
                   expandido={expandido === p.id} onToggle={() => setExpandido(expandido === p.id ? null : p.id)}
                   onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)}
-                  onAtualizado={recarregar} />
+                  onAtualizado={recarregar} nomesResponsaveis={nomesResponsaveis} />
               ))}
               {pedidos && !pedidos.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum pedido encontrado.</td></tr>}
             </tbody>
@@ -185,9 +186,9 @@ export default function PedidosPage() {
   );
 }
 
-function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado }: {
+function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado, nomesResponsaveis }: {
   pedido: PedidoRow; expandido: boolean; onToggle: () => void; onEditar: () => void; onExcluir: () => void; onMudarStatus: (s: string) => void;
-  onAtualizado: () => void;
+  onAtualizado: () => void; nomesResponsaveis: string[];
 }) {
   const [detalhe, setDetalhe] = useState<{ lancamentos: any[]; movimentos_estoque: any[] } | null>(null);
   useEffect(() => {
@@ -377,7 +378,7 @@ function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudar
           <Modal title="Lançar pagamento do pedido" onClose={() => setAbrirPagamento(false)} width="1100px" zIndex={90}>
             <FormFinanceiro
               tipo={pedido.tipo === "compra" ? "despesa" : "receita"}
-              responsaveis={RESPONSAVEIS}
+              responsaveis={nomesResponsaveis}
               prefillPedido={prefillPedido}
               onSalvo={() => { setAbrirPagamento(false); onAtualizado(); }}
             />

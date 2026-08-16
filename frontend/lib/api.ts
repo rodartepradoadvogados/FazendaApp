@@ -4778,6 +4778,29 @@ export async function atualizarFormaPagamentoCadastro(id: number, dados: { nome:
   return res.json();
 }
 
+// ── Classificações de lançamento (Configurações > Parâmetros financeiros) ──
+// Ex.: Medicamentos, Ração, Manutenção — selecionável ao lançar conta a
+// pagar/receber, cadastrável na hora (ver FormFinanceiro/FormEditarLancamento).
+export async function fetchClassificacoesCadastro() {
+  const res = await authFetch(`${API}/financeiro/classificacoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Classificações error: ${res.status}`);
+  return res.json();
+}
+export async function criarClassificacao(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/classificacoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar classificação"); }
+  return res.json();
+}
+export async function atualizarClassificacao(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/classificacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar classificação"); }
+  return res.json();
+}
+
 export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -4980,7 +5003,7 @@ export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
 }
 
 export async function atualizarLancamentoFinanceiro(id: number, dados: {
-  descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null;
+  descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null; classificacao?: string | null;
   fornecedor_cliente?: string | null; numero_nota?: string | null; numero_documento_pagamento?: string | null; tipo_documento?: string | null;
   numero_os_orcamento?: string | null; numero_boleto?: string | null;
   data_emissao?: string | null; data_vencimento?: string | null; data_competencia?: string | null;
@@ -4993,6 +5016,20 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao editar o lançamento"); }
   return res.json();
+}
+
+// Associa/renomeia o produto/serviço de UM item já lançado (LancamentoItem)
+// para um nome do catálogo — "associar a produto já existente" e o passo
+// seguinte a "cadastrar produto novo" na tela de edição (ver
+// FormEditarLancamento). Quando o item é um produto de estoque com
+// quantidade > 0 e ainda sem entrada registrada, o backend também dá baixa
+// (entrada) retroativa — ver PUT /financeiro/itens/{id}/vincular-produto.
+export async function vincularProdutoItem(itemId: number, produto: string) {
+  const res = await authFetch(`${API}/financeiro/itens/${itemId}/vincular-produto`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ produto }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao associar o produto/serviço"); }
+  return res.json() as Promise<{ id: number; produto: string; avisos_estoque: string[] }>;
 }
 
 // G2 — reverte a baixa (o lançamento volta para "em aberto"); não exclui o

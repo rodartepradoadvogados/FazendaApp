@@ -6,7 +6,7 @@ import {
   Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
 // o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
@@ -163,6 +163,7 @@ const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) =>
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [sujo, setSujo] = useState(false);
   // Contas a pagar também permite compra de sêmen — em vez de duplicar o
   // fluxo, reusa o mesmo formulário/endpoint de Lançamentos > Animais >
@@ -335,11 +336,11 @@ export default function LancamentosPage() {
                 <CompraSemenForm />
               </>
             ) : (
-              <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />
+              <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} />
             )}
           </>
         )}
-        {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
+        {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />}
         {sel === "estoque_entradas_saidas" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
         {sel === "estoque_ajuste_saldo" && <FormAjusteSaldoEstoque estoque={estoque} />}
         {sel === "mover_animais" && <MovimentarAnimais />}
