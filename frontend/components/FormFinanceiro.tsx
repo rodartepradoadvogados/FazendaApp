@@ -64,6 +64,13 @@ type Item = {
   // contrato/diária) e some dos relatórios gerenciais (ver ValeItemModal e
   // rules/vale_item.py no backend). null (padrão) = item normal da fazenda.
   vale: ValeItemDados | null;
+  // true só quando o produto/serviço veio de leitura automática (XML/OCR,
+  // ver aplicarXml) — usado pra destacar quando o nome extraído não bate com
+  // nada do catálogo (Estoque/ServicoCadastro). Item digitado manualmente em
+  // "texto livre" NÃO entra nesse aviso: aquele modo existe justamente pra
+  // compra que nunca vai virar item de estoque (ex.: "Supermercado") — a
+  // inconsistência real é só quando o sistema "adivinhou" um nome sozinho.
+  veioDeDocumento?: boolean;
 };
 const itemVazio = (): Item => ({
   codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto", produto: "", descricao: "",
@@ -171,6 +178,19 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const carregarServicos = () => fetchServicosCadastro().then(setServicos).catch(() => {});
   useEffect(() => { carregarServicos(); }, []);
   const sugestoesServico = useMemo(() => servicos.filter((s) => s.ativo).map((s) => s.nome).sort((a, b) => a.localeCompare(b, "pt-BR")), [servicos]);
+
+  // Um item lido automaticamente de XML/OCR (`veioDeDocumento`) que não bate
+  // (nome exato, sem diferenciar maiúsculas) com nada do catálogo — sem essa
+  // checagem, um nome que o sistema "adivinhou" sozinho (ex.: "TEATSEAL",
+  // vindo de uma nota fiscal) entrava no lançamento como texto solto: sem
+  // estocável, sem centro de custo padrão, invisível pras telas de aplicação.
+  // Item digitado manualmente em "texto livre" não entra aqui de propósito.
+  function itemNaoCadastradoDeDocumento(it: Item): boolean {
+    if (!it.veioDeDocumento || !it.produto.trim()) return false;
+    const nome = it.produto.trim().toLowerCase();
+    if (it.tipo_item === "servico") return !sugestoesServico.some((s) => s.toLowerCase() === nome);
+    return !produtosEstoque.some((p) => p.nome.toLowerCase() === nome);
+  }
 
   // Modal "+ Adicionar" (novo produto de estoque, novo serviço ou nova conta
   // gerencial), aberto a partir de um item específico da nota — o item fica
@@ -378,6 +398,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // Detecção de possível duplicado — comparação lado a lado antes de salvar.
   const [duplicados, setDuplicados] = useState<LancamentoParecido[]>([]);
   const [confirmandoDuplicado, setConfirmandoDuplicado] = useState(false);
+  const [confirmandoItemNaoCadastrado, setConfirmandoItemNaoCadastrado] = useState(false);
   const [verificandoDuplicado, setVerificandoDuplicado] = useState(false);
 
   // Sugestões de casamento com o cadastro (fornecedor/produto/serviço
@@ -570,6 +591,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         // usuário a bater o nome exato antes de poder editar.
         modoProduto: "livre",
         vale: null,
+        veioDeDocumento: true,
       })));
     } else if (dados.valor_total != null) {
       setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), modoValor: "total" }]);
@@ -817,6 +839,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     if (itens.some((i) => i.vale && (Number(i.valor_total) || 0) <= 0)) {
       setErro("Item marcado como vale precisa de valor maior que zero."); return;
     }
+    if (!confirmandoItemNaoCadastrado && itens.some((i) => itemNaoCadastradoDeDocumento(i))) {
+      setConfirmandoItemNaoCadastrado(true); return;
+    }
     if (!confirmandoDuplicado) {
       setVerificandoDuplicado(true);
       try {
@@ -874,6 +899,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       }
     } finally {
       setSalvando(false); setConfirmando(false); setConfirmandoDuplicado(false); setDuplicados([]);
+      setConfirmandoItemNaoCadastrado(false);
     }
   }
 
@@ -1029,6 +1055,19 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
               </Campo>
             </div>
+            {itemNaoCadastradoDeDocumento(it) && (
+              <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap", background: "rgba(180,120,0,0.14)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem" }}>
+                <AlertTriangle size={14} style={{ color: "var(--amber)", flexShrink: 0 }} />
+                <span style={{ fontSize: "0.78rem", color: "var(--amber)" }}>
+                  &ldquo;{it.produto}&rdquo; veio do documento lido, mas não está cadastrado no {it.tipo_item === "servico" ? "cadastro de serviços" : "estoque"} —
+                  sem cadastro, este item fica sem centro de custo padrão e não aparece pra seleção em telas de aplicação/consumo.
+                </span>
+                <button type="button" className="btn-secondary" style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}
+                  onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
+                  <Plus size={13} /> Cadastrar {it.tipo_item === "servico" ? "serviço" : "produto"} novo
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-3 mb-1" style={{ flexWrap: "wrap" }}>
               {(["unitario", "total"] as const).map((m) => (
                 <button key={m} type="button"
@@ -1478,6 +1517,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           </div>
           {modoAdicionar === "produto" ? (
             <NovoItemEstoque
+              // Pré-preenche com o nome já lançado (ex.: veio do XML/OCR e não
+              // batia com nada do estoque) — cadastrar com o MESMO texto é o
+              // que faz esse item "virar" reconhecido: o resto do sistema
+              // reconhece por igualdade de nome, não por vínculo.
+              prefill={adicionarPara !== null && itens[adicionarPara]?.produto.trim() ? { nome: itens[adicionarPara].produto.trim() } : undefined}
               onCriado={(item) => {
                 if (item?.nome && adicionarPara !== null) {
                   const patch: Partial<Item> = { produto: item.nome };
@@ -1494,6 +1538,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             />
           ) : modoAdicionar === "servico" ? (
             <NovoServicoRapido
+              prefillNome={adicionarPara !== null ? itens[adicionarPara]?.produto.trim() : undefined}
               onCriado={(servico) => {
                 if (servico?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: servico.nome });
                 carregarServicos();
@@ -1528,6 +1573,25 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             onCancelar={() => setAbrirNovoFornecedor(false)}
           />
         </Modal>
+      )}
+
+      {confirmandoItemNaoCadastrado && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" style={{ width: "560px", maxWidth: "95vw" }}>
+            <div className="flex items-center gap-2 mb-2"><AlertTriangle size={18} style={{ color: "var(--amber)" }} /><strong>Produto/serviço não cadastrado</strong></div>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              Este(s) item(ns) veio(vieram) do documento lido, mas não estão no cadastro — vão salvar como texto solto, sem
+              centro de custo padrão e sem aparecer pra seleção em telas de aplicação/consumo:
+            </p>
+            <ul style={{ fontSize: "0.82rem", marginBottom: "0.7rem", paddingLeft: "1.2rem" }}>
+              {itens.filter((i) => itemNaoCadastradoDeDocumento(i)).map((i, idx) => <li key={idx}>{i.produto}</li>)}
+            </ul>
+            <div className="flex items-center gap-3">
+              <button className="btn-primary" title="Salvar mesmo assim, sem cadastrar" onClick={salvar}><Check size={14} /> Salvar mesmo assim</button>
+              <button className="btn-ghost" title="Voltar e cadastrar o produto/serviço" onClick={() => setConfirmandoItemNaoCadastrado(false)}><X size={14} /> Cancelar e cadastrar</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {confirmandoDuplicado && (

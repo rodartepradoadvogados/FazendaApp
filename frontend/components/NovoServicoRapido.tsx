@@ -10,10 +10,10 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 /** Cadastro rápido de serviço — usado dentro do modal do lançamento financeiro. */
-export default function NovoServicoRapido({ onCriado, onCancelar }: {
-  onCriado: (servico: { nome: string }) => void; onCancelar: () => void;
+export default function NovoServicoRapido({ onCriado, onCancelar, prefillNome }: {
+  onCriado: (servico: { nome: string }) => void; onCancelar: () => void; prefillNome?: string;
 }) {
-  const [nome, setNome] = useState("");
+  const [nome, setNome] = useState(prefillNome || "");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 

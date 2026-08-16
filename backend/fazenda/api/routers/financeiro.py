@@ -486,6 +486,7 @@ def listar_lancamentos(
             vale_pessoa_id = vale.pessoa_id if vale else None
         itens_por_lancamento.setdefault(it.numero_lancamento, []).append({
             "id": it.id,
+            "tipo_item": it.tipo_item,
             "codigo_conta_gerencial": it.codigo_conta_gerencial,
             "nome_conta_gerencial": it.nome_conta_gerencial,
             "centro_custo": it.centro_custo,
