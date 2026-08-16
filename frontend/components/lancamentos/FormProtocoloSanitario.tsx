@@ -223,6 +223,8 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
 
   return (
     <>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Protocolo">
           <div className="flex items-center gap-2">
@@ -241,29 +243,6 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
           )}
         </Campo>
         <Campo label="Data de início (D1)"><input type="date" style={inputStyle} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></Campo>
-
-        {etapasCriterio.length > 0 && (
-          <div style={{ gridColumn: "1 / -1", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem" }}>
-            <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Escolha o medicamento de cada etapa (cadastrada por critério)</p>
-            <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
-              <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
-              Incluir todos os medicamentos/hormônios (inclusive sem estoque)
-            </label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {etapasCriterio.map((e) => (
-                <div key={e.id}>
-                  <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>D{e.dia} — {e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação"}: <strong>{e.produto}</strong></label>
-                  <EstoquePicker
-                    itens={medOpcoes[e.id as number] || []} value={escolhasMed[e.id as number] || ""}
-                    onChange={(nome) => setEscolhasMed((s) => ({ ...s, [e.id as number]: nome }))}
-                    placeholder="Selecione o medicamento…"
-                  />
-                  {!(medOpcoes[e.id as number] || []).length && <p style={{ fontSize: "0.7rem", color: "var(--amber)" }}>Nenhum medicamento cadastrado com esse critério.</p>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {protocolo?.eh_mastite ? (
           <Campo label="Matriz (nº)" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
@@ -301,7 +280,34 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
             )}
           </Campo>
         )}
+      </div>
+      </div>
 
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {etapasCriterio.length > 0 && (
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Escolha o medicamento de cada etapa (cadastrada por critério)</p>
+          <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+            Incluir todos os medicamentos/hormônios (inclusive sem estoque)
+          </label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {etapasCriterio.map((e) => (
+              <div key={e.id}>
+                <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>D{e.dia} — {e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação"}: <strong>{e.produto}</strong></label>
+                <EstoquePicker
+                  itens={medOpcoes[e.id as number] || []} value={escolhasMed[e.id as number] || ""}
+                  onChange={(nome) => setEscolhasMed((s) => ({ ...s, [e.id as number]: nome }))}
+                  placeholder="Selecione o medicamento…"
+                />
+                {!(medOpcoes[e.id as number] || []).length && <p style={{ fontSize: "0.7rem", color: "var(--amber)" }}>Nenhum medicamento cadastrado com esse critério.</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
@@ -404,6 +410,8 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
         <button className="btn-primary" onClick={salvar} disabled={salvando}>
           {salvando ? "Salvando…" : "Lançar protocolo"}
         </button>
+      </div>
+      </div>
       </div>
 
       {pickerAberto === "lote" && (
