@@ -199,6 +199,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [adicionarPara, setAdicionarPara] = useState<number | null>(null);
   const [modoAdicionar, setModoAdicionar] = useState<"produto" | "servico" | "conta">("produto");
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
+  // "Associar a produto/serviço já existente" — alternativa a "cadastrar
+  // novo" para um item vindo do documento lido sem bater com o cadastro
+  // (ver itemNaoCadastradoDeDocumento). Nada foi salvo ainda neste ponto —
+  // associar aqui é só trocar o texto do item pelo nome já cadastrado.
+  const [associarPara, setAssociarPara] = useState<number | null>(null);
 
   // Checkbox "É vale de funcionário?" de cada item — `valeAbertoPara` é o
   // índice do item cujo ValeItemModal está aberto (marcar ou "alterar" um já
@@ -1269,6 +1274,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
                   <Plus size={13} /> Cadastrar {it.tipo_item === "servico" ? "serviço" : "produto"} novo
                 </button>
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem", whiteSpace: "nowrap" }}
+                  onClick={() => setAssociarPara(idx)}>
+                  Associar a {it.tipo_item === "servico" ? "serviço" : "produto"} já existente
+                </button>
               </div>
             )}
             <div className="flex items-center gap-2 mt-3 mb-1" style={{ flexWrap: "wrap" }}>
@@ -1746,6 +1755,33 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               onCancelar={() => setAdicionarPara(null)}
             />
           )}
+        </Modal>
+      )}
+
+      {associarPara !== null && (
+        <Modal title={`Associar a ${itens[associarPara]?.tipo_item === "servico" ? "serviço" : "produto"} já existente`} onClose={() => setAssociarPara(null)} width="600px">
+          {itens[associarPara]?.tipo_item === "servico" ? (
+            <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
+              value="" onChange={(nomeEscolhido) => {
+                if (!nomeEscolhido) return;
+                atualizarItem(associarPara, { produto: nomeEscolhido });
+                setAssociarPara(null);
+              }} />
+          ) : (
+            <EstoquePicker itens={produtosEstoque} value="" todasFinalidades incluirNaoEstocaveis
+              onChange={(nomeProduto) => {
+                if (!nomeProduto) return;
+                const match = produtosEstoque.find((p) => p.nome === nomeProduto);
+                const patch: Partial<Item> = { produto: nomeProduto };
+                const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+                if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+                atualizarItem(associarPara, patch);
+                setAssociarPara(null);
+              }} />
+          )}
+          <div className="flex justify-end mt-3">
+            <button type="button" className="btn-ghost" onClick={() => setAssociarPara(null)}>Cancelar</button>
+          </div>
         </Modal>
       )}
 

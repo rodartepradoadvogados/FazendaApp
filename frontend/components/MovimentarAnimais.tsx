@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
+import { ArrowRightLeft, AlertTriangle, Check, Search, X, ListChecks } from "lucide-react";
 import { fetchAnimais, fetchLotes, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { casaBusca } from "@/lib/busca";
+import { Modal } from "@/components/Modal";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; del_dias: number | null };
 type Lote = { id: number; codigo: string; nome: string; rotulo: string };
@@ -23,10 +24,13 @@ export default function MovimentarAnimais() {
   const [motivos, setMotivos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // 1º passo: seleção do(s) animal(is) — busca por nº e/ou filtro opcional por lote.
+  // 1º passo: seleção do(s) animal(is) — feita numa janela suspensa (Modal),
+  // com busca por nº e/ou filtro opcional por lote; a tela principal só
+  // mostra explicitamente quem já foi selecionado (chips removíveis).
   const [busca, setBusca] = useState("");
   const [filtroLote, setFiltroLote] = useState("");
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [seletorAberto, setSeletorAberto] = useState(false);
 
   const [destinoCodigo, setDestinoCodigo] = useState("");
   const [data, setData] = useState(hoje());
@@ -55,6 +59,16 @@ export default function MovimentarAnimais() {
     );
   }, [animais, busca, filtroLote, filtroLoteRotulo]);
   const ord = useOrdenacao(candidatos);
+
+  const animalPorNumero = useMemo(() => {
+    const m = new Map<string, Animal>();
+    (animais || []).forEach((a) => m.set(a.numero, a));
+    return m;
+  }, [animais]);
+  const listaSelecionados = useMemo(
+    () => Array.from(selecionados).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [selecionados]
+  );
 
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
@@ -102,49 +116,35 @@ export default function MovimentarAnimais() {
 
       {animais && lotes && (
         <div className="card">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-            <div><label style={labelStyle}>Buscar animal (nº)</label>
-              <div style={{ position: "relative" }}>
-                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 068" />
-              </div></div>
-            <div><label style={labelStyle}>Filtrar por lote (opcional)</label>
-              <select style={selStyle} value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)}>
-                <option value="">Todos os lotes</option>
-                {lotes.map((l) => <option key={l.id} value={l.codigo}>{l.rotulo}</option>)}
-              </select></div>
-          </div>
-
-          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
-            <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "0.85rem" }}>Animais ({candidatos.length}) — {selecionados.size} selecionado(s)</span>
-              <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
-                {selecionados.size === candidatos.length && candidatos.length ? "Limpar seleção" : "Selecionar todos"}
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem 0.9rem", marginBottom: "1rem" }}>
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                {selecionados.size ? `${selecionados.size} animal(is) selecionado(s)` : "Nenhum animal selecionado"}
+              </span>
+              <button type="button" className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={() => setSeletorAberto(true)}>
+                <ListChecks size={14} /> Selecionar animais
               </button>
             </div>
-            <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr>
-                  <th></th>
-                  <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                  <ThOrdenavel label="Lote atual" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                  <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
-                </tr></thead>
-                <tbody>
-                  {ord.linhasOrdenadas.map((a) => (
-                    <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
-                      <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
-                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || "—"}</td>
-                      <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                    </tr>
-                  ))}
-                  {!candidatos.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal no filtro.</td></tr>}
-                </tbody>
-              </table>
-            </div>
+            {listaSelecionados.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {listaSelecionados.map((numero) => {
+                  const a = animalPorNumero.get(numero);
+                  return (
+                    <span key={numero} style={{
+                      display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.25rem 0.55rem",
+                      borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", fontSize: "0.78rem",
+                    }}>
+                      <strong>{numero}</strong>
+                      {a?.grupo_primario && <span style={{ color: "var(--text-muted)" }}>({a.grupo_primario})</span>}
+                      <button type="button" onClick={() => toggleAnimal(numero)} title="Remover da seleção"
+                        style={{ display: "flex", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}>
+                        <X size={12} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
@@ -185,6 +185,61 @@ export default function MovimentarAnimais() {
             <Check size={14} /> {salvando ? "Movendo…" : `Mover ${selecionados.size || ""} animal(is)`}
           </button>
         </div>
+      )}
+
+      {seletorAberto && animais && lotes && (
+        <Modal title="Selecionar animais" onClose={() => setSeletorAberto(false)} width="800px">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+            <div><label style={labelStyle}>Buscar animal (nº)</label>
+              <div style={{ position: "relative" }}>
+                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 068" autoFocus />
+              </div></div>
+            <div><label style={labelStyle}>Filtrar por lote (opcional)</label>
+              <select style={selStyle} value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)}>
+                <option value="">Todos os lotes</option>
+                {lotes.map((l) => <option key={l.id} value={l.codigo}>{l.rotulo}</option>)}
+              </select></div>
+          </div>
+
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+            <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "0.85rem" }}>Animais ({candidatos.length}) — {selecionados.size} selecionado(s)</span>
+              <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
+                {selecionados.size === candidatos.length && candidatos.length ? "Limpar seleção" : "Selecionar todos"}
+              </button>
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <th></th>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Lote atual" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                </tr></thead>
+                <tbody>
+                  {ord.linhasOrdenadas.map((a) => (
+                    <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
+                      <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
+                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
+                      <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || "—"}</td>
+                      <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+                    </tr>
+                  ))}
+                  {!candidatos.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal no filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="flex justify-end mt-3">
+            <button type="button" className="btn-primary" onClick={() => setSeletorAberto(false)}>
+              Concluir ({selecionados.size} selecionado{selecionados.size === 1 ? "" : "s"})
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );

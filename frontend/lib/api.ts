@@ -222,6 +222,15 @@ function moduloContratadoDireto(chaveComercial: string): boolean {
   if (lista == null) return true;
   return lista.includes(chaveComercial);
 }
+// A FAZENDA contratou o módulo à-la-carte Formulação de Dietas? Diferente de
+// podeFormularDietas() (que também exige ser dono/consultor CowData — eixo
+// de acesso ao PORTAL de autoria /dietas): esta função só checa o módulo,
+// para telas de uso comum (ex.: Alimentação > lançar dieta) que precisam
+// saber se "importar dieta formulada" deve aparecer, sem restringir por
+// quem pode CRIAR simulações.
+export function moduloFormulacaoDietasAtivo(): boolean {
+  return moduloContratadoDireto("formulacao_dietas");
+}
 // "Contratante-administrador": quem pode ver Configurações > Auditoria
 // CowData (auditoria de acessos de suporte + Confiança e LGPD) — dono
 // sempre pode; senão precisa ser admin desta fazenda E o vínculo
@@ -3706,7 +3715,11 @@ export async function criarDieta(dados: {
 export type ContextoDieta = {
   lote: number; nome: string | null; qtd_animais: number; del_medio: number | null; media_cl: number | null; data_ult_cl: string | null;
   animais: { numero: string; del_dias: number | null; ult_cl_kg: number | null; data_ult_leite: string | null }[];
-  ultima_dieta: { data_abertura: string; responsavel: string | null; itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null }[] } | null;
+  ultima_dieta: {
+    data_abertura: string; data_prevista_encerramento: string | null; responsavel: string | null;
+    base_quantidade: string | null; leite_bezerros_kg_dia: number | null; leite_por_bezerro_kg_dia: number | null;
+    itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null }[];
+  } | null;
 };
 export async function fetchContextoDieta(lote: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/contexto/${lote}`, { cache: "no-store" });
@@ -3963,6 +3976,28 @@ export async function importarControleLeiteiroPlanilha(file: File): Promise<{ cr
   form.append("file", file);
   const res = await authFetch(`${API}/producao/controle-leiteiro/importar`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao importar planilha"); }
+  return res.json();
+}
+
+// Fluxo de revisão: enviar a planilha só devolve as linhas normalizadas
+// (sem gravar nada) — o usuário edita na tela e só então confirma
+// (POST /confirmar), com as linhas já corrigidas se precisar.
+export type LinhaControleLeiteiroPreview = {
+  numero_matriz: string; data_controle: string;
+  ordenha1_kg: number | null; ordenha2_kg: number | null; ordenha3_kg: number | null; total_kg: number | null;
+};
+export async function preVisualizarControleLeiteiroPlanilha(file: File): Promise<{ linhas: LinhaControleLeiteiroPreview[]; erros: string[]; modo: "animal" | "lote" }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/producao/controle-leiteiro/pre-visualizar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler a planilha"); }
+  return res.json();
+}
+export async function confirmarControleLeiteiroPlanilha(linhas: LinhaControleLeiteiroPreview[]): Promise<{ criados: number }> {
+  const res = await authFetch(`${API}/producao/controle-leiteiro/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ linhas }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o controle leiteiro"); }
   return res.json();
 }
 

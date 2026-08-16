@@ -20,7 +20,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Alimento, Animal, ContratoFazenda, ContratoFazendaModulo, DietaLancamento, Fazenda, Lote, Pessoa, Usuario,
+    Alimento, Animal, ContratoFazenda, ContratoFazendaModulo, ControleLeiteiro, DietaLancamento, Fazenda, Lote, Pessoa, Usuario,
     UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
@@ -300,6 +300,29 @@ class TestContextoLote:
         corpo = r.json()
         assert corpo["dias_gestacao"] is None
         assert "dias_gestacao" not in corpo["campos_estimados"]
+
+    def test_producao_estimada_vem_do_controle_leiteiro_ao_vivo(self, client):
+        """Mesmo bug/fix de Alimentação > Nova dieta (ver
+        test_alimentacao.py): Animal.ult_cl_kg sozinho fica congelado na
+        data do último CSV importado — precisa refletir o controle leiteiro
+        mais recente de verdade, lançado pelo próprio app."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="03", nome="Lactação", fazenda_id=1))
+            s.add(Animal(numero="L1", sexo="F", ativo=True, grupo_primario="03 - Lactação",
+                          fazenda_id=1, ult_cl_kg=20.0, data_ult_leite=date(2026, 7, 8)))
+            s.add(Animal(numero="L2", sexo="F", ativo=True, grupo_primario="03 - Lactação",
+                          fazenda_id=1, ult_cl_kg=18.0, data_ult_leite=date(2026, 7, 8)))
+            # Controle leiteiro lançado pelo app, bem mais recente.
+            s.add(ControleLeiteiro(numero_matriz="L1", data_controle=date(2026, 8, 13), producao_kg=36.0, fazenda_id=1))
+            s.add(ControleLeiteiro(numero_matriz="L2", data_controle=date(2026, 8, 13), producao_kg=28.0, fazenda_id=1))
+            s.commit()
+
+        _como(13)
+        r = c.get("/formulacao/contexto/3")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["producao_leite_kg_dia"] == 32.0  # (36+28)/2, não (20+18)/2
 
 
 class TestAplicarNaDieta:

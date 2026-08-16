@@ -25,6 +25,7 @@ from fazenda.models import (
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.dieta_lancamento import criar_lancamento_programado
+from fazenda.rules.producao_leiteira import ultimo_controle_por_animal, com_fallback_animal
 from fazenda.rules import estoque_baixa
 from fazenda.rules.farmacia import pode_baixar_estoque
 
@@ -958,9 +959,17 @@ def contexto_dieta(
     animais = _animais_do_lote(session, lote, fazenda_id)
     n = len(animais)
 
+    # Último controle leiteiro AO VIVO (tabela controle_leiteiro), com
+    # fallback ao campo congelado só para quem nunca teve controle lançado
+    # pelo app — ver rules/producao_leiteira.py. Sem isso, lançar um
+    # controle novo não refletia aqui (a tela continuava mostrando a
+    # produção/data do último CSV importado, potencialmente meses velha).
+    controles_ao_vivo = ultimo_controle_por_animal(session, {a.numero for a in animais}, fazenda_id)
+    producao_data_por_animal = {a.numero: com_fallback_animal(a.numero, controles_ao_vivo, a) for a in animais}
+
     dels = [a.del_dias for a in animais if a.del_dias is not None]
-    cls = [a.ult_cl_kg for a in animais if a.ult_cl_kg is not None]
-    datas_cl = [a.data_ult_leite for a in animais if a.data_ult_leite is not None]
+    cls = [p for p, _ in producao_data_por_animal.values() if p is not None]
+    datas_cl = [d for _, d in producao_data_por_animal.values() if d is not None]
 
     # Última dieta ativa do lote (produtos + qtd total/dia → por cabeça/dia).
     query_ativa = select(DietaLancamento).where(
@@ -977,7 +986,16 @@ def contexto_dieta(
         itens = session.exec(query_itens).all()
         ultima_dieta = {
             "data_abertura": ativa.data_abertura.isoformat(),
+            "data_prevista_encerramento": ativa.data_prevista_encerramento.isoformat() if ativa.data_prevista_encerramento else None,
             "responsavel": ativa.responsavel,
+            "base_quantidade": ativa.base_quantidade,
+            "leite_bezerros_kg_dia": ativa.leite_bezerros_kg_dia,
+            # Leite/bezerro — mesma divisão simples que `por_cabeca` já faz
+            # pros itens da dieta abaixo (total do lote / nº de animais do
+            # lote); só faz sentido exibir num lote de bezerras.
+            "leite_por_bezerro_kg_dia": (
+                round(ativa.leite_bezerros_kg_dia / n, 2) if ativa.leite_bezerros_kg_dia and n else None
+            ),
             "itens": [
                 {
                     "alimento": it.alimento, "unidade": it.unidade,
@@ -996,8 +1014,11 @@ def contexto_dieta(
         "media_cl": round(sum(cls) / len(cls), 1) if cls else None,
         "data_ult_cl": max(datas_cl).isoformat() if datas_cl else None,
         "animais": sorted([
-            {"numero": a.numero, "del_dias": a.del_dias, "ult_cl_kg": a.ult_cl_kg,
-             "data_ult_leite": a.data_ult_leite.isoformat() if a.data_ult_leite else None}
+            {
+                "numero": a.numero, "del_dias": a.del_dias,
+                "ult_cl_kg": producao_data_por_animal[a.numero][0],
+                "data_ult_leite": producao_data_por_animal[a.numero][1].isoformat() if producao_data_por_animal[a.numero][1] else None,
+            }
             for a in animais
         ], key=lambda x: (x["ult_cl_kg"] is None, -(x["ult_cl_kg"] or 0))),
         "ultima_dieta": ultima_dieta,

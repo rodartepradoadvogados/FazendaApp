@@ -129,6 +129,7 @@ def contexto_lote(session: Session, fazenda_id: int | None, lote: int) -> dict:
     com o prefixo de `Animal.grupo_primario`)."""
     from fazenda.models import Animal, Parto, Servico
     from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+    from fazenda.rules.producao_leiteira import com_fallback_animal, ultimo_controle_por_animal
 
     query_lote = select(Lote).where(Lote.codigo == f"{lote:02d}")
     if fazenda_id is not None:
@@ -145,9 +146,15 @@ def contexto_lote(session: Session, fazenda_id: int | None, lote: int) -> dict:
     ]
     n = len(animais)
     dels = [a.del_dias for a in animais if a.del_dias is not None]
-    cls = [a.ult_cl_kg for a in animais if a.ult_cl_kg is not None]
-
+    # Último controle leiteiro AO VIVO — mesmo motivo/fix do contexto de
+    # Alimentação (ver rules/producao_leiteira.py): Animal.ult_cl_kg sozinho
+    # fica congelado na data do último CSV importado.
     numeros_do_lote = {a.numero for a in animais}
+    controles_ao_vivo = ultimo_controle_por_animal(session, numeros_do_lote, fazenda_id)
+    cls = [
+        p for a in animais
+        if (p := com_fallback_animal(a.numero, controles_ao_vivo, a)[0]) is not None
+    ]
     gestacoes: list[int] = []
     if numeros_do_lote:
         query_servicos = select(Servico).where(Servico.numero_matriz.in_(numeros_do_lote))
