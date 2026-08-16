@@ -132,6 +132,7 @@ class AgendaEngine:
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
         pedidos_documentos_vencendo: list[dict] | None = None,
+        inducoes_cio: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -157,6 +158,10 @@ class AgendaEngine:
                 serviço) com `data_validade`, já filtrados em agenda.py para
                 pedidos "aberto"/"parcialmente_atendido" — dispara alerta 2
                 dias antes do vencimento (ver PedidoAnexo/PUT /pedidos/{id}/anexos).
+            inducoes_cio: Aplicações de indução de cio (Sanidade com
+                atividade=ATIVIDADE_INDUCAO_CIO) dos últimos dias — dispara
+                "observar cio" na janela de 2 a 5 dias após a aplicação,
+                enquanto o cio ainda não foi aproveitado (ver reproducao.py).
 
         Returns:
             AgendaResult com todos os blocos da agenda calculados.
@@ -525,6 +530,31 @@ class AgendaEngine:
         result.bst_elegiveis = bst_elegiveis
         result.bst_excluidos = bst_excluidos
         result.bst_reanalise = bst_reanalise
+
+        # 3b. INDUÇÃO DE CIO (PGF2α/Cloprostenol) — aplicada nos últimos dias
+        # do PEV pra estimular o cio (não é IATF nem diagnóstico, ver
+        # fazenda/api/routers/reproducao.py::ATIVIDADE_INDUCAO_CIO). Observar
+        # cio na janela de 2 a 5 dias após a aplicação — pára de avisar assim
+        # que o cio já foi aproveitado (serviço mais recente do animal em
+        # data >= aplicação).
+        for inducao in (inducoes_cio or []):
+            numero = inducao.get("numero_matriz")
+            data_aplicacao = inducao.get("data_aplicacao")
+            if not numero or not data_aplicacao:
+                continue
+            data_servico_recente = servico_por_animal.get(numero, {}).get("data_servico")
+            if data_servico_recente and data_servico_recente >= data_aplicacao:
+                continue
+            janela_ini = data_aplicacao + timedelta(days=2)
+            janela_fim = data_aplicacao + timedelta(days=5)
+            if not (janela_ini <= data_referencia <= janela_fim):
+                continue
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Reprodutivo",
+                descricao=f"Observar cio — indução aplicada em {data_aplicacao.strftime('%d/%m/%Y')} ({inducao.get('produto', 'PGF2α')}), esperado em 2 a 5 dias",
+                numero_animal=numero,
+            ))
 
         # 4. PESAGENS RECORRENTES
         # Terça mais próxima (bezerros, a cada 15 dias)

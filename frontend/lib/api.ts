@@ -1403,6 +1403,35 @@ export async function criarServicoLote(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar inseminação"); }
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
 }
+
+// Indução de cio (PGF2α/Cloprostenol) — estímulo hormonal lançado à parte de
+// protocolo IATF, inseminação e diagnóstico (ver reproducao.py). Gera
+// histórico (Sanidade com atividade própria) e alimenta o alerta "Observar
+// cio" na Agenda, 2 a 5 dias depois da aplicação.
+export type InducaoCioLancamento = {
+  id: number; numero_matriz: string; data_aplicacao: string | null; produto: string;
+  dose: number | null; unidade: string | null; via: string | null; responsavel: string | null; observacao: string | null;
+};
+export async function registrarInducaoCio(dados: {
+  numeros_matriz: string[]; data_aplicacao: string; produto?: string;
+  dose?: number | null; unidade?: string | null; via?: string | null; responsavel?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/reproducao/inducao-cio`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar indução de cio"); }
+  return res.json() as Promise<{ aplicados: number; avisos: string[] }>;
+}
+export async function fetchInducoesCio(): Promise<InducaoCioLancamento[]> {
+  const res = await authFetch(`${API}/reproducao/inducao-cio`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar histórico de indução de cio");
+  return res.json();
+}
+export async function excluirInducaoCio(id: number) {
+  const res = await authFetch(`${API}/reproducao/inducao-cio/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir lançamento"); }
+  return res.json();
+}
 type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; valor_unitario?: number | null; local_armazenamento?: string | null; observacao?: string | null; ativo?: boolean };
 export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen`, {

@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
-  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge,
+  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
@@ -29,6 +29,7 @@ import { IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
 // de dynamic() acima (code-splitting: só baixa o formulário da sub-aba aberta).
 const FormProtocoloIatf = dynamic(() => import("@/components/lancamentos/FormProtocoloIatf").then((m) => m.FormProtocoloIatf), { ssr: false });
 const FormInseminacao = dynamic(() => import("@/components/lancamentos/FormInseminacao").then((m) => m.FormInseminacao), { ssr: false });
+const FormInducaoCio = dynamic(() => import("@/components/lancamentos/FormInducaoCio").then((m) => m.FormInducaoCio), { ssr: false });
 const FormDiagnostico = dynamic(() => import("@/components/lancamentos/FormDiagnostico").then((m) => m.FormDiagnostico), { ssr: false });
 const FormParto = dynamic(() => import("@/components/lancamentos/FormParto").then((m) => m.FormParto), { ssr: false });
 const FormControle = dynamic(() => import("@/components/lancamentos/FormControle").then((m) => m.FormControle), { ssr: false });
@@ -112,6 +113,7 @@ const TIPOS_GRUPOS = [
       { id: "inseminacao", label: "Inseminação", icon: Heart, desc: "Registrar a inseminação/cobertura em si — cio natural ou de um protocolo já agendado." },
       { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
       { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
+      { id: "inducao_cio", label: "Indução de cio", icon: Zap, desc: "Estímulo hormonal (PGF2α/Cloprostenol) para a vaca entrar em cio em 2 a 5 dias — sem misturar com protocolo IATF, inseminação ou diagnóstico." },
     ],
   },
   {
@@ -287,6 +289,8 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Protocolo IATF já grava de verdade.</strong> Agenda só os passos hormonais (D0/D7/D9/D11) na Agenda — a inseminação em si é lançada à parte, na sub-aba Inseminação.</>
           ) : sel === "inseminacao" ? (
             <><strong style={{ color: "var(--text)" }}>Inseminação já grava de verdade.</strong> Registra a cobertura/IA (cio natural ou vinda de um protocolo IATF já agendado) e calcula a ordem/intervalo de tentativas.</>
+          ) : sel === "inducao_cio" ? (
+            <><strong style={{ color: "var(--text)" }}>Indução de cio já grava de verdade.</strong> Gera histórico (sem tocar em Servico/Protocolo IATF) e um lembrete "Observar cio" na Agenda entre 2 e 5 dias depois da aplicação — some sozinho assim que a inseminação for lançada.</>
           ) : null}
         </p>
       </div>
@@ -298,6 +302,7 @@ export default function LancamentosPage() {
         {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
         {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
         {sel === "parto" && <FormParto animais={animais} lotes={lotes} />}
+        {sel === "inducao_cio" && <FormInducaoCio animais={aptasServico} estoque={estoque} />}
         {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
         {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
         {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
