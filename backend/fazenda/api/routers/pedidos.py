@@ -319,6 +319,36 @@ def atualizar_status_pedido(
     return {"id": pedido.id, "status": pedido.status}
 
 
+class RastreioIn(BaseModel):
+    enviado: bool
+    codigo_rastreio: Optional[str] = None
+    link_rastreio: Optional[str] = None
+
+
+@router.put("/{pedido_id}/rastreio")
+def atualizar_rastreio_pedido(
+    pedido_id: int,
+    dados: RastreioIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Perguntado quando o status manual vira "parcialmente_atendido" (ver
+    tela de Pedidos): se o pedido já foi enviado, guarda o código de
+    rastreio e o link de acompanhamento. `enviado=False` limpa os dois
+    campos (usuário respondeu que ainda não foi enviado)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pedido = session.get(Pedido, pedido_id)
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    pedido.enviado = dados.enviado
+    pedido.codigo_rastreio = dados.codigo_rastreio if dados.enviado else None
+    pedido.link_rastreio = dados.link_rastreio if dados.enviado else None
+    pedido.atualizado_em = datetime.utcnow()
+    session.add(pedido)
+    session.commit()
+    return {"id": pedido.id, "enviado": pedido.enviado, "codigo_rastreio": pedido.codigo_rastreio, "link_rastreio": pedido.link_rastreio}
+
+
 @router.delete("/{pedido_id}", status_code=204)
 def excluir_pedido(
     pedido_id: int,

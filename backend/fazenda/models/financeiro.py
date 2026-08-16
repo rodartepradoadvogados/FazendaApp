@@ -351,6 +351,11 @@ class Pedido(SQLModel, table=True):
     status: str = "aberto"  # "aberto" | "parcialmente_atendido" | "atendido" | "cancelado"
     observacao: Optional[str] = None
     responsavel: Optional[str] = None
+    # Rastreio — preenchido quando o status vira "parcialmente_atendido" e o
+    # usuário confirma que o pedido já foi enviado (ver PUT /pedidos/{id}/rastreio).
+    enviado: Optional[bool] = None
+    codigo_rastreio: Optional[str] = None
+    link_rastreio: Optional[str] = None
     # Rastro de onde este pedido nasceu, se veio de "Importar para Pedidos"
     # em Orçamento/Planejamento financeiro (ver planejamento.py).
     origem_tipo: Optional[str] = None  # "orcamento" | "planejamento_financeiro"

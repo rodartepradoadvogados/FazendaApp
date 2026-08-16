@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package } from "lucide-react";
+import { ShoppingCart, Filter, Plus, Pencil, Trash2, ChevronDown, ChevronRight, Receipt, Package, AlertTriangle, Truck, CreditCard } from "lucide-react";
 import {
-  fetchPedidos, fetchPedido, criarPedido, atualizarPedido, atualizarStatusPedido, excluirPedido, fetchOpcoesPedidos,
+  fetchPedidos, fetchPedido, criarPedido, atualizarPedido, atualizarStatusPedido, atualizarRastreioPedido, excluirPedido, fetchOpcoesPedidos,
   fetchCentrosCusto, fetchPlanoContas, fetchEstoque, fetchFornecedores, formatBRL, formatDate,
   type PedidoPayload, type PedidoItemPayload,
 } from "@/lib/api";
@@ -11,6 +11,8 @@ import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
+import { FormFinanceiro, type PrefillPedido } from "@/components/FormFinanceiro";
+import { RESPONSAVEIS } from "@/lib/constants";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -20,6 +22,7 @@ type PedidoRow = {
   id: number; numero_pedido: string; tipo: "compra" | "venda"; fornecedor_cliente: string | null;
   centro_custo: string | null; data_pedido: string; data_prevista: string | null; status: string;
   observacao: string | null; responsavel: string | null; origem_tipo: string | null;
+  enviado: boolean | null; codigo_rastreio: string | null; link_rastreio: string | null;
   itens: PedidoItemRow[]; valor_total_estimado: number; valor_atendido: number;
 };
 
@@ -160,7 +163,8 @@ export default function PedidosPage() {
               {ord.linhasOrdenadas.map((p) => (
                 <PedidoLinha key={p.id} pedido={p}
                   expandido={expandido === p.id} onToggle={() => setExpandido(expandido === p.id ? null : p.id)}
-                  onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)} />
+                  onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)}
+                  onAtualizado={recarregar} />
               ))}
               {pedidos && !pedidos.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum pedido encontrado.</td></tr>}
             </tbody>
@@ -180,13 +184,58 @@ export default function PedidosPage() {
   );
 }
 
-function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudarStatus }: {
+function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudarStatus, onAtualizado }: {
   pedido: PedidoRow; expandido: boolean; onToggle: () => void; onEditar: () => void; onExcluir: () => void; onMudarStatus: (s: string) => void;
+  onAtualizado: () => void;
 }) {
   const [detalhe, setDetalhe] = useState<{ lancamentos: any[]; movimentos_estoque: any[] } | null>(null);
   useEffect(() => {
     if (expandido && !detalhe) fetchPedido(pedido.id).then(setDetalhe).catch(() => {});
   }, [expandido]);
+
+  // "Parcialmente atendido" pergunta se o pedido já foi enviado (rastreio);
+  // "Atendido" alerta que vai virar compra (financeiro + estoque, se
+  // estocável) antes de deixar prosseguir. Os demais status (aberto,
+  // cancelado) aplicam direto, sem pergunta.
+  const [rastreioAberto, setRastreioAberto] = useState(false);
+  const [foiEnviado, setFoiEnviado] = useState<boolean | null>(null);
+  const [codigoRastreio, setCodigoRastreio] = useState(pedido.codigo_rastreio || "");
+  const [linkRastreio, setLinkRastreio] = useState(pedido.link_rastreio || "");
+  const [salvandoRastreio, setSalvandoRastreio] = useState(false);
+  const [alertaAtendido, setAlertaAtendido] = useState(false);
+  const [abrirPagamento, setAbrirPagamento] = useState(false);
+
+  function statusSolicitado(novoStatus: string) {
+    if (novoStatus === "parcialmente_atendido") { setFoiEnviado(null); setRastreioAberto(true); return; }
+    if (novoStatus === "atendido") { setAlertaAtendido(true); return; }
+    onMudarStatus(novoStatus);
+  }
+
+  async function salvarRastreio() {
+    setSalvandoRastreio(true);
+    try {
+      await atualizarRastreioPedido(pedido.id, {
+        enviado: !!foiEnviado,
+        codigo_rastreio: foiEnviado ? (codigoRastreio || undefined) : undefined,
+        link_rastreio: foiEnviado ? (linkRastreio || undefined) : undefined,
+      });
+      await onMudarStatus("parcialmente_atendido");
+      setRastreioAberto(false);
+    } finally {
+      setSalvandoRastreio(false);
+    }
+  }
+
+  const algumEstocavel = pedido.itens.some((i) => i.tipo_item === "produto");
+  const prefillPedido: PrefillPedido = {
+    id: pedido.id, fornecedorCliente: pedido.fornecedor_cliente,
+    itens: pedido.itens.map((i) => ({
+      produto: i.produto_servico, tipo_item: i.tipo_item,
+      quantidade: i.quantidade, valor_unitario_estimado: i.valor_unitario_estimado,
+      valor_total_estimado: i.valor_total_estimado - i.valor_atendido > 0 ? i.valor_total_estimado - i.valor_atendido : i.valor_total_estimado,
+      codigo_conta_gerencial: i.codigo_conta_gerencial, nome_conta_gerencial: i.nome_conta_gerencial,
+    })),
+  };
 
   return (
     <>
@@ -249,15 +298,90 @@ function PedidoLinha({ pedido, expandido, onToggle, onEditar, onExcluir, onMudar
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Status manual:</label>
-                <select style={inputStyle} value={pedido.status} onChange={(e) => onMudarStatus(e.target.value)}>
-                  {Object.entries(STATUS_INFO).map(([id, info]) => <option key={id} value={id}>{info.label}</option>)}
-                </select>
+              <div className="card" style={{ padding: "0.75rem", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem", background: "var(--surface)" }}>
+                <div className="flex items-center gap-2">
+                  <label style={{ fontSize: "0.78rem", fontWeight: 600 }}>Status manual:</label>
+                  <select style={{ ...inputStyle, fontWeight: 600 }} value={pedido.status} onChange={(e) => statusSolicitado(e.target.value)}>
+                    {Object.entries(STATUS_INFO).map(([id, info]) => <option key={id} value={id}>{info.label}</option>)}
+                  </select>
+                </div>
+                {pedido.enviado && (
+                  <div style={{ fontSize: "0.76rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <Truck size={13} /> Enviado
+                    {pedido.codigo_rastreio && <span>— {pedido.codigo_rastreio}</span>}
+                    {pedido.link_rastreio && <a href={pedido.link_rastreio} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>rastrear</a>}
+                  </div>
+                )}
+                <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.78rem", marginLeft: "auto" }}
+                  onClick={() => setAbrirPagamento(true)}>
+                  <CreditCard size={14} /> Lançar pagamento
+                </button>
               </div>
             </div>
           </td>
         </tr>
+      )}
+
+      {rastreioAberto && (
+        <tr><td colSpan={10} style={{ padding: 0 }}>
+          <Modal title="Pedido parcialmente atendido" onClose={() => setRastreioAberto(false)} width="480px">
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <p style={{ fontSize: "0.85rem" }}>O pedido já foi enviado?</p>
+              <div className="flex gap-2">
+                <button className={foiEnviado === true ? "btn-primary" : "btn-secondary"} onClick={() => setFoiEnviado(true)}>Sim, foi enviado</button>
+                <button className={foiEnviado === false ? "btn-primary" : "btn-secondary"} onClick={() => setFoiEnviado(false)}>Ainda não</button>
+              </div>
+              {foiEnviado && (
+                <div className="flex flex-col gap-2">
+                  <div><label style={labelStyle}>Código de rastreio (opcional)</label>
+                    <input style={{ ...inputStyle, width: "100%" }} value={codigoRastreio} onChange={(e) => setCodigoRastreio(e.target.value)} /></div>
+                  <div><label style={labelStyle}>Link de acompanhamento (opcional)</label>
+                    <input style={{ ...inputStyle, width: "100%" }} value={linkRastreio} onChange={(e) => setLinkRastreio(e.target.value)} /></div>
+                </div>
+              )}
+              <div className="flex gap-2 justify-end">
+                <button className="btn-secondary" onClick={() => setRastreioAberto(false)}>Cancelar</button>
+                <button className="btn-primary" disabled={foiEnviado === null || salvandoRastreio} onClick={salvarRastreio}>
+                  {salvandoRastreio ? "Salvando…" : "Confirmar"}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        </td></tr>
+      )}
+
+      {alertaAtendido && (
+        <tr><td colSpan={10} style={{ padding: 0 }}>
+          <Modal title="Marcar pedido como atendido" onClose={() => setAlertaAtendido(false)} width="480px">
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <div className="alert-atencao" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start" }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: "0.1rem" }} />
+                <span style={{ fontSize: "0.82rem" }}>
+                  Marcar como atendido registra este pedido como uma compra/venda e gera lançamento financeiro.
+                  {algumEstocavel && " Como há produto estocável neste pedido, também gerará movimentação de estoque."}
+                </span>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button className="btn-secondary" onClick={() => setAlertaAtendido(false)}>Cancelar</button>
+                <button className="btn-secondary" onClick={() => { setAlertaAtendido(false); onMudarStatus("atendido"); }}>Só marcar status</button>
+                <button className="btn-primary" onClick={() => { setAlertaAtendido(false); setAbrirPagamento(true); }}>Lançar pagamento agora</button>
+              </div>
+            </div>
+          </Modal>
+        </td></tr>
+      )}
+
+      {abrirPagamento && (
+        <tr><td colSpan={10} style={{ padding: 0 }}>
+          <Modal title="Lançar pagamento do pedido" onClose={() => setAbrirPagamento(false)} width="1100px" zIndex={90}>
+            <FormFinanceiro
+              tipo={pedido.tipo === "compra" ? "despesa" : "receita"}
+              responsaveis={RESPONSAVEIS}
+              prefillPedido={prefillPedido}
+              onSalvo={() => { setAbrirPagamento(false); onAtualizado(); }}
+            />
+          </Modal>
+        </td></tr>
       )}
     </>
   );

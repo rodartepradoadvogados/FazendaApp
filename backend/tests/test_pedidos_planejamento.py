@@ -89,6 +89,35 @@ class TestPedidosIsolamento:
         assert client.get(f"/pedidos/{pedido_id}").status_code == 404
 
 
+class TestRastreio:
+    def test_marcar_enviado_grava_codigo_e_link(self, client):
+        pedido_id = _criar_pedido(client).json()["id"]
+        r = client.put(f"/pedidos/{pedido_id}/rastreio", json={
+            "enviado": True, "codigo_rastreio": "BR123456789BR", "link_rastreio": "https://rastreio.correios.com.br/BR123456789BR",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["enviado"] is True
+        assert corpo["codigo_rastreio"] == "BR123456789BR"
+        assert corpo["link_rastreio"] == "https://rastreio.correios.com.br/BR123456789BR"
+
+        detalhe = client.get(f"/pedidos/{pedido_id}").json()
+        assert detalhe["enviado"] is True
+        assert detalhe["codigo_rastreio"] == "BR123456789BR"
+
+    def test_marcar_nao_enviado_limpa_codigo_e_link(self, client):
+        pedido_id = _criar_pedido(client).json()["id"]
+        client.put(f"/pedidos/{pedido_id}/rastreio", json={
+            "enviado": True, "codigo_rastreio": "BR123456789BR", "link_rastreio": "https://x.com/track",
+        })
+        r = client.put(f"/pedidos/{pedido_id}/rastreio", json={"enviado": False})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["enviado"] is False
+        assert corpo["codigo_rastreio"] is None
+        assert corpo["link_rastreio"] is None
+
+
 class TestVinculoFinanceiro:
     def test_lancamento_vinculado_atualiza_status_e_valor_atendido(self, client):
         pedido_id = _criar_pedido(client).json()["id"]
