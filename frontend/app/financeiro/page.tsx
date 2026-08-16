@@ -1279,6 +1279,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
           <span style={{ fontSize: "0.85rem" }}>
@@ -1289,7 +1291,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
             {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
           </button>
         </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+        <div className="overflow-x-auto">
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead style={theadStickyStyle}><tr>
               <th style={theadStickyStyle}></th>
@@ -1330,8 +1332,10 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           </table>
         </div>
       </div>
+      </div>
 
-      {selecionados.size > 0 && (
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {selecionados.size > 0 ? (
         <div className="card">
           <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
             <span>Baixa de {selecionados.size} lançamento(s) — {formatBRL(totalSelecionado)}</span>
@@ -1445,7 +1449,14 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
         </div>
+      ) : (
+        <div className="card" style={{ textAlign: "center", padding: "2.4rem 1rem" }}>
+          <Check size={22} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma ou mais notas à esquerda para ver os dados da baixa.</p>
+        </div>
       )}
+      </div>
+      </div>
     </div>
   );
 }
@@ -3777,11 +3788,13 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
         </ModalDivididoDocumento>
       )}
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
           <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
-        <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
+        <div className="overflow-x-auto">
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead style={theadStickyStyle}><tr>
               <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
@@ -3823,8 +3836,10 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
           </div>
         )}
       </div>
+      </div>
 
-      {notaSelecionada && (
+      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      {notaSelecionada ? (
         <div className="card">
           <div className="card-header mb-3">
             Tratar {tipo === "receita" ? "recebimento" : "pagamento"} — {notaSelecionada.descricao} · {formatBRL(notaSelecionada.valor)}
@@ -3940,7 +3955,14 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
             <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
         </div>
+      ) : (
+        <div className="card" style={{ textAlign: "center", padding: "2.4rem 1rem" }}>
+          <Circle size={22} style={{ color: "var(--text-muted)", margin: "0 auto 0.6rem" }} />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Selecione uma nota à esquerda para tratar {tipo === "receita" ? "o recebimento" : "o pagamento"}.</p>
+        </div>
       )}
+      </div>
+      </div>
     </div>
   );
 }
