@@ -60,6 +60,7 @@ class ContaGerencial(SQLModel, table=True):
     numero_boleto: Optional[str] = None
     responsavel: Optional[str] = None
     centro_custo: Optional[str] = None
+    classificacao: Optional[str] = None  # nome de uma ClassificacaoLancamento cadastrada (ex.: Medicamentos)
     tipo: Optional[str] = None
     origem: Optional[str] = "csv"  # "csv" (upload) | "manual" (lançamento pela tela)
     # Desconto/acréscimo negociado NA NOTA (produtos → valor bruto → líquido pago/recebido).
@@ -263,6 +264,21 @@ class FormaPagamentoCadastro(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (Fase 3B) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ClassificacaoLancamento(SQLModel, table=True):
+    """Classificação livre de uma conta a pagar/receber (ex.: Medicamentos,
+    Ração, Manutenção) — Configurações > Parâmetros financeiros, mesmo padrão
+    de TipoDocumento/FormaPagamentoCadastro, cadastrável na hora do lançamento."""
+
+    __tablename__ = "classificacao_lancamento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_classificacao_lancamento_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     ativo: bool = True

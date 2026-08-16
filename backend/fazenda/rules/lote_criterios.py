@@ -49,28 +49,40 @@ def _categoria_normalizada(animal: dict) -> str:
     return ""
 
 
-def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
-    """Serviço VIGENTE da matriz (o mais recente), SE ele estiver positivo e
-    sem perda de prenhez registrada — não é "o último serviço positivo do
-    histórico": um serviço mais novo (mesmo sem diagnóstico ainda) já
-    substitui aquele positivo, e uma perda registrada (manual ou automática
-    por reinseminação, ver fazenda.rules.perda_prenhez) encerra a gestação
-    mesmo sem um serviço novo. Sem este critério, "dias para o parto" e o
-    critério "Pré-parto" do lote continuavam contando uma gestação que já
-    tinha acabado."""
+def _ultimo_servico_positivo(
+    numero: str, servicos_por_animal: dict[str, list[dict]], partos_por_animal: dict[str, list] | None = None,
+) -> dict | None:
+    """Serviço VIGENTE da matriz (o mais recente), SE ele estiver positivo,
+    sem perda de prenhez registrada E sem um PARTO já realizado desde então —
+    não é "o último serviço positivo do histórico": um serviço mais novo
+    (mesmo sem diagnóstico ainda) já substitui aquele positivo, uma perda
+    registrada (manual ou automática por reinseminação, ver
+    fazenda.rules.perda_prenhez) encerra a gestação mesmo sem um serviço
+    novo, e um PARTO real (`Parto.data_parto >= data_servico`) encerra a
+    gestação mesmo sem perda_prenhez registrada (parto normal não é perda).
+    Sem este último critério, uma vaca que acabava de parir continuava
+    contando "dias para o parto"/"Pré-parto" com base no serviço antigo — bug
+    real: no dia seguinte ao parto, o sistema sugeria "faltam 2 dias para o
+    parto" mesmo com o parto já lançado. `partos_por_animal` é opcional
+    (retrocompatível) — chamador sem essa info mantém o comportamento antigo."""
     servicos = sorted(
         (s for s in servicos_por_animal.get(numero, []) if s.get("data_servico")), key=lambda s: s["data_servico"],
     )
     if not servicos:
         return None
     ultimo = servicos[-1]
-    if (ultimo.get("diagnostico") or "").strip().upper() == "POSITIVO" and not ultimo.get("data_perda_prenhez"):
-        return ultimo
-    return None
+    if (ultimo.get("diagnostico") or "").strip().upper() != "POSITIVO" or ultimo.get("data_perda_prenhez"):
+        return None
+    if partos_por_animal:
+        data_servico = ultimo["data_servico"]
+        if any(p.data_parto and p.data_parto >= data_servico for p in partos_por_animal.get(numero, [])):
+            return None
+    return ultimo
 
 
 def dias_para_parto(
     numero: str, servicos_por_animal: dict[str, list[dict]], hoje: date, raca: str | None = None,
+    partos_por_animal: dict[str, list] | None = None,
 ) -> int | None:
     """`raca` (opcional, retrocompatível) usa a gestação ESPECÍFICA da raça
     do animal (280/287/295 dias — ver fazenda.rules.gestation), a mesma
@@ -79,8 +91,9 @@ def dias_para_parto(
     critério `lote.pre_parto`) caía sempre no ponto médio fixo da faixa
     editável, divergindo em até 15 dias da Agenda para raças não-Holandês
     (mesma classe de bug já corrigida uma vez para a Secagem, ver
-    relatorios_gerenciais.GESTACAO_DIAS)."""
-    servico = _ultimo_servico_positivo(numero, servicos_por_animal)
+    relatorios_gerenciais.GESTACAO_DIAS). `partos_por_animal` (opcional,
+    retrocompatível) — ver docstring de `_ultimo_servico_positivo`."""
+    servico = _ultimo_servico_positivo(numero, servicos_por_animal, partos_por_animal)
     if not servico:
         return None
     dias_decorridos = (hoje - servico["data_servico"]).days
@@ -150,6 +163,7 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     servicos_por_animal = dados["servicos_por_animal"]
     sanidades_por_animal = dados["sanidades_por_animal"]
     peso_por_animal = dados["peso_por_animal"]
+    partos_obj_por_animal = dados["partos_obj_por_animal"]
     categoria = _categoria_normalizada(animal)
     ctx = _contexto_animal(animal, hoje, dados)
 
@@ -164,7 +178,7 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
         if categoria not in alvo:
             return False
 
-    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"))
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"), partos_obj_por_animal)
 
     if lote.pre_parto:
         if dpp is None or dpp > pre_parto_max() or dpp < 0:
@@ -295,7 +309,7 @@ def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[st
     servicos_por_animal = dados["servicos_por_animal"]
     peso_por_animal = dados["peso_por_animal"]
     ctx = _contexto_animal(animal, hoje, dados)
-    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"))
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje, animal.get("raca"), dados["partos_obj_por_animal"])
     motivos = []
 
     if lote.status_lactacao:

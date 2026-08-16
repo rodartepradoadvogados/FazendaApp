@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
-  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos, formatDate, fetchPessoas,
+  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos, formatDate,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -85,15 +86,10 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => { fetchProtocolosInducaoLactacao().then(setProtocolos).catch(() => setProtocolos([])); }, []);
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
 
   async function salvar() {
     setErro(null); setSucesso(null);

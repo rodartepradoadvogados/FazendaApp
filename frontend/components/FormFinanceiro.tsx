@@ -4,7 +4,7 @@ import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camer
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
-  type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido,
+  type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido, criarClassificacao,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload,
 } from "@/lib/api";
@@ -86,9 +86,10 @@ type Opcoes = {
   contas_bancarias: string[];
   tipos_documento: string[];
   formas_pagamento: string[];
+  classificacoes: string[];
 };
 
-const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], produtos: [], contas_bancarias: [], tipos_documento: [], formas_pagamento: [] };
+const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], produtos: [], contas_bancarias: [], tipos_documento: [], formas_pagamento: [], classificacoes: [] };
 
 function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string): Parcela[] {
   if (qtd <= 0) return [];
@@ -264,6 +265,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     if (dados.data_emissao) setDataEmissao(dados.data_emissao);
   }), [tipo, planoContas]);
   const [centroCusto, setCentroCusto] = useState("Pecuária Leiteira");
+  const [classificacao, setClassificacao] = useState("");
+  const [novaClassificacaoAberta, setNovaClassificacaoAberta] = useState(false);
+  const [novaClassificacaoNome, setNovaClassificacaoNome] = useState("");
+  const [salvandoClassificacao, setSalvandoClassificacao] = useState(false);
   const [fornecedor, setFornecedor] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [tipoDocumento, setTipoDocumento] = useState("");
@@ -511,7 +516,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   function limpar() {
     setItens([itemVazio()]);
-    setCentroCusto("Pecuária Leiteira"); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
+    setCentroCusto("Pecuária Leiteira"); setClassificacao(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
     setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
     entregueTocadoRef.current = false;
@@ -535,7 +540,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   function montarRascunho() {
     return {
-      itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, numeroOsOrcamento, numeroBoleto,
+      itens, centroCusto, classificacao, fornecedor, responsavel, tipoDocumento, numeroDocumento, numeroOsOrcamento, numeroBoleto,
       dataEmissao, dataVencimento, dataPrevistaEntrada, dataPedido, pedidoId, entregue, desconto, acrescimo,
       parcelado, qtdParcelas, parcelas, jaPago, dataPagamento, valorPago, contaBancaria,
       numeroDocumentoPagamento, formaPagamento, salvoEm: new Date().toISOString(),
@@ -544,7 +549,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   function aplicarRascunho(d: any) {
     if (!d) return;
     setItens(Array.isArray(d.itens) && d.itens.length ? d.itens : [itemVazio()]);
-    setCentroCusto(d.centroCusto || "Pecuária Leiteira"); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
+    setCentroCusto(d.centroCusto || "Pecuária Leiteira"); setClassificacao(d.classificacao || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
     setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
     setNumeroOsOrcamento(d.numeroOsOrcamento || ""); setNumeroBoleto(d.numeroBoleto || "");
     setDataEmissao(d.dataEmissao || ""); setDataVencimento(d.dataVencimento || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
@@ -921,6 +926,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           } : null,
         })),
       centro_custo: centroCusto || null,
+      classificacao: classificacao || null,
       fornecedor_cliente: fornecedor || null,
       responsavel: responsavel || null,
       tipo_documento: tipoDocumento || null,
@@ -1342,6 +1348,39 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             {centroCusto && !opcoes.centros_custo.includes(centroCusto) && <option value={centroCusto}>{centroCusto}</option>}
             {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+        </Campo>
+        <Campo label="Classificação">
+          {!novaClassificacaoAberta ? (
+            <div className="flex items-center gap-2">
+              <select style={inputStyle} value={classificacao} onChange={(e) => setClassificacao(e.target.value)}>
+                <option value="">Selecione…</option>
+                {classificacao && !opcoes.classificacoes.includes(classificacao) && <option value={classificacao}>{classificacao}</option>}
+                {opcoes.classificacoes.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button type="button" className="btn-ghost" title="Cadastrar nova classificação" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setNovaClassificacaoAberta(true)}>
+                <Plus size={13} /> Nova
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input style={inputStyle} value={novaClassificacaoNome} onChange={(e) => setNovaClassificacaoNome(e.target.value)} placeholder="ex.: Medicamentos" autoFocus />
+              <button type="button" className="btn-primary" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} disabled={salvandoClassificacao || !novaClassificacaoNome.trim()} onClick={async () => {
+                setSalvandoClassificacao(true);
+                try {
+                  await criarClassificacao({ nome: novaClassificacaoNome.trim() });
+                  const nome = novaClassificacaoNome.trim();
+                  setClassificacao(nome);
+                  await carregarOpcoes();
+                  setNovaClassificacaoNome(""); setNovaClassificacaoAberta(false);
+                } catch (e: any) {
+                  setErro(e.message || "Erro ao criar classificação");
+                } finally {
+                  setSalvandoClassificacao(false);
+                }
+              }}>{salvandoClassificacao ? "Salvando…" : "Salvar"}</button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setNovaClassificacaoAberta(false); setNovaClassificacaoNome(""); }}>Cancelar</button>
+            </div>
+          )}
         </Campo>
         <Campo label="Responsável pelo lançamento">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>

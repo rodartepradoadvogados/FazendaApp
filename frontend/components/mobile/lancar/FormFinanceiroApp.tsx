@@ -10,7 +10,7 @@ import dynamic from "next/dynamic";
 import { Receipt, HandCoins, ShoppingCart, Tag, Dna, Users, CircleDollarSign } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type Animal } from "@/components/mobile/lancar/comum";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 
 // Cada pílula só baixa seu próprio formulário quando aberta pela 1ª vez —
 // importante em conexão de campo, onde o app roda mais.
@@ -30,6 +30,7 @@ const TITULOS: Record<TipoLancamento, string> = {
 
 export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { onVoltar: () => void; tipoInicial?: "despesa" | "receita"; animais: Animal[] }) {
   const [tipo, setTipo] = useState<TipoLancamento | null>(tipoInicial || null);
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   if (!tipo) {
     return (
@@ -59,7 +60,7 @@ export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { 
     <div>
       <MobVoltar titulo={TITULOS[tipo]} onVoltar={() => setTipo(null)} />
       <div className="mob-form-embutido">
-        {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={RESPONSAVEIS} apresentacaoModais="tela" />}
+        {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={nomesResponsaveis} apresentacaoModais="tela" />}
         {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} />}
         {tipo === "venda_animal" && <CompraVendaAnimalForm key="venda_animal" modo="venda" animais={animais} />}
         {tipo === "compra_semen" && <CompraSemenForm key="compra_semen" />}

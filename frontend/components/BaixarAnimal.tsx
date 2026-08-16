@@ -2,7 +2,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -57,6 +57,7 @@ export default function BaixarAnimal() {
   const [vendaRecria, setVendaRecria] = useState(false);
   const [dataBaixa, setDataBaixa] = useState(hoje());
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
@@ -341,7 +342,7 @@ export default function BaixarAnimal() {
             <div><label style={labelStyle}>Responsável</label>
               <select style={selStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
                 <option value="">Selecione...</option>
-                {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+                {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
               </select></div>
             <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Observação (opcional)</label>
               <input style={selStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>

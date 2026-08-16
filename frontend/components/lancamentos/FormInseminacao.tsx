@@ -6,7 +6,7 @@ import {
   fetchSugestaoAcasalamento, fetchTouros,
 } from "@/lib/api";
 import type { SemenDisponivel, Touro, SugestaoAcasalamento } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -30,6 +30,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
   const [touro, setTouro] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   // IATF: vincular a um lançamento já existente + auto-lançar retroativo.
   const [protocoloId, setProtocoloId] = useState("");
   const [autoLancar, setAutoLancar] = useState(false);
@@ -380,7 +381,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
           )}
         </Campo>
         <Campo label="Responsável / inseminador">
-          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select>
         </Campo>
       </div>
 

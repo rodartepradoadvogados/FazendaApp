@@ -6,7 +6,7 @@ import {
   fetchAgenda, fetchLotes, fetchMastiteContexto, fetchMastiteOpcoes, fetchMedicamentos, fetchProtocolosSanitarios,
   lancarProtocoloSanitario, previewCriteriosLote,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
@@ -41,6 +41,7 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
   const [matriz, setMatriz] = useState("");
   const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().slice(0, 10));
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [classificacaoMastite, setClassificacaoMastite] = useState("");
   const [grauMastite, setGrauMastite] = useState("");
@@ -301,7 +302,7 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
           </Campo>
         )}
 
-        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
 

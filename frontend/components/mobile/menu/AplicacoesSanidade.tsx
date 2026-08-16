@@ -11,7 +11,8 @@ import {
 } from "@/lib/api";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
-import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
 import { casaBusca } from "@/lib/busca";
@@ -46,6 +47,7 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
   const [busca, setBusca] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [vals, setVals] = useState({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [produtosCatalogo, setProdutosCatalogo] = useState<EstoqueItemPicker[]>([]);
@@ -184,8 +186,8 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                       <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Responsável</label>
                         <select style={inp} value={vals.responsavel} onChange={(e) => setVals((s) => ({ ...s, responsavel: e.target.value }))}>
                           <option value="">—</option>
-                          {!RESPONSAVEIS.includes(vals.responsavel) && vals.responsavel && <option value={vals.responsavel}>{vals.responsavel}</option>}
-                          {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+                          {!nomesResponsaveis.includes(vals.responsavel) && vals.responsavel && <option value={vals.responsavel}>{vals.responsavel}</option>}
+                          {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
                         </select></div>
                       <div style={{ marginBottom: "0.2rem" }}><label style={rotulo}>Observação</label>
                         <input style={inp} value={vals.obs} onChange={(e) => setVals((s) => ({ ...s, obs: e.target.value }))} /></div>

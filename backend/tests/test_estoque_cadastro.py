@@ -8,10 +8,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Estoque
+from fazenda.models import Estoque, MovimentoEstoque
 
 
 @pytest.fixture
@@ -67,6 +67,43 @@ class TestCriarItemEstoque:
         c, _ = client
         r = c.post("/estoque/", json={"nome": "Ração Y", "unidade": "kg"})
         assert r.json()["gera_patrimonio"] is False
+
+
+class TestSaldoInicialGeraEntrada:
+    """Saldo inicial informado no cadastro é uma entrada de verdade — precisa
+    aparecer no Mapa de entradas (Sanidade > Insumos e Sanidade), não só em
+    Estoque.quantidade (ver criar_item_estoque, fazenda/api/routers/estoque.py)."""
+
+    def test_saldo_inicial_positivo_cria_movimento_de_entrada(self, client):
+        c, engine = client
+        criado = c.post("/estoque/", json={
+            "nome": "Vacina Y", "unidade": "ml", "quantidade": 24, "estocavel": True,
+            "data_inicio_controle": "2026-08-16",
+        }).json()
+
+        with Session(engine) as s:
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "cadastro_estoque", MovimentoEstoque.origem_id == criado["id"])).first()
+            assert mov is not None
+            assert mov.movimento == "Saldo inicial"
+            assert mov.quantidade == 24
+            assert str(mov.data_movimento) == "2026-08-16"
+            assert mov.estoque_id == criado["id"]
+
+    def test_sem_saldo_inicial_nao_cria_movimento(self, client):
+        c, engine = client
+        criado = c.post("/estoque/", json={"nome": "Ração Z", "unidade": "kg"}).json()
+
+        with Session(engine) as s:
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "cadastro_estoque", MovimentoEstoque.origem_id == criado["id"])).first()
+            assert mov is None
+
+    def test_item_nao_estocavel_com_quantidade_nao_cria_movimento(self, client):
+        c, engine = client
+        criado = c.post("/estoque/", json={"nome": "Serviço financeiro", "quantidade": 5, "estocavel": False}).json()
+
+        with Session(engine) as s:
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "cadastro_estoque", MovimentoEstoque.origem_id == criado["id"])).first()
+            assert mov is None
 
 
 class TestAtualizarItemEstoque:

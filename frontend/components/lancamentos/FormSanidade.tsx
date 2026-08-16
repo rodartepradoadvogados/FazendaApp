@@ -3,7 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Plus, ShoppingCart, Sparkles, Trash2 } from "lucide-react";
 import { criarAplicacaoSanidade, fetchApresentacoesFarmacia, fetchDoencas, fetchIndicacoesDoenca, fetchMedicamentos, fetchPrincipiosAtivos, marcarEventoRealizado } from "@/lib/api";
 import type { ApresentacaoFarmacia, OpcaoIndicacaoDoenca } from "@/lib/api";
-import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import {
@@ -72,6 +73,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
   const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -234,7 +236,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
                 {lotes.map((l) => <label key={l} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}><input type="checkbox" checked={lotesSel.has(l)} onChange={() => toggleLote(l)} /> {l}</label>)}
               </div>
             </Campo>}
-        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
         <Campo label="Já foi aplicado?" full>
           {dataAplicacao > new Date().toISOString().slice(0, 10) ? (

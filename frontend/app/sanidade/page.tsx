@@ -10,7 +10,8 @@ import {
   fetchMedicamentos,
   fetchRastreabilidadeSanitaria, type LinhaRastreabilidadeSanitaria,
 } from "@/lib/api";
-import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
@@ -884,6 +885,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
   const [selDasCategorias, setSelDasCategorias] = useState<Set<string>>(new Set());
   const [editId, setEditId] = useState<number | null>(null);
   const [editVals, setEditVals] = useState<{ data: string; produto: string; dose: string; unidade: string; via: string; responsavel: string; obs: string }>({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [produtosCatalogo, setProdutosCatalogo] = useState<{ nome: string; quantidade: number | null; unidade: string | null }[]>([]);
   const [soComEstoque, setSoComEstoque] = useState(false);
@@ -1254,8 +1256,8 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Responsável</label>
                                 <select style={inp} value={editVals.responsavel} onChange={(e) => setEditVals((s) => ({ ...s, responsavel: e.target.value }))}>
                                   <option value="">—</option>
-                                  {!RESPONSAVEIS.includes(editVals.responsavel) && editVals.responsavel && <option value={editVals.responsavel}>{editVals.responsavel}</option>}
-                                  {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+                                  {!nomesResponsaveis.includes(editVals.responsavel) && editVals.responsavel && <option value={editVals.responsavel}>{editVals.responsavel}</option>}
+                                  {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
                                 </select></div>
                               <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Observação</label>
                                 <input style={inp} value={editVals.obs} onChange={(e) => setEditVals((s) => ({ ...s, obs: e.target.value }))} /></div>

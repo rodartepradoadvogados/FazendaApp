@@ -1,7 +1,8 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { registrarInducaoCio, fetchInducoesCio, excluirInducaoCio, type InducaoCioLancamento } from "@/lib/api";
-import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { VIAS_APLICACAO } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -37,6 +38,7 @@ export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; est
   const [unidade, setUnidade] = useState("ml");
   const [via, setVia] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -160,7 +162,7 @@ export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; est
         </Campo>
         <Campo label="Responsável">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
-            <option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+            <option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
           </select>
         </Campo>
         <Campo label="Observação (opcional)" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>

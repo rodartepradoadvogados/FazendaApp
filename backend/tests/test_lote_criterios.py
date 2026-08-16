@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Lote, PesagemCorporal, Sanidade, Secagem, Servico
+from fazenda.models import Animal, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 
 
 @pytest.fixture
@@ -157,6 +157,54 @@ class TestPreviewCriterios(object):
         # gestação de 283 dias, serviço há 100 dias -> faltam 183 dias
         r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "dias_para_parto_min": 170, "dias_para_parto_max": 190})
         assert r.json()["animais"] == ["3"]
+
+
+class TestParaJaResolvePreParto(object):
+    """Vaca 3335 pariu, mas o serviço positivo antigo continuava contando
+    "dias para o parto"/"Pré-parto" — no dia seguinte ao parto, o sistema
+    sugeria "faltam 2 dias para o parto", o que é logicamente impossível
+    (ver fazenda.rules.lote_criterios._ultimo_servico_positivo)."""
+
+    def _seed(self, engine, dias_desde_o_parto: int):
+        hoje = date.today()
+        from fazenda.rules.gestation import dias_gestacao
+        gestacao = round(dias_gestacao(None))
+        # Serviço datado para que, SEM considerar o parto, "faltariam 2 dias
+        # para o parto" hoje — exatamente o cenário relatado.
+        data_servico = hoje - timedelta(days=gestacao - 2)
+        with Session(engine) as s:
+            s.add(Animal(numero="3335", categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+                         sit_rep="Ges.", diagnostico="POSITIVO", data_nasc=hoje - timedelta(days=1500), ativo=True))
+            s.commit()
+            s.add(Servico(numero_matriz="3335", data_servico=data_servico, diagnostico="POSITIVO"))
+            s.add(Parto(numero_matriz="3335", data_parto=hoje - timedelta(days=dias_desde_o_parto)))
+            s.commit()
+
+    def test_pre_parto_nao_bate_no_dia_seguinte_ao_parto_real(self, client):
+        c, engine = client
+        self._seed(engine, dias_desde_o_parto=1)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "pre_parto": True})
+        assert r.json()["animais"] == []
+
+    def test_faixa_dias_para_parto_nao_bate_apos_parto_real(self, client):
+        c, engine = client
+        self._seed(engine, dias_desde_o_parto=1)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "dias_para_parto_min": 0, "dias_para_parto_max": 10})
+        assert r.json()["animais"] == []
+
+    def test_sem_parto_o_pre_parto_continua_batendo_normalmente(self, client):
+        c, engine = client
+        hoje = date.today()
+        from fazenda.rules.gestation import dias_gestacao
+        gestacao = round(dias_gestacao(None))
+        with Session(engine) as s:
+            s.add(Animal(numero="3335", categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+                         sit_rep="Ges.", diagnostico="POSITIVO", data_nasc=hoje - timedelta(days=1500), ativo=True))
+            s.commit()
+            s.add(Servico(numero_matriz="3335", data_servico=hoje - timedelta(days=gestacao - 2), diagnostico="POSITIVO"))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "pre_parto": True})
+        assert r.json()["animais"] == ["3335"]
 
 
 class TestCamposGeradoresVsRestritivos(object):

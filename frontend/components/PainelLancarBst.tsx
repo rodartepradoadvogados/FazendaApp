@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
-import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas, formatDate } from "@/lib/api";
+import { aplicarBstLote, marcarInaptaBst, fetchEstoque, formatDate } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
 import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { EstoquePicker } from "@/components/EstoquePicker";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+import type { ColunaExport } from "@/lib/export";
 
 // Mesmo padrão de nome usado no backend para reconhecer um item de estoque
 // como BST (ver MARCADORES_BST em fazenda/api/routers/agenda.py) — não há
@@ -81,6 +84,24 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
     ["ambos", "Ambos"], ["atual", "Só DEL atual"], ["projetado", "Só DEL projetado"],
   ];
 
+  // Exportação (PDF/Excel) das 3 listas juntas — mesma tabela usada tanto na
+  // Agenda (card de BST) quanto em Lançamentos > Produção > BST e em
+  // Produção > Relatórios de BST, já que todas renderizam via este
+  // componente. "Situação" identifica de qual das 3 tabelas a linha veio.
+  const colunasExport: ColunaExport[] = [
+    { header: "Nº", key: "numero_matriz" },
+    { header: "Lote", key: "grupo" },
+    { header: "DEL atual", key: "del_atual" },
+    { header: "DEL projetado", key: "del_projetado" },
+    { header: "Situação", key: "situacao" },
+    { header: "Obs.", key: "obs" },
+  ];
+  const linhasExport = useMemo(() => [
+    ...aptas.map((b) => ({ ...b, situacao: "Apta", obs: "" })),
+    ...nuncaAplicadas.map((b) => ({ ...b, situacao: "Incluir no próximo BST", obs: "Nunca aplicada — apta na próxima" })),
+    ...inaptas.map((b) => ({ ...b, situacao: "Inapta", obs: b.requer_reanalise ? (b.motivo_exclusao || "Retirada do BST — revisar") : "" })),
+  ], [aptas, nuncaAplicadas, inaptas]);
+
   return (
     <div className="space-y-2">
       <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
@@ -88,16 +109,19 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
         {agenda?.proxima_visita_bst ? <> (<strong>{formatDate(agenda.proxima_visita_bst)}</strong>)</> : null} — é essa
         projeção que decide se a vaca chega apta na hora certa.
       </p>
-      <div className="flex items-center gap-2">
-        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Ver:</span>
-        <div className="flex gap-1">
-          {opcoesVerDel.map(([valor, rotulo]) => (
-            <button key={valor} type="button" onClick={() => setVerDel(valor)}
-              className={verDel === valor ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem" }}>
-              {rotulo}
-            </button>
-          ))}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Ver:</span>
+          <div className="flex gap-1">
+            {opcoesVerDel.map(([valor, rotulo]) => (
+              <button key={valor} type="button" onClick={() => setVerDel(valor)}
+                className={verDel === valor ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem" }}>
+                {rotulo}
+              </button>
+            ))}
+          </div>
         </div>
+        <ExportarBotoes titulo="BST — DEL atual e projetado" colunas={colunasExport} linhas={linhasExport} nomeArquivoBase="bst_del" />
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
@@ -137,11 +161,10 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [estoqueItens, setEstoqueItens] = useState<any[]>([]);
-  const [pessoas, setPessoas] = useState<any[]>([]);
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
 
   useEffect(() => {
     fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => setEstoqueItens([]));
-    fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
   }, []);
 
   // Itens de estoque reconhecidos como BST (mesmo critério do backend) —
@@ -151,11 +174,6 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const itensBst = useMemo(
     () => estoqueItens.filter((i) => MARCADORES_BST.test(i.nome || "")),
     [estoqueItens]
-  );
-
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
   );
 
   const toggle = (numero: string) => setSelecionados((prev) => {

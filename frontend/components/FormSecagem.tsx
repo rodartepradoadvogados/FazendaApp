@@ -4,7 +4,7 @@ import { Plus, Trash2 } from "lucide-react";
 import {
   fetchSecagemInfo, criarSecagem, criarMovimentacao, fetchMedicamentos, formatDate, fetchTransferenciaLoteAutomatica,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -53,6 +53,7 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
   const [ecc, setEcc] = useState("");
   const [observacao, setObservacao] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
   // "Dosagem" de cada produto de secagem pode ser a dose DE CADA vaca (padrão
   // — aplica o valor cheio a cada animal selecionado) ou o TOTAL usado na
@@ -304,7 +305,7 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         <Campo label="Escore de condição corporal (opcional, 1 a 5)">
           <input type="number" step={0.25} min={1} max={5} style={inputStyle} value={ecc} onChange={(e) => setEcc(e.target.value)} placeholder="ex.: 3,25" />
         </Campo>
-        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
       {info?.motivo_exclusao && <p style={{ ...nota, color: "var(--amber)" }}>{info.motivo_exclusao}</p>}

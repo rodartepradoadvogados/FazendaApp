@@ -5,8 +5,9 @@ import { Plus } from "lucide-react";
 import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario,
   atualizarCalendarioSanitario, excluirCalendarioSanitario, fetchExames, atualizarEventoSanitario, criarEventoSanitario,
-  fetchEventosVidaVocabulario, fetchCategoriasManejo, fetchPessoas, formatDate,
+  fetchEventosVidaVocabulario, fetchCategoriasManejo, formatDate,
 } from "@/lib/api";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { Modal } from "@/components/Modal";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
@@ -157,12 +158,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   );
   const ordRegras = useOrdenacao(regrasFiltradas);
 
-  const [pessoas, setPessoas] = useState<any[]>([]);
-  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
-  const pessoasAtivas = useMemo(
-    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoas]
-  );
+  const { pessoas: pessoasAtivas } = usePessoasAtivas();
   const veterinariosZootecnistas = useMemo(
     () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t))),
     [pessoasAtivas]

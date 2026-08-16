@@ -6,7 +6,7 @@ import {
   criarCompraAnimal, criarVendaAnimal, fetchComprasAnimais, fetchVendasAnimais,
   ehAdmin, formatBRL,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { SeletorContaGerencial } from "./SeletorContaGerencial";
 import { AnimalPickerModal } from "./AnimalPickerModal";
@@ -59,6 +59,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_animal");
   const [responsavel, setResponsavel] = useState("");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
 
   // Motivo(s)/categoria(s) — só na venda.
@@ -348,7 +349,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
           <Campo label="Responsável pelo lançamento">
             <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
               <option value="">Selecione...</option>
-              {RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+              {nomesResponsaveis.map((r) => <option key={r}>{r}</option>)}
             </select>
           </Campo>
           <Campo label="Tipo de documento">
