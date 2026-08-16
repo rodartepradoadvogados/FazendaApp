@@ -345,4 +345,4 @@ class TestSugestoesCadastroNoEndpoint:
             MockAnthropic.return_value.messages.create.return_value = _resposta_mock(_PAYLOAD_MINIMO)
             r = c.post("/financeiro/ler-documento", files={"file": ("nota.pdf", b"%PDF-1.4", "application/pdf")})
         assert r.status_code == 200
-        assert r.json()["sugestoes_cadastro"] == {"fornecedor": None, "itens": []}
+        assert r.json()["sugestoes_cadastro"] == {"fornecedor": None, "fornecedor_confianca": "incerto", "itens": []}

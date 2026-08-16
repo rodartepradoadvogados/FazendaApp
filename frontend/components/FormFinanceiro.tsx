@@ -4,7 +4,7 @@ import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camer
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
-  type SugestoesCadastro, type SugestaoCadastroItem,
+  type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload,
 } from "@/lib/api";
@@ -353,28 +353,42 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // parcela (parcelas_detectadas), guarda aqui pra o efeito de auto-divisão
   // (abaixo) usar esses valores reais em vez de dividir tudo igualmente.
   const parcelasExtraidasRef = useRef<Parcela[] | null>(null);
-  // Boleto(s) a anexar ao lançamento quando ele nascer parcelado — sobem
-  // depois que o lançamento é criado (o anexo precisa do numero_lancamento).
-  // Cada documento anexado (boleto, nota, orçamento, pedido...) carrega sua
-  // PRÓPRIA categoria/número/data — um mesmo lançamento pode reunir vários
-  // tipos de documento juntos (ver Central de Documentos), não um só rótulo
-  // pra tudo que for anexado de uma vez. `categoria` nasce com o "Tipo de
-  // documento" escolhido acima (mesmo default de sempre), mas é editável por
-  // arquivo.
+  // Anexos deste lançamento — UM local só (dropzone acima, "leitura
+  // automática"), pra qualquer documento: nota, boleto, orçamento,
+  // comprovante de pagamento etc. Antes eram 3 dropzones separadas (esta +
+  // uma dentro do bloco "já foi pago" + o próprio arquivo usado na leitura
+  // automática, que nunca ficava anexado) — juntar tudo aqui é o que faz
+  // "arrastar o documento" também GUARDAR o arquivo, não só ler os dados.
+  // Cada arquivo carrega sua PRÓPRIA categoria/número/data (um lançamento
+  // pode reunir vários tipos de documento — ver Central de Documentos).
   type AnexoStaged = { file: File; categoria: string; numero_documento: string; data_documento: string };
-  const [boletoFiles, setBoletoFiles] = useState<AnexoStaged[]>([]);
-  const boletoInputRef = useRef<HTMLInputElement>(null);
-  const fotoBoletoInputRef = useRef<HTMLInputElement>(null);
-  const [avisoTipoDocumento, setAvisoTipoDocumento] = useState(false);
-  // Comprovante de pagamento — dropzone própria dentro do bloco "Já foi
-  // pago", categoria fixa "Comprovante" (não passa pelo mesmo "Tipo de
-  // documento" do lançamento como um todo, nem exige preenchê-lo antes).
-  // Sem isso, marcar "já pago" na hora de criar o lançamento não tinha
-  // NENHUMA forma de anexar o comprovante — só dava pra fazer depois, em
-  // Controle Financeiro > Editar ou > Tratar pagamento.
-  const [comprovanteFiles, setComprovanteFiles] = useState<{ file: File; numero_documento: string; data_documento: string }[]>([]);
-  const comprovanteInputRef = useRef<HTMLInputElement>(null);
-  const fotoComprovanteInputRef = useRef<HTMLInputElement>(null);
+  const [anexosStaged, setAnexosStaged] = useState<AnexoStaged[]>([]);
+  const anexoInputRef = useRef<HTMLInputElement>(null);
+  const fotoAnexoInputRef = useRef<HTMLInputElement>(null);
+  // Popup "miniatura + tipo de documento" que abre logo depois de anexar —
+  // guarda o próprio File (não um índice) porque vários arquivos podem ser
+  // processados em sequência, cada um com sua leitura assíncrona; um índice
+  // ficaria velho entre um `await` e outro, a identidade do arquivo não.
+  const [categoriaPopupFile, setCategoriaPopupFile] = useState<File | null>(null);
+  const [novoTipoDocumentoAberto, setNovoTipoDocumentoAberto] = useState(false);
+  const [novoTipoDocumentoNome, setNovoTipoDocumentoNome] = useState("");
+  const [salvandoTipoDocumento, setSalvandoTipoDocumento] = useState(false);
+  // A partir do 2º documento anexado, cada novo documento tenta identificar
+  // MAIS dados do lançamento: campo que já está em branco é preenchido
+  // direto (com um aviso do que foi acrescentado); campo que já tem um
+  // valor DIFERENTE do que este documento traz vira uma divergência — o
+  // usuário escolhe manter o atual ou usar o deste documento (nunca
+  // sobrescreve sozinho).
+  const [notaCamposIdentificados, setNotaCamposIdentificados] = useState<string | null>(null);
+  const [divergenciasDocumento, setDivergenciasDocumento] = useState<
+    { campo: string; atual: string; novo: string; escolha: "atual" | "novo" }[] | null
+  >(null);
+  // Quando a leitura não bate EXATO com nada do cadastro de fornecedores
+  // (nem sugestão "provável"), oferece guardar o texto bruto da nota como
+  // apelido — da próxima vez que aparecer, resolve sozinho (ver
+  // FornecedorClienteApelido, por fazenda).
+  const [apelidoBanner, setApelidoBanner] = useState<{ nomeBruto: string } | null>(null);
+  const [salvandoApelido, setSalvandoApelido] = useState(false);
 
   const [jaPago, setJaPago] = useState(false);
   const [dataPagamento, setDataPagamento] = useState("");
@@ -503,9 +517,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     entregueTocadoRef.current = false;
     setPedidoId("");
     setDesconto(""); setAcrescimo("");
-    setParcelado(false); setQtdParcelas("2"); setParcelas([]); setBoletoFiles([]); setComprovanteFiles([]);
+    setParcelado(false); setQtdParcelas("2"); setParcelas([]); setAnexosStaged([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
     setXmlTexto(""); setXmlAberto(false);
+    setNotaCamposIdentificados(null); setDivergenciasDocumento(null); setApelidoBanner(null);
   }
 
   // ── Rascunho automático ──────────────────────────────────────────────
@@ -572,35 +587,74 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     try { localStorage.removeItem(RASCUNHO_KEY); } catch { /* ignore */ }
   }
 
+  // Normaliza pra comparar (maiúscula/espaço não conta como divergência de verdade).
+  function normalizarComparacao(v: string): string {
+    return v.trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  // Aplica um campo de texto simples SEM nunca sobrescrever silenciosamente:
+  // vazio → preenche e anota em `preenchidos`; já preenchido e IGUAL → nada;
+  // já preenchido e DIFERENTE → vira divergência (usuário decide depois, ver
+  // `divergenciasDocumento`). É a base do "documento a partir do 2º tenta
+  // identificar mais dados, com confirmação" pedido pelo usuário.
+  function aplicarCampoIdentificado(
+    label: string, atual: string, novo: string | null | undefined,
+    aplicar: (v: string) => void, preenchidos: string[], conflitos: { campo: string; atual: string; novo: string; escolha: "atual" | "novo" }[],
+  ) {
+    if (!novo) return;
+    if (!atual.trim()) { aplicar(novo); preenchidos.push(`${label}: ${novo}`); return; }
+    if (normalizarComparacao(atual) !== normalizarComparacao(novo)) {
+      conflitos.push({ campo: label, atual, novo, escolha: "atual" });
+    }
+  }
+
   function aplicarXml(dados: any) {
-    if (dados.numero_documento) setNumeroDocumento(dados.numero_documento);
-    if (dados.data_emissao) setDataEmissao(dados.data_emissao);
-    if (dados.fornecedor_cliente) setFornecedor(dados.fornecedor_cliente);
-    setTipoDocumento("Nota fiscal");
+    const preenchidos: string[] = [];
+    const conflitos: { campo: string; atual: string; novo: string; escolha: "atual" | "novo" }[] = [];
+
+    aplicarCampoIdentificado("Número do documento", numeroDocumento, dados.numero_documento, setNumeroDocumento, preenchidos, conflitos);
+    aplicarCampoIdentificado("Data de emissão", dataEmissao, dados.data_emissao, setDataEmissao, preenchidos, conflitos);
+    aplicarCampoIdentificado("Fornecedor/cliente", fornecedor, dados.fornecedor_cliente, setFornecedor, preenchidos, conflitos);
+    if (!tipoDocumento) setTipoDocumento("Nota fiscal");
+
+    // Itens: só substitui a lista enquanto ela ainda está no estado "vazio
+    // padrão" (nenhum item com produto preenchido) — um 2º documento que
+    // também lista itens NUNCA sobrescreve os que o usuário já revisou;
+    // só avisa que existem itens ali, pra conferência manual.
+    const itensAindaVazios = itens.length <= 1 && !itens.some((i) => i.produto.trim());
     if (Array.isArray(dados.itens) && dados.itens.length) {
-      setItens(dados.itens.map((it: any) => ({
-        codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto",
-        produto: it.produto || "", descricao: "",
-        quantidade: it.quantidade != null ? String(it.quantidade) : "",
-        valor_unitario: it.valor_unitario != null ? String(it.valor_unitario) : "",
-        valor_total: it.valor_total != null ? String(it.valor_total) : "",
-        // Preserva o total informado na nota (não recalcula por quantidade × unitário).
-        modoValor: it.valor_total != null ? "total" : "unitario",
-        // Nome extraído da nota, não necessariamente igual a um item já
-        // cadastrado no estoque — começa em texto livre pra não forçar o
-        // usuário a bater o nome exato antes de poder editar.
-        modoProduto: "livre",
-        vale: null,
-        veioDeDocumento: true,
-      })));
-    } else if (dados.valor_total != null) {
+      if (itensAindaVazios) {
+        setItens(dados.itens.map((it: any) => ({
+          codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto",
+          produto: it.produto || "", descricao: "",
+          quantidade: it.quantidade != null ? String(it.quantidade) : "",
+          valor_unitario: it.valor_unitario != null ? String(it.valor_unitario) : "",
+          valor_total: it.valor_total != null ? String(it.valor_total) : "",
+          // Preserva o total informado na nota (não recalcula por quantidade × unitário).
+          modoValor: it.valor_total != null ? "total" : "unitario",
+          // Nome extraído da nota, não necessariamente igual a um item já
+          // cadastrado no estoque — começa em texto livre pra não forçar o
+          // usuário a bater o nome exato antes de poder editar.
+          modoProduto: "livre",
+          vale: null,
+          veioDeDocumento: true,
+        })));
+        preenchidos.push(`${dados.itens.length} item(ns) do documento`);
+      } else {
+        conflitos.push({ campo: "Itens", atual: `${itens.length} item(ns) já preenchido(s)`, novo: `${dados.itens.length} item(ns) neste documento`, escolha: "atual" });
+      }
+    } else if (dados.valor_total != null && itensAindaVazios) {
       setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), modoValor: "total" }]);
     }
-    if (Array.isArray(dados.parcelas) && dados.parcelas.length) {
+    if (Array.isArray(dados.parcelas) && dados.parcelas.length && !parcelado) {
       setParcelado(true);
       setQtdParcelas(String(dados.parcelas.length));
       setParcelas(dados.parcelas.map((p: any) => ({ data_vencimento: p.data_vencimento || "", valor: p.valor != null ? String(p.valor) : "" })));
     }
+
+    setNotaCamposIdentificados(preenchidos.length && anexosStaged.length > 0 ? `Também identifiquei neste documento: ${preenchidos.join("; ")}.` : null);
+    setDivergenciasDocumento(conflitos.length ? conflitos : null);
+
     // Fornecedor/produto/serviço parecido mas não idêntico no cadastro —
     // mostra o quadro de confirmação (ver JSX abaixo) só quando há alguma
     // sugestão de verdade; senão limpa qualquer sugestão de uma leitura anterior.
@@ -610,6 +664,48 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       setSugestoesEscolhidas({});
     } else {
       setSugestoesCadastro(null);
+    }
+    // Nome bruto da nota não bateu EXATO com nada do cadastro (nem sugestão
+    // "provável") — oferece ensinar o sistema pra próxima vez (ver
+    // FornecedorClienteApelido). "exato" e já resolvido por apelido salvo
+    // não precisam de nada.
+    if (dados.fornecedor_cliente && !dados.fornecedor_resolvido_por_apelido
+      && sug?.fornecedor_confianca && sug.fornecedor_confianca !== "exato") {
+      setApelidoBanner({ nomeBruto: dados.fornecedor_cliente });
+    } else {
+      setApelidoBanner(null);
+    }
+  }
+
+  function aplicarEscolhaDivergencia(indice: number, escolha: "atual" | "novo") {
+    setDivergenciasDocumento((arr) => arr ? arr.map((d, i) => i === indice ? { ...d, escolha } : d) : arr);
+  }
+
+  function confirmarDivergencias() {
+    if (!divergenciasDocumento) return;
+    for (const d of divergenciasDocumento) {
+      if (d.escolha !== "novo") continue;
+      if (d.campo === "Número do documento") setNumeroDocumento(d.novo);
+      else if (d.campo === "Data de emissão") setDataEmissao(d.novo);
+      else if (d.campo === "Fornecedor/cliente") setFornecedor(d.novo);
+      // "Itens" não tem valor pra aplicar automaticamente (a lista já
+      // preenchida não é substituída sozinha) — usar "novo" aqui só serve
+      // de lembrete visual de que há itens do documento pra conferir à mão.
+    }
+    setDivergenciasDocumento(null);
+  }
+
+  async function salvarApelidoFornecedor() {
+    if (!apelidoBanner) return;
+    setSalvandoApelido(true);
+    try {
+      await criarFornecedorApelido(apelidoBanner.nomeBruto, fornecedor);
+      setApelidoBanner(null);
+    } catch {
+      // Falha ao salvar apelido não impede seguir com o lançamento — só
+      // mantém o banner pra tentar de novo, sem travar o formulário.
+    } finally {
+      setSalvandoApelido(false);
     }
   }
 
@@ -634,13 +730,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     setSugestoesCadastro(null);
   }
 
-  async function importarXml(texto: string) {
+  async function importarXml(texto: string, arquivo?: File) {
     if (!texto.trim()) return;
     setImportando(true); setErroXml(null);
     try {
       const dados = await importarXmlFinanceiro(texto);
       aplicarXml(dados);
       setXmlAberto(false);
+      if (arquivo) preencherAnexoAposLeitura(arquivo, "Nota fiscal", dados);
     } catch (e: any) {
       setErroXml(e.message || "Erro ao ler o XML");
     } finally {
@@ -648,12 +745,36 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     }
   }
 
+  // Adiciona o arquivo à lista de anexos deste lançamento (staged — sobe de
+  // verdade só ao salvar, ver `salvar()`) e abre o popup de categorização
+  // (miniatura + tipo de documento, com opção de criar um tipo novo).
+  // `categoriaSugerida`: "Nota fiscal"/"Recibo"/"Boleto" quando dá pra
+  // adivinhar pelo próprio documento; senão usa o Tipo de documento já
+  // escolhido no lançamento (se houver) ou deixa em branco pro usuário decidir.
+  function stageArquivo(file: File, categoriaSugerida?: string) {
+    setAnexosStaged((arr) => [...arr, { file, categoria: categoriaSugerida || tipoDocumento || "", numero_documento: "", data_documento: "" }]);
+    setCategoriaPopupFile(file);
+  }
+
+  // Depois que a leitura automática roda, pré-preenche número/data DESTE
+  // arquivo especificamente (o que está impresso no próprio documento) —
+  // poupa o usuário de digitar nos dois lugares (nº do lançamento vs. nº do
+  // anexo, que podem ser o mesmo dado, mas nem sempre: um lançamento com
+  // nota + boleto tem um número de cada).
+  function preencherAnexoAposLeitura(file: File, categoria: string, dados: any) {
+    setAnexosStaged((arr) => arr.map((a) => a.file === file ? {
+      ...a, categoria: a.categoria || categoria,
+      numero_documento: a.numero_documento || dados.numero_documento || dados.linha_digitavel || "",
+      data_documento: a.data_documento || dados.data_emissao || dados.data_vencimento || "",
+    } : a));
+  }
+
   // Nota fiscal ou recibo em PDF/JPEG/PNG — leitura automática via IA.
   // Recibo (já pago) preenche o pagamento imediato; nota fiscal nasce em aberto.
   // Boleto: se a IA achou "parcela X/Y" no próprio boleto, já monta o
   // parcelamento com essa quantidade; senão, deixa como lançamento único e
   // é o usuário quem decide (documento avulso ou marcar como parcelado).
-  function aplicarExtracaoDocumento(dados: any) {
+  function aplicarExtracaoDocumento(dados: any, file: File) {
     setAvisoDocumento(null);
     aplicarXml(dados);
     const ehRecibo = dados.tipo_documento === "recibo";
@@ -711,19 +832,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         );
       }
     }
+    preencherAnexoAposLeitura(file, ehRecibo ? "Recibo" : ehBoleto ? "Boleto" : "Nota fiscal", dados);
   }
 
   async function lerDocumentoAnexado(file: File) {
     setImportando(true); setErroXml(null);
     try {
       const dados = await lerDocumentoFinanceiro(file);
-      aplicarExtracaoDocumento(dados);
+      aplicarExtracaoDocumento(dados, file);
       setXmlAberto(false);
-      // O documento usado pra leitura automática NÃO fica anexado ao
-      // lançamento por padrão (só os dados extraídos ficam) — a prévia mostra
-      // um aviso disso (ver ModalDivididoDocumento). Quem quiser guardar o
-      // arquivo mesmo assim usa o dropzone "documentos deste lançamento"
-      // abaixo (mesmo arquivo, arraste de novo — ou outro).
     } catch (e: any) {
       setErroXml(e.message || "Erro ao ler o documento");
     } finally {
@@ -731,7 +848,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     }
   }
 
-  function tratarArquivo(file: File) {
+  // Processa UM arquivo: anexa (staged) + tenta ler/extrair dados dele. Os
+  // dois sempre andam juntos agora — antes, o arquivo usado na leitura
+  // automática NUNCA ficava anexado (só os dados extraídos), e era preciso
+  // arrastar de novo num dropzone separado só pra guardar o arquivo. `await`
+  // até o fim (mesmo quando a leitura falha) — quem chama processa vários
+  // arquivos em sequência, nunca em paralelo, pra "campo já preenchido por
+  // este documento, o próximo diverge" (ver aplicarXml) comparar direito.
+  async function tratarArquivo(file: File) {
     // Antes, só passava pela leitura automática (IA) quando file.type fosse
     // EXATAMENTE "application/pdf"/"image/jpeg"/"image/png" — qualquer outra
     // coisa (foto salva como "image/jpg" por câmera/app mais antigo, WEBP,
@@ -744,21 +868,32 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     // checagem aqui só precisa distinguir XML (rota de texto) do resto
     // (rota de leitura de documento/imagem via IA).
     const ehXml = file.type === "text/xml" || file.type === "application/xml" || /\.xml$/i.test(file.name);
+    stageArquivo(file, ehXml ? "Nota fiscal" : undefined);
     if (ehXml) {
-      file.text().then(importarXml);
+      const texto = await file.text();
+      await importarXml(texto, file);
     } else {
       onArquivoParaLeitura?.(file);
-      lerDocumentoAnexado(file);
+      await lerDocumentoAnexado(file);
+    }
+  }
+  async function processarArquivos(files: File[]) {
+    // Sequencial, não Promise.all — cada leitura precisa ver o resultado da
+    // anterior já aplicado pros campos (preenchidos/divergências) fazerem
+    // sentido (ver aplicarXml).
+    for (const file of files) {
+      await tratarArquivo(file);
     }
   }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) tratarArquivo(file);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) processarArquivos(files);
   }
   function onFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) tratarArquivo(file);
+    const files = Array.from(e.target.files || []);
+    if (files.length) processarArquivos(files);
+    e.target.value = "";
   }
 
   function montarPayload() {
@@ -858,10 +993,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     try {
       const r = await criarLancamentoFinanceiro(montarPayload());
       let avisoAnexo = "";
-      const falhasAnexo = (await Promise.all([
-        ...boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f.file, f.categoria, f.numero_documento || undefined, f.data_documento || undefined).then(() => null).catch(() => f.file.name)),
-        ...comprovanteFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f.file, "Comprovante", f.numero_documento || undefined, f.data_documento || undefined).then(() => null).catch(() => f.file.name)),
-      ])).filter(Boolean);
+      const falhasAnexo = (await Promise.all(
+        anexosStaged.map((f) => anexarArquivoLancamento(r.numero_lancamento, f.file, f.categoria || undefined, f.numero_documento || undefined, f.data_documento || undefined).then(() => null).catch(() => f.file.name)),
+      )).filter(Boolean);
       if (falhasAnexo.length) avisoAnexo = ` (não foi possível anexar: ${falhasAnexo.join(", ")})`;
       // avisos_estoque: ex. "X não está no estoque desta fazenda" — o backend
       // já calcula, mas até aqui ninguém no frontend lia a resposta pra
@@ -936,7 +1070,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </div>
       )}
 
-      {/* Importação de XML de nota */}
+      {/* Anexo e leitura automática — UM local só pra qualquer documento
+          deste lançamento (nota, boleto, orçamento, comprovante de
+          pagamento...). Cada arquivo é lido (extrai dados) E fica anexado —
+          antes eram 3 pontos separados de anexo e o arquivo lido não ficava
+          guardado. */}
       <div
         onDrop={onDrop} onDragOver={(e) => e.preventDefault()}
         className="card mb-3"
@@ -944,14 +1082,18 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       >
         <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
           <FileText size={16} style={{ color: "var(--dourado-light)" }} />
-          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Arraste o XML, PDF, JPEG ou PNG da nota/recibo aqui, ou</span>
-          <button type="button" className="btn-ghost" title="Selecionar arquivo XML, PDF, JPEG ou PNG da nota ou recibo" onClick={() => fileInputRef.current?.click()} style={{ fontSize: "0.78rem" }}>
-            <Upload size={13} /> selecionar arquivo
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Arraste um ou mais documentos (XML, PDF, JPEG, PNG — nota, boleto, orçamento, comprovante...) aqui, ou</span>
+          <button type="button" className="btn-ghost" title="Selecionar um ou mais arquivos" onClick={() => fileInputRef.current?.click()} style={{ fontSize: "0.78rem" }}>
+            <Upload size={13} /> selecionar arquivo(s)
+          </button>
+          <button type="button" className="btn-ghost" title="Tirar foto do documento" onClick={() => fotoAnexoInputRef.current?.click()} style={{ fontSize: "0.78rem" }}>
+            <Camera size={13} /> tirar foto
           </button>
           <button type="button" className="btn-ghost" title="Colar o código XML da nota fiscal" onClick={() => setXmlAberto((v) => !v)} style={{ fontSize: "0.78rem" }}>colar código XML</button>
           {importando && <Loader2 size={14} className="animate-spin" style={{ color: "var(--dourado-light)" }} />}
         </div>
-        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,image/heic,image/heif" onChange={onFileSelect} style={{ display: "none" }} />
+        <input ref={fileInputRef} type="file" multiple accept=".xml,text/xml,application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,image/heic,image/heif" onChange={onFileSelect} style={{ display: "none" }} />
+        <input ref={fotoAnexoInputRef} type="file" accept="image/*" capture="environment" onChange={onFileSelect} style={{ display: "none" }} />
         {xmlAberto && (
           <div style={{ marginTop: "0.6rem", textAlign: "left" }}>
             <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o conteúdo do XML da nota fiscal…"
@@ -961,9 +1103,64 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         )}
         {erroXml && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{erroXml}</p>}
         {avisoDocumento && <p style={{ color: "var(--amber)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{avisoDocumento}</p>}
+        {notaCamposIdentificados && (
+          <p style={{ color: "var(--green-light)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+            {notaCamposIdentificados}{" "}
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => setNotaCamposIdentificados(null)}>ok</button>
+          </p>
+        )}
+        {apelidoBanner && (
+          <div style={{ marginTop: "0.5rem", background: "rgba(94,26,46,0.15)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem", textAlign: "left" }}>
+            <p style={{ fontSize: "0.76rem" }}>
+              &ldquo;{apelidoBanner.nomeBruto}&rdquo; não bate exatamente com nada do cadastro. Salvar &ldquo;{fornecedor}&rdquo; como
+              {" "}{tipo === "despesa" ? "fornecedor" : "cliente"} padrão pra próxima vez que esse nome aparecer numa nota?
+            </p>
+            <div className="flex items-center gap-2 mt-1">
+              <button type="button" className="btn-secondary" style={{ fontSize: "0.72rem" }} disabled={salvandoApelido || !fornecedor.trim()} onClick={salvarApelidoFornecedor}>
+                {salvandoApelido ? "Salvando…" : "Sim, lembrar"}
+              </button>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setApelidoBanner(null)}>Não, obrigado</button>
+            </div>
+          </div>
+        )}
+        {anexosStaged.length > 0 && (
+          <ul style={{ marginTop: "0.6rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
+            {anexosStaged.map((f, i) => {
+              const ehImagem = f.file.type.startsWith("image/");
+              return (
+                <li key={i} className="card" style={{ padding: "0.4rem 0.5rem", marginBottom: "0.35rem", background: "var(--surface)" }}>
+                  <div className="flex items-center gap-2">
+                    {ehImagem ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={URL.createObjectURL(f.file)} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: "var(--r-sm)", flexShrink: 0 }} />
+                    ) : (
+                      <FileText size={20} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />
+                    )}
+                    <a href={URL.createObjectURL(f.file)} target="_blank" rel="noreferrer" title="Abrir este documento numa aba nova"
+                      style={{ color: "var(--dourado-light)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {f.file.name}
+                    </a>
+                    <button type="button" className="btn-ghost" title="Editar tipo de documento" onClick={() => setCategoriaPopupFile(f.file)} style={{ padding: "0.1rem 0.3rem", flexShrink: 0, fontSize: "0.72rem" }}>
+                      {f.categoria || "definir tipo"}
+                    </button>
+                    <button type="button" className="btn-ghost" title="Remover" onClick={() => setAnexosStaged((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                      <X size={12} style={{ color: "var(--red)" }} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2" style={{ marginTop: "0.3rem" }}>
+                    <input style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} placeholder="Número do documento" value={f.numero_documento}
+                      onChange={(e) => setAnexosStaged((arr) => arr.map((x, j) => j === i ? { ...x, numero_documento: e.target.value } : x))} />
+                    <input type="date" style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} title="Data deste documento" value={f.data_documento}
+                      onChange={(e) => setAnexosStaged((arr) => arr.map((x, j) => j === i ? { ...x, data_documento: e.target.value } : x))} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-          XML reconhece vários produtos/serviços da mesma nota. PDF/JPEG/PNG usa leitura automática por IA — identifica se é
-          nota fiscal (nasce em aberto) ou recibo (nasce já pago) — os campos ficam abaixo, todos editáveis.
+          XML/PDF/JPEG/PNG reconhecem vários produtos/serviços da mesma nota. A partir do 2º documento, tenta identificar mais
+          dados (com aviso do que foi acrescentado) e avisa se algum dado divergir do que já está preenchido.
         </p>
       </div>
 
@@ -1153,7 +1350,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           </select>
         </Campo>
         <Campo label="Tipo de documento">
-          <select style={inputStyle} value={tipoDocumento} onChange={(e) => { setTipoDocumento(e.target.value); if (e.target.value) setAvisoTipoDocumento(false); }}>
+          <select style={inputStyle} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)}>
             <option value="">Selecione…</option>
             {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
           </select>
@@ -1305,92 +1502,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         )}
       </div>
 
-      {/* Anexar documento(s) a este lançamento — boleto, nota, comprovante etc.
-          Sempre visível (não só quando parcelado): sobe junto ao salvar o
-          lançamento, chamando `anexarArquivoLancamento` uma vez por arquivo.
-          Exige "Tipo de documento" (campo acima) preenchido ANTES de anexar
-          — sem isso não dá pra saber depois se o arquivo anexado era nota
-          fiscal, recibo, boleto etc. (decisão do usuário). */}
-      <div
-        onDrop={(e) => {
-          e.preventDefault();
-          if (!tipoDocumento) { setAvisoTipoDocumento(true); return; }
-          const fs = Array.from(e.dataTransfer.files || []);
-          if (fs.length) setBoletoFiles((arr) => [...arr, ...fs.map((file) => ({ file, categoria: tipoDocumento, numero_documento: "", data_documento: "" }))]);
-        }}
-        onDragOver={(e) => e.preventDefault()}
-        className="card mt-3"
-        style={{ border: "1px dashed var(--border)", background: "var(--surface-2)", padding: "0.7rem", textAlign: "center" }}
-      >
-        <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
-          <FileText size={15} style={{ color: "var(--dourado-light)" }} />
-          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            Arraste o(s) documento(s) deste lançamento aqui (boleto, nota, orçamento, comprovante — PDF/JPEG/PNG), ou
-          </span>
-          <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }}
-            onClick={() => { if (!tipoDocumento) { setAvisoTipoDocumento(true); return; } boletoInputRef.current?.click(); }}>
-            <Upload size={12} /> selecionar arquivo(s)
-          </button>
-          <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }}
-            onClick={() => { if (!tipoDocumento) { setAvisoTipoDocumento(true); return; } fotoBoletoInputRef.current?.click(); }}>
-            <Camera size={12} /> tirar foto
-          </button>
-        </div>
-        <input ref={boletoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
-          onChange={(e) => {
-            const fs = Array.from(e.target.files || []);
-            if (fs.length) setBoletoFiles((arr) => [...arr, ...fs.map((file) => ({ file, categoria: tipoDocumento, numero_documento: "", data_documento: "" }))]);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }} />
-        {/* capture="environment" abre a câmera do celular direto (mesmo padrão do
-            app móvel — ver components/mobile/menu/FotosCampo.tsx); em desktop sem
-            câmera, cai de volta no seletor de arquivo normal. */}
-        <input ref={fotoBoletoInputRef} type="file" accept="image/*" capture="environment"
-          onChange={(e) => {
-            const fs = Array.from(e.target.files || []);
-            if (fs.length) setBoletoFiles((arr) => [...arr, ...fs.map((file) => ({ file, categoria: tipoDocumento, numero_documento: "", data_documento: "" }))]);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }} />
-        {avisoTipoDocumento && (
-          <p style={{ color: "var(--red)", fontSize: "0.74rem", marginTop: "0.4rem", fontWeight: 600 }}>
-            <AlertTriangle size={12} style={{ display: "inline", marginRight: "0.2rem" }} />
-            Selecione o &ldquo;Tipo de documento&rdquo; acima antes de anexar ou tirar foto.
-          </p>
-        )}
-        {boletoFiles.length > 0 && (
-          <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
-            {boletoFiles.map((f, i) => (
-              <li key={i} className="card" style={{ padding: "0.4rem 0.5rem", marginBottom: "0.35rem", background: "var(--surface)" }}>
-                <div className="flex items-center justify-between" style={{ gap: "0.4rem" }}>
-                  <a href={URL.createObjectURL(f.file)} target="_blank" rel="noreferrer" title="Abrir este documento numa aba nova"
-                    style={{ color: "var(--dourado-light)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {f.file.name}
-                  </a>
-                  <button type="button" className="btn-ghost" title="Remover" onClick={() => setBoletoFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
-                    <X size={12} style={{ color: "var(--red)" }} />
-                  </button>
-                </div>
-                <div className="grid grid-cols-3 gap-2" style={{ marginTop: "0.3rem" }}>
-                  <select style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} value={f.categoria} title="Tipo deste documento"
-                    onChange={(e) => setBoletoFiles((arr) => arr.map((x, j) => j === i ? { ...x, categoria: e.target.value } : x))}>
-                    {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Comprovante", "Fatura", "Orçamento", "Boleto", "Ordem de serviço"]).map((t) => <option key={t}>{t}</option>)}
-                  </select>
-                  <input style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} placeholder="Número do documento" value={f.numero_documento}
-                    onChange={(e) => setBoletoFiles((arr) => arr.map((x, j) => j === i ? { ...x, numero_documento: e.target.value } : x))} />
-                  <input type="date" style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} title="Data deste documento" value={f.data_documento}
-                    onChange={(e) => setBoletoFiles((arr) => arr.map((x, j) => j === i ? { ...x, data_documento: e.target.value } : x))} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-          Opcional — fica disponível para consulta neste lançamento; não altera valores nem parcelas.
-        </p>
-      </div>
-
       {/* Pagamento imediato (só para lançamento não parcelado) */}
       {!parcelado && (
         <div className="card mt-3" style={{ background: "var(--fin-pagamento-bg)" }}>
@@ -1425,57 +1536,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   {diferencaPagamento < 0 ? `Desconto de ${formatBRL(Math.abs(diferencaPagamento))}` : `Acréscimo de ${formatBRL(diferencaPagamento)}`} em relação ao valor líquido (na baixa do pagamento, diferente do desconto/acréscimo da nota acima).
                 </p>
               )}
-              <div
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const fs = Array.from(e.dataTransfer.files || []);
-                  if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs.map((file) => ({ file, numero_documento: numeroDocumentoPagamento, data_documento: dataPagamento }))]);
-                }}
-                onDragOver={(e) => e.preventDefault()}
-                style={{ gridColumn: "1 / -1", border: "1px dashed var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem", textAlign: "center" }}
-              >
-                <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
-                  <FileText size={14} style={{ color: "var(--dourado-light)" }} />
-                  <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Comprovante de pagamento (opcional) — arraste aqui, ou</span>
-                  <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => comprovanteInputRef.current?.click()}>
-                    <Upload size={12} /> selecionar arquivo(s)
-                  </button>
-                  <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => fotoComprovanteInputRef.current?.click()}>
-                    <Camera size={12} /> tirar foto
-                  </button>
-                </div>
-                <input ref={comprovanteInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
-                  onChange={(e) => {
-                    const fs = Array.from(e.target.files || []);
-                    if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs.map((file) => ({ file, numero_documento: numeroDocumentoPagamento, data_documento: dataPagamento }))]);
-                    e.target.value = "";
-                  }}
-                  style={{ display: "none" }} />
-                <input ref={fotoComprovanteInputRef} type="file" accept="image/*" capture="environment"
-                  onChange={(e) => {
-                    const fs = Array.from(e.target.files || []);
-                    if (fs.length) setComprovanteFiles((arr) => [...arr, ...fs.map((file) => ({ file, numero_documento: numeroDocumentoPagamento, data_documento: dataPagamento }))]);
-                    e.target.value = "";
-                  }}
-                  style={{ display: "none" }} />
-                {comprovanteFiles.length > 0 && (
-                  <ul style={{ marginTop: "0.4rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
-                    {comprovanteFiles.map((f, i) => (
-                      <li key={i} className="card" style={{ padding: "0.35rem 0.5rem", marginBottom: "0.3rem", background: "var(--surface)" }}>
-                        <div className="flex items-center justify-between" style={{ gap: "0.4rem" }}>
-                          <a href={URL.createObjectURL(f.file)} target="_blank" rel="noreferrer" title="Abrir este comprovante numa aba nova"
-                            style={{ color: "var(--dourado-light)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {f.file.name}
-                          </a>
-                          <button type="button" className="btn-ghost" title="Remover" onClick={() => setComprovanteFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
-                            <X size={12} style={{ color: "var(--red)" }} />
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              <p style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                Comprovante de pagamento: anexe no bloco de documentos no início do formulário (categoria &ldquo;Comprovante&rdquo;).
+              </p>
             </div>
           )}
         </div>
@@ -1489,6 +1552,93 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           {salvando ? "Salvando…" : verificandoDuplicado ? "Verificando…" : "Salvar lançamento"}
         </button>
       </div>
+
+      {categoriaPopupFile && (() => {
+        const entrada = anexosStaged.find((a) => a.file === categoriaPopupFile);
+        if (!entrada) return null;
+        const ehImagem = entrada.file.type.startsWith("image/");
+        return (
+          <Modal title="Tipo de documento" onClose={() => setCategoriaPopupFile(null)} width="480px" zIndex={95}>
+            <div className="flex items-center gap-3 mb-3">
+              {ehImagem ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={URL.createObjectURL(entrada.file)} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "var(--r-sm)", flexShrink: 0 }} />
+              ) : (
+                <FileText size={40} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />
+              )}
+              <span style={{ fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entrada.file.name}</span>
+            </div>
+            {!novoTipoDocumentoAberto ? (
+              <>
+                <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.3rem" }}>Este documento é um(a):</label>
+                <select style={inputStyle} value={entrada.categoria}
+                  onChange={(e) => setAnexosStaged((arr) => arr.map((a) => a.file === categoriaPopupFile ? { ...a, categoria: e.target.value } : a))}>
+                  <option value="">Selecione…</option>
+                  {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Comprovante", "Fatura", "Orçamento", "Boleto", "Ordem de serviço"]).map((t) => <option key={t}>{t}</option>)}
+                </select>
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem", marginTop: "0.5rem" }} onClick={() => setNovoTipoDocumentoAberto(true)}>
+                  <Plus size={13} /> Criar novo tipo de documento
+                </button>
+                <div className="flex justify-end mt-3">
+                  <button type="button" className="btn-primary" onClick={() => setCategoriaPopupFile(null)}>Concluir</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.3rem" }}>Nome do novo tipo de documento</label>
+                <input style={inputStyle} value={novoTipoDocumentoNome} onChange={(e) => setNovoTipoDocumentoNome(e.target.value)} placeholder="ex.: Contrato" />
+                <div className="flex items-center gap-2 mt-3">
+                  <button type="button" className="btn-primary" disabled={salvandoTipoDocumento || !novoTipoDocumentoNome.trim()} onClick={async () => {
+                    setSalvandoTipoDocumento(true);
+                    try {
+                      await criarTipoDocumento({ nome: novoTipoDocumentoNome.trim() });
+                      const nome = novoTipoDocumentoNome.trim();
+                      setAnexosStaged((arr) => arr.map((a) => a.file === categoriaPopupFile ? { ...a, categoria: nome } : a));
+                      await carregarOpcoes();
+                      setNovoTipoDocumentoNome(""); setNovoTipoDocumentoAberto(false);
+                    } catch (e: any) {
+                      setErro(e.message || "Erro ao criar tipo de documento");
+                    } finally {
+                      setSalvandoTipoDocumento(false);
+                    }
+                  }}>
+                    {salvandoTipoDocumento ? "Salvando…" : "Salvar"}
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setNovoTipoDocumentoAberto(false)}>Cancelar</button>
+                </div>
+              </>
+            )}
+          </Modal>
+        );
+      })()}
+
+      {divergenciasDocumento && (
+        <Modal title="Este documento diverge do que já está preenchido" onClose={() => setDivergenciasDocumento(null)} width="560px" zIndex={95}>
+          <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Escolha, campo a campo, se mantém o que já estava preenchido ou passa a usar o que este documento traz.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            {divergenciasDocumento.map((d, i) => (
+              <div key={i} className="card" style={{ padding: "0.5rem 0.7rem" }}>
+                <p style={{ fontSize: "0.78rem", fontWeight: 600, marginBottom: "0.3rem" }}>{d.campo}</p>
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <button type="button" className={d.escolha === "atual" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.74rem" }}
+                    onClick={() => aplicarEscolhaDivergencia(i, "atual")}>
+                    Manter: {d.atual}
+                  </button>
+                  <button type="button" className={d.escolha === "novo" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.74rem" }}
+                    onClick={() => aplicarEscolhaDivergencia(i, "novo")}>
+                    Usar deste documento: {d.novo}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end mt-3">
+            <button type="button" className="btn-primary" onClick={confirmarDivergencias}>Aplicar escolhas</button>
+          </div>
+        </Modal>
+      )}
 
       {adicionarPara !== null && (
         <Modal title="Adicionar produto, serviço ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">

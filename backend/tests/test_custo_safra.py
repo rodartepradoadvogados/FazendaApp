@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import ContaGerencial, Safra
+from fazenda.models import ContaGerencial, LancamentoItem, Safra
 from fazenda.rules.custo_safra import calcular_custo_safra
 
 
@@ -194,3 +194,31 @@ class TestEndpointCustoSafra:
 
         categorias = {p["codigo"]: p["valor"] for p in d["por_categoria"]}
         assert categorias == {"3": 150_000.0, "5": 30_000.0}
+
+    def test_item_com_centro_de_custo_proprio_e_rateado(self, client):
+        """Nota de R$ 10.000 lançada no centro de custo da safra
+        ("Agricultura"), mas um item de R$ 3.000 tem override pra "Pecuária
+        Leiteira" — só os R$ 7.000 restantes podem entrar no custo da safra."""
+        c, engine = client
+        with self._sessao(engine) as session:
+            safra = Safra(
+                nome="Silagem Milho 2026", centro_custo="Agricultura",
+                data_inicio=date(2026, 1, 1), data_fim=date(2026, 7, 31),
+                hectares=100.0, toneladas_produzidas=1000.0,
+            )
+            session.add(safra)
+            session.commit()
+            session.refresh(safra)
+            safra_id = safra.id
+
+            session.add(ContaGerencial(
+                numero_lancamento="LC-2026-00010", tipo="despesa", valor_total=10_000.0,
+                data_competencia=date(2026, 3, 10), centro_custo="Agricultura", codigo_conta="3.01",
+            ))
+            session.add(LancamentoItem(numero_lancamento="LC-2026-00010", produto="Sementes", valor_total=7_000.0))
+            session.add(LancamentoItem(numero_lancamento="LC-2026-00010", produto="Sal mineral", valor_total=3_000.0, centro_custo="Pecuária Leiteira"))
+            session.commit()
+
+        r = c.get("/financeiro/custo-safra", params={"safra_id": safra_id})
+        assert r.status_code == 200
+        assert r.json()["despesas_total"] == 7_000.0

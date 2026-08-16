@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import Estoque, Fornecedor, ServicoCadastro
-from fazenda.rules.sugestao_documento import sugestoes_cadastro
+from fazenda.models import Estoque, Fornecedor, FornecedorClienteApelido, ServicoCadastro
+from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugestoes_cadastro
 
 
 def _engine_seedado():
@@ -89,7 +89,7 @@ class TestSugestoesCadastro:
         engine = _engine_seedado()
         with Session(engine) as s:
             r = sugestoes_cadastro(s, None, {})
-        assert r == {"fornecedor": None, "itens": []}
+        assert r == {"fornecedor": None, "fornecedor_confianca": None, "itens": []}
 
     def test_isolamento_por_fazenda(self):
         # Só a fazenda 2 tem um fornecedor parecido — consultando pela
@@ -105,3 +105,52 @@ class TestSugestoesCadastro:
         with Session(engine) as s:
             r2 = sugestoes_cadastro(s, 2, {"fornecedor_cliente": "Agropecuaria Sao Jose Norte", "itens": []})
         assert r2["fornecedor"]["candidato"] == "Agropecuária São José"
+
+    def test_fornecedor_confianca_vai_mesmo_sem_sugestao(self):
+        """`fornecedor_confianca` precisa ir SEMPRE (não só quando há
+        sugestão) — é o que o front usa pra saber quando oferecer "salvar
+        como apelido padrão" (ver FornecedorClienteApelido): tanto em
+        "provavel" quanto em "incerto", nunca em "exato"."""
+        engine = _engine_seedado()
+        with Session(engine) as s:
+            exato = sugestoes_cadastro(s, None, {"fornecedor_cliente": "AGROPECUARIA SAO JOSE LTDA", "itens": []})
+            provavel = sugestoes_cadastro(s, None, {"fornecedor_cliente": "Agropecuaria Sao Jose Norte", "itens": []})
+            incerto = sugestoes_cadastro(s, None, {"fornecedor_cliente": "Distribuidora Totalmente Diferente", "itens": []})
+        assert exato["fornecedor_confianca"] == "exato"
+        assert provavel["fornecedor_confianca"] == "provavel"
+        assert incerto["fornecedor_confianca"] == "incerto"
+
+
+class TestResolverApelidoFornecedor:
+    def test_sem_apelido_salvo_devolve_none(self):
+        engine = _engine_seedado()
+        with Session(engine) as s:
+            assert resolver_apelido_fornecedor(s, None, "COOP.AGRO.PROD.R.S.GOIANO - COMIGO") is None
+
+    def test_apelido_salvo_resolve_o_nome_bruto(self):
+        engine = _engine_seedado()
+        with Session(engine) as s:
+            from fazenda.rules.casamento_cadastro import normalizar
+            s.add(FornecedorClienteApelido(nome_bruto=normalizar("COOP.AGRO.PROD.R.S.GOIANO - COMIGO"), nome_canonico="COMIGO"))
+            s.commit()
+        with Session(engine) as s:
+            assert resolver_apelido_fornecedor(s, None, "COOP.AGRO.PROD.R.S.GOIANO - COMIGO") == "COMIGO"
+            # Variação de caixa/pontuação do mesmo texto bruto ainda resolve
+            # (compara normalizado, não literal).
+            assert resolver_apelido_fornecedor(s, None, "coop.agro.prod.r.s.goiano  -  comigo") == "COMIGO"
+
+    def test_apelido_e_isolado_por_fazenda(self):
+        engine = _engine_seedado()
+        with Session(engine) as s:
+            from fazenda.rules.casamento_cadastro import normalizar
+            s.add(FornecedorClienteApelido(nome_bruto=normalizar("Origem X"), nome_canonico="Canonico Fazenda 2", fazenda_id=2))
+            s.commit()
+        with Session(engine) as s:
+            assert resolver_apelido_fornecedor(s, 1, "Origem X") is None
+            assert resolver_apelido_fornecedor(s, 2, "Origem X") == "Canonico Fazenda 2"
+
+    def test_texto_vazio_devolve_none(self):
+        engine = _engine_seedado()
+        with Session(engine) as s:
+            assert resolver_apelido_fornecedor(s, None, None) is None
+            assert resolver_apelido_fornecedor(s, None, "") is None

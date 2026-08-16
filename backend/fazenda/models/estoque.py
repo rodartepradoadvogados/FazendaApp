@@ -222,6 +222,33 @@ class Fornecedor(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class FornecedorClienteApelido(SQLModel, table=True):
+    """Apelido aprendido: o nome de fornecedor/cliente como aparece BRUTO num
+    documento (razão social completa da NF-e, texto lido por OCR) nem sempre
+    bate com o nome do cadastro (ex.: nota vem com "COOP.AGRO.PROD.R.S.
+    GOIANO - COMIGO", cadastro tem só "COMIGO"). Quando a leitura automática
+    de documento não encontra correspondência exata no cadastro (ver
+    fazenda.rules.casamento_cadastro), o usuário pode ensinar o sistema a
+    reconhecer aquele nome bruto — da próxima vez, resolve direto para
+    `nome_canonico`, sem precisar corrigir de novo.
+
+    Por fazenda — o apelido de um tenant nunca pode resolver o nome de outro
+    (mesmo texto bruto pode significar fornecedores diferentes em fazendas
+    diferentes)."""
+
+    __tablename__ = "fornecedor_cliente_apelido"
+    __table_args__ = (UniqueConstraint("nome_bruto", "fazenda_id", name="uq_apelido_nome_bruto_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Normalizado (mesma função de fazenda.rules.casamento_cadastro) antes de
+    # gravar e antes de comparar — evita duplicar apelido por causa de
+    # diferença de maiúscula/acento/espaço.
+    nome_bruto: str = Field(index=True)
+    nome_canonico: str
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Movimento de estoque (histórico de entradas/saídas lançadas manualmente)
 # ---------------------------------------------------------------------------

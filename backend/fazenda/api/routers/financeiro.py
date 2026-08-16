@@ -17,17 +17,19 @@ from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
+    FornecedorClienteApelido,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, Usuario, ValeAvulso, ValeFuncionario,
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale, valor_gerencial
+from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale
 from fazenda.rules.email import enviar_email
-from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
+from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo, valor_gerencial_por_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
-from fazenda.rules.sugestao_documento import sugestoes_cadastro
+from fazenda.rules.casamento_cadastro import normalizar
+from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
 from fazenda.rules.patrimonio import calcular_depreciacao, proxima_atualizacao_valor_mercado, somar_meses, status_manutencao
@@ -390,21 +392,26 @@ def dre(
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
     contas = session.exec(query).all()
 
-    filtradas = []
+    periodo = []
     for c in contas:
         data_ref = c.data_competencia if regime == "competencia" else c.data_pagamento
         if data_ref and data_inicio <= data_ref <= data_fim:
-            if centro_custo is None or c.centro_custo == centro_custo:
-                filtradas.append(c)
+            periodo.append(c)
 
     # Vale de funcionário/empreiteiro lançado a partir de um item desta nota
     # não é despesa da fazenda (é adiantamento a receber da pessoa) — vale
     # nos DOIS regimes (competência e caixa), porque o DRE é resultado
     # gerencial e vale nunca é despesa em regime nenhum (ver rules/vale_item.py).
-    ajustes = ajuste_vale_por_conta(session, filtradas, fazenda_id)
+    ajustes = ajuste_vale_por_conta(session, periodo, fazenda_id)
+    # Quando um item da nota tem centro de custo próprio (override, ver
+    # Financeiro > lançamento), o valor daquela conta/parcela é rateado entre
+    # os centros de custo dos itens em vez de cair inteiro no centro de custo
+    # da nota — ver valor_gerencial_por_centro_custo.
+    valores = valor_gerencial_por_centro_custo(session, periodo, centro_custo, ajustes)
+    filtradas = periodo if centro_custo is None else [c for c in periodo if valores.get(c.id, 0.0) != 0]
 
-    receitas = sum(c.valor_total or 0 for c in filtradas if c.tipo == "receita")
-    despesas = sum(valor_gerencial(c, ajustes) for c in filtradas if c.tipo == "despesa")
+    receitas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "receita")
+    despesas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "despesa")
     resultado = receitas - despesas
 
     # Agrupa por código de conta
@@ -415,9 +422,9 @@ def dre(
         if nivel1 not in por_conta:
             por_conta[nivel1] = {"descricao": c.descricao or "", "receitas": 0.0, "despesas": 0.0}
         if c.tipo == "receita":
-            por_conta[nivel1]["receitas"] += c.valor_total or 0
+            por_conta[nivel1]["receitas"] += valores.get(c.id, 0.0)
         else:
-            por_conta[nivel1]["despesas"] += valor_gerencial(c, ajustes)
+            por_conta[nivel1]["despesas"] += valores.get(c.id, 0.0)
 
     return {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -2497,6 +2504,14 @@ def importar_xml(
         extraido = parse_nfe_xml(dados.xml)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler o XML: {e}")
+    # Apelido aprendido (ver FornecedorClienteApelido) resolve o nome bruto
+    # da nota pro nome do cadastro ANTES da sugestão de casamento — assim
+    # sugestoes_cadastro já enxerga o nome certo, sem precisar saber que veio
+    # de um apelido salvo em lançamento anterior.
+    apelido = resolver_apelido_fornecedor(session, fazenda_id, extraido.get("fornecedor_cliente"))
+    if apelido:
+        extraido["fornecedor_cliente"] = apelido
+        extraido["fornecedor_resolvido_por_apelido"] = True
     extraido["sugestoes_cadastro"] = sugestoes_cadastro(session, fazenda_id, extraido)
     return extraido
 
@@ -2517,8 +2532,49 @@ async def ler_documento_anexado(
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler o documento: {e}")
+    apelido = resolver_apelido_fornecedor(session, fazenda_id, extraido.get("fornecedor_cliente"))
+    if apelido:
+        extraido["fornecedor_cliente"] = apelido
+        extraido["fornecedor_resolvido_por_apelido"] = True
     extraido["sugestoes_cadastro"] = sugestoes_cadastro(session, fazenda_id, extraido)
     return extraido
+
+
+class FornecedorApelidoIn(BaseModel):
+    nome_bruto: str
+    nome_canonico: str
+
+
+@router.post("/fornecedor-apelidos", status_code=201)
+def criar_fornecedor_apelido(
+    dados: FornecedorApelidoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Ensina o sistema a reconhecer `nome_bruto` (como aparece na nota, ex.:
+    "COOP.AGRO.PROD.R.S.GOIANO - COMIGO") como `nome_canonico` (o nome do
+    cadastro, ex.: "COMIGO") NESTA fazenda — oferecido pelo front quando a
+    leitura automática de documento não bate com nada do cadastro (ver
+    sugestao_documento.py, campo `fornecedor_confianca` != "exato"). Chamar
+    de novo com o mesmo nome_bruto ATUALIZA o apelido em vez de duplicar —
+    o usuário pode corrigir o que ensinou antes."""
+    norm = normalizar(dados.nome_bruto)
+    if not norm:
+        raise HTTPException(status_code=400, detail="nome_bruto vazio")
+    if not dados.nome_canonico.strip():
+        raise HTTPException(status_code=400, detail="nome_canonico vazio")
+    existente = session.exec(
+        select(FornecedorClienteApelido).where(
+            FornecedorClienteApelido.nome_bruto == norm, FornecedorClienteApelido.fazenda_id == fazenda_id,
+        )
+    ).first()
+    if existente:
+        existente.nome_canonico = dados.nome_canonico.strip()
+        registro = existente
+    else:
+        registro = FornecedorClienteApelido(nome_bruto=norm, nome_canonico=dados.nome_canonico.strip(), fazenda_id=fazenda_id)
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return {"id": registro.id, "nome_bruto": registro.nome_bruto, "nome_canonico": registro.nome_canonico}
 
 
 # Tamanho máximo por anexo (boleto, contrato etc.) — sobe pro Supabase Storage,

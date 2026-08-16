@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import ContaGerencial, ParametroFazenda
+from fazenda.models import ContaGerencial, LancamentoItem, ParametroFazenda
 from fazenda.rules.custo_hectare import calcular_custo_por_hectare
 
 
@@ -140,3 +140,37 @@ class TestEndpointCustoHectare:
         d = r.json()
         assert d["despesas_total"] == 1000.0
         assert d["custo_por_hectare"] == 100.0
+
+    def test_item_com_centro_de_custo_proprio_e_rateado(self, client):
+        """Nota de R$ 1.000 no centro "Pecuária Leiteira", mas um dos dois
+        itens (R$ 400) foi lançado com override "Agricultura" — o filtro por
+        "Pecuária Leiteira" só pode contar os R$ 600 restantes, e o filtro
+        por "Agricultura" só os R$ 400 do item — nunca a nota inteira nos
+        dois, nem a nota inteira em nenhum dos dois."""
+        c, engine = client
+        with self._sessao(engine) as session:
+            session.add(ContaGerencial(
+                numero_lancamento="LC-2026-00001", tipo="despesa", valor_total=1000.0,
+                data_competencia=date(2026, 7, 10), centro_custo="Pecuária Leiteira",
+            ))
+            session.add(LancamentoItem(numero_lancamento="LC-2026-00001", produto="Ração", valor_total=600.0))
+            session.add(LancamentoItem(numero_lancamento="LC-2026-00001", produto="Adubo", valor_total=400.0, centro_custo="Agricultura"))
+            session.add(ParametroFazenda(
+                chave="area_total_hectares", grupo="estrutura_fazenda",
+                label="Área total da fazenda", valor="10", tipo="float", unidade="ha",
+            ))
+            session.commit()
+
+        r_pl = c.get("/financeiro/custo-hectare", params={
+            "data_inicio": "2026-07-01", "data_fim": "2026-07-31", "centro_custo": "Pecuária Leiteira",
+        })
+        assert r_pl.json()["despesas_total"] == 600.0
+
+        r_agro = c.get("/financeiro/custo-hectare", params={
+            "data_inicio": "2026-07-01", "data_fim": "2026-07-31", "centro_custo": "Agricultura",
+        })
+        assert r_agro.json()["despesas_total"] == 400.0
+
+        # Sem filtro, continua somando a nota inteira — não muda o total.
+        r_sem_filtro = c.get("/financeiro/custo-hectare", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r_sem_filtro.json()["despesas_total"] == 1000.0

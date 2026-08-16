@@ -233,4 +233,34 @@ class TestSugestoesCadastroNoImportarXml:
         c, engine = client
         r = c.post("/financeiro/importar-xml", json={"xml": NFE_COM_DESCONTO_E_ACRESCIMO})
         assert r.status_code == 200
-        assert r.json()["sugestoes_cadastro"] == {"fornecedor": None, "itens": []}
+        assert r.json()["sugestoes_cadastro"] == {"fornecedor": None, "fornecedor_confianca": "incerto", "itens": []}
+
+    def test_apelido_salvo_resolve_fornecedor_bruto_da_nota(self, client):
+        """Nota vem com "Insumos Agropecuários LTDA" (sem nada parecido no
+        cadastro) — usuário já ensinou o sistema, em lançamento anterior, que
+        esse texto bruto é "Fornecedor Canônico". A importação seguinte já
+        devolve o nome certo, sem pedir de novo."""
+        c, _ = client
+        r = c.post("/financeiro/fornecedor-apelidos", json={
+            "nome_bruto": "Insumos Agropecuários LTDA", "nome_canonico": "Fornecedor Canônico",
+        })
+        assert r.status_code == 201, r.text
+
+        r2 = c.post("/financeiro/importar-xml", json={"xml": NFE_COM_DESCONTO_E_ACRESCIMO})
+        assert r2.status_code == 200
+        corpo = r2.json()
+        assert corpo["fornecedor_cliente"] == "Fornecedor Canônico"
+        assert corpo["fornecedor_resolvido_por_apelido"] is True
+
+    def test_criar_apelido_com_mesmo_nome_bruto_atualiza_em_vez_de_duplicar(self, client):
+        c, engine = client
+        c.post("/financeiro/fornecedor-apelidos", json={"nome_bruto": "X Bruto", "nome_canonico": "Primeiro"})
+        r = c.post("/financeiro/fornecedor-apelidos", json={"nome_bruto": "X Bruto", "nome_canonico": "Segundo"})
+        assert r.status_code == 201
+        assert r.json()["nome_canonico"] == "Segundo"
+
+        from fazenda.models import FornecedorClienteApelido
+        with Session(engine) as s:
+            from sqlmodel import select
+            todos = s.exec(select(FornecedorClienteApelido)).all()
+        assert len(todos) == 1
