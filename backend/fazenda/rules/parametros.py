@@ -90,6 +90,11 @@ DEFINICOES: list[dict] = [
     {"chave": "cronograma_sanitario_min_animais_agrupamento", "grupo": "agenda_sistema", "label": "Calendário sanitário — mínimo de animais para sugerir chamada do veterinário", "valor": 15, "unidade": "animais"},
     {"chave": "cronograma_sanitario_janela_agrupamento_dias", "grupo": "agenda_sistema", "label": "Calendário sanitário — janela de agrupamento entre eventos próximos", "valor": 7, "unidade": "dias"},
     {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
+    # Secagem/Parto sugerem mover o animal para o lote de secas/lote 03 — por
+    # padrão, sempre PERGUNTA (janela de confirmação, ver FormSecagem.tsx/
+    # FormParto.tsx); marcando este parâmetro, a movimentação acontece sozinha,
+    # sem perguntar.
+    {"chave": "transferencia_lote_automatica", "grupo": "agenda_sistema", "label": "Secagem/Parto — transferir para o lote sugerido automaticamente (sem perguntar)?", "valor": "false", "tipo": "bool"},
     {"chave": "patrimonio_atualizacao_valor_mercado_meses", "grupo": "agenda_sistema", "label": "Patrimônio não depreciável — frequência padrão de atualização do valor de mercado (0 = nunca)", "valor": 12, "unidade": "meses"},
     {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
 
@@ -382,6 +387,13 @@ def patrimonio_atualizacao_valor_mercado_meses() -> int:
 
 def dias_contas_a_pagar_agenda() -> int:
     return int(get_param("dias_contas_a_pagar_agenda", 10) or 10)
+
+
+def transferencia_lote_automatica() -> bool:
+    """Secagem/Parto: mover para o lote sugerido sem perguntar (True) ou
+    sempre abrir a janela de confirmação (False, padrão) — ver
+    FormSecagem.tsx/FormParto.tsx."""
+    return get_param_bool("transferencia_lote_automatica", False)
 
 
 def data_corte_taxa_concepcao() -> date:

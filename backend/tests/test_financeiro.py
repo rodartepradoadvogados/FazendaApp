@@ -251,6 +251,58 @@ class TestCentroCustoObrigatorio:
             conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
             assert conta.centro_custo == "Arrendamento"
 
+
+class TestCentroCustoPorItem:
+    """Uma nota com vários itens pode distribuir cada item para um centro de
+    custo diferente do da nota (ex.: um boleto que cobre insumos de mais de
+    um centro) — ver LancamentoItem.centro_custo, mesmo padrão do já
+    existente codigo_conta_gerencial por item."""
+
+    def test_item_sem_override_fica_nulo(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira",
+            "itens": [{"produto": "Ração concentrada", "valor_total": 500.0}],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            item = s.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert item.centro_custo is None
+
+    def test_item_com_override_diferente_do_centro_da_nota(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira",
+            "itens": [
+                {"produto": "Ração concentrada", "valor_total": 500.0},
+                {"produto": "Adubo", "valor_total": 300.0, "centro_custo": "Agricultura"},
+            ],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            itens = s.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == r.json()["numero_lancamento"])).all()
+            por_produto = {i.produto: i.centro_custo for i in itens}
+            assert por_produto["Ração concentrada"] is None
+            assert por_produto["Adubo"] == "Agricultura"
+            # O centro de custo da NOTA continua o mesmo — só o item mudou.
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
+
+    def test_listar_lancamentos_traz_o_centro_de_custo_do_item(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "centro_custo": "Pecuária Leiteira",
+            "itens": [{"produto": "Adubo", "valor_total": 300.0, "centro_custo": "Agricultura"}],
+        })
+        numero = r.json()["numero_lancamento"]
+        lista = c.get("/financeiro/lancamentos").json()
+        lanc = next(l for l in lista["lancamentos"] if l["numero_lancamento"] == numero)
+        assert lanc["itens"][0]["centro_custo"] == "Agricultura"
+
+
+class TestDescontoAcrescimo:
     def test_desconto_reduz_o_valor_liquido(self, client):
         c, _ = client
         r = c.post("/financeiro/lancamentos", json={

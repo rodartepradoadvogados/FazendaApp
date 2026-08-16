@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import {
-  fetchSecagemInfo, criarSecagem, criarMovimentacao, fetchMedicamentos, formatDate,
+  fetchSecagemInfo, criarSecagem, criarMovimentacao, fetchMedicamentos, formatDate, fetchTransferenciaLoteAutomatica,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -54,6 +54,11 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
   const [observacao, setObservacao] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
+  // "Dosagem" de cada produto de secagem pode ser a dose DE CADA vaca (padrão
+  // — aplica o valor cheio a cada animal selecionado) ou o TOTAL usado na
+  // aplicação inteira (divide pelo nº de vacas antes de lançar) — só faz
+  // diferença de verdade quando mais de uma vaca está selecionada.
+  const [modoDosagem, setModoDosagem] = useState<Record<number, "por_vaca" | "total">>({});
   const [aplicado, setAplicado] = useState(true);
   const [vacinas, setVacinas] = useState<string[]>([]);
   const [aplicarVacinaPreParto, setAplicarVacinaPreParto] = useState(false);
@@ -70,6 +75,11 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
   const [filaTransferencia, setFilaTransferencia] = useState<{ numero: string; lote: { codigo: string; rotulo: string } }[]>([]);
   const transferenciaPendente = filaTransferencia[0] || null;
   const [transferindo, setTransferindo] = useState(false);
+  // Configurações > Parâmetros > "transferir para o lote sugerido
+  // automaticamente" — quando ligado, pula a janela de confirmação abaixo e
+  // move sozinho.
+  const [transferenciaAutomatica, setTransferenciaAutomatica] = useState(false);
+  useEffect(() => { fetchTransferenciaLoteAutomatica().then(setTransferenciaAutomatica).catch(() => {}); }, []);
 
   useEffect(() => {
     if (!matriz) { setInfo(null); return; }
@@ -101,8 +111,20 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
     setErro(null); setSucesso(null);
     if (!numerosAlvo.size) { setErro("Selecione ao menos uma vaca (ou lote)."); return; }
     if (!motivo) { setErro("Selecione o motivo da secagem."); return; }
-    const itensValidos = itens.filter((i) => i.produto && Number(i.quantidade) > 0 && i.unidade);
+    if (aplicarVacinaPreParto && !vacinasPreParto.length) {
+      setErro('Marque ao menos uma vacina pré-parto, ou volte para "Não" acima.'); return;
+    }
+    // Índice original preservado (não o do array filtrado) — é por ele que
+    // modoDosagem sabe se a dosagem digitada é por vaca ou o total a dividir.
+    const itensValidos = itens
+      .map((i, idx) => ({ ...i, idx }))
+      .filter((i) => i.produto && Number(i.quantidade) > 0 && i.unidade);
     const aplicadoEfetivo = aplicado && dataSecagem <= new Date().toISOString().slice(0, 10);
+    const produtosParaEnvio = itensValidos.map((i) => ({
+      produto: i.produto, via: i.via || undefined,
+      quantidade: modoDosagem[i.idx] === "total" && numerosAlvo.size > 1 ? Number(i.quantidade) / numerosAlvo.size : Number(i.quantidade),
+      unidade: i.unidade,
+    }));
 
     setSalvando(true);
     // Loop por animal (mesmo padrão do Diagnóstico): registra sucesso/falha por
@@ -117,9 +139,10 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
             numero_matriz: numero, data_secagem: dataSecagem, motivo,
             escore_condicao_corporal: ecc ? Number(ecc) : null,
             observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
-            produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+            produtos: produtosParaEnvio,
             vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
             vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
+            vacina_pre_parto: aplicarVacinaPreParto,
           });
           // Cada vaca pode ter uma sugestão diferente (ex.: alguma já está no
           // lote das secas) — só entra na fila quem realmente precisa mudar.
@@ -141,12 +164,27 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         }
       } else {
         setSucesso(`Secagem lançada com sucesso para ${salvos.length} animal(is).`);
-        // Fila de confirmação, uma de cada vez — inclusive quando várias
-        // vacas foram secadas juntas, cada uma pode precisar de um lote
-        // diferente (ou nenhum, se já estiver no lote certo).
-        if (pendentes.length) setFilaTransferencia(pendentes);
+        if (pendentes.length && transferenciaAutomatica) {
+          // "Transferir automaticamente" ligado em Configurações > Parâmetros
+          // — move sozinho, sem abrir a janela de confirmação abaixo.
+          const movidos: string[] = []; const falhasMov: string[] = [];
+          for (const p of pendentes) {
+            try {
+              const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: p.lote.codigo, animais: [p.numero], origem: "sugestao_automatica" });
+              if ((r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(p.numero)) movidos.push(`${p.numero} → ${p.lote.rotulo}`);
+              else falhasMov.push(p.numero);
+            } catch { falhasMov.push(p.numero); }
+          }
+          if (movidos.length) setSucesso((s) => `${s} Transferido(s) automaticamente: ${movidos.join(", ")}.`);
+          if (falhasMov.length) setErro(`Não foi possível transferir automaticamente: ${falhasMov.join(", ")}.`);
+        } else if (pendentes.length) {
+          // Fila de confirmação, uma de cada vez — inclusive quando várias
+          // vacas foram secadas juntas, cada uma pode precisar de um lote
+          // diferente (ou nenhum, se já estiver no lote certo).
+          setFilaTransferencia(pendentes);
+        }
         setSelecionados(new Set()); setLotesSelecionados([]);
-        setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
+        setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]); setModoDosagem({});
         setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
       }
     } catch (e: any) {
@@ -225,6 +263,23 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
           </div>
         )}
       </Campo>
+
+      {numerosAlvo.size > 0 && (
+        <div className="mt-3" style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", alignItems: "center" }}>
+          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+            {numerosAlvo.size} vaca(s) selecionada(s):
+          </span>
+          {Array.from(numerosAlvo).sort().map((n) => (
+            <span key={n} style={{
+              fontSize: "0.76rem", background: "var(--surface-2)", border: "1px solid var(--border)",
+              borderRadius: "999px", padding: "0.15rem 0.6rem", fontWeight: 600,
+            }}>
+              {n}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         {numerosAlvo.size === 1 && (
           <>
@@ -284,7 +339,22 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
                   </select>
                 </Campo>
               </div>
-              {item.produto && <EstoqueRestante estoque={estoque} produto={item.produto} quantidade={Number(item.quantidade) || 0} />}
+              {numerosAlvo.size > 1 && (
+                <div className="flex items-center gap-4 mt-2">
+                  <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", cursor: "pointer" }}>
+                    <input type="radio" checked={(modoDosagem[idx] ?? "por_vaca") === "por_vaca"} onChange={() => setModoDosagem((p) => ({ ...p, [idx]: "por_vaca" }))} /> Dosagem por vaca
+                  </label>
+                  <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", cursor: "pointer" }}>
+                    <input type="radio" checked={modoDosagem[idx] === "total"} onChange={() => setModoDosagem((p) => ({ ...p, [idx]: "total" }))} /> Dosagem total (divide pelas {numerosAlvo.size} vacas)
+                  </label>
+                </div>
+              )}
+              {item.produto && (
+                <EstoqueRestante
+                  estoque={estoque} produto={item.produto}
+                  quantidade={(modoDosagem[idx] === "total" && numerosAlvo.size > 1 ? (Number(item.quantidade) || 0) : (Number(item.quantidade) || 0) * Math.max(1, numerosAlvo.size))}
+                />
+              )}
               {itens.length > 1 && (
                 <button onClick={() => removerItem(idx)} title="Remover este item" aria-label="Remover este item" className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
                   <Trash2 size={13} />
@@ -357,10 +427,15 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
         </Campo>
       )}
 
+      {aplicarVacinaPreParto && !vacinasPreParto.length && (
+        <p style={{ ...nota, marginLeft: 0, display: "block", color: "var(--amber)" }}>
+          Marque ao menos uma vacina pré-parto acima para salvar, ou volte para "Não".
+        </p>
+      )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size}>
+        <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size || (aplicarVacinaPreParto && !vacinasPreParto.length)}>
           {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} ${numerosAlvo.size !== 1 ? "animais" : "animal"})`}
         </button>
       </div>

@@ -224,6 +224,9 @@ class ValeItemNovoIn(BaseModel):
 class ItemIn(BaseModel):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
+    # Override do centro de custo da nota (dados.centro_custo, abaixo) só
+    # para este item — None (a maioria) usa o centro de custo da nota inteira.
+    centro_custo: Optional[str] = None
     produto: str
     tipo_item: Optional[str] = None  # "produto" | "servico"
     descricao: Optional[str] = None
@@ -485,6 +488,7 @@ def listar_lancamentos(
             "id": it.id,
             "codigo_conta_gerencial": it.codigo_conta_gerencial,
             "nome_conta_gerencial": it.nome_conta_gerencial,
+            "centro_custo": it.centro_custo,
             "produto": it.produto,
             "descricao": it.descricao,
             "quantidade": it.quantidade,
@@ -1611,6 +1615,26 @@ def registrar_manutencao(
     return {"manutencao": registro.model_dump(), "item": d_item}
 
 
+def _aprender_conta_gerencial_padrao(session: Session, fazenda_id: int | None, tipo: str, itens: list["ItemIn"]) -> None:
+    """Primeira vez que um item de estoque SEM conta gerencial padrão recebe
+    um lançamento, a conta escolhida na hora vira o padrão dele — do próximo
+    lançamento em diante, o formulário já pré-preenche essa conta sozinho
+    (ver FormFinanceiro.tsx::contaGerencialPadrao / Estoque.conta_gerencial_
+    despesa_padrao|receita_padrao). Nunca sobrescreve um padrão já definido
+    (manual, em Configurações > Cadastro > Estoque, ou aprendido antes)."""
+    campo = "conta_gerencial_despesa_padrao" if tipo == "despesa" else "conta_gerencial_receita_padrao"
+    for item in itens:
+        if item.tipo_item == "servico" or not item.produto or not item.codigo_conta_gerencial:
+            continue
+        query = select(Estoque).where(Estoque.nome == item.produto)
+        if fazenda_id is not None:
+            query = query.where(Estoque.fazenda_id == fazenda_id)
+        estoque_item = session.exec(query).first()
+        if estoque_item is not None and getattr(estoque_item, campo) is None:
+            setattr(estoque_item, campo, item.codigo_conta_gerencial)
+            session.add(estoque_item)
+
+
 @router.post("/lancamentos", status_code=201)
 def criar_lancamento(
     dados: LancamentoIn,
@@ -1661,6 +1685,7 @@ def criar_lancamento(
             data_competencia=data_competencia,
             codigo_conta_gerencial=item.codigo_conta_gerencial,
             nome_conta_gerencial=item.nome_conta_gerencial,
+            centro_custo=mapear_centro_custo(item.centro_custo) if item.centro_custo else None,
             produto=item.produto,
             tipo_item=item.tipo_item,
             descricao=item.descricao,
@@ -1765,6 +1790,9 @@ def criar_lancamento(
         session.refresh(c)
     for it in itens_criados:
         session.refresh(it)
+
+    _aprender_conta_gerencial_padrao(session, fazenda_id, dados.tipo, dados.itens)
+    session.commit()
 
     if dados.pedido_id:
         from fazenda.api.routers.pedidos import atualizar_status_por_lancamento

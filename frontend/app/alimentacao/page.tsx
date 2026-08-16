@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package } from "lucide-react";
+import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package, FileSpreadsheet, FileText } from "lucide-react";
 import { fetchAlimentacao, fetchNecessidadeMensal, fetchEstadoBaixaAlimentacao } from "@/lib/api";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { MultiFiltro } from "@/components/ui";
+import { exportarMultiExcel, exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 
 const TRATOS = 2; // 2 tratos por dia
 const fmt = (v: number) => Number(v.toFixed(2)).toLocaleString("pt-BR");
@@ -76,9 +77,64 @@ function PlanoPorLote({ a }: { a: any }) {
   const porLote: any[] = a?.por_lote ?? [];
   const [abertos, setAbertos] = useState<Set<number>>(new Set());
   const toggle = (l: number) => setAbertos((p) => { const n = new Set(p); n.has(l) ? n.delete(l) : n.add(l); return n; });
+
+  // Seleção de lote(s) pra exportação — vazio = todos (mesmo padrão do
+  // filtro de Consumo Diário acima).
+  const [lotesExport, setLotesExport] = useState<string[]>([]);
+  const lotesOpcoes = useMemo(() => porLote.map((l) => String(l.lote)), [porLote]);
+  const [exportando, setExportando] = useState(false);
+
+  function secoesParaExportar(): SecaoFicha[] {
+    const alvo = lotesExport.length ? porLote.filter((l) => lotesExport.includes(String(l.lote))) : porLote;
+    return alvo.map((l) => ({
+      titulo: `Lote ${l.lote} — ${l.categoria} (${l.efetivo} cab.)`,
+      colunas: [
+        { header: "Ingrediente", key: "ingrediente" },
+        { header: "Por cabeça", key: "por_cabeca" },
+        { header: "Lote/dia", key: "lote_dia" },
+        { header: "Lote/trato", key: "lote_trato" },
+      ],
+      linhas: (l.itens || []).map((i: any) => ({
+        ingrediente: i.ingrediente,
+        por_cabeca: `${fmt(i.por_cabeca)} ${i.unidade}`,
+        lote_dia: `${fmt(i.consumo_dia)} ${i.unidade}`,
+        lote_trato: `${fmt(i.consumo_dia / TRATOS)} ${i.unidade}`,
+      })),
+    }));
+  }
+
+  async function exportar(formato: "pdf" | "excel") {
+    setExportando(true);
+    try {
+      const secoes = secoesParaExportar();
+      const subtitulo = lotesExport.length ? `Lote(s): ${lotesExport.join(", ")}` : "Todos os lotes";
+      if (formato === "pdf") await exportarFichaPDF("Plano por Lote", subtitulo, secoes, "plano_por_lote");
+      else await exportarMultiExcel("Plano por Lote", secoes, "plano_por_lote");
+    } catch {
+      // erro já mostrado ao usuário dentro de exportarFichaPDF/exportarMultiExcel (lib/export.ts)
+    } finally {
+      setExportando(false);
+    }
+  }
+
   return (
     <div className="card">
-      <div className="card-header mb-3">Plano por Lote <span style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)" }}>(clique para expandir)</span></div>
+      <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.6rem" }}>
+        <span>Plano por Lote <span style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)" }}>(clique para expandir)</span></span>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          <div style={{ minWidth: "12rem" }}>
+            <MultiFiltro label="Lote(s) a exportar" opcoes={lotesOpcoes} selecionados={lotesExport} onChange={setLotesExport} />
+          </div>
+          <button type="button" className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}
+            disabled={exportando || !porLote.length} onClick={() => exportar("excel")}>
+            <FileSpreadsheet size={14} /> Excel
+          </button>
+          <button type="button" className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem" }}
+            disabled={exportando || !porLote.length} onClick={() => exportar("pdf")}>
+            <FileText size={14} /> PDF
+          </button>
+        </div>
+      </div>
       <div className="space-y-2">
         {porLote.map((l) => {
           const aberto = abertos.has(l.lote);

@@ -14,7 +14,31 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import ContaGerencial, Fornecedor
-from fazenda.rules.leitura_documento import MIME_ACEITOS, MODEL, ler_documento
+from fazenda.rules.leitura_documento import MIME_ACEITOS, MODEL, _SCHEMA, ler_documento
+
+
+def _contar_parametros_uniao(no) -> int:
+    """Conta campos com `type` em lista (ex.: ["string", "null"]) ou `anyOf`,
+    recursivamente — mesma contagem que a API de structured output aplica
+    pra limitar o schema (ver comentário em leitura_documento.py::_SCHEMA)."""
+    total = 0
+    if isinstance(no, dict):
+        if isinstance(no.get("type"), list) or "anyOf" in no:
+            total += 1
+        for valor in no.get("properties", {}).values():
+            total += _contar_parametros_uniao(valor)
+        if "items" in no:
+            total += _contar_parametros_uniao(no["items"])
+    return total
+
+
+class TestSchemaDentroDoLimiteDeUniao:
+    def test_menos_de_16_parametros_com_tipo_uniao(self):
+        """Regressão do bug relatado: com todo campo opcional em [tipo, null],
+        o schema chegou a 23 parâmetros-união e a API de structured output
+        passou a recusar TODO upload com 400 'too many parameters with union
+        types' (limite documentado: 16)."""
+        assert _contar_parametros_uniao(_SCHEMA) < 16
 
 
 def _resposta_mock(payload: dict, stop_reason: str = "end_turn"):

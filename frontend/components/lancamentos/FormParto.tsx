@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Baby, BookOpen, ExternalLink, X } from "lucide-react";
-import { criarMovimentacao, criarParto, previewCriteriosLote, registrarColostragem, registrarPerdaPrenhez, sugestaoLoteEvento, LoteSugeridoEvento } from "@/lib/api";
+import { criarMovimentacao, criarParto, previewCriteriosLote, registrarColostragem, registrarPerdaPrenhez, sugestaoLoteEvento, fetchTransferenciaLoteAutomatica, LoteSugeridoEvento } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, nota } from "@/components/lancamentos/comumForms";
@@ -177,6 +177,12 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
   type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento; motivo: string };
   const [filaLotes, setFilaLotes] = useState<PendenciaLote[]>([]);
   const [movendoLote, setMovendoLote] = useState(false);
+  // Configurações > Parâmetros > "transferir para o lote sugerido
+  // automaticamente" — quando ligado, mãe e cria(s) são movidas sozinhas
+  // (mesmo caminho de `alocarSemConfirmar`, já usado no lançamento em lote),
+  // sem abrir a fila de confirmação abaixo.
+  const [transferenciaAutomatica, setTransferenciaAutomatica] = useState(false);
+  useEffect(() => { fetchTransferenciaLoteAutomatica().then(setTransferenciaAutomatica).catch(() => {}); }, []);
 
   // Busca a sugestão real de lote (motor de critérios do backend) para um
   // animal num evento de vida (parto/nascimento) e decide se vale a pena
@@ -383,19 +389,33 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       // Efeitos colaterais do parto (alocação de lote e colostragem) são
       // complementares: não bloqueiam o parto já salvo, mas as falhas são
       // coletadas para avisar o usuário no fim, em vez de sumirem em silêncio.
-      // A troca de lote (mãe e cria(s)) nunca é automática aqui — vira uma
-      // fila de pop-ups de confirmação (ver `filaLotes`/`prepararPendenciaLote`),
-      // um por vez, mesma UX para os dois.
+      // A troca de lote (mãe e cria(s)) vira uma fila de pop-ups de
+      // confirmação (ver `filaLotes`/`prepararPendenciaLote`), um por vez —
+      // a não ser que "transferir automaticamente" esteja ligado em
+      // Configurações > Parâmetros, aí move sozinho (mesmo caminho de
+      // `alocarSemConfirmar`, já usado no lançamento em lote).
       const falhasEfeito: string[] = [];
       const pendencias: PendenciaLote[] = [];
+      const movidosAutomaticamente: string[] = [];
       const loteAtualMae = animais.find((a) => a.numero === matriz)?.grupo_primario || null;
-      const pendMae = await prepararPendenciaLote(matriz, "a vaca", "Vaca", { del_dias: 0 }, loteAtualMae, "Parto", falhasEfeito);
-      if (pendMae) pendencias.push(pendMae);
-      for (const c of r.crias_criadas as string[]) {
-        const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
-        const categoriaAbrevCria = sexoCria === "Macho" ? "Bezerro" : "Bezerra";
-        const pendCria = await prepararPendenciaLote(c, sexoCria === "Macho" ? "o bezerro" : "a bezerra", categoriaAbrevCria, { data_nasc: dataParto }, null, "Nascimento", falhasEfeito);
-        if (pendCria) pendencias.push(pendCria);
+      if (transferenciaAutomatica) {
+        const loteMae = await alocarSemConfirmar(matriz, "Vaca", { del_dias: 0 }, "Parto", falhasEfeito);
+        if (loteMae) movidosAutomaticamente.push(`${matriz} → ${loteMae}`);
+        for (const c of r.crias_criadas as string[]) {
+          const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
+          const categoriaAbrevCria = sexoCria === "Macho" ? "Bezerro" : "Bezerra";
+          const loteCria = await alocarSemConfirmar(c, categoriaAbrevCria, { data_nasc: dataParto }, "Nascimento", falhasEfeito);
+          if (loteCria) movidosAutomaticamente.push(`${c} → ${loteCria}`);
+        }
+      } else {
+        const pendMae = await prepararPendenciaLote(matriz, "a vaca", "Vaca", { del_dias: 0 }, loteAtualMae, "Parto", falhasEfeito);
+        if (pendMae) pendencias.push(pendMae);
+        for (const c of r.crias_criadas as string[]) {
+          const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
+          const categoriaAbrevCria = sexoCria === "Macho" ? "Bezerro" : "Bezerra";
+          const pendCria = await prepararPendenciaLote(c, sexoCria === "Macho" ? "o bezerro" : "a bezerra", categoriaAbrevCria, { data_nasc: dataParto }, null, "Nascimento", falhasEfeito);
+          if (pendCria) pendencias.push(pendCria);
+        }
       }
       // Colostragem/IgG acima descrevem só a 1ª cria (o formulário tem um único
       // bloco de colostro mesmo em parto gemelar) — grava se a cria foi criada
@@ -421,7 +441,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           falhasEfeito.push(`a colostragem não pôde ser gravada${e?.message ? `: ${e.message}` : ""}`);
         }
       }
-      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${pendencias.length ? ` ${pendencias.length} sugestão(ões) de troca de lote aguardando confirmação abaixo.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
+      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${pendencias.length ? ` ${pendencias.length} sugestão(ões) de troca de lote aguardando confirmação abaixo.` : ""}${movidosAutomaticamente.length ? ` Transferido(s) automaticamente: ${movidosAutomaticamente.join(", ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
       if (pendencias.length) setFilaLotes(pendencias);
       limparFormulario();
     } catch (e: any) {

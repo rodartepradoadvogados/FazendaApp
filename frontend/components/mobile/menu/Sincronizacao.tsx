@@ -119,7 +119,7 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
 
   return (
     <>
-      <MobVoltar onVoltar={onVoltar} />
+      <MobVoltar titulo="Sincronização" onVoltar={onVoltar} />
       <div style={{ padding: "1rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "1.2rem", marginBottom: "1rem" }}>
           <WifiOff size={24} /> Sincronização Offline

@@ -102,6 +102,20 @@ def obter_parametros(
     return {"grupos": grupos}
 
 
+@router.get("/transferencia-lote-automatica")
+def obter_transferencia_lote_automatica(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Secagem/Parto sugerem mover o animal para o lote de secas/lote 03 —
+    consultado direto (sem carregar o bloco inteiro de Parâmetros) por
+    FormSecagem.tsx/FormParto.tsx pra decidir entre perguntar (padrão) ou
+    mover sozinho, sem popup de confirmação."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    linha = _linha_visivel(session, "transferencia_lote_automatica", fazenda_id)
+    automatica = bool(linha and (linha.valor or "").strip().lower() in ("1", "true", "sim", "yes"))
+    return {"automatica": automatica}
+
+
 class AtualizarParametroIn(BaseModel):
     valor: float | int | bool | str
 

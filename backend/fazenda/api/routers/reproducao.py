@@ -15,7 +15,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, ControleLeiteiro, EstoqueSemen, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
     ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
-    SeedFlag, Secagem, Servico, Usuario,
+    Sanidade, SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
@@ -2020,3 +2020,92 @@ def registrar_servico_lote(
 
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}
+
+
+# ---------------------------------------------------------------------------
+# Indução de cio (PGF2α/Cloprostenol) — estímulo hormonal aplicado geralmente
+# nos últimos dias do PEV para a vaca entrar em cio em 2 a 5 dias. Guardado
+# como Sanidade (mesmo padrão que BST já usa em agenda.py::aplicar_bst_lote)
+# com `atividade` própria — gera histórico, mas de propósito NÃO é gravado em
+# Servico (inseminação) nem em ProtocoloIatf*: não é IATF, não é diagnóstico,
+# só um estímulo para o cio aparecer naturalmente (o cio observado depois vira
+# um Serviço/IA normal, lançado à parte). A Agenda usa esta atividade para
+# lembrar de observar o cio na janela de 2 a 5 dias (ver agenda_engine.py,
+# bloco "3b").
+# ---------------------------------------------------------------------------
+ATIVIDADE_INDUCAO_CIO = "Indução de cio"
+
+
+class InducaoCioIn(BaseModel):
+    numeros_matriz: list[str]
+    data_aplicacao: date
+    produto: str = "Cloprostenol"
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+    responsavel: str | None = None
+    observacao: str | None = None
+
+
+@router.post("/inducao-cio", status_code=201)
+def registrar_inducao_cio(
+    dados: InducaoCioIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    if not dados.numeros_matriz:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+    usuario_id = usuario_id_seguro(user)
+    avisos: list[str] = []
+    for numero in dados.numeros_matriz:
+        sanidade = Sanidade(
+            numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
+            dose=dados.dose, unidade=dados.unidade, via=dados.via, responsavel=dados.responsavel,
+            atividade=ATIVIDADE_INDUCAO_CIO, obs=dados.observacao, natureza="preventivo",
+            usuario_id=usuario_id, fazenda_id=fazenda_id,
+        )
+        session.add(sanidade)
+        session.flush()
+        if dados.dose and dados.unidade:
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=dados.produto)
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=dados.dose, unidade=dados.unidade, data=dados.data_aplicacao,
+                fazenda_id=fazenda_id, observacao=f"Indução de cio — matriz {numero}", usuario_id=usuario_id,
+                origem_tipo="inducao_cio", origem_id=sanidade.id, produto=dados.produto,
+            ))
+    session.commit()
+    return {"aplicados": len(dados.numeros_matriz), "avisos": avisos}
+
+
+@router.get("/inducao-cio")
+def listar_inducoes_cio(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Sanidade).where(Sanidade.atividade == ATIVIDADE_INDUCAO_CIO)
+    if fazenda_id is not None:
+        query = query.where(Sanidade.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query.order_by(Sanidade.data_aplicacao.desc())).all()
+    return [
+        {
+            "id": s.id, "numero_matriz": s.numero_matriz, "data_aplicacao": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
+            "produto": s.produto, "dose": s.dose, "unidade": s.unidade, "via": s.via,
+            "responsavel": s.responsavel, "observacao": s.obs,
+        }
+        for s in lancamentos
+    ]
+
+
+@router.delete("/inducao-cio/{lancamento_id}")
+def excluir_inducao_cio(
+    lancamento_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    sanidade = session.get(Sanidade, lancamento_id)
+    if (
+        not sanidade or sanidade.atividade != ATIVIDADE_INDUCAO_CIO
+        or (fazenda_id is not None and sanidade.fazenda_id != fazenda_id)
+    ):
+        raise HTTPException(status_code=404, detail="Lançamento de indução de cio não encontrado")
+    session.delete(sanidade)
+    session.commit()
+    return {"excluido": True}

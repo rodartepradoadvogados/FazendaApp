@@ -119,3 +119,39 @@ def test_editar_clona_a_linha_global_em_vez_de_mutar_ela(client):
         por_fazenda = {l.fazenda_id: l.valor for l in linhas}
         assert por_fazenda[None] == "45", "padrão global não podia ter sido alterado"
         assert por_fazenda[3] == "99"
+
+
+class TestTransferenciaLoteAutomatica:
+    """GET dedicado consumido por FormSecagem.tsx/FormParto.tsx pra decidir
+    entre perguntar (padrão) ou mover o animal pro lote sugerido sozinho."""
+
+    def _seed_global(self, engine):
+        with Session(engine) as s:
+            s.add(ParametroFazenda(
+                chave="transferencia_lote_automatica", fazenda_id=None, grupo="agenda_sistema",
+                label="Transferir automaticamente", valor="false", tipo="bool",
+            ))
+            s.commit()
+
+    def test_padrao_e_false_sem_personalizacao(self, client):
+        c, engine = client
+        self._seed_global(engine)
+        token = _login(c)
+        headers = {"Authorization": f"Bearer {token}"}
+        _com_fazenda(1)
+        r = c.get("/parametros/transferencia-lote-automatica", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json() == {"automatica": False}
+
+    def test_fazenda_liga_sem_afetar_outra(self, client):
+        c, engine = client
+        self._seed_global(engine)
+        token = _login(c)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        _com_fazenda(1)
+        c.put("/parametros/transferencia_lote_automatica", json={"valor": True}, headers=headers)
+        assert c.get("/parametros/transferencia-lote-automatica", headers=headers).json() == {"automatica": True}
+
+        _com_fazenda(2)
+        assert c.get("/parametros/transferencia-lote-automatica", headers=headers).json() == {"automatica": False}

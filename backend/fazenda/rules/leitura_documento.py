@@ -42,6 +42,10 @@ _MIME_NORMALIZADO = {"image/jpg": "image/jpeg"}
 # acionável em vez de estourar como "tipo de mídia inválido" lá na API.
 _MIME_SEM_SUPORTE_NA_VISAO = {"image/heic": "HEIC", "image/heif": "HEIF"}
 
+_TEXTO_AUSENTE = (
+    " Campo de TEXTO — se não existir/não se aplicar/não conseguir ler, devolva string vazia \"\" (nunca null)."
+)
+
 _SCHEMA = {
     "type": "object",
     "properties": {
@@ -58,6 +62,14 @@ _SCHEMA = {
                 "com código da receita, período de apuração, valor do principal/multa/juros)."
             ),
         },
+        # Campos NUMÉRICOS ficam nullable (["tipo", "null"]) — precisam
+        # distinguir "0 (existe e é zero)" de "null (nem existe no
+        # documento)". Campos de TEXTO usam só "string" (nunca null) e ""
+        # como sentinela de ausência — a API de structured output tem um
+        # limite de 16 parâmetros com tipo união (nullable/anyOf) por
+        # schema; com todo campo opcional como texto+null, este schema
+        # somava 23 e o /ler-documento quebrava com 400 "too many
+        # parameters with union types" em TODO upload. Ver _TEXTO_AUSENTE.
         "parcela_num": {
             "type": ["integer", "null"],
             "description": "Se o boleto indicar 'parcela X/Y' ou 'X de Y', o número desta parcela (X). Só se aplica a boleto.",
@@ -67,20 +79,20 @@ _SCHEMA = {
             "description": "Se o boleto indicar 'parcela X/Y' ou 'X de Y', o total de parcelas (Y). Só se aplica a boleto.",
         },
         "linha_digitavel": {
-            "type": ["string", "null"],
-            "description": "Linha digitável ou código de barras — do boleto, ou da guia de FGTS/DCTF, se legível.",
+            "type": "string",
+            "description": "Linha digitável ou código de barras — do boleto, ou da guia de FGTS/DCTF, se legível." + _TEXTO_AUSENTE,
         },
         "data_vencimento": {
-            "type": ["string", "null"],
-            "description": "Data de vencimento, formato YYYY-MM-DD — do boleto, ou da guia de FGTS/DCTF.",
+            "type": "string",
+            "description": "Data de vencimento, formato YYYY-MM-DD — do boleto, ou da guia de FGTS/DCTF." + _TEXTO_AUSENTE,
         },
         "competencia": {
-            "type": ["string", "null"],
-            "description": "Competência (mês de referência) da guia de FGTS/DCTF, formato YYYY-MM. Só se aplica a guia_fgts/guia_dctf.",
+            "type": "string",
+            "description": "Competência (mês de referência) da guia de FGTS/DCTF, formato YYYY-MM. Só se aplica a guia_fgts/guia_dctf." + _TEXTO_AUSENTE,
         },
         "codigo_receita": {
-            "type": ["string", "null"],
-            "description": "Código da receita do DARF (ex.: '1017' para FGTS/DCTF-relacionados). Só se aplica a guia_dctf.",
+            "type": "string",
+            "description": "Código da receita do DARF (ex.: '1017' para FGTS/DCTF-relacionados). Só se aplica a guia_dctf." + _TEXTO_AUSENTE,
         },
         "valor_principal": {
             "type": ["number", "null"],
@@ -95,14 +107,14 @@ _SCHEMA = {
             "description": "Valor dos juros/encargos da guia de FGTS/DCTF, se houver. Só se aplica a guia_fgts/guia_dctf.",
         },
         "fornecedor_cliente": {
-            "type": ["string", "null"],
-            "description": f"Nome do fornecedor (se {NOME_FAZENDA} for quem paga/compra) ou do cliente (se for quem recebe/vende).",
+            "type": "string",
+            "description": f"Nome do fornecedor (se {NOME_FAZENDA} for quem paga/compra) ou do cliente (se for quem recebe/vende)." + _TEXTO_AUSENTE,
         },
-        "numero_documento": {"type": ["string", "null"], "description": "Número da nota fiscal ou do comprovante, se houver."},
-        "data_emissao": {"type": ["string", "null"], "description": "Data de emissão da nota fiscal, formato YYYY-MM-DD."},
+        "numero_documento": {"type": "string", "description": "Número da nota fiscal ou do comprovante, se houver." + _TEXTO_AUSENTE},
+        "data_emissao": {"type": "string", "description": "Data de emissão da nota fiscal, formato YYYY-MM-DD." + _TEXTO_AUSENTE},
         "data_pagamento": {
-            "type": ["string", "null"],
-            "description": "Data em que o pagamento/transferência do recibo foi efetivado, formato YYYY-MM-DD. Só se aplica a recibo.",
+            "type": "string",
+            "description": "Data em que o pagamento/transferência do recibo foi efetivado, formato YYYY-MM-DD. Só se aplica a recibo." + _TEXTO_AUSENTE,
         },
         "valor_total": {
             "type": ["number", "null"],
@@ -125,16 +137,16 @@ _SCHEMA = {
                 "properties": {
                     "numero": {"type": ["integer", "null"], "description": "Número desta parcela (1, 2, 3...)."},
                     "valor": {"type": ["number", "null"], "description": "Valor desta parcela/via, isoladamente."},
-                    "data_vencimento": {"type": ["string", "null"], "description": "Vencimento desta parcela, YYYY-MM-DD."},
-                    "linha_digitavel": {"type": ["string", "null"], "description": "Linha digitável/código de barras desta via, se legível."},
+                    "data_vencimento": {"type": "string", "description": "Vencimento desta parcela, YYYY-MM-DD." + _TEXTO_AUSENTE},
+                    "linha_digitavel": {"type": "string", "description": "Linha digitável/código de barras desta via, se legível." + _TEXTO_AUSENTE},
                 },
                 "required": ["numero", "valor", "data_vencimento", "linha_digitavel"],
                 "additionalProperties": False,
             },
         },
         "conta_bancaria": {
-            "type": ["string", "null"],
-            "description": "Banco/agência/conta de origem ou destino identificável no comprovante (ex.: 'Banco do Brasil ag 3775-3 cc 3.615-3'). Só se aplica a recibo.",
+            "type": "string",
+            "description": "Banco/agência/conta de origem ou destino identificável no comprovante (ex.: 'Banco do Brasil ag 3775-3 cc 3.615-3'). Só se aplica a recibo." + _TEXTO_AUSENTE,
         },
         "itens": {
             "type": "array",
@@ -151,7 +163,7 @@ _SCHEMA = {
                 "additionalProperties": False,
             },
         },
-        "observacao": {"type": ["string", "null"], "description": "Qualquer informação relevante que não caiba nos campos acima."},
+        "observacao": {"type": "string", "description": "Qualquer informação relevante que não caiba nos campos acima." + _TEXTO_AUSENTE},
     },
     "required": [
         "tipo_documento", "fornecedor_cliente", "numero_documento", "data_emissao", "data_pagamento", "valor_total",
@@ -199,7 +211,9 @@ existir no documento), valor_total (principal + multa + juros), data_vencimento 
 código de barras. Só para guia_dctf, preencha também codigo_receita (o código numérico da receita no DARF). \
 fornecedor_cliente fica com o nome da empresa/fazenda que está recolhendo (não com a Receita Federal/Caixa).
 
-Responda só com os campos do schema — não invente valores que não conseguir ler; deixe null."""
+Responda só com os campos do schema — não invente valores que não conseguir ler: campos de TEXTO ficam com \
+string vazia ("") quando o dado não existir/não se aplicar/não for legível; campos NUMÉRICOS ficam com null \
+nessa mesma situação (0 só quando o documento realmente indicar valor zero, nunca como "não sei")."""
 
 
 def _client():

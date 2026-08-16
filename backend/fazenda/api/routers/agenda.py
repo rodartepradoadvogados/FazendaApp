@@ -19,12 +19,13 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Patrimonio, Pedido, PedidoAnexo, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Secagem, SeedFlag, Servico,
 )
 from fazenda.api.routers.lotes import coletar_dados_criterios
+from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
@@ -331,6 +332,30 @@ def calcular_agenda(
             )
         ).all()
     ]
+    # Orçamento/OS anexados a pedido ainda aberto/parcialmente atendido, com
+    # validade — dispara o alerta "vence em breve" (ver AgendaEngine.calcular,
+    # param `pedidos_documentos_vencendo`). Junta com Pedido pra pegar
+    # numero_pedido/status/fornecedor_cliente sem duas idas ao banco por item.
+    _rotulo_status_pedido = {"aberto": "em aberto", "parcialmente_atendido": "parcialmente atendido"}
+    query_docs_pedido = (
+        select(PedidoAnexo, Pedido)
+        .join(Pedido, PedidoAnexo.pedido_id == Pedido.id)
+        .where(PedidoAnexo.data_validade.is_not(None), Pedido.status.in_(("aberto", "parcialmente_atendido")))
+    )
+    if fazenda_id is not None:
+        query_docs_pedido = query_docs_pedido.where(Pedido.fazenda_id == fazenda_id)
+    pedidos_documentos_vencendo = [
+        {
+            "pedido_id": pedido.id,
+            "numero_pedido": pedido.numero_pedido,
+            "categoria": anexo.categoria,
+            "data_validade": anexo.data_validade,
+            "fornecedor_cliente": pedido.fornecedor_cliente,
+            "status_label": _rotulo_status_pedido.get(pedido.status, pedido.status),
+        }
+        for anexo, pedido in session.exec(query_docs_pedido).all()
+    ]
+
     # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
     # ver AgendaEngine.calcular, param `lotes`) para não repetir o alerta
     # "Pré-parto" de quem já foi movido para esse lote.
@@ -354,6 +379,25 @@ def calcular_agenda(
     ]
     datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
     intervalo_bst_dias = intervalo_bst()
+
+    # Indução de cio (PGF2α/Cloprostenol) — só a janela que o motor de fato
+    # usa (observar cio de 2 a 5 dias após a aplicação, ver AgendaEngine
+    # bloco "3b"): aplicação de até 6 dias atrás é o bastante para cobrir
+    # qualquer dia dentro da janela de 2 a 5 dias a partir de hoje.
+    inducoes_cio = [
+        {"numero_matriz": s.numero_matriz, "data_aplicacao": s.data_aplicacao, "produto": s.produto}
+        for s in session.exec(
+            _da_fazenda(
+                select(Sanidade).where(
+                    Sanidade.atividade == ATIVIDADE_INDUCAO_CIO,
+                    Sanidade.data_aplicacao >= data - timedelta(days=6),
+                    Sanidade.data_aplicacao <= data,
+                ),
+                Sanidade,
+            )
+        ).all()
+        if s.data_aplicacao
+    ]
     # `bst_ajuste_ancora_data` é o override manual gravado por
     # POST /producao/bst/ajustar-proxima-aplicacao (opção "considerar essa
     # nova data a referência") — só vale enquanto for mais recente que a
@@ -388,6 +432,8 @@ def calcular_agenda(
         proxima_visita_bst_real=proxima_visita_bst_real,
         lotes=lotes,
         secagens=secagens,
+        pedidos_documentos_vencendo=pedidos_documentos_vencendo,
+        inducoes_cio=inducoes_cio,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
