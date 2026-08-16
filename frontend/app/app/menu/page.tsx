@@ -18,12 +18,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
-  LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
+  LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
   Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
-import { usePendentes, sincronizar, descartarPendente, lerCache } from "@/lib/offline";
+import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
@@ -54,9 +54,8 @@ import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
 import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
+import Sincronizacao from "@/components/mobile/menu/Sincronizacao";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
-  | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
@@ -232,26 +231,27 @@ function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
 
 export default function Pagina() {
   const router = useRouter();
-  const [montado, setMontado] = useState(false);
-  const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(new Set());
+  const montado = typeof window !== "undefined";
+  const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const salvo = window.localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
+      return salvo ? new Set(JSON.parse(salvo)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   // Telas de tela cheia fora do inventário SUBTELAS (módulos, administração,
-  // Aparência, News) — mesmo mecanismo de estado interno (sem navegar de
-  // rota), só que sem passar pelo mapa SUBTELAS/SubKey.
-  const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | null>(null);
-  const [sub, setSub] = useState<SubKey | null>(null);
+  // Aparência, News, sincronização) — mesmo mecanismo de estado interno
+  // (sem navegar de rota), só que sem passar pelo mapa SUBTELAS/SubKey.
+  const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | "sincronizacao" | null>(null);
+  const [sub, setSub] = useState<SubKey | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.location.hash === "#calendario-sanitario" ? "calendario" : null;
+  });
   const fila = usePendentes();
-  const [sincronizando, setSincronizando] = useState(false);
-  const [resultadoEnvio, setResultadoEnvio] = useState<{ tipo: "ok" | "parcial"; msg: string } | null>(null);
   const [confirmarSair, setConfirmarSair] = useState(false);
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setMontado(true);
-    try {
-      const salvo = localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
-      if (salvo) setSecoesColapsadas(new Set(JSON.parse(salvo)));
-    } catch { /* localStorage indisponível ou valor corrompido — segue com tudo expandido */ }
-  }, []);
 
   function alternarSecao(chave: string) {
     setSecoesColapsadas((atual) => {
@@ -284,29 +284,14 @@ export default function Pagina() {
   // rota a página monta do zero, então o hash já está certo no 1º render;
   // sem 'hashchange' aqui porque não há como cair já em /app/menu antes.
   useEffect(() => {
-    if (window.location.hash === "#calendario-sanitario") setSub("calendario");
-  }, []);
+    const abrirSeHashCalendario = () => {
+      if (window.location.hash === "#calendario-sanitario") setSub("calendario");
+    };
 
-  async function enviarAgora() {
-    setSincronizando(true);
-    setResultadoEnvio(null);
-    try {
-      const { enviados, restantes } = await sincronizar();
-      if (restantes === 0) {
-        setResultadoEnvio({ tipo: "ok", msg: enviados > 0 ? `Tudo enviado (${enviados}).` : "Tudo já estava enviado." });
-      } else if (enviados > 0) {
-        setResultadoEnvio({ tipo: "parcial", msg: `${enviados} enviado(s) — ${restantes} ainda aguardando.` });
-      } else {
-        // Nenhum item saiu — provavelmente ainda sem conexão de verdade com
-        // o servidor (mesmo caso do card "Última falha" de cada item, mas
-        // muita gente só olha o botão, não os cards). Sem isso, tocar
-        // "Enviar agora" e falhar parecia não fazer nada (relato recorrente).
-        setResultadoEnvio({ tipo: "parcial", msg: "Não conseguiu enviar agora — sem conexão com o servidor. Vai tentar de novo sozinho." });
-      }
-    } finally {
-      setSincronizando(false);
-    }
-  }
+    abrirSeHashCalendario();
+    window.addEventListener("hashchange", abrirSeHashCalendario);
+    return () => window.removeEventListener("hashchange", abrirSeHashCalendario);
+  }, []);
 
   const usuario = montado ? getUsuario() : null;
 
@@ -371,6 +356,10 @@ export default function Pagina() {
   if (tela === "portal") return <Portal onVoltar={() => setTela(null)} />;
 
   if (tela === "assistente") return <Assistente onVoltar={() => setTela(null)} />;
+
+  if (tela === "sincronizacao") {
+    return <Sincronizacao onVoltar={() => setTela(null)} />;
+  }
 
   if (tela === "aparencia") {
     return (
@@ -450,6 +439,7 @@ export default function Pagina() {
 
       <SecaoRetratil chave="app" titulo="App" colapsada={secoesColapsadas.has("app")} onAlternar={alternarSecao}>
         <LinhaMenu icone={<Palette size={20} />} titulo="Aparência" subtitulo="Tema claro ou escuro" cor="var(--mob-dourado)" onClick={() => setTela("aparencia")} />
+        <LinhaMenu icone={<WifiOff size={20} />} titulo="Sincronização" subtitulo={fila.length > 0 ? `${fila.length} pendente${fila.length > 1 ? "s" : ""}` : "Fila em dia"} cor={fila.length > 0 ? "var(--mob-ambar)" : "var(--mob-dourado)"} onClick={() => setTela("sincronizacao")} />
         {/* Escape hatch para as áreas que só existem no site (Configurações,
             Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios
             avançados etc.) — mesma sessão (localStorage é da mesma origem), sem
@@ -459,58 +449,6 @@ export default function Pagina() {
         <LinhaMenu icone={<Monitor size={20} />} titulo="Site completo" subtitulo="Abrir a versão completa do site" cor="var(--mob-azul)" onClick={() => router.push("/")} />
         <LinhaMenu icone={<LogOut size={20} />} titulo="Sair / trocar de usuário" subtitulo="Encerrar a sessão neste aparelho" cor="var(--mob-vermelho)" onClick={() => setConfirmarSair(true)} />
       </SecaoRetratil>
-
-      {/* Sincronização offline — seção retrátil como as demais; a fila
-          continua sendo processada em segundo plano mesmo recolhida. */}
-      <div id="pendentes" style={{ scrollMarginTop: "5rem", marginTop: "1.2rem" }}>
-      <SecaoRetratil chave="sincronizacao" titulo="Sincronização" colapsada={secoesColapsadas.has("sincronizacao")} onAlternar={alternarSecao}>
-        {fila.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>Nada aguardando envio ✓</p>}
-
-        {fila.map((item) => (
-          <div key={item.id} className="mob-card" style={{ padding: "0.85rem 1rem", marginBottom: "0.6rem" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.92rem" }}>{item.descricao}</div>
-            <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)" }}>{new Date(item.criadoEm).toLocaleString("pt-BR")}</div>
-            {!item.erro && (
-              <div style={{ marginTop: "0.35rem", fontSize: "0.78rem", color: "var(--mob-muted)" }}>
-                {(item.tentativas || 0) > 0 ? `Aguardando envio (tentativa ${item.tentativas})…` : "Aguardando envio…"}
-                {item.debugUltimoErro && (
-                  <div style={{ marginTop: "0.2rem", color: "var(--mob-ambar)", fontSize: "0.72rem" }}>
-                    Última falha: {item.debugUltimoErro}
-                  </div>
-                )}
-              </div>
-            )}
-            {item.erro && (
-              <div style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-                <span style={{ color: "var(--mob-vermelho)", fontSize: "0.8rem", fontWeight: 600, flex: 1, minWidth: 0 }}>{item.erro}</span>
-                <button type="button" onClick={() => setConfirmarDescartarId(item.id)}
-                  style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 600, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: "var(--r-app)", padding: "0.35rem 0.6rem", cursor: "pointer", flexShrink: 0 }}>
-                  <Trash2 size={14} /> Descartar
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {fila.length > 0 && (
-          // Não trava no estado `online` (React, só atualiza via evento
-          // 'online'/'offline' — pode ficar desatualizado se o WebView não
-          // disparar o evento) — sempre permite tentar; sincronizar() já
-          // lida bem com estar realmente offline (falha rápido, tenta depois).
-          <button type="button" className="mob-btn-2" onClick={enviarAgora} disabled={sincronizando} style={{ marginTop: "0.2rem" }}>
-            <CloudUpload size={17} /> {sincronizando ? "Enviando…" : "Enviar agora"}
-          </button>
-        )}
-        {resultadoEnvio && (
-          <p style={{
-            marginTop: "0.5rem", fontSize: "0.82rem", textAlign: "center",
-            color: resultadoEnvio.tipo === "ok" ? "var(--mob-verde)" : "var(--mob-ambar)",
-          }}>
-            {resultadoEnvio.msg}
-          </p>
-        )}
-      </SecaoRetratil>
-      </div>
 
       {/* Rodapé */}
       <p style={{ textAlign: "center", color: "var(--mob-muted)", fontSize: "0.78rem", margin: "1.6rem 0 0.5rem" }}>
