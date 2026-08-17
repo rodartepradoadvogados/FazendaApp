@@ -11,9 +11,11 @@
 //
 // Insights: Indicadores, Listas, Relatórios — leitura/análise, sem nenhuma
 // tela de configuração.
-// Administração: Controle de Acesso, Painel CowData, Painel do Contador
-// (os dois últimos entram como atalhos, mas mantêm a própria casca bespoke
-// já existente), Portal, Configurações.
+// Administração: Configurações, Parâmetros, News, Controle de Acesso,
+// Central de Documentos, Portal, Painel CowData, Painel do Contador (os dois
+// últimos entram como atalhos, mas mantêm a própria casca bespoke já
+// existente) — ordem e composição pedidas explicitamente pelo usuário
+// (17/08/2026); ver ABAS_ADMINISTRACAO abaixo para o gate de cada aba.
 //
 // Layout INVERTIDO em relação ao resto do site: aqui os módulos (o que na
 // Sidebar é a lista vertical) viram uma barra de abas no TOPO, e a
@@ -31,10 +33,10 @@ import { SubNavTree } from "@/components/SubNavTree";
 import { useSubNav } from "@/components/SubNavContext";
 import { useExportAtual } from "@/components/ExportContext";
 import { exportarExcel, exportarPDF } from "@/lib/export";
-import { getFazendaAtual, getUsuario, podeModulo, ehDono, ROTA_MODULO } from "@/lib/api";
+import { getFazendaAtual, getUsuario, podeModulo, ehDono, ehAdmin, podePublicarMaterias, ROTA_MODULO } from "@/lib/api";
 import { marcarVeioDaAdministracao } from "@/lib/portalAdministracao";
 
-type Aba = { href: string; label: string; donoOnly?: boolean; requerConfig?: boolean };
+type Aba = { href: string; label: string; donoOnly?: boolean; adminOnly?: boolean; requerConfig?: boolean; requerNews?: boolean };
 
 const ABAS_INSIGHTS: Aba[] = [
   { href: "/indicadores", label: "Indicadores" },
@@ -42,20 +44,29 @@ const ABAS_INSIGHTS: Aba[] = [
   { href: "/analise-relatorios", label: "Relatórios" },
 ];
 
+// Ordem pedida explicitamente pelo usuário (17/08/2026): Configurações,
+// Parâmetros e News saem/entram como abas de primeiro nível (os dois
+// últimos eram sub-abas dentro de Configurações); Controle de Acesso deixa
+// de ter a sub-aba duplicada "Usuários" dentro de Cadastro (ver Cadastro.tsx).
 const ABAS_ADMINISTRACAO: Aba[] = [
+  // A assinatura independente de consultor foi removida (backlog #122) — o
+  // consultor passa a existir só dentro da própria fazenda (vínculo
+  // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).
+  { href: "/configuracoes", label: "Configurações", requerConfig: true },
+  { href: "/parametros", label: "Parâmetros" }, // gate genérico via ROTA_MODULO["/parametros"] = "parametros"
+  { href: "/news-admin", label: "News", requerNews: true },
   { href: "/usuarios", label: "Controle de Acesso", donoOnly: true },
-  { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
-  { href: "/contador", label: "Painel do Contador", donoOnly: true },
-  { href: "/portal", label: "Portal" },
   // Aberta a qualquer logado (igual a Portal) — o filtro de verdade é do
   // backend (GET /documentos-central): documento fiscal só pra admin,
   // documento de lançamento só pra quem tem o módulo financeiro. Quem não
   // tem nenhum dos dois só vê a tela vazia, não um 403.
   { href: "/documentos-central", label: "Central de Documentos" },
-  // A assinatura independente de consultor foi removida (backlog #122) — o
-  // consultor passa a existir só dentro da própria fazenda (vínculo
-  // UsuarioFazenda.consultor) e como Consultor CowData (Equipe CowData).
-  { href: "/configuracoes", label: "Configurações", requerConfig: true },
+  { href: "/portal", label: "Portal" },
+  { href: "/painel-cowdata", label: "Painel CowData", donoOnly: true },
+  // Administrador da fazenda vê a aba (além do dono, que já vê tudo) — o
+  // acesso de fato (inclusive do contador externo) é checado à parte em
+  // AuthShell.tsx, esta flag só decide a VISIBILIDADE da aba aqui.
+  { href: "/contador", label: "Painel do Contador", adminOnly: true },
 ];
 
 // Qual dos dois grupos a rota ATUAL pertence — decide tanto o conjunto de
@@ -136,18 +147,23 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   const [admin, setAdmin] = useState(false);
   const [dono, setDono] = useState(false);
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+  const [podeNews, setPodeNews] = useState(false);
 
   useEffect(() => {
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehDono());
+    setPodeNews(podePublicarMaterias());
   }, [path]);
 
   const modo = modoDaRota(path);
   const titulo = modo === "administracao" ? "Administração" : "Insights";
   const abasVisiveis = (modo === "administracao" ? ABAS_ADMINISTRACAO : ABAS_INSIGHTS).filter((a) => {
     if (a.donoOnly) return dono;
+    if (a.adminOnly) return admin || dono;
     if (a.requerConfig) return temConfiguracoes;
+    if (a.requerNews) return podeNews;
     const mod = ROTA_MODULO[a.href];
     if (mod) return podeModulo(mod);
     return true; // /portal — liberado para todo logado
@@ -210,7 +226,8 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         {subNav && (
           <aside style={{
-            width: "15rem", flexShrink: 0, padding: "1rem 0.8rem", borderRight: "1px solid var(--border)",
+            width: "15rem", flexShrink: 0, padding: "1rem 0.8rem",
+            background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)",
             minHeight: "calc(100vh - 6.5rem)",
           }}>
             <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect}

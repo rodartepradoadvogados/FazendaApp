@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { getToken, podeModulo, ehDono, ehContador, ehMembroEquipeCowData, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
+import { getToken, podeModulo, ehDono, ehAdmin, ehContador, ehMembroEquipeCowData, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -77,7 +77,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // pelo próprio atalho na Sidebar, numa aba nova de verdade do navegador
   // (ver Sidebar.tsx). Painel CowData e Painel do Contador são checados à
   // parte acima: têm a própria casca bespoke, não a desta.
-  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes"];
+  const ROTAS_INSIGHTS = ["/indicadores", "/relatorios", "/analise-relatorios", "/usuarios", "/portal", "/configuracoes", "/parametros", "/news-admin"];
   const ehInsightsPortal = ROTAS_INSIGHTS.some((r) => path === r || path.startsWith(r + "/"));
   // Portal "Formulação de Dietas" (/dietas): casca própria
   // (components/dietas/DietasLayout.tsx via app/dietas/layout.tsx), nunca a
@@ -99,11 +99,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     }
     // Um vínculo de contador só enxerga o Painel do Contador — nunca o resto
     // do sistema (nem o app móvel, que sequer tem essa tela). O proprietário
-    // também pode visitar /contador (mesma tela que o contador externo vê,
-    // acessível pela Sidebar > Administração), mas não fica preso lá — só
-    // quem tem o vínculo de contador é redirecionado automaticamente.
+    // e os administradores da fazenda também podem visitar /contador (mesma
+    // tela que o contador externo vê, acessível pela aba "Painel do Contador"
+    // em Administração), mas não ficam presos lá — só quem tem o vínculo de
+    // contador é redirecionado automaticamente.
     if (ehContador() && !ehPainelContador) { router.replace("/contador"); return; }
-    if (ehPainelContador && !ehContador() && !ehDono()) { router.replace(destinoRaiz); return; }
+    if (ehPainelContador && !ehContador() && !ehDono() && !ehAdmin()) { router.replace(destinoRaiz); return; }
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace(destinoRaiz); return; }

@@ -21,11 +21,11 @@ import CadastroProtocolosCustomizados from "./CadastroProtocolosCustomizados";
 import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
 import CentralSemen, { type AbaCentralSemen } from "./CentralSemen";
 import { FormExclusao } from "./FormExclusao";
-import UsuariosPage from "@/app/usuarios/page";
 
-// Ordem alfabética (pelo rótulo exibido). "usuarios" é restrito a
-// administradores — quem monta a árvore de sub-navegação (Configurações >
-// page.tsx) filtra essa entrada para não-admins antes de exibi-la.
+// Ordem alfabética (pelo rótulo exibido). "Usuários" não vive mais aqui —
+// era um duplicado exato da aba "Controle de Acesso" (/usuarios), removido
+// em 17/08/2026 a pedido explícito do usuário para não ter dois caminhos
+// para a mesma tela.
 export const ABAS_CADASTRO = [
   ["alimentacao", "Alimentação", Wheat],
   ["animal", "Animal (ficha)", Beef],
@@ -46,7 +46,6 @@ export const ABAS_CADASTRO = [
   ["sanitario", "Sanitário", HeartPulse],
   ["servicos", "Serviços", Wrench],
   ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
-  ["usuarios", "Usuários", Users],
 ] as const;
 export type AbaCadastro = (typeof ABAS_CADASTRO)[number][0];
 
@@ -115,7 +114,6 @@ export default function Cadastro({
       {aba === "sanitario" && <CadastroSanitario abaControlada={abaSanitario} onAbaChange={setAbaSanitario} />}
       {aba === "pesagem" && <CadastroPesagem />}
       {aba === "recria" && <CadastroRecria />}
-      {aba === "usuarios" && <UsuariosPage />}
       {aba === "excluir" && (
         <>
           <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
