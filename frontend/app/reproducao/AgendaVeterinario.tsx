@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus, Download } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus, Download, ClipboardEdit, ArrowRight } from "lucide-react";
 import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
@@ -8,30 +9,65 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
+  lote_atual: string | null;
   dias_inseminada: number | null; data_servico: string | null;
+  inseminador: string | null; touro: string | null; tipo_servico: string | null; metodo: string | null;
   tocada: boolean; reconfirmada: boolean;
-  diagnostico: string | null; diagnostico_reconfirmacao: string | null;
+  data_diagnostico: string | null; diagnostico: string | null;
+  data_reconfirmacao: string | null; diagnostico_reconfirmacao: string | null;
+  tem_servico?: boolean;
   atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
+  data_dg_negativo?: string | null; del_projetado_proximo_servico?: number | null;
+  pev_dias_restantes_projetado?: number | null; proxima_data_dg_estimada?: string | null;
 };
 type Listas = Record<string, Item[]>;
 
-const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+const fmtDia = (iso: string | null | undefined) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+// Resultado de toque/reconfirmação em uma letra — P(renha)/V(azia)/I(ndefinido).
+const badgeTexto = (v: string | null | undefined) => (v === "POSITIVO" ? "P" : v === "NEGATIVO" ? "V" : v === "INDEFINIDO" ? "I" : "—");
+const corBadge = (v: string | null | undefined) => (v === "POSITIVO" ? "var(--green-light)" : v === "NEGATIVO" ? "var(--red)" : v === "INDEFINIDO" ? "var(--dourado-light)" : "var(--text-muted)");
+function BadgeDiag({ v }: { v: string | null | undefined }) {
+  return <span style={{ fontWeight: 700, color: corBadge(v) }}>{badgeTexto(v)}</span>;
+}
 
-const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | "dias_para_parto" | "motivo"; reconfirmavel?: boolean }[] = [
-  { key: "inseminadas_1_29", label: "Inseminadas 1–29 dias", color: "var(--blue)" },
-  { key: "inseminadas_30_59", label: "Inseminadas 30–59 dias — toque", color: "var(--dourado)", extra: "atrasada" },
-  { key: "inseminadas_60_mais", label: "Inseminadas 60+ dias — reconfirmação", color: "var(--amber)", extra: "atrasada", reconfirmavel: true },
+const LISTAS: {
+  key: string; label: string; color: string; extra?: "dias_para_parto" | "motivo"; reconfirmavel?: boolean;
+  acao?: "toque" | "toque_ou_reconfirmacao"; vazia?: boolean; lancar?: boolean;
+}[] = [
+  { key: "inseminadas_1_29", label: "Inseminadas 1–29 dias", color: "var(--blue)", acao: "toque" },
+  { key: "inseminadas_30_59", label: "Inseminadas 30–59 dias — toque", color: "var(--dourado)", acao: "toque" },
+  { key: "inseminadas_60_mais", label: "Inseminadas 60+ dias — reconfirmação", color: "var(--amber)", reconfirmavel: true },
   { key: "novilhas_aptas_vazias", label: "Novilhas aptas vazias (≥300 kg)", color: "var(--green-light)" },
   { key: "verificar_aptidao", label: "Verificar aptidão (≥280 kg, nunca servida)", color: "var(--text-muted)" },
-  { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
-  { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
+  { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto", acao: "toque_ou_reconfirmacao" },
+  { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto", acao: "toque_ou_reconfirmacao" },
   { key: "verificar_pre_parto", label: "Verificar pré-parto (até 30 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
-  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/perda) — novo serviço", color: "var(--red)", extra: "motivo" },
-  { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo" },
+  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/perda) — novo serviço", color: "var(--red)", extra: "motivo", vazia: true },
+  { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo", lancar: true },
   // Só aparece (pílula com contagem > 0) quando o parâmetro
   // "usa_adesivo_deteccao_cio" está ativo — ver Configurações > Parâmetros.
   { key: "observacao_cio", label: "Observação de cio — adesivo de repasse (15–28 dias)", color: "var(--dourado)" },
 ];
+
+/** Rótulo de Status por lista — a categoria em que o animal foi classificado
+ * já É o status dele; só precisa de uma versão curta/legível por lista,
+ * com a variação "atrasada" quando fizer sentido. */
+function statusDe(cfg: typeof LISTAS[number], it: Item): string {
+  switch (cfg.key) {
+    case "inseminadas_1_29": return "Aguardando toque";
+    case "inseminadas_30_59": return it.atrasada ? "Toque atrasado" : "Aguardando toque";
+    case "inseminadas_60_mais": return it.atrasada ? "Reconfirmação atrasada" : "Aguardando reconfirmação";
+    case "novilhas_aptas_vazias": return "Apta, vazia";
+    case "verificar_aptidao": return "Verificar aptidão";
+    case "novilhas_gestantes":
+    case "vacas_gestantes": return "Gestante confirmada";
+    case "verificar_pre_parto": return "Pré-parto";
+    case "vazias_por_diagnostico": return "Vazia — aguardando novo serviço";
+    case "pendentes_classificacao": return "Pendente de classificação";
+    case "observacao_cio": return "Observação de cio (adesivo)";
+    default: return cfg.label;
+  }
+}
 
 /** Colunas/linhas de uma categoria — compartilhado entre a exportação por
  * categoria (dentro de ListaTabela) e a exportação combinada (várias
@@ -39,18 +75,29 @@ const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | 
 function colunasDaCategoria(cfg: typeof LISTAS[number]): ColunaExport[] {
   return [
     { header: "Matriz", key: "numero_matriz" }, { header: "Categoria", key: "categoria" },
-    { header: "Peso (kg)", key: "peso" }, { header: "Dias insem.", key: "dias_inseminada" },
-    { header: "Data serviço", key: "data_servico_fmt" }, { header: "Toque", key: "tocada_fmt" },
-    { header: "Reconfirmação", key: "reconfirmada_fmt" },
-    ...(cfg.extra === "atrasada" ? [{ header: "Situação", key: "situacao_fmt" }] : []),
+    { header: "Lote atual", key: "lote_atual" }, { header: "Dias insem.", key: "dias_inseminada" },
+    { header: "Inseminador", key: "inseminador" }, { header: "Nome do touro", key: "touro" },
+    { header: "Tipo de inseminação", key: "tipo_servico" }, { header: "Método", key: "metodo" },
+    { header: "Resultado 1º toque", key: "diagnostico_fmt" }, { header: "Data 1º toque", key: "data_diagnostico_fmt" },
+    { header: "Res. Reconf.", key: "diagnostico_reconfirmacao_fmt" }, { header: "Data Reconfirmação", key: "data_reconfirmacao_fmt" },
+    { header: "Status", key: "status_fmt" },
     ...(cfg.extra === "dias_para_parto" ? [{ header: "Dias p/ parto", key: "dias_para_parto" }] : []),
     ...(cfg.extra === "motivo" ? [{ header: "Motivo", key: "motivo" }] : []),
+    ...(cfg.vazia ? [
+      { header: "Data DG negativo", key: "data_dg_negativo_fmt" },
+      { header: "DEL projetado no próximo serviço", key: "del_projetado_proximo_servico" },
+      { header: "PEV projetado (dias restantes)", key: "pev_dias_restantes_projetado" },
+      { header: "Data do próximo DG (estimada)", key: "proxima_data_dg_estimada_fmt" },
+    ] : []),
   ];
 }
-function linhasDaCategoria(itens: Item[]): Record<string, unknown>[] {
+function linhasDaCategoria(itens: Item[], cfg: typeof LISTAS[number]): Record<string, unknown>[] {
   return itens.map((it) => ({
-    ...it, data_servico_fmt: fmtDia(it.data_servico), tocada_fmt: it.tocada ? "Sim" : "—",
-    reconfirmada_fmt: it.reconfirmada ? "Sim" : "—", situacao_fmt: it.atrasada ? "Atrasada" : "No prazo",
+    ...it,
+    diagnostico_fmt: badgeTexto(it.diagnostico), data_diagnostico_fmt: fmtDia(it.data_diagnostico),
+    diagnostico_reconfirmacao_fmt: badgeTexto(it.diagnostico_reconfirmacao), data_reconfirmacao_fmt: fmtDia(it.data_reconfirmacao),
+    status_fmt: statusDe(cfg, it),
+    data_dg_negativo_fmt: fmtDia(it.data_dg_negativo), proxima_data_dg_estimada_fmt: fmtDia(it.proxima_data_dg_estimada),
   }));
 }
 
@@ -116,6 +163,44 @@ function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: stri
   );
 }
 
+/** "Lançar", em Pendentes de classificação: janela suspensa com as duas
+ * frentes que podem estar faltando para esta matriz — sempre pode lançar
+ * IA/cobertura; só oferece toque/retoque se já existir um serviço para
+ * diagnosticar (tem_servico). Cada opção só leva para /lancamentos com a
+ * matriz pré-selecionada — o lançamento em si acontece lá, sem duplicar a
+ * lógica (vínculo financeiro, detecção de aborto etc.) aqui dentro. */
+function PopupLancarPendente({ numero, temServico, onFechar }: { numero: string; temServico?: boolean; onFechar: () => void }) {
+  const linkStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
+    padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)",
+    background: "var(--surface-2)", color: "var(--text)", fontSize: "0.8rem", textDecoration: "none",
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onFechar}>
+      <div className="card" style={{ maxWidth: "360px", width: "90%" }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-header mb-2 flex items-center justify-between">
+          <span>Lançar — matriz {numero}</span>
+          <button onClick={onFechar} title="Fechar" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          <Link href={`/lancamentos?ir=inseminacao&numero_matriz=${encodeURIComponent(numero)}`} style={linkStyle}>
+            1. Lançar IA/cobertura <ArrowRight size={14} />
+          </Link>
+          {temServico ? (
+            <Link href={`/lancamentos?ir=diagnostico&numero_matriz=${encodeURIComponent(numero)}`} style={linkStyle}>
+              2. Lançar toque/retoque <ArrowRight size={14} />
+            </Link>
+          ) : (
+            <div style={{ ...linkStyle, opacity: 0.5, cursor: "not-allowed" }} title="Esta matriz ainda não tem nenhum serviço reprodutivo lançado para diagnosticar">
+              2. Lançar toque/retoque — sem serviço pendente
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type DadosAgendaVet = {
   listas: Listas; totais: Record<string, number>; data_referencia: string; projetado?: boolean;
   ultimo_servico?: string | null; proxima_visita_reprodutiva?: string | null; intervalo_visita_reprodutiva?: number;
@@ -131,6 +216,7 @@ export default function AgendaVeterinarioPage() {
   const [reconfirmando, setReconfirmando] = useState<string | null>(null);
   const [enviandoDg, setEnviandoDg] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  const [lancandoPendente, setLancandoPendente] = useState<Item | null>(null);
 
   // Janela suspensa em 2 passos para configurar a próxima visita reprodutiva
   // quando o modo "projeção" não tem para onde projetar (parâmetro em 0/vazio
@@ -203,7 +289,7 @@ export default function AgendaVeterinarioPage() {
   function montarSecoes() {
     return categoriasComDados
       .filter((l) => selecionadasExport.has(l.key))
-      .map((l) => ({ titulo: l.label, colunas: colunasDaCategoria(l), linhas: linhasDaCategoria(dados!.listas[l.key] ?? []) }));
+      .map((l) => ({ titulo: l.label, colunas: colunasDaCategoria(l), linhas: linhasDaCategoria(dados!.listas[l.key] ?? [], l) }));
   }
   async function exportarSelecionadas(formato: "excel" | "pdf") {
     setExportando(formato);
@@ -343,11 +429,16 @@ export default function AgendaVeterinarioPage() {
           reconfirmando={reconfirmando} setReconfirmando={setReconfirmando}
           onSalvo={(numero) => { setReconfirmando(null); setSucesso(`Reconfirmação registrada para a matriz ${numero}.`); carregar(); }}
           enviandoDg={enviandoDg} setEnviandoDg={setEnviandoDg}
-          onDgEnviado={(numero) => { setEnviandoDg(null); setSucesso(`Diagnóstico enviado por e-mail (matriz ${numero}).`); }} />
+          onDgEnviado={(numero) => { setEnviandoDg(null); setSucesso(`Diagnóstico enviado por e-mail (matriz ${numero}).`); }}
+          onLancar={setLancandoPendente} />
       ))}
 
       {LISTAS.every((l) => (dados.totais[l.key] ?? 0) === 0) && (
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal para classificar no momento.</p>
+      )}
+
+      {lancandoPendente && (
+        <PopupLancarPendente numero={lancandoPendente.numero_matriz} temServico={lancandoPendente.tem_servico} onFechar={() => setLancandoPendente(null)} />
       )}
 
       {passoAgendar === "confirmar" && (
@@ -412,14 +503,53 @@ export default function AgendaVeterinarioPage() {
   );
 }
 
-function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, enviandoDg, setEnviandoDg, onDgEnviado }: {
+// Botão de ação de registro (toque/reconfirmação) por linha — cada lista usa
+// no máximo um: link para /lancamentos pré-selecionando a matriz (toque/DG
+// antecipado, mesmo padrão de "Ir para Inseminação") ou o mini-form inline já
+// existente (reconfirmação, que não precisa de tela própria).
+function botaoRegistroLabel(cfg: typeof LISTAS[number]): string {
+  if (cfg.key === "inseminadas_1_29") return "Registrar DG antecipado";
+  return "Registrar toque";
+}
+function CelulaAcaoRegistro({ cfg, it, reconfirmando, setReconfirmando, onSalvo }: {
+  cfg: typeof LISTAS[number]; it: Item;
+  reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: (numero: string) => void;
+}) {
+  const linkBtn: React.CSSProperties = { fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem" };
+  if (cfg.reconfirmavel) {
+    if (reconfirmando === it.numero_matriz) {
+      return <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />;
+    }
+    return <button onClick={() => setReconfirmando(it.numero_matriz)} style={{ ...linkBtn, border: "1px solid var(--dourado)" }}>Registrar reconfirmação</button>;
+  }
+  if (cfg.acao === "toque") {
+    return <Link href={`/lancamentos?ir=diagnostico&numero_matriz=${encodeURIComponent(it.numero_matriz)}`} style={linkBtn}>{botaoRegistroLabel(cfg)}</Link>;
+  }
+  if (cfg.acao === "toque_ou_reconfirmacao") {
+    if (!it.tocada) {
+      return <Link href={`/lancamentos?ir=diagnostico&numero_matriz=${encodeURIComponent(it.numero_matriz)}`} style={linkBtn}>Registrar toque</Link>;
+    }
+    if (!it.reconfirmada) {
+      if (reconfirmando === it.numero_matriz) {
+        return <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />;
+      }
+      return <button onClick={() => setReconfirmando(it.numero_matriz)} style={linkBtn}>Registrar reconfirmação</button>;
+    }
+    return <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>—</span>;
+  }
+  return null;
+}
+
+function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, enviandoDg, setEnviandoDg, onDgEnviado, onLancar }: {
   cfg: typeof LISTAS[number]; itens: Item[];
   reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: (numero: string) => void;
   enviandoDg: string | null; setEnviandoDg: (n: string | null) => void; onDgEnviado: (numero: string) => void;
+  onLancar: (it: Item) => void;
 }) {
   const ord = useOrdenacao(itens);
   const colunasExport = colunasDaCategoria(cfg);
-  const linhasExport = linhasDaCategoria(ord.linhasOrdenadas);
+  const linhasExport = linhasDaCategoria(ord.linhasOrdenadas, cfg);
+  const temAcaoRegistro = cfg.reconfirmavel || !!cfg.acao;
   return (
     <div className="card mb-3" style={{ overflowX: "auto" }}>
       <div className="card-header mb-2 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
@@ -430,15 +560,24 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
         <thead><tr>
           <ThOrdenavel label="Matriz" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
           <ThOrdenavel label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <ThOrdenavel label="Peso (kg)" campo="peso" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Lote atual" campo="lote_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
           <ThOrdenavel label="Dias insem." campo="dias_inseminada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <ThOrdenavel label="Data serviço" campo="data_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <ThOrdenavel label="Toque" campo="tocada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <ThOrdenavel label="Reconfirmação" campo="reconfirmada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          {cfg.extra === "atrasada" && <ThOrdenavel label="Situação" campo="atrasada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          <ThOrdenavel label="Inseminador" campo="inseminador" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Nome do touro" campo="touro" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Tipo" campo="tipo_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Método" campo="metodo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Result. 1º toque" campo="diagnostico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Data 1º toque" campo="data_diagnostico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Res. Reconf." campo="diagnostico_reconfirmacao" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Data Reconfirmação" campo="data_reconfirmacao" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <th>Status</th>
           {cfg.extra === "dias_para_parto" && <ThOrdenavel label="Dias p/ parto" campo="dias_para_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.extra === "motivo" && <ThOrdenavel label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
-          {cfg.reconfirmavel && <th></th>}
+          {cfg.vazia && <ThOrdenavel label="Data DG negativo" campo="data_dg_negativo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.vazia && <ThOrdenavel label="DEL projetado no próximo serviço" campo="del_projetado_proximo_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.vazia && <th>Novo serviço</th>}
+          {cfg.lancar && <th>Lançar</th>}
+          {temAcaoRegistro && <th></th>}
           <th>DG por e-mail</th>
         </tr></thead>
         <tbody>
@@ -446,26 +585,50 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
             <tr key={it.numero_matriz}>
               <td style={{ fontWeight: 700 }}>{it.numero_matriz}</td>
               <td style={{ fontSize: "0.78rem", textTransform: "capitalize" }}>{it.categoria}</td>
-              <td>{it.peso ?? "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.lote_atual ?? "—"}</td>
               <td>{it.dias_inseminada ?? "—"}</td>
-              <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_servico)}</td>
-              <td>{it.tocada ? <Check size={14} style={{ color: "var(--green-light)" }} /> : "—"}</td>
-              <td>{it.reconfirmada ? <Check size={14} style={{ color: "var(--green-light)" }} /> : "—"}</td>
-              {cfg.extra === "atrasada" && (
-                <td>{it.atrasada ? <span style={{ color: "var(--red)", fontWeight: 600, fontSize: "0.75rem" }}>Atrasada</span> : <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>No prazo</span>}</td>
-              )}
+              <td style={{ fontSize: "0.78rem" }}>{it.inseminador ?? "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.touro ?? "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.tipo_servico ?? "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.metodo ?? "—"}</td>
+              <td><BadgeDiag v={it.diagnostico} /></td>
+              <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_diagnostico)}</td>
+              <td><BadgeDiag v={it.diagnostico_reconfirmacao} /></td>
+              <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_reconfirmacao)}</td>
+              <td style={{ fontSize: "0.78rem" }}>{statusDe(cfg, it)}</td>
               {cfg.extra === "dias_para_parto" && <td>{it.dias_para_parto ?? "—"}</td>}
               {cfg.extra === "motivo" && <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{it.motivo}</td>}
-              {cfg.reconfirmavel && (
-                <td>
-                  {reconfirmando === it.numero_matriz ? (
-                    <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />
-                  ) : (
-                    <button onClick={() => setReconfirmando(it.numero_matriz)}
-                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
-                      Registrar reconfirmação
-                    </button>
+              {cfg.vazia && <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_dg_negativo)}</td>}
+              {cfg.vazia && (
+                <td style={{ fontSize: "0.78rem" }}>
+                  {it.del_projetado_proximo_servico ?? "—"}
+                  {it.pev_dias_restantes_projetado != null && (
+                    <div style={{ color: "var(--red)", fontSize: "0.7rem", fontWeight: 600 }}>PEV projet. {it.pev_dias_restantes_projetado} dias</div>
                   )}
+                </td>
+              )}
+              {cfg.vazia && (
+                <td>
+                  <Link href={`/lancamentos?ir=inseminacao&numero_matriz=${encodeURIComponent(it.numero_matriz)}`}
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
+                    Novo Serviço
+                  </Link>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.68rem", marginTop: "0.2rem", whiteSpace: "nowrap" }}>
+                    Próx. DG estim.: {fmtDia(it.proxima_data_dg_estimada)}
+                  </div>
+                </td>
+              )}
+              {cfg.lancar && (
+                <td>
+                  <button onClick={() => onLancar(it)} title="Lançar IA/cobertura ou toque/retoque para esta matriz"
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                    <ClipboardEdit size={13} /> Lançar
+                  </button>
+                </td>
+              )}
+              {temAcaoRegistro && (
+                <td>
+                  <CelulaAcaoRegistro cfg={cfg} it={it} reconfirmando={reconfirmando} setReconfirmando={setReconfirmando} onSalvo={onSalvo} />
                 </td>
               )}
               <td>

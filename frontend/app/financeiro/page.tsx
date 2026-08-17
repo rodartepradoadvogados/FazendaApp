@@ -77,6 +77,7 @@ type Lanc = {
   centro_custo: string; classificacao?: string | null; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
   tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
+  numero_boleto?: string | null;
   // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
   // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
   tem_comprovante?: boolean;
@@ -477,7 +478,7 @@ export default function FinanceiroPage() {
       if (relTipo && r.tipo !== relTipo) return false;
       if (relFornecedor && r.fornecedor !== relFornecedor) return false;
       if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
-      if (relDocumento && !casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, relDocumento)) return false;
+      if (relDocumento && !casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""} ${r.numero_boleto || ""}`, relDocumento)) return false;
       if (!casaContaGerencial(r, relConta)) return false;
       return true;
     });
@@ -1129,7 +1130,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
     return regs.filter((r) =>
       !r.data_pagamento &&
       (tipoFiltro === "todos" || r.tipo === tipoFiltro) &&
-      casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""}`, numeroDocumento) &&
+      casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""} ${r.numero_boleto || ""}`, numeroDocumento) &&
       (!fornecedor || r.fornecedor === fornecedor) &&
       (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
       (!centroCusto || r.centro_custo === centroCusto) &&

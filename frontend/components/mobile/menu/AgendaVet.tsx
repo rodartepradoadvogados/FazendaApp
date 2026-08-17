@@ -61,7 +61,6 @@ function detalhe(chave: string, a: Animal): string {
   const partes: string[] = [];
   if (a.dias_para_parto != null) partes.push(`parto em ${a.dias_para_parto} dias`);
   if (a.dias_inseminada != null) partes.push(`${a.dias_inseminada} dias inseminada`);
-  if (a.peso != null) partes.push(`${a.peso} kg`);
   if (a.atrasada) partes.push("atrasada");
   if (!partes.length && a.data_servico) partes.push(`serviço ${formatDate(a.data_servico)}`);
   return partes.join(" · ");

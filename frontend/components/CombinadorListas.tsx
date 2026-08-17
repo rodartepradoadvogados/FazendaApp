@@ -109,47 +109,6 @@ export default function CombinadorListas() {
 
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
-      {/* Lista de BST */}
-      <div style={card}>
-        <div className="flex items-center justify-between" style={{ marginBottom: "0.7rem" }}>
-          <div className="flex items-center gap-2" style={{ fontWeight: 700, fontSize: "0.95rem" }}>
-            <Droplets size={16} style={{ color: "var(--accent-icon)" }} /> Lista de BST
-          </div>
-          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={carregar}><RefreshCw size={13} /> Atualizar</button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {[
-            { titulo: "Aptas", linhas: bstAptas, cor: "var(--green-light)" },
-            { titulo: "Incluir no próximo BST", linhas: bstIncluir, cor: "var(--dourado-light)" },
-            { titulo: "Inaptas", linhas: bstInaptas, cor: "var(--red)" },
-            { titulo: "Já aplicados (histórico)", linhas: bstAplicados, cor: "var(--text-muted)" },
-          ].map((bloco) => (
-            <div key={bloco.titulo} style={{ background: "var(--surface-2)", borderRadius: 8, padding: "0.7rem" }}>
-              <div className="flex items-center justify-between" style={{ marginBottom: "0.4rem" }}>
-                <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>{bloco.titulo}</span>
-                <span style={{ fontSize: "0.78rem", fontWeight: 700, color: bloco.cor }}>{bloco.linhas.length}</span>
-              </div>
-              {bloco.linhas.length === 0 ? (
-                <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum animal.</p>
-              ) : (
-                <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                  <table className="fazenda-table" style={{ fontSize: "0.76rem" }}>
-                    <tbody>
-                      {bloco.linhas.map((r: any, i: number) => (
-                        <tr key={i}>
-                          <td>{r.numero_matriz}</td>
-                          <td style={{ color: "var(--text-muted)" }}>{r.grupo || r.lote || r.categoria || r.motivo_exclusao || ""}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Combinador de listas */}
       <div style={card}>
         <div className="flex items-center gap-2" style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.7rem" }}>
@@ -215,6 +174,47 @@ export default function CombinadorListas() {
             )}
           </div>
         )}
+      </div>
+
+      {/* Lista de BST */}
+      <div style={card}>
+        <div className="flex items-center justify-between" style={{ marginBottom: "0.7rem" }}>
+          <div className="flex items-center gap-2" style={{ fontWeight: 700, fontSize: "0.95rem" }}>
+            <Droplets size={16} style={{ color: "var(--accent-icon)" }} /> Lista de BST
+          </div>
+          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={carregar}><RefreshCw size={13} /> Atualizar</button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {[
+            { titulo: "Aptas", linhas: bstAptas, cor: "var(--green-light)" },
+            { titulo: "Incluir no próximo BST", linhas: bstIncluir, cor: "var(--dourado-light)" },
+            { titulo: "Inaptas", linhas: bstInaptas, cor: "var(--red)" },
+            { titulo: "Já aplicados (histórico)", linhas: bstAplicados, cor: "var(--text-muted)" },
+          ].map((bloco) => (
+            <div key={bloco.titulo} style={{ background: "var(--surface-2)", borderRadius: 8, padding: "0.7rem" }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: "0.4rem" }}>
+                <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>{bloco.titulo}</span>
+                <span style={{ fontSize: "0.78rem", fontWeight: 700, color: bloco.cor }}>{bloco.linhas.length}</span>
+              </div>
+              {bloco.linhas.length === 0 ? (
+                <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum animal.</p>
+              ) : (
+                <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                  <table className="fazenda-table" style={{ fontSize: "0.76rem" }}>
+                    <tbody>
+                      {bloco.linhas.map((r: any, i: number) => (
+                        <tr key={i}>
+                          <td>{r.numero_matriz}</td>
+                          <td style={{ color: "var(--text-muted)" }}>{r.grupo || r.lote || r.categoria || r.motivo_exclusao || ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

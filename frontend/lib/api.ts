@@ -1478,10 +1478,16 @@ export async function salvarDiagnostico(dados: {
 
 export type AgendaVetItem = {
   numero_matriz: string; categoria: string; peso: number | null;
+  lote_atual: string | null;
   dias_inseminada: number | null; data_servico: string | null;
+  inseminador: string | null; touro: string | null; tipo_servico: string | null; metodo: string | null;
   tocada: boolean; reconfirmada: boolean;
-  diagnostico: string | null; diagnostico_reconfirmacao: string | null;
+  data_diagnostico: string | null; diagnostico: string | null;
+  data_reconfirmacao: string | null; diagnostico_reconfirmacao: string | null;
+  tem_servico?: boolean;
   atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
+  data_dg_negativo?: string | null; del_projetado_proximo_servico?: number | null;
+  pev_dias_restantes_projetado?: number | null; proxima_data_dg_estimada?: string | null;
 };
 export type AgendaVetResposta = {
   data_referencia: string; projetado?: boolean; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number>;
