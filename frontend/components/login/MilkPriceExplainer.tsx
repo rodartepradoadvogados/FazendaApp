@@ -19,7 +19,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.atermaisdigital.cnptia.embrapa.br/web/bovino-de-leite/indicadores-de-qualidade-do-leite",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "10/08/2026";
+const FONTES_ATUALIZADO_EM = "17/08/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
