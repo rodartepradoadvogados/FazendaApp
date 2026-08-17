@@ -1,15 +1,36 @@
 "use client";
-import { Fragment, useEffect, useState } from "react";
-import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Loader2, Milk, Plus, X } from "lucide-react";
-import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros, mensagemErroApi } from "@/lib/api";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Loader2, Milk, Plus, X, Wallet } from "lucide-react";
+import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros, mensagemErroApi, podeModulo } from "@/lib/api";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 import ManualFazendaParametros from "@/components/ManualFazendaParametros";
 import AlertasIndicador from "@/components/AlertasIndicador";
+import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 type Item = { chave: string; label: string; valor: number | string | boolean | null; unidade: string | null; tipo?: string };
 type Grupo = { titulo: string; itens: Item[] };
 
+// Parâmetros virou aba de primeiro nível de Administração (17/08/2026,
+// pedido explícito do usuário) — antes era sub-aba dentro de Configurações
+// (ver histórico de app/configuracoes/page.tsx). Sub-navegação (gerais/
+// financeiro) próprias, registradas aqui — mesmo padrão que Configurações
+// usava para elas antes de saírem de lá.
 export default function ParametrosPage() {
+  const temFinanceiro = podeModulo("financeiro");
+  const [aba, setAba] = useState<"gerais" | "financeiro">("gerais");
+  const tree: SubNavNode[] = useMemo(() => {
+    const nodes: SubNavNode[] = [{ id: "gerais", label: "Parâmetros gerais", icon: SlidersHorizontal }];
+    if (temFinanceiro) nodes.push({ id: "financeiro", label: "Parâmetros financeiros", icon: Wallet });
+    return nodes;
+  }, [temFinanceiro]);
+  const onSelect = useCallback((id: string) => setAba(id as "gerais" | "financeiro"), []);
+  useSubNavRegister(useMemo(() => ({ tree, activeId: aba, onSelect }), [tree, aba, onSelect]));
+
+  return aba === "financeiro" && temFinanceiro ? <ParametrosFinanceiros /> : <ParametrosGerais />;
+}
+
+function ParametrosGerais() {
   const [grupos, setGrupos] = useState<Record<string, Grupo> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editando, setEditando] = useState<Set<string>>(new Set());

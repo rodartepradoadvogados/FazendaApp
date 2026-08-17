@@ -131,8 +131,8 @@ export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean 
           <button key={id || "todas"} onClick={() => setTipoFiltro(id)}
             style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
               border: "1px solid " + (tipoFiltro === id ? "var(--dourado)" : "var(--border)"),
-              background: tipoFiltro === id ? "rgba(94,26,46,0.4)" : "transparent",
-              color: tipoFiltro === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: tipoFiltro === id ? 700 : 500 }}>
+              background: tipoFiltro === id ? "var(--pill-active-bg)" : "transparent",
+              color: tipoFiltro === id ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: tipoFiltro === id ? 700 : 500 }}>
             {label}
           </button>
         ))}
@@ -141,8 +141,8 @@ export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean 
             style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
               display: "inline-flex", alignItems: "center", gap: "0.3rem",
               border: "1px solid " + (soPersonalizadas ? "var(--dourado)" : "var(--border)"),
-              background: soPersonalizadas ? "rgba(94,26,46,0.4)" : "transparent",
-              color: soPersonalizadas ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: soPersonalizadas ? 700 : 500 }}>
+              background: soPersonalizadas ? "var(--pill-active-bg)" : "transparent",
+              color: soPersonalizadas ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: soPersonalizadas ? 700 : 500 }}>
             <Pencil size={12} /> Só personalizadas
           </button>
         )}
