@@ -46,6 +46,14 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
 
+  // Vindo da Agenda Reprodutiva ("Registrar toque"/"Registrar DG antecipado"/
+  // "Lançar toque/retoque"): pré-seleciona a matriz — mesmo padrão de
+  // FormInseminacao.tsx para "Ir para Inseminação".
+  useEffect(() => {
+    const numeroMatriz = new URLSearchParams(window.location.search).get("numero_matriz");
+    if (numeroMatriz) setSelecionados(new Set([numeroMatriz]));
+  }, []);
+
   // Animal(is), lote(s) ou Agenda do veterinário — dentro de lote/agenda, pode
   // escolher mais de um; a lista de animais mostrada é sempre a das servidas
   // dentro do(s) lote(s)/categoria(s) escolhido(s).
