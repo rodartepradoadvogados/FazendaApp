@@ -1918,7 +1918,13 @@ function LancarGuiaFgtsDctfSection({ onLancado }: { onLancado: () => void }) {
         data_vencimento: dataVencimento, linha_digitavel: linhaDigitavel || undefined, origem,
       });
       if (arquivoLido && guia.numero_lancamento) {
-        await anexarArquivoLancamento(guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF").catch(() => {});
+        // numero_documento = número do boleto/linha digitável — é o que torna
+        // a guia arquivada pesquisável por esse número em Central de
+        // Documentos e no filtro de Financeiro (pedido explícito do usuário).
+        await anexarArquivoLancamento(
+          guia.numero_lancamento, arquivoLido, tipo === "fgts" ? "Guia FGTS" : "Guia DCTF",
+          linhaDigitavel || undefined, dataVencimento || undefined,
+        ).catch(() => {});
       }
       setMsg({ tipo: "sucesso", texto: `Guia de ${tipo === "fgts" ? "FGTS" : "DCTF"} lançada em Contas a Pagar.` });
       setValorPrincipal(""); setValorMulta("0"); setValorJuros("0"); setDataVencimento(""); setLinhaDigitavel(""); setCodigoReceita("");

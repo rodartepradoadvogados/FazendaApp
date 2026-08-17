@@ -99,7 +99,11 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
         perm = session.exec(select(PermissaoEquipeCowData).where(PermissaoEquipeCowData.usuario_id == u.id)).first()
         areas_cowdata = [a for a in (perm.areas or "").split(",") if a] if perm else []
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
-            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
+            # None quando o usuário nunca escolheu paleta — o frontend só deve
+            # sobrescrever o que já está no navegador quando houver preferência
+            # de fato salva (ver login() em frontend/lib/api.ts). Um fallback
+            # fixo aqui reescreveria a paleta atual de todo mundo a cada login.
+            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta,
             "email": u.email, "eh_dono": eh_email_dono_equivalente(u.email),
             "pode_publicar_materias_blog": u.pode_publicar_materias_blog,
             "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome, "pessoa_tipo": pessoa_tipo,

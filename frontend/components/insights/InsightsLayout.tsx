@@ -170,8 +170,8 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   });
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <header style={{ background: "linear-gradient(135deg, #0E2A47, #0A1F36)" }}>
+    <div style={{ height: "calc(100vh - var(--suporte-banner-h, 0px))", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+      <header style={{ flexShrink: 0, background: "linear-gradient(135deg, #0E2A47, #0A1F36)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", padding: "0.9rem 1.4rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <CowDataMark size={34} />
@@ -222,20 +222,24 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
       {/* Corpo: rail de sub-navegação à ESQUERDA (quando a página registrou
           uma árvore de sub-abas — ver useSubNavRegister) + conteúdo. No resto
           do site esse rail fica em cima, dentro da Sidebar — aqui é o
-          inverso, por pedido explícito do usuário para este portal. */}
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+          inverso, por pedido explícito do usuário para este portal.
+          flex:1 + minHeight:0 no corpo, e height:100% + overflowY próprio no
+          rail e no conteúdo, é o que dá a cada um sua rolagem independente —
+          sem isso os dois cresciam livremente e quem rolava era a página
+          inteira (pedido explícito do usuário para consertar). */}
+      <div style={{ display: "flex", alignItems: "stretch", flex: 1, minHeight: 0 }}>
         {subNav && (
           <aside style={{
             width: "15rem", flexShrink: 0, padding: "1rem 0.8rem",
             background: "var(--sidebar-bg)", borderRight: "1px solid var(--sidebar-border)",
-            minHeight: "calc(100vh - 6.5rem)",
+            height: "100%", overflowY: "auto",
           }}>
             <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect}
               raiz={subNav.tree} pathname={path} paginaLabel={rotuloDaPagina(path)}
               recolhidos={new Set()} onToggleRecolhido={() => {}} />
           </aside>
         )}
-        <main style={{ flex: 1, minWidth: 0, padding: "1.4rem" }}>{children}</main>
+        <main style={{ flex: 1, minWidth: 0, padding: "1.4rem", height: "100%", overflowY: "auto" }}>{children}</main>
       </div>
     </div>
   );
