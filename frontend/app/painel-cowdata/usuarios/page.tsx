@@ -47,6 +47,7 @@ export default function UsuariosPorFazendaCowData() {
   const [salvando, setSalvando] = useState(false);
 
   const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [mostrarInativos, setMostrarInativos] = useState(false);
 
   useEffect(() => { fetchFazendasCadastroCowData().then(setFazendas).catch((e) => setErro(e.message)); }, []);
 
@@ -65,6 +66,7 @@ export default function UsuariosPorFazendaCowData() {
   }, [fazendaId]);
 
   const pessoasDisponiveis = useMemo(() => pessoas.filter((p) => !p.tem_usuario), [pessoas]);
+  const usuariosExibidos = useMemo(() => usuarios.filter((u) => mostrarInativos || u.ativo), [usuarios, mostrarInativos]);
 
   const escolherPessoa = (id: string) => {
     setPessoaId(id);
@@ -166,14 +168,21 @@ export default function UsuariosPorFazendaCowData() {
           </div>
 
           <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: 10, padding: "1rem" }}>
-            <div style={{ fontSize: "0.85rem", fontWeight: 700, color: COR.texto, marginBottom: "0.8rem" }}>
-              Usuários desta fazenda {carregando && <span style={{ color: COR.mudo, fontWeight: 400 }}>· carregando…</span>}
+            <div className="flex items-center justify-between mb-2" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
+              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: COR.texto }}>
+                Usuários desta fazenda {carregando && <span style={{ color: COR.mudo, fontWeight: 400 }}>· carregando…</span>}
+              </div>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.75rem", fontWeight: 400, color: COR.mudo, cursor: "pointer" }}>
+                <input type="checkbox" checked={mostrarInativos} onChange={(e) => setMostrarInativos(e.target.checked)} /> Incluir inativos
+              </label>
             </div>
-            {usuarios.length === 0 ? (
-              <p style={{ fontSize: "0.8rem", color: COR.mudo }}>Nenhum usuário cadastrado ainda para esta fazenda.</p>
+            {usuariosExibidos.length === 0 ? (
+              <p style={{ fontSize: "0.8rem", color: COR.mudo }}>
+                {usuarios.length === 0 ? "Nenhum usuário cadastrado ainda para esta fazenda." : "Nenhum usuário ativo — marque \"Incluir inativos\" para ver todos."}
+              </p>
             ) : (
               <div className="space-y-2">
-                {usuarios.map((u) => (
+                {usuariosExibidos.map((u) => (
                   <LinhaUsuario key={u.id} u={u} fazendaId={fazendaId as number} aberto={editandoId === u.id}
                     onAbrir={() => setEditandoId(editandoId === u.id ? null : u.id)}
                     onSalvo={() => { setEditandoId(null); carregar(fazendaId as number); }} />
