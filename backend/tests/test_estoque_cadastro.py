@@ -142,6 +142,68 @@ class TestAtualizarItemEstoque:
         assert r.status_code == 200
         assert r.json()["tipo_semen"] == "sexado"
 
+    def test_editar_quantidade_grava_movimento_de_ajuste(self, client):
+        """Gauntlet A-14: editar a quantidade direto no cadastro do item
+        (PUT /estoque/{id}) mudava `Estoque.quantidade` sem gerar nenhum
+        MovimentoEstoque — invisível no Mapa de Entradas/Saídas e no custo
+        físico do RMCA, diferente de toda outra baixa/ajuste do sistema."""
+        c, engine = client
+        criado = c.post("/estoque/", json={
+            "nome": "Sal mineral", "categoria": "Nutrição animal", "unidade": "kg",
+            "quantidade": 100, "estoque_minimo": 10, "valor_unitario": 2.0,
+        }).json()
+
+        r = c.put(f"/estoque/{criado['id']}", json={
+            "nome": "Sal mineral", "categoria": "Nutrição animal", "unidade": "kg",
+            "quantidade": 130, "estoque_minimo": 10, "valor_unitario": 2.0,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["quantidade"] == 130
+
+        with Session(engine) as s:
+            ajustes = s.exec(
+                select(MovimentoEstoque).where(MovimentoEstoque.origem_tipo == "cadastro_estoque")
+            ).all()
+        ajustes_de_edicao = [m for m in ajustes if m.movimento == "Entrada de ajuste" and m.quantidade == 30]
+        assert len(ajustes_de_edicao) == 1, "aumentar a quantidade editada tem que gravar uma Entrada de ajuste"
+
+    def test_editar_quantidade_para_baixo_grava_saida_de_ajuste(self, client):
+        c, engine = client
+        criado = c.post("/estoque/", json={
+            "nome": "Ureia", "categoria": "Nutrição animal", "unidade": "kg", "quantidade": 100,
+        }).json()
+
+        r = c.put(f"/estoque/{criado['id']}", json={
+            "nome": "Ureia", "categoria": "Nutrição animal", "unidade": "kg", "quantidade": 60,
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            ajustes = s.exec(
+                select(MovimentoEstoque).where(
+                    MovimentoEstoque.origem_tipo == "cadastro_estoque", MovimentoEstoque.movimento == "Saída de ajuste",
+                )
+            ).all()
+        assert len(ajustes) == 1
+        assert ajustes[0].quantidade == 40
+
+    def test_editar_sem_mudar_quantidade_nao_gera_movimento_extra(self, client):
+        c, engine = client
+        criado = c.post("/estoque/", json={
+            "nome": "Fosfato bicálcico", "categoria": "Nutrição animal", "unidade": "kg", "quantidade": 50,
+        }).json()
+        with Session(engine) as s:
+            antes = len(s.exec(select(MovimentoEstoque)).all())
+
+        r = c.put(f"/estoque/{criado['id']}", json={
+            "nome": "Fosfato bicálcico (renomeado)", "categoria": "Nutrição animal", "unidade": "kg", "quantidade": 50,
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            depois = len(s.exec(select(MovimentoEstoque)).all())
+        assert depois == antes, "quantidade igual não pode gerar movimento de ajuste"
+
     def test_404_para_item_inexistente(self, client):
         c, _ = client
         r = c.put("/estoque/999", json={"nome": "Não existe", "unidade": "un"})

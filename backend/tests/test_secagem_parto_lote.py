@@ -561,9 +561,18 @@ class TestProtocoloIatf:
         # lista — passa a aparecer com concluido=True, mostrando a data do
         # próximo serviço (D11 + intervalo_visita_reprodutiva, padrão 21
         # dias) e as candidatas herd-wide ao próximo repasse.
+        #
+        # Datas relativas a hoje (não fixas): `ativos()` só lista protocolos
+        # concluídos dentro de uma janela após a próxima visita (ver
+        # reproducao.py) — datas fixas no passado (ex.: "2026-07-08") saem
+        # dessa janela conforme o tempo passa e o teste quebra sem nenhuma
+        # mudança de código, só pelo calendário avançar.
         c, engine = client
+        d0 = date.today() - timedelta(days=15)
+        d11 = d0 + timedelta(days=11)
+        proxima_visita = d11 + timedelta(days=21)
         c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+            "animais": ["500"], "data_d0": d0.isoformat(), "protocolo": "Protocolo padrão",
         })
         with Session(engine) as s:
             from sqlmodel import select
@@ -571,7 +580,7 @@ class TestProtocoloIatf:
             for ap in s.exec(select(ProtocoloIatfAplicacao)).all():
                 ap.realizada = True
                 if ap.dia == 11:
-                    ap.data_realizacao = date(2026, 7, 19)
+                    ap.data_realizacao = d11
                 s.add(ap)
             s.commit()
         r = c.get("/reproducao/protocolo-iatf/ativos")
@@ -579,8 +588,8 @@ class TestProtocoloIatf:
         assert len(ativos) == 1
         item = ativos[0]
         assert item["concluido"] is True
-        assert item["data_d11"] == "2026-07-19"
-        assert item["proxima_visita"] == "2026-08-09"
+        assert item["data_d11"] == d11.isoformat()
+        assert item["proxima_visita"] == proxima_visita.isoformat()
         assert "candidatas_proxima_visita" in item
         # #440: mesmo concluído, a lista de animais do protocolo continua
         # populada (para a Agenda poder mostrar "ÚLTIMA IATF — y animais"

@@ -127,6 +127,10 @@ function ParametrosGerais() {
                           <input type="date" defaultValue={String(valorAtual ?? "")}
                             onChange={(e) => setValores((p) => ({ ...p, [it.chave]: e.target.value }))}
                             style={inputStyle} />
+                        ) : edit && it.tipo === "texto" ? (
+                          <input type="text" defaultValue={String(valorAtual ?? "")}
+                            onChange={(e) => setValores((p) => ({ ...p, [it.chave]: e.target.value }))}
+                            style={inputStyle} />
                         ) : edit ? (
                           <input type="number" defaultValue={Number(valorAtual)}
                             onChange={(e) => setValores((p) => ({ ...p, [it.chave]: Number(e.target.value) }))}

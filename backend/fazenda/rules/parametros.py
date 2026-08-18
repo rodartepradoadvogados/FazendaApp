@@ -142,6 +142,11 @@ DEFINICOES: list[dict] = [
     # > RMCA). Padrão 0 (ponto de equilíbrio) preserva o comportamento atual
     # (verde se RMCA >= 0) até o usuário definir uma meta de margem própria.
     {"chave": "meta_rmca", "grupo": "financeiro", "label": "RMCA mínimo aceitável", "valor": 0, "tipo": "float", "unidade": "R$"},
+    # Nome (ou trecho do nome) do comprador do leite usado para reconhecer a
+    # receita de leite em "Fornecedor/Cliente" — antes era "italac" fixo no
+    # código (rules/producao.py), então qualquer fazenda com outro laticínio
+    # nunca tinha a receita reconhecida no RMCA/custo por litro.
+    {"chave": "laticinio_nome", "grupo": "financeiro", "label": "Nome do laticínio (reconhece a receita de leite no RMCA)", "valor": "italac", "tipo": "texto"},
 ]
 
 

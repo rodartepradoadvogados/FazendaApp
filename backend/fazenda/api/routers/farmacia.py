@@ -276,7 +276,7 @@ def inicializar_estoque(
         # `fazenda_id` não era gravado aqui (bug pré-existente, achado nesta
         # varredura) — o movimento nascia sempre órfão, mesmo com o item de
         # Estoque de origem já escopado corretamente.
-        fazenda_id=fazenda_id, estoque_id=item.id,
+        fazenda_id=fazenda_id, estoque_id=item.id, valor_unitario=item.valor_unitario,
     ))
     session.commit()
     return {"ok": True, "estoque_inicializado": True, "quantidade": item.quantidade}

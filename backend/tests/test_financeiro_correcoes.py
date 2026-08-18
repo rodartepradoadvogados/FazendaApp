@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContaGerencial, Estoque
+from fazenda.models import ContaGerencial, Estoque, MovimentoEstoque
 from fazenda.rules.rmca import calcular_custo_fisico
 
 
@@ -108,6 +108,59 @@ def test_calcular_custo_fisico_so_inclui_conta_gerencial_3_01_01():
     fisico = calcular_custo_fisico(movimentos, estoque)
     assert fisico["custo_total"] == 260.0  # 100×2,00 + 40×1,50 = 200 + 60
     assert sorted(i["ingrediente"] for i in fisico["itens"]) == ["Milho moído", "Ração concentrada"]
+
+
+def test_custo_fisico_nao_acumula_erro_de_arredondamento_por_movimento():
+    # Gauntlet A-17: arredondar a cada iteração do loop (em vez de só no
+    # total final) compunha um erro pequeno a cada movimento somado. 3
+    # baixas de 1 unidade a R$ 0,333 cada: 3 × 0,333 = 0,999 → R$ 1,00 no
+    # arredondamento correto (só no fim); arredondando a cada passo dava
+    # 0,33 → 0,66 → 0,99, ou seja, R$ 0,99 — um centavo a menos.
+    estoque = {"Item": {"nome": "Item", "valor_unitario": 0.333, "conta_gerencial_despesa_padrao": "3.01.01"}}
+    movimentos = [{"nome_item": "Item", "quantidade": 1, "data_movimento": None} for _ in range(3)]
+    fisico = calcular_custo_fisico(movimentos, estoque)
+    assert fisico["custo_total"] == 1.0
+    assert fisico["itens"][0]["custo"] == 1.0
+
+
+def test_custo_fisico_usa_preco_da_epoca_gravado_no_movimento():
+    # Gauntlet A-15: sem o snapshot de valor_unitario em MovimentoEstoque, o
+    # custo físico multiplicava TODO o histórico pelo preço ATUAL do item —
+    # reescrevendo retroativamente o custo de um mês cujo preço já mudou.
+    # Milho custava R$ 1,00/kg quando as 100 kg de julho saíram; hoje custa
+    # R$ 2,00/kg (só a compra recente é mais cara, não o consumo passado).
+    estoque = {"Milho": {"nome": "Milho", "valor_unitario": 2.0, "conta_gerencial_despesa_padrao": "3.01.01"}}
+    movimentos = [{"nome_item": "Milho", "quantidade": 100, "data_movimento": date(2026, 7, 10), "valor_unitario": 1.0}]
+    fisico = calcular_custo_fisico(movimentos, estoque)
+    assert fisico["custo_total"] == 100.0  # 100 × R$ 1,00 (da época) — não R$ 2,00 (atual)
+
+
+def test_custo_fisico_sem_snapshot_cai_no_preco_atual():
+    # Movimento anterior à existência da coluna (ou dict sem a chave) — só
+    # aí vale o comportamento antigo (preço atual como aproximação).
+    estoque = {"Milho": {"nome": "Milho", "valor_unitario": 2.0, "conta_gerencial_despesa_padrao": "3.01.01"}}
+    movimentos = [{"nome_item": "Milho", "quantidade": 100, "data_movimento": date(2026, 7, 10)}]
+    fisico = calcular_custo_fisico(movimentos, estoque)
+    assert fisico["custo_total"] == 200.0
+
+
+def test_rmca_fisico_via_api_usa_preco_gravado_no_movimento(client):
+    # Fim a fim: GET /financeiro/rmca lê o valor_unitario do próprio
+    # MovimentoEstoque quando presente, não o preço atual do item.
+    c, engine = client
+    with Session(engine) as s:
+        s.add(Estoque(
+            nome="Silagem", valor_unitario=5.0, conta_gerencial_despesa_padrao="3.01.01",
+        ))
+        s.add(MovimentoEstoque(
+            nome_item="Silagem", movimento="Saída de ajuste", quantidade=100.0, unidade="kg",
+            data_movimento=date(2026, 7, 15), valor_unitario=2.0,
+        ))
+        s.commit()
+
+    r = c.get("/financeiro/rmca", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+    assert r.status_code == 200, r.text
+    assert r.json()["fisico"]["custo_alimentacao"] == 200.0  # 100 × R$ 2,00 (da época) — não R$ 5,00 (atual)
 
 
 def test_opcoes_traz_centros_canonicos(client):
