@@ -29,6 +29,27 @@ def _kg_por_saca_de_unidade(unidade: Optional[str]) -> Optional[float]:
     return float(m.group(1).replace(",", "."))
 
 
+def resolver_kg_por_unidade(estoque_item: Optional[dict]) -> Optional[float]:
+    """Quantos kg equivalem a 1 unidade de estoque do item informado — None
+    quando a unidade não é ensacada (kg/L direto) ou quando não há como
+    resolver. Mesma prioridade usada em `calcular_necessidade_mensal`: (1) o
+    trio unidade_embalagem="Saca"/medida_embalagem="kg/saca"/
+    quantidade_embalagem; (2) senão, peso extraído da própria `unidade` (ex.:
+    "saca 30kg", "saca 60kg"). Compartilhado com a baixa automática de
+    estoque (ver `_dar_baixa_automatica` em routers/alimentacao.py) — sem
+    isso, um item cadastrado em sacas tinha seu saldo debitado como se 1
+    unidade de estoque valesse 1 kg (erro de 30x/60x)."""
+    if not estoque_item:
+        return None
+    ensacado = bool(
+        estoque_item.get("unidade_embalagem") == "Saca"
+        and estoque_item.get("medida_embalagem") == "kg/saca" and estoque_item.get("quantidade_embalagem")
+    )
+    if ensacado:
+        return estoque_item.get("quantidade_embalagem")
+    return _kg_por_saca_de_unidade(estoque_item.get("unidade"))
+
+
 def _codigo_grupo(grupo: Optional[str]) -> Optional[str]:
     if not grupo:
         return None
@@ -162,14 +183,8 @@ def calcular_necessidade_mensal(
                 estoque_item = candidatos[0]
             elif nome_normalizado in alimentos_cadastrados:
                 alimento_sem_vinculo = True
-        ensacado = bool(
-            estoque_item and estoque_item.get("unidade_embalagem") == "Saca"
-            and estoque_item.get("medida_embalagem") == "kg/saca" and estoque_item.get("quantidade_embalagem")
-        )
-        kg_por_saco = estoque_item.get("quantidade_embalagem") if ensacado else None
-        if not ensacado and estoque_item:
-            kg_por_saco = _kg_por_saca_de_unidade(estoque_item.get("unidade"))
-            ensacado = kg_por_saco is not None
+        kg_por_saco = resolver_kg_por_unidade(estoque_item)
+        ensacado = kg_por_saco is not None
         sacos = math.ceil(kg_mes / kg_por_saco) if ensacado else None
         saida.append({
             "ingrediente": item["ingrediente"],

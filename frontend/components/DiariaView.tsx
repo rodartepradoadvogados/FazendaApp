@@ -1,10 +1,10 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock } from "lucide-react";
+import { Plus, DollarSign, Pencil, Check, X, Trash2, Receipt, CalendarCheck2, CalendarClock, Ban } from "lucide-react";
 import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
-  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro,
+  confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro, encerrarDiaria,
   fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
@@ -31,6 +31,7 @@ type Diaria = {
   // contagem cega legada); uma vez setado, nunca mais volta a null.
   controle_por_dia_desde: string | null;
   dias_folga: number;
+  dias_meia_diaria: number;
   ultima_folga: string | null;
   pago_ate: string | null;
 };
@@ -51,6 +52,10 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Diaria[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Por padrão o Controle de Diárias só mostra quem ainda está fazendo
+  // diárias — mesmo padrão "mostrar inativos" já usado em Usuários.
+  const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false);
+  const [encerrandoId, setEncerrandoId] = useState<number | null>(null);
 
   const [pessoaId, setPessoaId] = useState("");
   const [valorDiaria, setValorDiaria] = useState("");
@@ -109,13 +114,29 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     return { totalDias, totalValor: totalDias * valor, futura, diasAteHoje, valorAteHoje: diasAteHoje * valor };
   }, [dataInicio, dataFim, valorDiaria]);
 
-  const carregar = () => fetchDiarias().then(setItens).catch((e) => setError(e.message));
+  const carregar = () => fetchDiarias(mostrarFinalizadas).then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
     carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mostrarFinalizadas]);
+  useEffect(() => {
     fetchPessoas().then(setPessoas).catch(() => {});
     fetchParametroDiariaPadrao().then(setParametroPadrao).catch(() => {});
     fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
   }, []);
+
+  async function encerrarDiariaClick(d: Diaria) {
+    if (!window.confirm(`Marcar a diária de ${d.pessoa_nome} como finalizada? Ela sai do Controle de Diárias (a menos que "Incluir finalizadas" esteja marcado) e para de gerar cobrança na Agenda.`)) return;
+    setEncerrandoId(d.id);
+    try {
+      await encerrarDiaria(d.id);
+      carregar();
+    } catch (e: any) {
+      setErroExclusao(e.message || "Erro ao encerrar diária");
+    } finally {
+      setEncerrandoId(null);
+    }
+  }
 
   async function salvar() {
     setMsg(null);
@@ -266,6 +287,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const [calendarioAberto, setCalendarioAberto] = useState<{ diariaId: number; modo: "ultimo_periodo" | "completo" } | null>(null);
   const [dadosCalendario, setDadosCalendario] = useState<DiasDiariaResposta | null>(null);
   const [diasNaoTrabalhados, setDiasNaoTrabalhados] = useState<Set<string>>(new Set());
+  const [diasMeiaDiaria, setDiasMeiaDiaria] = useState<Set<string>>(new Set());
   const [calendarioCarregando, setCalendarioCarregando] = useState(false);
   const [calendarioSalvando, setCalendarioSalvando] = useState(false);
   const [calendarioErro, setCalendarioErro] = useState<string | null>(null);
@@ -282,7 +304,8 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     try {
       const dados = await fetchDiasDiaria(diariaId, { modo, desde: opts?.desde, ate: opts?.ate });
       setDadosCalendario(dados);
-      setDiasNaoTrabalhados(new Set(dados.dias.filter((d) => !d.trabalhado).map((d) => d.data)));
+      setDiasNaoTrabalhados(new Set(dados.dias.filter((d) => !d.trabalhado && !d.meia_diaria).map((d) => d.data)));
+      setDiasMeiaDiaria(new Set(dados.dias.filter((d) => d.meia_diaria).map((d) => d.data)));
       setCalendarioDesde(dados.periodo_inicio);
       setCalendarioAte(dados.periodo_fim);
     } catch (e: any) {
@@ -296,6 +319,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     setCalendarioAberto(null);
     setDadosCalendario(null);
     setDiasNaoTrabalhados(new Set());
+    setDiasMeiaDiaria(new Set());
     setCalendarioErro(null);
   }
 
@@ -314,12 +338,30 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itens, deepLinkDiariaId, deepLinkModo]);
 
-  function toggleDiaCalendario(iso: string) {
-    setDiasNaoTrabalhados((prev) => {
-      const novo = new Set(prev);
-      if (novo.has(iso)) novo.delete(iso); else novo.add(iso);
-      return novo;
+  // Cicla um dia entre os 3 estados: trabalhado -> folga -> meia diária ->
+  // trabalhado. "Marcar todos como X" (CalendarioDiasTrabalhados.tsx) seta
+  // os Sets direto em vez de simular cliques.
+  function cicloDiaCalendario(iso: string) {
+    if (diasNaoTrabalhados.has(iso)) {
+      setDiasNaoTrabalhados((p) => { const n = new Set(p); n.delete(iso); return n; });
+      setDiasMeiaDiaria((p) => new Set(p).add(iso));
+    } else if (diasMeiaDiaria.has(iso)) {
+      setDiasMeiaDiaria((p) => { const n = new Set(p); n.delete(iso); return n; });
+    } else {
+      setDiasNaoTrabalhados((p) => new Set(p).add(iso));
+    }
+  }
+
+  function marcarTodosComo(alvo: "trabalhado" | "folga" | "meia") {
+    if (!dadosCalendario) return;
+    const novasFolgas = new Set<string>();
+    const novasMeias = new Set<string>();
+    dadosCalendario.dias.forEach((d) => {
+      if (alvo === "folga") novasFolgas.add(d.data);
+      else if (alvo === "meia") novasMeias.add(d.data);
     });
+    setDiasNaoTrabalhados(novasFolgas);
+    setDiasMeiaDiaria(novasMeias);
   }
 
   async function salvarCalendario() {
@@ -330,6 +372,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
       periodo_inicio: dadosCalendario.periodo_inicio,
       periodo_fim: dadosCalendario.periodo_fim,
       dias_nao_trabalhados: Array.from(diasNaoTrabalhados),
+      dias_meia_diaria: Array.from(diasMeiaDiaria),
     };
     try {
       await salvarDiasDiaria(calendarioAberto.diariaId, body);
@@ -539,7 +582,13 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
       )}
 
       <div className="card mt-4">
-        <div className="card-header mb-3">Controle de diárias</div>
+        <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <span>Controle de diárias</span>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", fontWeight: 400, cursor: "pointer" }}>
+            <input type="checkbox" checked={mostrarFinalizadas} onChange={(e) => setMostrarFinalizadas(e.target.checked)} />
+            Incluir finalizadas
+          </label>
+        </div>
         {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erroExclusao}</p>}
         {calendarioMsg && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{calendarioMsg}</p>}
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -554,6 +603,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                   <ThOrdenavel label="Fim" campo="data_fim" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Nº diárias" campo="numero_diarias" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Folgas" campo="dias_folga" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
+                  <ThOrdenavel label="Meia diária" campo="dias_meia_diaria" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Valor diária" campo="valor_diaria" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Total até hoje" campo="total_ate_hoje" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
                   <ThOrdenavel label="Pago" campo="valor_pago" coluna={ordDiarias.coluna} dir={ordDiarias.dir} ordenar={ordDiarias.ordenar} />
@@ -566,11 +616,19 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                 {ordDiarias.linhasOrdenadas.map((d) => (
                   <Fragment key={d.id}>
                   <tr>
-                    <td style={{ fontWeight: 700 }}>{d.pessoa_nome}</td>
+                    <td style={{ fontWeight: 700 }}>
+                      {d.pessoa_nome}
+                      {d.status === "encerrado" && (
+                        <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: "999px", padding: "0.05rem 0.45rem" }}>
+                          Finalizada
+                        </span>
+                      )}
+                    </td>
                     <td>{fmtDataBR(d.data_inicio)}</td>
                     <td>{fmtDataBR(d.data_fim)}</td>
                     <td>{d.numero_diarias}</td>
                     <td>{d.dias_folga ?? 0}</td>
+                    <td>{d.dias_meia_diaria ?? 0}</td>
                     <td>{formatBRL(d.valor_diaria)}</td>
                     <td>{formatBRL(d.total_ate_hoje)}</td>
                     <td>{formatBRL(d.valor_pago)}</td>
@@ -610,6 +668,13 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                             </button>
                           </>
                         )}
+                        {d.status !== "encerrado" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                            title="Marcar como finalizada — some do Controle de Diárias e para de cobrar na Agenda"
+                            disabled={encerrandoId === d.id} onClick={() => encerrarDiariaClick(d)}>
+                            <Ban size={13} /> Encerrar
+                          </button>
+                        )}
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} title="Excluir diária"
                           disabled={ocupadoExclusao === d.id} onClick={() => excluirDiaria(d)}>
                           <Trash2 size={13} />
@@ -619,7 +684,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                   </tr>
                   {pagamentosAbertoId === d.id && (
                     <tr>
-                      <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      <td colSpan={12} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                         <div style={{ fontSize: "0.75rem", fontWeight: 700, marginBottom: "0.4rem" }}>Pagamentos lançados</div>
                         {!d.pagamentos?.length && <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhum pagamento lançado ainda.</p>}
                         {d.pagamentos?.length > 0 && (
@@ -650,7 +715,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                   )}
                   {editandoId === d.id && (
                     <tr>
-                      <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      <td colSpan={12} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
                           <div><label style={lbl}>Data de início</label>
                             <input type="date" style={inputSm} value={editDataInicio} onChange={(e) => setEditDataInicio(e.target.value)} /></div>
@@ -742,7 +807,9 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               <CalendarioDiasTrabalhados
                 dados={dadosCalendario}
                 diasNaoTrabalhados={diasNaoTrabalhados}
-                onToggleDia={toggleDiaCalendario}
+                diasMeiaDiaria={diasMeiaDiaria}
+                onClickDia={cicloDiaCalendario}
+                onMarcarTodos={marcarTodosComo}
               />
 
               <div className="flex items-center gap-2" style={{ marginTop: "1rem" }}>

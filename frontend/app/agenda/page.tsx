@@ -657,31 +657,37 @@ export default function AgendaPage() {
     finally { setDescartando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
-  // "Contar diária" / "Descartar diária" — card de diarista ativo sem folga
-  // marcada hoje (ver eventos_diaria_trabalho em agenda.py). ANTES eram
-  // "Importar agora" (só levava pro Financeiro, o usuário tinha que repetir a
-  // decisão lá) e "Realizado" (só dispensava o card da Agenda, sem tocar em
-  // nada do controle de diárias — o dia ficava contado por omissão, sem
-  // registro explícito). Agora as duas chamam DIRETO o mesmo endpoint que o
-  // calendário "Dias trabalhados" do Controle de diárias usa
-  // (`salvarDiasDiaria`, ver rh_contratos.py::salvar_dias_diaria): "Contar"
-  // grava o dia sem exceção (conta, que é o padrão do calendário esparso);
-  // "Descartar" grava uma folga explícita — nenhuma etapa intermediária, tudo
-  // resolvido com um clique aqui mesmo na Agenda.
+  // "Contar diária" / "Descartar diária" / "Contar meia diária" — card de
+  // diarista ativo sem folga marcada hoje (ver eventos_diaria_trabalho em
+  // agenda.py). ANTES eram "Importar agora" (só levava pro Financeiro, o
+  // usuário tinha que repetir a decisão lá) e "Realizado" (só dispensava o
+  // card da Agenda, sem tocar em nada do controle de diárias — o dia ficava
+  // contado por omissão, sem registro explícito). Agora as três chamam
+  // DIRETO o mesmo endpoint que o calendário "Dias trabalhados" do Controle
+  // de diárias usa (`salvarDiasDiaria`, ver rh_contratos.py::salvar_dias_diaria):
+  // "Contar" grava o dia sem exceção (conta, que é o padrão do calendário
+  // esparso); "Descartar" grava uma folga explícita; "Contar meia diária"
+  // grava a exceção de meia diária (metade do valor) — nenhuma etapa
+  // intermediária, tudo resolvido com um clique aqui mesmo na Agenda.
   const [processandoDiaria, setProcessandoDiaria] = useState<Set<string>>(new Set());
-  const decidirDiaria = async (e: any, contar: boolean) => {
+  const decidirDiaria = async (e: any, decisao: "contar" | "descartar" | "meia") => {
     setProcessandoDiaria((p) => new Set(p).add(e.id));
     try {
       await salvarDiasDiaria(e.diaria_id, {
         periodo_inicio: e.data, periodo_fim: e.data,
-        dias_nao_trabalhados: contar ? [] : [e.data],
+        dias_nao_trabalhados: decisao === "descartar" ? [e.data] : [],
+        dias_meia_diaria: decisao === "meia" ? [e.data] : [],
       });
       // O dia já está gravado certo no calendário da diária (linha acima) —
       // isto só cala o lembrete de hoje na Agenda, mesmo EventoRealizado que
       // qualquer outro "Realizado" usa.
       await marcarEventoRealizado(e.id);
       await carregar();
-      mostrarFeedback(contar ? "Diária contada." : "Diária descartada — hoje virou folga no Controle de diárias.");
+      mostrarFeedback(
+        decisao === "contar" ? "Diária contada."
+          : decisao === "meia" ? "Meia diária contada — hoje vale metade do valor no Controle de diárias."
+          : "Diária descartada — hoje virou folga no Controle de diárias."
+      );
     } catch (err: any) {
       // 409 = o período já tem pagamento registrado (ver salvar_dias_diaria);
       // o card só cobre "hoje" e não tem contexto pra oferecer o
@@ -1035,13 +1041,19 @@ export default function AgendaPage() {
                                   <button className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}
                                     disabled={processandoDiaria.has(e.id)}
                                     title="Registra hoje na contagem de diárias — direto, sem passar pelo Financeiro"
-                                    onClick={() => decidirDiaria(e, true)}>
+                                    onClick={() => decidirDiaria(e, "contar")}>
                                     <CheckCircle2 size={12} /> Contar diária
+                                  </button>
+                                  <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--amber)" }}
+                                    disabled={processandoDiaria.has(e.id)}
+                                    title="Registra hoje como meia diária — metade do valor na contagem de diárias"
+                                    onClick={() => decidirDiaria(e, "meia")}>
+                                    <CheckCircle2 size={12} /> Contar meia diária
                                   </button>
                                   <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", color: "var(--text-muted)" }}
                                     disabled={processandoDiaria.has(e.id)}
                                     title="Marca hoje como folga — não entra na contagem de diárias"
-                                    onClick={() => decidirDiaria(e, false)}>
+                                    onClick={() => decidirDiaria(e, "descartar")}>
                                     <X size={12} /> Descartar diária
                                   </button>
                                 </div>

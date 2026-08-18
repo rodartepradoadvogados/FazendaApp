@@ -22,7 +22,7 @@ from fazenda.models import (
     AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, Dieta, DietaItemProgramado, DietaLancamento,
     DietaRegistroReal, Estoque, IngredienteMS, Lote, Usuario,
 )
-from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
+from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, resolver_kg_por_unidade, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.dieta_lancamento import criar_lancamento_programado
 from fazenda.rules.producao_leiteira import ultimo_controle_por_animal, com_fallback_animal
@@ -167,14 +167,30 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
         # compra já foi registrado (None = insumo legado, mantém comportamento).
         if not pode_baixar_estoque(estoque_item):
             continue
-        baixa = round(item["consumo_dia"] * dias, 2)
+        # O consumo da dieta é sempre em kg — mas o saldo do item de Estoque
+        # pode estar em uma unidade ensacada (ex.: "saca 30kg"/"saca 60kg").
+        # Sem esta conversão, os kg consumidos eram debitados 1:1 da
+        # quantidade em sacas (erro de ~30x/~60x no saldo). Mesma resolução
+        # de kg_por_saco já usada em Necessidade Mensal (ver
+        # `resolver_kg_por_unidade`, fazenda/rules/alimentacao.py).
+        baixa_kg = round(item["consumo_dia"] * dias, 2)
+        kg_por_unidade = resolver_kg_por_unidade(estoque_item.model_dump())
+        if kg_por_unidade:
+            baixa = round(baixa_kg / kg_por_unidade, 4)
+            observacao = (
+                f"Baixa automática da Alimentação — {dias} dia(s) desde a última baixa "
+                f"({baixa_kg} kg ÷ {kg_por_unidade} kg/{estoque_item.unidade} = {baixa} {estoque_item.unidade})"
+            )
+        else:
+            baixa = baixa_kg
+            observacao = f"Baixa automática da Alimentação — {dias} dia(s) desde a última baixa"
         avisos.extend(estoque_baixa.movimentar(
             session, item=estoque_item, quantidade=baixa, unidade=estoque_item.unidade, data=hoje,
             fazenda_id=fazenda_id, movimento="Saída de ajuste",
-            observacao=f"Baixa automática da Alimentação — {dias} dia(s) desde a última baixa",
+            observacao=observacao,
             origem_tipo="alimentacao", produto=item["ingrediente"],
         ))
-        itens_baixados.append({"ingrediente": item["ingrediente"], "baixa": baixa})
+        itens_baixados.append({"ingrediente": item["ingrediente"], "baixa": baixa, "baixa_kg": baixa_kg})
 
     session.commit()
     return {"dias_deduzidos": dias, "ultima_data_deducao": hoje.isoformat(), "itens": itens_baixados, "avisos": avisos}

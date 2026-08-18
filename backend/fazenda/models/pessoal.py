@@ -622,6 +622,14 @@ class DiariaDia(SQLModel, table=True):
     diaria_id: int = Field(foreign_key="diaria.id", index=True)
     data: date = Field(index=True)
     trabalhado: bool = False
+    # Fração da diária cumprida neste dia (0 a 1) — None em linhas antigas
+    # (só existiam folgas antes desta feature) equivale a 0.0, o mesmo que
+    # `trabalhado=False` já significava. 0.5 = meia diária (metade do valor);
+    # ver `_fracao_dia` em routers/cadastro/rh_contratos.py. Uma linha de dia
+    # CHEIO nunca é gravada (o calendário é esparso — ausência de linha já
+    # significa dia cheio), então `trabalhado` continua sempre False em toda
+    # linha existente; ele fica só por compatibilidade com dado histórico.
+    fracao: Optional[float] = None
     observacao: Optional[str] = None
     registrado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

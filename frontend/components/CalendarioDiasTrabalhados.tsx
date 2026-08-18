@@ -21,11 +21,18 @@ function parseIso(iso: string): { ano: number; mes: number; dia: number } {
 type Props = {
   dados: DiasDiariaResposta;
   diasNaoTrabalhados: Set<string>;
-  onToggleDia: (iso: string) => void;
+  diasMeiaDiaria: Set<string>;
+  // Um clique cicla o dia entre os 3 estados: trabalhado -> folga -> meia
+  // diária -> trabalhado (a lógica de qual Set mexer mora em DiariaView.tsx,
+  // que é quem já possui os dois Sets).
+  onClickDia: (iso: string) => void;
+  // Atalhos "marcar todos" — setam o estado direto (não simulam cliques),
+  // para não depender da ordem do ciclo em cada atalho.
+  onMarcarTodos: (alvo: "trabalhado" | "folga" | "meia") => void;
   somenteLeitura?: boolean;
 };
 
-export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, onToggleDia, somenteLeitura = false }: Props) {
+export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, diasMeiaDiaria, onClickDia, onMarcarTodos, somenteLeitura = false }: Props) {
   const diasPorData = useMemo(() => {
     const m = new Map<string, DiasDiariaResposta["dias"][number]>();
     dados.dias.forEach((d) => m.set(d.data, d));
@@ -47,29 +54,24 @@ export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, o
     return lista;
   }, [dados.periodo_inicio, dados.periodo_fim]);
 
-  function marcarTodosTrabalhados() {
-    if (somenteLeitura) return;
-    dados.dias.forEach((d) => { if (diasNaoTrabalhados.has(d.data)) onToggleDia(d.data); });
-  }
-  function marcarTodosFolga() {
-    if (somenteLeitura) return;
-    dados.dias.forEach((d) => { if (!diasNaoTrabalhados.has(d.data)) onToggleDia(d.data); });
-  }
-
-  // Resumo AO VIVO da edição em curso (Set local), não `dados.resumo_periodo`
+  // Resumo AO VIVO da edição em curso (Sets locais), não `dados.resumo_periodo`
   // — que reflete o último estado salvo no servidor, não o rascunho na tela.
-  const trabalhados = dados.dias.filter((d) => !diasNaoTrabalhados.has(d.data)).length;
-  const folgas = dados.dias.length - trabalhados;
-  const valor = trabalhados * dados.valor_diaria;
+  const folgas = dados.dias.filter((d) => diasNaoTrabalhados.has(d.data)).length;
+  const meias = dados.dias.filter((d) => diasMeiaDiaria.has(d.data)).length;
+  const trabalhados = dados.dias.length - folgas - meias;
+  const valor = trabalhados * dados.valor_diaria + meias * dados.valor_diaria * 0.5;
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} disabled={somenteLeitura} onClick={marcarTodosTrabalhados}>
+        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} disabled={somenteLeitura} onClick={() => onMarcarTodos("trabalhado")}>
           Marcar todos como trabalhados
         </button>
-        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} disabled={somenteLeitura} onClick={marcarTodosFolga}>
+        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} disabled={somenteLeitura} onClick={() => onMarcarTodos("folga")}>
           Marcar todos como folga
+        </button>
+        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} disabled={somenteLeitura} onClick={() => onMarcarTodos("meia")}>
+          Marcar todos como meia diária
         </button>
       </div>
 
@@ -96,6 +98,7 @@ export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, o
                 const dentroDoPeriodo = iso >= dados.periodo_inicio && iso <= dados.periodo_fim;
                 const infoDia = diasPorData.get(iso);
                 const folga = diasNaoTrabalhados.has(iso);
+                const meia = diasMeiaDiaria.has(iso);
                 const desabilitado = somenteLeitura || !dentroDoPeriodo;
                 const dia = Number(iso.slice(-2));
 
@@ -108,6 +111,10 @@ export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, o
                     borderColor = "var(--red)";
                     borderStyle = "dashed";
                     color = "var(--red)";
+                  } else if (meia) {
+                    borderColor = "var(--amber)";
+                    borderStyle = "dashed";
+                    color = "var(--amber)";
                   } else {
                     borderColor = "var(--dourado)";
                     borderStyle = "solid";
@@ -120,8 +127,8 @@ export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, o
                     key={iso}
                     type="button"
                     disabled={desabilitado}
-                    onClick={() => onToggleDia(iso)}
-                    title={infoDia?.pago ? "Dia já coberto por pagamento registrado" : undefined}
+                    onClick={() => onClickDia(iso)}
+                    title={infoDia?.pago ? "Dia já coberto por pagamento registrado" : meia ? "Meia diária — clique para virar trabalhado" : folga ? "Folga — clique para virar meia diária" : "Trabalhado — clique para virar folga"}
                     style={{
                       position: "relative",
                       padding: "0.45rem 0",
@@ -137,6 +144,7 @@ export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, o
                     }}
                   >
                     {dia}
+                    {meia && dentroDoPeriodo && <span style={{ position: "absolute", bottom: 2, left: "50%", transform: "translateX(-50%)", fontSize: "0.55rem" }}>½</span>}
                     {infoDia?.pago && dentroDoPeriodo && (
                       <Lock size={9} style={{ position: "absolute", top: 3, right: 3, opacity: 0.75 }} />
                     )}
@@ -150,6 +158,7 @@ export default function CalendarioDiasTrabalhados({ dados, diasNaoTrabalhados, o
 
       <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", borderTop: "1px solid var(--border)", paddingTop: "0.6rem", marginTop: "0.4rem" }}>
         <strong style={{ color: "var(--dourado-light)" }}>{trabalhados}</strong> dia(s) trabalhado(s) ·{" "}
+        <strong style={{ color: "var(--amber)" }}>{meias}</strong> meia(s) diária(s) ·{" "}
         <strong style={{ color: "var(--red)" }}>{folgas}</strong> folga(s) · {formatBRL(valor)}
       </div>
     </div>
