@@ -29,6 +29,26 @@ def _configurar_supabase(monkeypatch):
     monkeypatch.setattr(settings, "supabase_bucket_financeiro", "anexos-financeiro")
 
 
+class TestNomeSeguroStorage:
+    """Nome de arquivo com acento/espaço/parênteses é a regra (não a
+    exceção) em anexo de documento — o Supabase Storage rejeita esses
+    caracteres na KEY do objeto com "400 Invalid Key" (bug real reportado em
+    produção no anexo de documento de Pessoa)."""
+
+    def test_remove_acento_e_espaco(self):
+        assert storage.nome_seguro_storage("Currículo João.pdf") == "Curriculo_Joao.pdf"
+
+    def test_remove_parenteses_e_travessao(self):
+        assert storage.nome_seguro_storage("RG (frente) - cópia.jpg") == "RG_frente_-_copia.jpg"
+
+    def test_nome_ja_seguro_fica_igual(self):
+        assert storage.nome_seguro_storage("contrato_2026.pdf") == "contrato_2026.pdf"
+
+    def test_nome_vazio_ou_so_caracteres_invalidos_vira_arquivo(self):
+        assert storage.nome_seguro_storage("") == "arquivo"
+        assert storage.nome_seguro_storage("🎉🎊") == "arquivo"
+
+
 def test_sem_config_nao_faz_nada(monkeypatch):
     monkeypatch.setattr(settings, "supabase_url", "")
     chamado = {"get": False, "post": False}
