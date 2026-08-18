@@ -24,7 +24,7 @@ from fazenda.models import (
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
-from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -361,7 +361,7 @@ def _caminho_anexo_pedido(session: Session, fazenda_id: int | None, pedido_id: i
     pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/pedidos/{pedido_id}"
     existentes = session.exec(select(PedidoAnexo).where(PedidoAnexo.pedido_id == pedido_id)).all()
     seq = 1 + len(existentes)
-    return f"{pasta}/{seq:04d}_{nome_arquivo}"
+    return f"{pasta}/{seq:04d}_{nome_seguro_storage(nome_arquivo)}"
 
 
 @router.post("/{pedido_id}/anexos", status_code=201)

@@ -16,7 +16,31 @@ import {
   animalEmLactacao,
 } from "@/components/lancamentos/comumForms";
 
-export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[]; numeroInicial?: string }) {
+type DadosSecagem = {
+  numero_matriz: string; data_secagem: string; motivo: string; escore_condicao_corporal: number | null;
+  observacao?: string; responsavel?: string; aplicado?: boolean;
+  produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
+  vacinas_pre_parto: string[]; vacina_pre_parto_aplicada_agora: boolean; vacina_pre_parto: boolean | null;
+};
+// `lote_sugerido` só vem preenchido quando o envio foi síncrono (enviado !==
+// false) — na fila offline não há como saber a sugestão de lote antes do
+// item sincronizar de verdade, então a transferência automática simplesmente
+// não dispara para esses casos (ver uso de `r.lote_sugerido` mais abaixo).
+type ResultadoSecagem = { lote_sugerido?: { codigo: string; nome: string; rotulo: string }; enviado?: boolean };
+type DadosMovimentacao = {
+  data_movimento: string; motivo?: string; lote_destino_codigo: string; animais: string[];
+  origem?: "manual" | "sugestao_confirmada" | "sugestao_automatica" | "sugestao_passiva" | "importacao";
+};
+type ResultadoMovimentacao = { movidos: number; nao_encontrados: string[] };
+
+export function FormSecagem({
+  animais, estoque, produtos, numeroInicial,
+  salvarSecagem = criarSecagem, salvarMovimentacao = criarMovimentacao,
+}: {
+  animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[]; numeroInicial?: string;
+  salvarSecagem?: (dados: DadosSecagem) => Promise<ResultadoSecagem>;
+  salvarMovimentacao?: (dados: DadosMovimentacao) => Promise<ResultadoMovimentacao & { enviado?: boolean }>;
+}) {
   // Secagem só faz sentido para quem está em lactação — sem este filtro, a
   // lista de candidatas (e a tabela de lotes, com sua contagem e DEL médio)
   // misturava secas, novilhas e machos que só compartilham o grupo_primario.
@@ -133,10 +157,11 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
     const salvos: string[] = [];
     const falhados: string[] = [];
     const pendentes: { numero: string; lote: { codigo: string; rotulo: string } }[] = [];
+    let algumEnfileirado = false;
     try {
       for (const numero of numerosAlvo) {
         try {
-          const r = await criarSecagem({
+          const r = await salvarSecagem({
             numero_matriz: numero, data_secagem: dataSecagem, motivo,
             escore_condicao_corporal: ecc ? Number(ecc) : null,
             observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
@@ -145,8 +170,12 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
             vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
             vacina_pre_parto: aplicarVacinaPreParto,
           });
+          if (r.enviado === false) algumEnfileirado = true;
           // Cada vaca pode ter uma sugestão diferente (ex.: alguma já está no
           // lote das secas) — só entra na fila quem realmente precisa mudar.
+          // Sem internet, `lote_sugerido` nem vem — a sugestão só existe
+          // depois que o item sincronizar de verdade, então essa vaca
+          // simplesmente não entra na fila de transferência agora.
           if (r.lote_sugerido && codigoGrupo(animais.find((a) => a.numero === numero)?.grupo_primario) !== r.lote_sugerido.codigo) {
             pendentes.push({ numero, lote: r.lote_sugerido });
           }
@@ -164,15 +193,18 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
           setErro(`Nenhuma secagem lançada. Falharam: ${falhados.join(", ")} — tente novamente.`);
         }
       } else {
-        setSucesso(`Secagem lançada com sucesso para ${salvos.length} animal(is).`);
+        setSucesso(algumEnfileirado
+          ? `Secagem guardada para ${salvos.length} animal(is) — será enviada quando conectar.`
+          : `Secagem lançada com sucesso para ${salvos.length} animal(is).`);
         if (pendentes.length && transferenciaAutomatica) {
           // "Transferir automaticamente" ligado em Configurações > Parâmetros
           // — move sozinho, sem abrir a janela de confirmação abaixo.
           const movidos: string[] = []; const falhasMov: string[] = [];
           for (const p of pendentes) {
             try {
-              const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: p.lote.codigo, animais: [p.numero], origem: "sugestao_automatica" });
-              if ((r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(p.numero)) movidos.push(`${p.numero} → ${p.lote.rotulo}`);
+              const r = await salvarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: p.lote.codigo, animais: [p.numero], origem: "sugestao_automatica" });
+              if (r.enviado === false) movidos.push(`${p.numero} → ${p.lote.rotulo} (guardado, será enviado ao conectar)`);
+              else if ((r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(p.numero)) movidos.push(`${p.numero} → ${p.lote.rotulo}`);
               else falhasMov.push(p.numero);
             } catch { falhasMov.push(p.numero); }
           }
@@ -200,7 +232,12 @@ export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { ani
     const { numero, lote } = transferenciaPendente;
     setTransferindo(true);
     try {
-      const r = await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero], origem: "sugestao_confirmada" });
+      const r = await salvarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero], origem: "sugestao_confirmada" });
+      if (r.enviado === false) {
+        setSucesso((s) => `${s || ""} ${numero} guardada para mover ao lote ${lote.rotulo} — será enviada quando conectar.`);
+        setFilaTransferencia((f) => f.slice(1));
+        return;
+      }
       const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
       if (!moveuDeFato) throw new Error(`Não foi possível mover ${numero} para o lote ${lote.rotulo}.`);
       setSucesso((s) => `${s || ""} ${numero} movida para o lote ${lote.rotulo}.`);

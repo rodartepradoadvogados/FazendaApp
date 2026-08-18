@@ -7,7 +7,15 @@ import { TabBar } from "@/components/ui";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
 import { Campo, Secao, inputStyle } from "@/components/lancamentos/comumForms";
 
-export function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
+type DadosQualidadeLeite = {
+  numero_matriz: string | null; data_coleta: string;
+  ccs: number | null; cbt: number | null; gordura_pct: number | null; proteina_pct: number | null;
+  solidos_totais_pct: number | null; esd_pct: number | null; lactose_pct: number | null; nul: number | null;
+  observacao?: string;
+};
+type SalvarQualidadeLeite = (dados: DadosQualidadeLeite) => Promise<{ enviado?: boolean } | void>;
+
+export function FormQualidadeLeite({ animais, salvarQualidade = criarQualidadeLeite }: { animais: AnimalRow[]; salvarQualidade?: SalvarQualidadeLeite }) {
   const [alvo, setAlvo] = useState<"tanque" | "vaca" | "planilha">("tanque");
   const [matriz, setMatriz] = useState("");
   const [dataColeta, setDataColeta] = useState(() => new Date().toISOString().slice(0, 10));
@@ -33,14 +41,16 @@ export function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
 
     setSalvando(true);
     try {
-      await criarQualidadeLeite({
+      const r = await salvarQualidade({
         numero_matriz: alvo === "vaca" ? matriz : null,
         data_coleta: dataColeta,
         ccs: num(ccs), cbt: num(cbt), gordura_pct: num(gordura), proteina_pct: num(proteina),
         solidos_totais_pct: num(solidosTotais), esd_pct: num(esd), lactose_pct: num(lactose), nul: num(nul),
         observacao: observacao || undefined,
       });
-      setSucesso("Qualidade do leite lançada com sucesso.");
+      setSucesso(r?.enviado === false
+        ? "Sem internet — guardado, será enviado quando conectar."
+        : "Qualidade do leite lançada com sucesso.");
       setMatriz(""); setCcs(""); setCbt(""); setGordura(""); setProteina(""); setSolidosTotais(""); setEsd(""); setLactose(""); setNul(""); setObservacao("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar qualidade do leite");

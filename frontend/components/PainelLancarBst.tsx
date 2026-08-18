@@ -149,7 +149,19 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
  * amarela na tabela, sinalizando que precisam ser reavaliados antes de
  * entrar de novo no lançamento.
  */
-export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtualizado: () => void }) {
+type DadosAplicarBst = {
+  numeros_matriz: string[]; data_aplicacao: string; aplicado?: boolean; produto?: string;
+  dose?: number | null; unidade?: string | null; responsavel?: string; dose_por_animal?: boolean;
+};
+type DadosMarcarInaptaBst = { numeros_matriz: string[]; inapta?: boolean };
+
+export function PainelLancarBst({
+  agenda, onAtualizado, aplicarBst = aplicarBstLote, marcarInapta: marcarInaptaFn = marcarInaptaBst,
+}: {
+  agenda: any; onAtualizado: () => void;
+  aplicarBst?: (dados: DadosAplicarBst) => Promise<unknown>;
+  marcarInapta?: (dados: DadosMarcarInaptaBst) => Promise<unknown>;
+}) {
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [lotesFiltro, setLotesFiltro] = useState<string[]>([]);
   const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
@@ -190,7 +202,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const executarAplicar = async () => {
     setOcupado(true); setErro(null);
     try {
-      await aplicarBstLote({
+      await aplicarBst({
         numeros_matriz: Array.from(selecionados), data_aplicacao: dataAplicacao, aplicado: true,
         produto: produto.trim() || "Lactotropin", dose: dose ? Number(dose) : null, unidade: unidade || null,
         responsavel: responsavel.trim() || undefined, dose_por_animal: dosePorAnimal,
@@ -204,7 +216,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const marcarInapta = async () => {
     setOcupado(true); setErro(null);
     try {
-      await marcarInaptaBst({ numeros_matriz: Array.from(selecionados), inapta: true });
+      await marcarInaptaFn({ numeros_matriz: Array.from(selecionados), inapta: true });
       setSelecionados(new Set());
       onAtualizado();
     } catch (e: any) { setErro(e.message); }
@@ -214,7 +226,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const reverterInapta = async () => {
     setOcupado(true); setErro(null);
     try {
-      await marcarInaptaBst({ numeros_matriz: Array.from(selecionados), inapta: false });
+      await marcarInaptaFn({ numeros_matriz: Array.from(selecionados), inapta: false });
       setSelecionados(new Set());
       onAtualizado();
     } catch (e: any) { setErro(e.message); }

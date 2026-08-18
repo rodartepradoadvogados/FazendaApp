@@ -26,12 +26,26 @@ levanta RuntimeError com mensagem clara — não falha silenciosamente.
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 
 import httpx
 
 from fazenda.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def nome_seguro_storage(nome_arquivo: str) -> str:
+    """Sanitiza um nome de arquivo para uso dentro da KEY do Supabase
+    Storage — o Storage recusa key com acento ou outro caractere fora de
+    [A-Za-z0-9._-] com "400 Invalid Key" (nome de arquivo com acento,
+    espaço, parênteses etc. é a regra, não a exceção, em anexo de
+    documento/comprovante). Só afeta o caminho salvo no bucket — o nome de
+    exibição (guardado no banco, mostrado ao usuário) continua o original."""
+    sem_acento = unicodedata.normalize("NFKD", nome_arquivo or "").encode("ascii", "ignore").decode()
+    seguro = re.sub(r"[^A-Za-z0-9._-]+", "_", sem_acento).strip("_")
+    return seguro or "arquivo"
 
 
 def habilitado() -> bool:

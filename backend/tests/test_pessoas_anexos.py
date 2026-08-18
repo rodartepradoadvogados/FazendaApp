@@ -76,6 +76,24 @@ class TestAnexarDocumentoPessoa:
         assert r.status_code == 201, r.text
         assert r.json()["data_validade"] is None
 
+    def test_nome_de_arquivo_acentuado_nao_quebra_o_caminho_no_storage(self, client, monkeypatch):
+        """Nome de arquivo com acento/espaço/parênteses é comum (RG, holerite,
+        contrato...) e o Supabase Storage rejeita esses caracteres na KEY do
+        objeto com "400 Invalid Key" — a exibição (nome_arquivo) preserva o
+        original, só o caminho salvo no bucket precisa ser seguro."""
+        pessoa_id = _criar_pessoa(client)
+        import fazenda.api.routers.cadastro.pessoas as pessoas_mod
+        caminhos = []
+        monkeypatch.setattr(pessoas_mod, "enviar_arquivo", lambda caminho, *a, **k: caminhos.append(caminho))
+
+        nome_original = "Currículo João (frente) - Cópia.pdf"
+        r = client.post(f"/cadastro/pessoas/{pessoa_id}/anexos", files=_pdf(nome_original), data={"categoria": "RG"})
+
+        assert r.status_code == 201, r.text
+        assert r.json()["nome_arquivo"] == nome_original
+        assert len(caminhos) == 1
+        assert all(c.isascii() and (c.isalnum() or c in "._-/") for c in caminhos[0]), caminhos[0]
+
     def test_categoria_invalida_e_rejeitada(self, client):
         pessoa_id = _criar_pessoa(client)
         r = client.post(f"/cadastro/pessoas/{pessoa_id}/anexos", files=_pdf(), data={"categoria": "Boleto"})

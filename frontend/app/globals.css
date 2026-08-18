@@ -1013,6 +1013,16 @@ html, body { max-width: 100%; overflow-x: hidden; }
   color: var(--c, var(--mob-dourado-2));
 }
 
+/* Variante "grande" — os destinos de maior frequência de uso real do
+   Lançamento Rápido (Reprodutivo/Produção/Sanidade) ganham uma linha
+   horizontal mais alta que a largura, empilhada acima da grade 2×N normal,
+   em vez de disputar o mesmo tamanho de quadrado que "Excluir lançamento". */
+.mob-bloco-grande {
+  flex-direction: row; justify-content: flex-start; gap: 0.9rem;
+  min-height: 4.5rem; padding: 0 1.1rem; font-size: 0.95rem;
+}
+.mob-bloco-grande .icone { width: 32px; height: 32px; }
+
 /* Botão de ação principal, largura total. */
 .mob-btn {
   width: 100%; border: none; border-radius: var(--r-app); cursor: pointer;

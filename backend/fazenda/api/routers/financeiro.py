@@ -35,7 +35,7 @@ from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
 from fazenda.rules.patrimonio import calcular_depreciacao, proxima_atualizacao_valor_mercado, somar_meses, status_manutencao
 from fazenda.rules.parametros import meta_rmca, patrimonio_atualizacao_valor_mercado_meses
-from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.config import settings
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -2744,7 +2744,7 @@ def _caminho_anexo_lancamento(session: Session, fazenda_id: int | None, numero_l
         select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
     ).all()
     seq = 1 + len(existentes)
-    return f"{pasta}/{seq:04d}_{nome_arquivo}"
+    return f"{pasta}/{seq:04d}_{nome_seguro_storage(nome_arquivo)}"
 
 
 @router.post("/lancamentos/{numero_lancamento}/anexos", status_code=201)
