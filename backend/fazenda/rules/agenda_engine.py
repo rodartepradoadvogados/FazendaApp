@@ -132,6 +132,7 @@ class AgendaEngine:
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
         pedidos_documentos_vencendo: list[dict] | None = None,
+        pessoas_documentos_vencendo: list[dict] | None = None,
         inducoes_cio: list[dict] | None = None,
     ) -> AgendaResult:
         """
@@ -158,6 +159,13 @@ class AgendaEngine:
                 serviço) com `data_validade`, já filtrados em agenda.py para
                 pedidos "aberto"/"parcialmente_atendido" — dispara alerta 2
                 dias antes do vencimento (ver PedidoAnexo/PUT /pedidos/{id}/anexos).
+            pessoas_documentos_vencendo: Anexos de Pessoa da categoria
+                "Contrato de trabalho por prazo determinado" com
+                `data_validade`, já filtrados em agenda.py para pessoa ativa —
+                dispara alerta 15 dias antes do vencimento (mais antecedência
+                que Pedido: decidir renovar/encerrar um vínculo de trabalho
+                precisa de mais prazo do que aprovar um orçamento — ver
+                PessoaAnexo/POST /cadastro/pessoas/{id}/anexos).
             inducoes_cio: Aplicações de indução de cio (Sanidade com
                 atividade=ATIVIDADE_INDUCAO_CIO) dos últimos dias — dispara
                 "observar cio" na janela de 2 a 5 dias após a aplicação,
@@ -625,6 +633,26 @@ class AgendaEngine:
                 observacao=doc.get("fornecedor_cliente"),
                 ref=doc.get("numero_pedido"),
                 link=f"/pedidos?id={doc.get('pedido_id')}" if doc.get("pedido_id") else None,
+            ))
+
+        # 5d. PESSOAS — contrato de trabalho por prazo determinado vencendo
+        # (15 dias antes — mais antecedência que Pedido: decidir renovar ou
+        # encerrar um vínculo de trabalho precisa de mais prazo do que
+        # aprovar um orçamento), pessoa ainda ativa (já filtrado em
+        # agenda.py, ver PessoaAnexo).
+        for doc in (pessoas_documentos_vencendo or []):
+            validade = doc.get("data_validade")
+            if not validade:
+                continue
+            alerta_em = validade - timedelta(days=15)
+            if not (data_referencia <= alerta_em <= limite_contas):
+                continue
+            eventos.append(AgendaItem(
+                data=alerta_em,
+                categoria="Gestão/Financeiro",
+                descricao=f"{doc.get('categoria', 'Documento')} de {doc.get('pessoa_nome', '')} vence em {validade.strftime('%d/%m/%Y')}",
+                ref=str(doc.get("pessoa_id")) if doc.get("pessoa_id") else None,
+                link="/configuracoes?aba=cadastro&sub=pessoas",
             ))
 
         # 6. EVENTOS MANUAIS

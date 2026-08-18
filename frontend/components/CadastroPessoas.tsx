@@ -1,7 +1,10 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { Users, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "lucide-react";
-import { fetchPessoas, criarPessoa, atualizarPessoa, excluirPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Users, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search, FileText, Upload } from "lucide-react";
+import {
+  fetchPessoas, criarPessoa, atualizarPessoa, excluirPessoa, fetchTiposPessoa, criarTipoPessoa,
+  CATEGORIAS_PESSOA_ANEXO, anexarArquivoPessoa, listarAnexosPessoa, excluirAnexoPessoa, urlAnexoPessoa, type AnexoPessoa,
+} from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -22,6 +25,7 @@ type Form = {
   rg: string; dataNascimento: string; genero: string; estadoCivil: string;
   enderecoRua: string; enderecoNumero: string; enderecoBairro: string; enderecoCidade: string; enderecoUf: string;
 };
+type AnexoStagedPessoa = { file: File; categoria: string; data_validade: string };
 const formVazio: Form = {
   nome: "", tipos: ["Funcionário"], telefones: [], emails: [], cpfCnpj: "", cep: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
   rg: "", dataNascimento: "", genero: "", estadoCivil: "",
@@ -65,11 +69,18 @@ export default function CadastroPessoas() {
   const [busca, setBusca] = useState("");
   const [novoTipoAberto, setNovoTipoAberto] = useState(false);
 
+  // Documentos (RG, CPF, contratos, holerite, comprovantes...) — mesmo
+  // padrão staged/existente do anexo de Pedido (frontend/app/pedidos/
+  // page.tsx): arquivo novo fica "staged" e só sobe de fato depois que a
+  // pessoa é salva (uma pessoa nova ainda não tem id).
+  const [anexosStaged, setAnexosStaged] = useState<AnexoStagedPessoa[]>([]);
+  const [anexosExistentes, setAnexosExistentes] = useState<AnexoPessoa[]>([]);
+
   const carregar = () => fetchPessoas().then(setItens).catch((e) => setError(e.message));
   const carregarTipos = () => fetchTiposPessoa().then(setTipos).catch(() => {});
   useEffect(() => { carregar(); carregarTipos(); }, []);
 
-  const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
+  const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); };
   const abrirEdicao = (p: Pessoa) => {
     setForm({
       nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefones: p.telefones ?? [], emails: p.emails ?? [],
@@ -80,8 +91,15 @@ export default function CadastroPessoas() {
       enderecoCidade: p.endereco_cidade ?? "", enderecoUf: p.endereco_uf ?? "",
     });
     setEditando(p.id); setMsg(null);
+    setAnexosStaged([]);
+    listarAnexosPessoa(p.id).then(setAnexosExistentes).catch(() => setAnexosExistentes([]));
   };
-  const cancelar = () => { setEditando(null); setMsg(null); };
+  const cancelar = () => { setEditando(null); setMsg(null); setAnexosStaged([]); setAnexosExistentes([]); };
+
+  async function excluirAnexoExistente(id: number) {
+    if (!window.confirm("Excluir este documento?")) return;
+    try { await excluirAnexoPessoa(id); setAnexosExistentes((arr) => arr.filter((a) => a.id !== id)); } catch (e: any) { setMsg(e.message); }
+  }
 
   // Exclusão de fato (não só desativar) — bloqueada pelo backend com 409
   // quando há folha/férias/13º/rescisão/vale/empreitada/contrato/diária ou
@@ -108,9 +126,15 @@ export default function CadastroPessoas() {
     setSalvando(true); setMsg(null);
     try {
       const dados = paraPayload(form);
-      if (editando === "novo") await criarPessoa(dados);
-      else if (typeof editando === "number") await atualizarPessoa(editando, dados);
+      let pessoaId: number;
+      if (editando === "novo") pessoaId = (await criarPessoa(dados)).id;
+      else if (typeof editando === "number") { await atualizarPessoa(editando, dados); pessoaId = editando; }
+      else return;
+      if (anexosStaged.length) {
+        await Promise.all(anexosStaged.map((a) => anexarArquivoPessoa(pessoaId, a.file, a.categoria, a.data_validade || undefined)));
+      }
       setEditando(null);
+      setAnexosStaged([]);
       await carregar();
     } catch (e: any) {
       setMsg(e.message || "Erro ao salvar");
@@ -151,7 +175,9 @@ export default function CadastroPessoas() {
 
       {editando === "novo" && (
         <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-          tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)} />
+          tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
+          anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
+          anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
       )}
 
       {itens && (
@@ -193,7 +219,9 @@ export default function CadastroPessoas() {
                   {editando === p.id && (
                     <tr><td colSpan={5} style={{ padding: 0 }}>
                       <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
-                        tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)} />
+                        tipos={tipos} onNovoTipo={() => setNovoTipoAberto(true)}
+                        anexosStaged={anexosStaged} setAnexosStaged={setAnexosStaged}
+                        anexosExistentes={anexosExistentes} onExcluirAnexoExistente={excluirAnexoExistente} />
                     </td></tr>
                   )}
                 </Fragment>
@@ -286,13 +314,24 @@ function ListaContatoInput({ label, valores, onChange, mask, placeholder }: {
   );
 }
 
-function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, onNovoTipo }: {
+function FormItem({
+  form, setForm, onSalvar, onCancelar, salvando, msg, tipos, onNovoTipo,
+  anexosStaged, setAnexosStaged, anexosExistentes, onExcluirAnexoExistente,
+}: {
   form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
   tipos: { id: number; nome: string; ativo: boolean }[]; onNovoTipo: () => void;
+  anexosStaged: AnexoStagedPessoa[]; setAnexosStaged: (fn: (arr: AnexoStagedPessoa[]) => AnexoStagedPessoa[]) => void;
+  anexosExistentes: AnexoPessoa[]; onExcluirAnexoExistente: (id: number) => void;
 }) {
   const toggleTipo = (t: string) =>
     setForm({ ...form, tipos: form.tipos.includes(t) ? form.tipos.filter((x) => x !== t) : [...form.tipos, t] });
   const tiposAtivos = tipos.filter((t) => t.ativo);
+  const [categoriaAnexoPadrao, setCategoriaAnexoPadrao] = useState(CATEGORIAS_PESSOA_ANEXO[0]);
+  const anexoInputRef = useRef<HTMLInputElement>(null);
+  function adicionarAnexosStaged(files: File[]) {
+    if (!files.length) return;
+    setAnexosStaged((arr) => [...arr, ...files.map((file) => ({ file, categoria: categoriaAnexoPadrao, data_validade: "" }))]);
+  }
 
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
@@ -361,6 +400,75 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
       <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "-0.4rem", marginBottom: "0.6rem" }}>
         CPF, RG, data de nascimento, estado civil e endereço não bloqueiam o cadastro — ficam disponíveis para preencher agora e valem para o contrato mais tarde.
       </p>
+
+      <div style={{ marginBottom: "0.8rem" }}>
+        <label style={{ ...labelStyle, margin: "0 0 0.3rem", display: "block" }}>Documentos (RG, CPF, contratos, holerite, comprovantes...)</label>
+        {anexosExistentes.length > 0 && (
+          <ul style={{ marginBottom: "0.5rem", fontSize: "0.78rem", listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            {anexosExistentes.map((a) => (
+              <li key={a.id} className="card" style={{ padding: "0.4rem 0.6rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <FileText size={13} style={{ flexShrink: 0, color: "var(--dourado-light)" }} />
+                <a href={urlAnexoPessoa(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {a.nome_arquivo}
+                </a>
+                <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{a.categoria}</span>
+                {a.data_validade && <span style={{ color: "var(--amber)", flexShrink: 0 }}>válido até {a.data_validade.split("-").reverse().join("/")}</span>}
+                <button type="button" className="btn-ghost" title="Excluir documento" onClick={() => onExcluirAnexoExistente(a.id)} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                  <X size={12} style={{ color: "var(--red)" }} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div
+          onDrop={(e) => { e.preventDefault(); adicionarAnexosStaged(Array.from(e.dataTransfer.files || [])); }}
+          onDragOver={(e) => e.preventDefault()}
+          className="card"
+          style={{ border: "1px dashed var(--border)", background: "var(--surface)", padding: "0.7rem", textAlign: "center" }}
+        >
+          <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
+            <FileText size={15} style={{ color: "var(--dourado-light)" }} />
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Arraste um documento aqui, ou</span>
+            <select style={{ ...inputStyle, width: "auto", fontSize: "0.76rem" }} value={categoriaAnexoPadrao} onChange={(e) => setCategoriaAnexoPadrao(e.target.value)}>
+              {CATEGORIAS_PESSOA_ANEXO.map((c) => <option key={c}>{c}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={() => anexoInputRef.current?.click()}>
+              <Upload size={12} /> selecionar arquivo(s)
+            </button>
+          </div>
+          <input ref={anexoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
+            onChange={(e) => { adicionarAnexosStaged(Array.from(e.target.files || [])); e.target.value = ""; }}
+            style={{ display: "none" }} />
+          {anexosStaged.length > 0 && (
+            <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem", listStyle: "none", padding: 0 }}>
+              {anexosStaged.map((a, i) => (
+                <li key={i} className="card" style={{ padding: "0.4rem 0.5rem", marginBottom: "0.35rem", background: "var(--surface-2)" }}>
+                  <div className="flex items-center justify-between" style={{ gap: "0.4rem" }}>
+                    <a href={URL.createObjectURL(a.file)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {a.file.name}
+                    </a>
+                    <button type="button" className="btn-ghost" title="Remover" onClick={() => setAnexosStaged((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem", flexShrink: 0 }}>
+                      <X size={12} style={{ color: "var(--red)" }} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2" style={{ marginTop: "0.3rem" }}>
+                    <select style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} value={a.categoria} title="Categoria deste documento"
+                      onChange={(e) => setAnexosStaged((arr) => arr.map((x, j) => j === i ? { ...x, categoria: e.target.value } : x))}>
+                      {CATEGORIAS_PESSOA_ANEXO.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                    <input type="date" style={{ ...inputStyle, fontSize: "0.74rem", padding: "0.25rem 0.4rem" }} title="Data de validade — opcional"
+                      value={a.data_validade} onChange={(e) => setAnexosStaged((arr) => arr.map((x, j) => j === i ? { ...x, data_validade: e.target.value } : x))} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+            Validade opcional — preencha só quando fizer sentido (ex.: contrato por prazo determinado). Quando preenchida, a Agenda avisa 15 dias antes do vencimento.
+          </p>
+        </div>
+      </div>
+
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>

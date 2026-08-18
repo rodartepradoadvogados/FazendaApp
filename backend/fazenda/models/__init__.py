@@ -97,6 +97,8 @@ from .agricultura import (
 from .pessoal import (
     TipoPessoa,
     Pessoa,
+    PessoaAnexo,
+    CATEGORIAS_PESSOA_ANEXO,
     FolhaPagamento,
     FeriasFuncionario,
     DecimoTerceiro,
@@ -348,6 +350,8 @@ __all__ = [
     "UnidadeMedidaEmbalagemEstoque",
     "TipoPessoa",
     "Pessoa",
+    "PessoaAnexo",
+    "CATEGORIAS_PESSOA_ANEXO",
     "FolhaPagamento",
     "FeriasFuncionario",
     "DecimoTerceiro",
