@@ -1478,7 +1478,7 @@ def _baixar_protocolo_sanitario(
         numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=produto,
         dose=etapa.dosagem, unidade=etapa.unidade, via=etapa.via, responsavel=lancamento.responsavel,
         obs=f"Protocolo sanitário — D{etapa.dia}" + (f" — {lancamento.observacao}" if lancamento.observacao else ""),
-        protocolo_sanitario_lancamento_id=lancamento.id,
+        protocolo_sanitario_lancamento_id=lancamento.id, fazenda_id=fazenda_id,
     ))
 
     estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto)
@@ -1521,7 +1521,7 @@ def _baixar_aplicacao_agendada(
     session.add(Sanidade(
         numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=produto_final,
         dose=dose_final, unidade=unidade_final, via=via_final, responsavel=ag.responsavel, obs=ag.observacao,
-        natureza=ag.natureza or "curativo",
+        natureza=ag.natureza or "curativo", fazenda_id=fazenda_id,
     ))
 
     # Aplicação de BST confirmada (produto reconhecido) — fecha o ciclo do
@@ -1573,7 +1573,7 @@ def _baixar_vacina_pre_parto(
         session.add(ag)
         sanidade = Sanidade(
             numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
-            via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
+            via=ag.via, responsavel=ag.responsavel, obs=ag.observacao, fazenda_id=fazenda_id,
         )
         session.add(sanidade)
         session.flush()
@@ -1680,7 +1680,7 @@ def _marcar_protocolo_iatf_realizado(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Protocolo IATF — D{dia}",
-                protocolo_iatf_lancamento_id=ap.lancamento_id,
+                protocolo_iatf_lancamento_id=ap.lancamento_id, fazenda_id=fazenda_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
@@ -1798,7 +1798,7 @@ def _marcar_protocolo_inducao_realizado(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Indução de lactação — D{dia}",
-                protocolo_inducao_lancamento_id=lancamento_id,
+                protocolo_inducao_lancamento_id=lancamento_id, fazenda_id=fazenda_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
