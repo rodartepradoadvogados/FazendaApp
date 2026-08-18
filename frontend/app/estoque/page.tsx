@@ -178,13 +178,28 @@ function EstoqueInventario() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <Indicador categoria="geral" valor={filtrados.length} rotulo="Itens (filtro)" />
-            <Indicador categoria="geral" valor={formatBRL(valorTotal)} cor="var(--dourado-light)" rotulo="Valor em estoque" />
-            <Indicador categoria="geral" valor={abaixo} cor={abaixo ? "var(--red)" : "var(--green-light)"} rotulo="Abaixo do mínimo"
-              onClick={() => setModalAbaixo(true)} title="Ver quais produtos estão abaixo do mínimo" />
-            <Indicador categoria="geral" valor={categorias.length} rotulo="Categorias"
-              onClick={() => setModalCategorias(true)} title="Ver as categorias e quantos itens cada uma tem" />
+          {/* Valor em estoque já era o único KPI marcado em dourado — vira a
+              métrica-âncora. Abaixo do mínimo e Categorias continuam clicáveis
+              (mesmos modais de antes), só em tamanho de apoio. Mesmos 4 números. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Valor em estoque</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {formatBRL(valorTotal)}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{filtrados.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Itens (filtro)</div>
+              </div>
+              <div onClick={() => setModalAbaixo(true)} title="Ver quais produtos estão abaixo do mínimo" style={{ cursor: "pointer" }}>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: abaixo ? "var(--red)" : "var(--green-light)", fontVariantNumeric: "tabular-nums" }}>{abaixo}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Abaixo do mínimo</div>
+              </div>
+              <div onClick={() => setModalCategorias(true)} title="Ver as categorias e quantos itens cada uma tem" style={{ cursor: "pointer" }}>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{categorias.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Categorias</div>
+              </div>
+            </div>
           </div>
 
           <div className="card mb-4">

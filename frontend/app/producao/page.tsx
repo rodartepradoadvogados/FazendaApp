@@ -475,14 +475,42 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
             </div>
 
             {ucRegistros.length > 0 && (
-              <div className={`grid grid-cols-2 md:grid-cols-3 ${ucTemTerceiraOrdenha ? "lg:grid-cols-7" : "lg:grid-cols-6"} gap-4 mb-3`}>
-                <Indicador categoria="producao" valor={`${ucMedia} kg`} cor="var(--green-light)" rotulo={`Média do ${ucLabelEscopo}`} />
-                <Indicador categoria="producao" valor={`${ucMenor ?? "—"} kg`} rotulo="Menor" />
-                <Indicador categoria="producao" valor={`${ucMediaManha || "—"} kg`} rotulo="Média ordenha — manhã" />
-                {ucTemTerceiraOrdenha && <Indicador categoria="producao" valor={`${ucMediaTarde || "—"} kg`} rotulo="Média ordenha — tarde" />}
-                <Indicador categoria="producao" valor={`${ucMediaNoite || "—"} kg`} rotulo="Média ordenha — noite" />
-                <Indicador categoria="producao" valor={ucNumerosEscopo.size} rotulo="Vacas no filtro" />
-                <Indicador categoria="producao" valor={ucRegistros.length} rotulo="Controles no filtro" />
+              // Média do escopo já era o único KPI marcado em verde — vira a
+              // métrica-âncora em vez de competir em pé de igualdade com os outros
+              // 5-6 números, que continuam do lado, menores. Mesmos dados de antes.
+              <div className="card mb-3" style={{ padding: "1.1rem 1.3rem" }}>
+                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Média do {ucLabelEscopo}</div>
+                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+                  {ucMedia} kg
+                </div>
+                <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMenor ?? "—"} kg</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Menor</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMediaManha || "—"} kg</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Média ordenha — manhã</div>
+                  </div>
+                  {ucTemTerceiraOrdenha && (
+                    <div>
+                      <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMediaTarde || "—"} kg</div>
+                      <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Média ordenha — tarde</div>
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucMediaNoite || "—"} kg</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Média ordenha — noite</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucNumerosEscopo.size}</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Vacas no filtro</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ucRegistros.length}</div>
+                    <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Controles no filtro</div>
+                  </div>
+                </div>
               </div>
             )}
 
