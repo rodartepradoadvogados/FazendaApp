@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from fazenda.auth import exigir_modulo_contratado
+from fazenda.auth import exigir_modulo, exigir_modulo_contratado
 
 from . import (
     animais,
@@ -71,7 +71,14 @@ router.include_router(servicos.router)
 # já tratado como financeiro-adjacente em main.py::_PREFIXOS_RH_MODO_SUPORTE
 # (bloqueio de escrita/leitura em modo suporte) — esta trava só estende essa
 # mesma decisão para o módulo contratado.
-_exige_financeiro = [Depends(exigir_modulo_contratado("financeiro"))]
+#
+# `exigir_modulo_contratado` só confere se a FAZENDA (tenant) contratou o
+# módulo — não confere se o USUÁRIO logado tem a permissão "financeiro" (o
+# frontend esconde a tela de Folha de Pagamento de quem só tem "parametros",
+# mas sem `exigir_modulo` aqui o backend deixava passar: um operador com
+# "parametros" e sem "financeiro" conseguia ler/editar folha, rescisão, vale
+# e pagamento de diária/empreita chamando a API direto).
+_exige_financeiro = [Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))]
 router.include_router(rh_folha.router, dependencies=_exige_financeiro)
 router.include_router(rh_contratos.router, dependencies=_exige_financeiro)
 router.include_router(rh_vale_item.router, dependencies=_exige_financeiro)

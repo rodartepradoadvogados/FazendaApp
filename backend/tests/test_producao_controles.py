@@ -97,6 +97,26 @@ class TestCriarControles:
         assert registro["ordenha3_kg"] is None
         assert registro["grupo_primario"] == "01 - Alta"
 
+    def test_reenviar_o_mesmo_animal_no_mesmo_dia_atualiza_em_vez_de_duplicar(self, client):
+        """#68/#72 — reenvio (duplo clique, funcionário achando que não
+        salvou) não pode duplicar a produção do dia; upsert por
+        (numero_matriz, data_controle) em vez de inserir de novo."""
+        client.post("/producao/controles", json={
+            "data_controle": "2026-07-08",
+            "entradas": [{"numero_matriz": "101", "ordenhas": [12.5, 10.0]}],
+        })
+        r2 = client.post("/producao/controles", json={
+            "data_controle": "2026-07-08",
+            "entradas": [{"numero_matriz": "101", "ordenhas": [15.0, 11.0]}],
+        })
+        assert r2.status_code == 200
+        assert r2.json()["criados"] == 1
+
+        r = client.get("/producao/controles")
+        registros_101 = [c for c in r.json()["controles"] if c["numero"] == "101"]
+        assert len(registros_101) == 1
+        assert registros_101[0]["producao_kg"] == 26.0
+
     def test_persiste_terceira_ordenha(self, client):
         client.post("/producao/controles", json={
             "data_controle": "2026-07-08",

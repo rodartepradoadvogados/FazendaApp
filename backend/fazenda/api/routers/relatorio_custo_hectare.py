@@ -54,7 +54,7 @@ def custo_por_hectare(
     periodo = [c for c in contas if c.data_competencia and data_inicio <= c.data_competencia <= data_fim]
     # Vale de funcionário/empreiteiro lançado a partir de um item não é
     # despesa da fazenda — ver rules/vale_item.py.
-    ajustes = ajuste_vale_por_conta(session, periodo, None)
+    ajustes = ajuste_vale_por_conta(session, periodo, fazenda_id)
     # Item com centro de custo próprio (override) é rateado entre os centros
     # dos itens em vez de cair inteiro no centro de custo da nota — ver
     # valor_gerencial_por_centro_custo.

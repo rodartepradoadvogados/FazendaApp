@@ -286,6 +286,7 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
   }
 
   async function excluirFolha(id: number) {
+    if (!confirm("Excluir este lançamento de folha? Isso não pode ser desfeito.")) return;
     try { await excluirFolhaCowData(id); setFolhas(await fetchFolhaMembroCowData(pessoa.id)); } catch (e: any) { setErro(e.message); }
   }
 

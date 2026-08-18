@@ -126,7 +126,10 @@ def _buscar_um(
         )
 
     if tipo == "animal":
-        rows = session.exec(select(Animal)).all()
+        query = select(Animal)
+        if fazenda_id is not None:
+            query = query.where(Animal.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": a.numero, "titulo": a.numero, "subtitulo": f"{a.categoria_abrev or a.categoria_completa or '—'} · {a.grupo_primario or '—'}"}
             for a in rows if _contem(termo, a.numero, a.grupo_primario, a.categoria_completa)
@@ -134,7 +137,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "servico":
-        rows = session.exec(select(Servico)).all()
+        query = select(Servico)
+        if fazenda_id is not None:
+            query = query.where(Servico.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": s.id,
@@ -149,7 +155,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "parto":
-        rows = session.exec(select(Parto)).all()
+        query = select(Parto)
+        if fazenda_id is not None:
+            query = query.where(Parto.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": p.id,
@@ -180,7 +189,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "sanidade":
-        rows = session.exec(select(Sanidade)).all()
+        query = select(Sanidade)
+        if fazenda_id is not None:
+            query = query.where(Sanidade.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": s.id,
@@ -195,7 +207,10 @@ def _buscar_um(
 
     if tipo == "protocolo_sanitario_lancamento":
         protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
-        rows = session.exec(select(ProtocoloSanitarioLancamento)).all()
+        query = select(ProtocoloSanitarioLancamento)
+        if fazenda_id is not None:
+            query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         aplicacoes_por_lancamento: dict[int, list] = {}
         for ap in session.exec(select(ProtocoloSanitarioAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
@@ -217,7 +232,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "protocolo_iatf_lancamento":
-        rows = session.exec(select(ProtocoloIatfLancamento)).all()
+        query = select(ProtocoloIatfLancamento)
+        if fazenda_id is not None:
+            query = query.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         aplicacoes_por_lancamento: dict[int, list] = {}
         for ap in session.exec(select(ProtocoloIatfAplicacao)).all():
             aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
@@ -239,7 +257,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "financeiro":
-        rows = session.exec(select(ContaGerencial)).all()
+        query = select(ContaGerencial)
+        if fazenda_id is not None:
+            query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": c.id,
@@ -313,7 +334,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "estoque":
-        rows = session.exec(select(Estoque)).all()
+        query = select(Estoque)
+        if fazenda_id is not None:
+            query = query.where(Estoque.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": e.id, "titulo": e.nome, "subtitulo": f"{e.quantidade or 0} {e.unidade or ''}"}
             for e in rows if _contem(termo, e.nome)
@@ -349,7 +373,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "fornecedor":
-        rows = session.exec(select(Fornecedor)).all()
+        query = select(Fornecedor)
+        if fazenda_id is not None:
+            query = query.where(Fornecedor.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": f.id, "titulo": f.nome, "subtitulo": f"{f.tipo} · {f.categoria or '—'}"}
             for f in rows if _contem(termo, f.nome, f.tipo, f.categoria)
@@ -365,27 +392,42 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "pessoa":
-        rows = session.exec(select(Pessoa)).all()
+        query = select(Pessoa)
+        if fazenda_id is not None:
+            query = query.where(Pessoa.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": p.id, "titulo": p.nome, "subtitulo": (p.tipo or "").replace(",", ", ")} for p in rows if _contem(termo, p.nome, p.tipo)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "principio_ativo":
-        rows = session.exec(select(PrincipioAtivo)).all()
+        query = select(PrincipioAtivo)
+        if fazenda_id is not None:
+            query = query.where(PrincipioAtivo.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": p.id, "titulo": p.nome, "subtitulo": "Ativo" if p.ativo else "Inativo"} for p in rows if _contem(termo, p.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "doenca":
-        rows = session.exec(select(Doenca)).all()
+        query = select(Doenca)
+        if fazenda_id is not None:
+            query = query.where(Doenca.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": d.id, "titulo": d.nome, "subtitulo": "Ativo" if d.ativo else "Inativo"} for d in rows if _contem(termo, d.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "evento_sanitario":
-        rows = session.exec(select(EventoSanitario)).all()
+        query = select(EventoSanitario)
+        if fazenda_id is not None:
+            query = query.where(EventoSanitario.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": e.id, "titulo": e.nome, "subtitulo": "Ativo" if e.ativo else "Inativo"} for e in rows if _contem(termo, e.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "protocolo_sanitario":
-        rows = session.exec(select(ProtocoloSanitario)).all()
+        query = select(ProtocoloSanitario)
+        if fazenda_id is not None:
+            query = query.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": p.id, "titulo": p.nome, "subtitulo": "Mastite" if p.eh_mastite else "—"}
             for p in rows if _contem(termo, p.nome)
@@ -395,7 +437,10 @@ def _buscar_um(
     if tipo == "calendario_sanitario":
         eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
         doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
-        rows = session.exec(select(CalendarioSanitario)).all()
+        query = select(CalendarioSanitario)
+        if fazenda_id is not None:
+            query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": c.id,
              "titulo": f"{eventos.get(c.evento_sanitario_id, '—')} — {_br(c.data_evento)}",
@@ -448,7 +493,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         return REGISTRO[tipo].alvos(id_=id_, session=session, fazenda_id=fazenda_id)
 
     if tipo == "animal":
-        animal = session.exec(select(Animal).where(Animal.numero == id_)).first()
+        query_animal = select(Animal).where(Animal.numero == id_)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if not animal:
             raise HTTPException(status_code=404, detail="Animal não encontrado")
         servicos = session.exec(select(Servico).where(Servico.numero_matriz == id_)).all()
@@ -468,13 +516,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "servico":
         s = session.get(Servico, int(id_))
-        if not s:
+        if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Serviço não encontrado")
         return [f"Serviço de {s.numero_matriz} em {_br(s.data_servico)}"], [s]
 
     if tipo == "parto":
         p = session.get(Parto, int(id_))
-        if not p:
+        if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Parto não encontrado")
         return [f"Parto de {p.numero_matriz} em {_br(p.data_parto)}"], [p]
 
@@ -486,13 +534,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "sanidade":
         s = session.get(Sanidade, int(id_))
-        if not s:
+        if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Registro não encontrado")
         return [f"Aplicação de {s.produto} em {s.numero_matriz}"], [s]
 
     if tipo == "protocolo_sanitario_lancamento":
         lancamento = session.get(ProtocoloSanitarioLancamento, int(id_))
-        if not lancamento:
+        if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento de protocolo não encontrado")
         aplicacoes = session.exec(
             select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.lancamento_id == lancamento.id)
@@ -522,7 +570,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "protocolo_iatf_lancamento":
         lancamento = session.get(ProtocoloIatfLancamento, int(id_))
-        if not lancamento:
+        if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento de protocolo IATF não encontrado")
         aplicacoes = session.exec(
             select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento.id)
@@ -553,19 +601,19 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "estoque":
         e = session.get(Estoque, int(id_))
-        if not e:
+        if not e or (fazenda_id is not None and e.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Item não encontrado")
         return [f'Item de estoque "{e.nome}"'], [e]
 
     if tipo == "evento_manual":
         ev = session.get(AgendaManual, int(id_))
-        if not ev:
+        if not ev or (fazenda_id is not None and ev.fazenda_id not in (fazenda_id, None)):
             raise HTTPException(status_code=404, detail="Evento não encontrado")
         return [f'Evento manual "{ev.descricao}" em {_br(ev.data_evento)}'], [ev]
 
     if tipo == "financeiro":
         c = session.get(ContaGerencial, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento não encontrado")
         itens = (
             session.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == c.numero_lancamento)).all()
@@ -711,7 +759,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "fornecedor":
         fornecedor = session.get(Fornecedor, int(id_))
-        if not fornecedor:
+        if not fornecedor or (fazenda_id is not None and fornecedor.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
         vinculados = session.exec(select(Estoque).where(Estoque.fornecedor_id == fornecedor.id)).all()
         impacto = [f"Fornecedor {fornecedor.nome}"]
@@ -730,7 +778,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "pessoa":
         pessoa = session.get(Pessoa, int(id_))
-        if not pessoa:
+        if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Pessoa não encontrada")
         n_folha = len(session.exec(select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa.id)).all())
         n_vale = len(session.exec(select(ValeFuncionario).where(ValeFuncionario.pessoa_id == pessoa.id)).all())
@@ -744,7 +792,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "principio_ativo":
         pa = session.get(PrincipioAtivo, int(id_))
-        if not pa:
+        if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
         vinculados = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.principio_ativo_id == pa.id)).all()
         impacto = [f"Princípio ativo {pa.nome}"]
@@ -757,7 +805,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "doenca":
         doenca = session.get(Doenca, int(id_))
-        if not doenca:
+        if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Doença não encontrada")
         n_calendario = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.doenca_id == doenca.id)).all()
         n_protocolo = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.doenca_id == doenca.id)).all()
@@ -774,7 +822,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "evento_sanitario":
         evento = session.get(EventoSanitario, int(id_))
-        if not evento:
+        if not evento or (fazenda_id is not None and evento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Evento sanitário não encontrado")
         n_calendario = len(session.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == evento.id)).all())
         if n_calendario:
@@ -787,7 +835,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "protocolo_sanitario":
         protocolo = session.get(ProtocoloSanitario, int(id_))
-        if not protocolo:
+        if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Protocolo sanitário não encontrado")
         n_lancamentos = len(session.exec(
             select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo.id)
@@ -806,7 +854,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "calendario_sanitario":
         c = session.get(CalendarioSanitario, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
         evento = session.get(EventoSanitario, c.evento_sanitario_id)
         nome = evento.nome if evento else "evento"
@@ -840,6 +888,12 @@ _ORIGENS_POR_CLASSE: dict[type, list[str]] = {
     ProtocoloSanitarioAplicacao: ["protocolo_sanitario"],
     ProtocoloIatfLancamento: ["iatf"],
     Servico: ["ia_semen"],
+    # Compra de produto estocável lançada em Financeiro dá ENTRADA automática
+    # no estoque (sinal=+1, ver financeiro.py::criar_lancamento) — diferente
+    # dos demais casos acima (que são baixas/consumo, sinal=-1). Por isso o
+    # estorno abaixo trata "Entrada de compra" à parte: precisa SUBTRAIR a
+    # quantidade de volta, não devolver.
+    LancamentoItem: ["compra_financeiro"],
 }
 
 
@@ -898,7 +952,7 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
         query = select(MovimentoEstoque).where(
             MovimentoEstoque.origem_tipo.in_(origens),
             MovimentoEstoque.origem_id == obj.id,
-            MovimentoEstoque.movimento == "Aplicação",
+            MovimentoEstoque.movimento.in_(["Aplicação", "Entrada de compra"]),
         )
         if fazenda_id is not None:
             query = query.where(MovimentoEstoque.fazenda_id == fazenda_id)
@@ -908,11 +962,20 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
                 avisos.extend(_devolver_dose_semen_do_movimento(session, mov, fazenda_id, observacao))
                 continue
             item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=mov.nome_item, estoque_id=mov.estoque_id)
-            avisos.extend(estoque_baixa.devolver(
-                session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
-                fazenda_id=fazenda_id, observacao=observacao,
-                origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
-            ))
+            if mov.movimento == "Entrada de compra":
+                # A baixa original SOMOU ao estoque (compra financeira) — o
+                # estorno precisa SUBTRAIR a mesma quantidade, não devolver.
+                avisos.extend(estoque_baixa.movimentar(
+                    session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
+                    fazenda_id=fazenda_id, movimento="Saída de ajuste", observacao=observacao, sinal=-1,
+                    origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                ))
+            else:
+                avisos.extend(estoque_baixa.devolver(
+                    session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
+                    fazenda_id=fazenda_id, observacao=observacao,
+                    origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                ))
     return avisos
 
 

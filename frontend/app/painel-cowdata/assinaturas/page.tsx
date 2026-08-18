@@ -36,7 +36,8 @@ export default function AssinaturasCowData() {
     try { await aprovarContratoFazenda(fazendaId); carregar(); }
     catch (e: any) { setErro(e.message); } finally { setProcessando(null); }
   }
-  async function suspender(fazendaId: number) {
+  async function suspender(fazendaId: number, fazendaNome: string) {
+    if (!confirm(`Suspender o contrato de "${fazendaNome}"? Nenhum módulo fica acessível para essa fazenda até reaprovar.`)) return;
     setProcessando(fazendaId); setErro(null);
     try { await suspenderContratoFazenda(fazendaId); carregar(); }
     catch (e: any) { setErro(e.message); } finally { setProcessando(null); }
@@ -94,7 +95,7 @@ export default function AssinaturasCowData() {
                         <ShieldCheck size={12} /> Aprovar
                       </button>
                     ) : (
-                      <button onClick={() => suspender(fazenda.id)} disabled={processando === fazenda.id}
+                      <button onClick={() => suspender(fazenda.id, fazenda.nome)} disabled={processando === fazenda.id}
                         style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "var(--r-sm)", border: `1px solid ${COR.vermelho}`, background: "transparent", color: COR.vermelho, cursor: "pointer" }}>
                         <Ban size={12} /> Suspender
                       </button>

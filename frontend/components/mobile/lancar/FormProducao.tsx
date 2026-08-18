@@ -72,37 +72,54 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
     );
   }
 
+  // Estas 6 sub-abas reaproveitam o formulário do site tal como é — ele
+  // salva direto pela rede (authFetch), sem passar pela fila offline
+  // (enviarOuEnfileirar) do resto do app de campo. Migrar cada uma pra fila
+  // é trabalho maior (são formulários compartilhados com o desktop) —
+  // enquanto isso não acontece, avisa explicitamente que aqui precisa de
+  // internet no momento de salvar, pra não confiar só no ícone de conexão
+  // do topo (que é global e não reflete esta tela específica).
+  const avisoExigeInternet = (
+    <MobAviso tipo="offline">Esta tela precisa de internet no momento de salvar — não fica guardada pra enviar depois se a conexão cair.</MobAviso>
+  );
+
   return (
     <>
       <MobVoltar titulo={TITULOS_SUB[sub]} onVoltar={() => setSub(null)} />
       {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">
+          {avisoExigeInternet}
           <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} />
         </div>
       )}
       {sub === "secagem" && (
         <div className="mob-form-embutido">
+          {avisoExigeInternet}
           <FormSecagem animais={animais as any} estoque={estoque} produtos={produtosSanidade} />
         </div>
       )}
       {sub === "inducao" && (
         <div className="mob-form-embutido">
+          {avisoExigeInternet}
           <FormInducaoLactacao animais={animais as any} />
         </div>
       )}
       {sub === "qualidade" && (
         <div className="mob-form-embutido">
+          {avisoExigeInternet}
           <FormQualidadeLeite animais={animais as any} />
         </div>
       )}
       {sub === "entrega" && (
         <div className="mob-form-embutido">
+          {avisoExigeInternet}
           <FormEntregaLeite />
         </div>
       )}
       {sub === "bst" && (
         <div className="mob-form-embutido">
+          {avisoExigeInternet}
           {agenda ? <PainelLancarBst agenda={agenda} onAtualizado={carregarAgenda} /> : <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Carregando…</p>}
         </div>
       )}
