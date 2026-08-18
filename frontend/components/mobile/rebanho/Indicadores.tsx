@@ -421,6 +421,10 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   type Cartao = {
     chave: string; titulo: string; valor: string; onClick: () => void; icone: React.ReactNode;
     combo?: { valor: string; rotulo: string }[];
+    // "Atrasadas" é o único card do painel que sinaliza um problema, não uma
+    // contagem neutra — ganha destaque em âmbar pra não se confundir com os
+    // demais (ex.: "Lotes", "IEP médio"), que são só números de consulta.
+    atencao?: boolean;
   };
   const cartoes: Cartao[] = [
     { chave: "animais", titulo: "Animais", valor: val(animais.length || null), onClick: onAbrirAnimais, icone: <CowIcon size={20} color="var(--mob-dourado-2)" /> },
@@ -431,7 +435,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
     { chave: "vazias", titulo: "Vazias", valor: val(rep.vazias), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
     { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas"), icone: <CheckCircle2 size={20} /> },
     // Contagem AO VIVO (estado), não mais Animal.sit_rep — mesma fonte da lista de drill-down.
-    { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} /> },
+    { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} />, atencao: true },
     { chave: "protocolo", titulo: "IA atual (D0–D11)", valor: val(contagemEstados.em_protocolo ?? null), onClick: () => setDrill("protocolo"), icone: <Syringe size={20} /> },
     // Contagem também ao vivo, para bater com a lista que o card abre.
     { chave: "partoPrevisto", titulo: "Parto previsto", valor: val(estadoAnimais.filter((e) => {
@@ -463,8 +467,12 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
           {cartoes.map((c) => (
             <button key={c.chave} type="button" onClick={c.onClick}
-              className="mob-card" style={{ padding: "0.9rem 0.85rem", textAlign: "center", cursor: "pointer", border: "1px solid var(--mob-border)" }}>
-              <div style={{ color: "var(--mob-dourado-2)", display: "flex", justifyContent: "center", marginBottom: "0.35rem" }}>{c.icone}</div>
+              className="mob-card" style={{
+                padding: "0.9rem 0.85rem", textAlign: "center", cursor: "pointer",
+                border: c.atencao ? "1px solid color-mix(in srgb, var(--mob-ambar) 45%, var(--mob-border))" : "1px solid var(--mob-border)",
+                background: c.atencao ? "color-mix(in srgb, var(--mob-ambar) 7%, var(--mob-surface))" : undefined,
+              }}>
+              <div style={{ color: c.atencao ? "var(--mob-ambar)" : "var(--mob-dourado-2)", display: "flex", justifyContent: "center", marginBottom: "0.35rem" }}>{c.icone}</div>
               {c.combo ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
                   {c.combo.map((x) => (
@@ -476,11 +484,11 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
                 </div>
               ) : (
                 <>
-                  <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: "var(--mob-text)" }}>{c.valor}</div>
+                  <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: c.atencao ? "var(--mob-ambar)" : "var(--mob-text)" }}>{c.valor}</div>
                   <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.35rem", fontWeight: 600 }}>{c.titulo}</div>
                 </>
               )}
-              <div style={{ fontSize: "0.68rem", color: "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
+              <div style={{ fontSize: "0.68rem", color: c.atencao ? "var(--mob-ambar)" : "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
                 ver lista <ChevronRight size={12} />
               </div>
             </button>

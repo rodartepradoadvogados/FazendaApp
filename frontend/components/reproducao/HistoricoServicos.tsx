@@ -289,12 +289,37 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <Indicador categoria="reprodutivo" valor={filtrados.length} rotulo={foco === "perdas" ? "Perdas" : "Registros"} />
-          {foco !== "perdas" && <Indicador categoria="reprodutivo" valor={positivos} cor="var(--green-light)" rotulo="Prenhezes" />}
-          {foco !== "perdas" && <Indicador categoria="reprodutivo" valor={taxa === null ? "—" : `${taxa}%`} cor="var(--blue)" rotulo="Concepção / serviço" />}
-          {foco === "todos" && <Indicador categoria="reprodutivo" valor={perdas} cor="var(--amber)" rotulo="Perdas de prenhez" />}
-        </div>
+        {foco === "perdas" ? (
+          <div className="grid grid-cols-1 gap-2 mb-4">
+            <Indicador categoria="reprodutivo" valor={filtrados.length} rotulo="Perdas" />
+          </div>
+        ) : (
+          // Concepção/serviço é o número que mede se o programa reprodutivo está
+          // funcionando — vira a métrica-âncora em vez de competir em pé de
+          // igualdade com Registros/Prenhezes/Perdas, que continuam do lado, menores.
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Concepção / serviço</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--blue)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {taxa === null ? "—" : `${taxa}%`}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{filtrados.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Registros</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--green-light)", fontVariantNumeric: "tabular-nums" }}>{positivos}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Prenhezes</div>
+              </div>
+              {foco === "todos" && (
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{perdas}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Perdas de prenhez</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="card">
           <div className="card-header mb-3 flex items-center justify-between"><span>{titulo}</span><span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span></div>

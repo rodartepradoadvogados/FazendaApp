@@ -178,7 +178,9 @@ function statEstoque(): string | null {
  *  próprio ícone NUNCA é apagado/dessaturado — instrução explícita do
  *  stakeholder). min-height 60px (acima do piso geral de 48px do app) foi a
  *  condição do próprio stakeholder para aprovar esta lista mais densa,
- *  mantendo o uso a uma mão no curral. A linha inteira é o alvo de toque. */
+ *  mantendo o uso a uma mão no curral. A linha inteira é o alvo de toque.
+ *  Sem moldura/fundo/margem próprios — vive dentro do card da seção
+ *  (SecaoRetratil, abaixo), separada das vizinhas por um filete superior. */
 function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
   icone: React.ReactNode; titulo: string; subtitulo?: string; cor?: string; onClick: () => void;
 }) {
@@ -187,9 +189,8 @@ function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
     <button type="button" onClick={onClick}
       style={{
         display: "flex", alignItems: "center", gap: "0.85rem", width: "100%",
-        minHeight: 60, padding: "0.6rem 1rem", marginBottom: "0.55rem",
-        background: "var(--mob-surface)", border: "1px solid var(--mob-border)",
-        borderRadius: "var(--r-app)", boxShadow: "var(--mob-sombra)",
+        minHeight: 60, padding: "0.6rem 1rem",
+        background: "transparent", border: "none", borderTop: "1px solid var(--mob-border)",
         color: "var(--mob-text)", textAlign: "left", cursor: "pointer",
       }}>
       <span style={{
@@ -214,15 +215,35 @@ function LinhaMenu({ icone, titulo, subtitulo, cor, onClick }: {
 
 const CHAVE_SECOES_COLAPSADAS = "mob_menu_secoes_colapsadas";
 
-/** Título de seção clicável (retrátil) — mesmo rótulo do .mob-secao de sempre,
- *  agora com seta de estado; lembra a escolha do usuário entre visitas
- *  (localStorage, chave CHAVE_SECOES_COLAPSADAS). */
+// Todas as seções nascem RECOLHIDAS na 1ª visita (sem nada salvo ainda em
+// localStorage) — antes o padrão era o conjunto vazio (tudo expandido de
+// cara), o que fazia a tela inicial do Menu já nascer com todos os itens de
+// todas as seções visíveis, exigindo bastante rolagem. Cada seção expandida
+// pelo usuário continua salva entre visitas, como já era (ver alternarSecao).
+const SECOES_PADRAO_COLAPSADAS = ["protocolos-restrito", "reproducao", "sanidade", "alimentacao", "producao", "gestao", "financeiro", "modulos", "administracao", "app"];
+
+/** Card de seção, clicável e retrátil (layout "1B"): o rótulo em CAIXA ALTA
+ *  de sempre agora é o cabeçalho de um card próprio — molduras/fundo iguais
+ *  ao dos outros cards do app —, com os itens (LinhaMenu) dentro dele quando
+ *  expandido, separados por um filete, não mais soltos em cards individuais.
+ *  Lembra a escolha do usuário entre visitas (localStorage, chave
+ *  CHAVE_SECOES_COLAPSADAS). */
 function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
   chave: string; titulo: string; colapsada: boolean; onAlternar: (chave: string) => void; children: React.ReactNode;
 }) {
   return (
-    <div>
-      <button type="button" className="mob-secao-retratil" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}>
+    <div style={{
+      background: "var(--mob-surface)", border: "1px solid var(--mob-border)",
+      borderRadius: "var(--r-app)", boxShadow: "var(--mob-sombra)",
+      marginBottom: "0.7rem", overflow: "hidden",
+    }}>
+      <button type="button" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
+          padding: "0.85rem 1rem", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+          fontSize: "var(--mob-fs-rotulo)", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
+          color: "var(--mob-muted)",
+        }}>
         <span>{titulo}</span>
         {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
       </button>
@@ -235,12 +256,12 @@ export default function Pagina() {
   const router = useRouter();
   const montado = typeof window !== "undefined";
   const [secoesColapsadas, setSecoesColapsadas] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
+    if (typeof window === "undefined") return new Set(SECOES_PADRAO_COLAPSADAS);
     try {
       const salvo = window.localStorage.getItem(CHAVE_SECOES_COLAPSADAS);
-      return salvo ? new Set(JSON.parse(salvo)) : new Set();
+      return salvo ? new Set(JSON.parse(salvo)) : new Set(SECOES_PADRAO_COLAPSADAS);
     } catch {
-      return new Set();
+      return new Set(SECOES_PADRAO_COLAPSADAS);
     }
   });
   // Telas de tela cheia fora do inventário SUBTELAS (módulos, administração,
