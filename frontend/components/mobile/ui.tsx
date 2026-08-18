@@ -97,10 +97,12 @@ export function MobCheck({ feito, onClick, title }: { feito: boolean; onClick?: 
 }
 
 /** Bloco grande do Lançamento Rápido — `cor` tinge o contorno e o fundo leve
- * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca. */
-export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; label: string; cor?: string; onClick: () => void }) {
+ * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca.
+ * `variante="grande"` é pra 1-3 destinos de maior frequência de uso real — vira
+ * uma linha horizontal mais alta em vez do quadrado padrão da grade 2×N. */
+export function MobBloco({ icone, label, cor, onClick, variante }: { icone: ReactNode; label: string; cor?: string; onClick: () => void; variante?: "grande" }) {
   return (
-    <button type="button" className="mob-bloco" onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
+    <button type="button" className={variante === "grande" ? "mob-bloco mob-bloco-grande" : "mob-bloco"} onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
       <span className="icone">{icone}</span>
       {label}
     </button>

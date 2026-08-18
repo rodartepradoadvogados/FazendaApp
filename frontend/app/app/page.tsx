@@ -6,7 +6,7 @@
 // site desktop (POST/DELETE /agenda/realizados). Funciona offline: a lista vem
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
@@ -924,6 +924,39 @@ export default function AgendaMovel() {
     return r.kind === "grupo" ? renderGrupoSanitario(r.g, alt) : renderCartao(r.e, alt);
   }
 
+  // Data do item, pra saber se está atrasado — mesma checagem `data < hoje`
+  // usada dentro de cada renderCartao/renderGrupoSanitario pra colorir o
+  // filete lateral do cartão (ver .mob-card[data-estado] em globals.css).
+  function dataRenderavel(r: Renderavel): string {
+    return r.kind === "grupo" ? r.g.data : r.e.data;
+  }
+
+  // Lista do dia (Hoje + atrasadas, já ordenada com as atrasadas primeiro —
+  // ver `eventos` acima): agrupa visualmente as duas faixas com um rótulo de
+  // seção, uma vez cada, na fronteira entre atrasada e hoje. O filete lateral
+  // vermelho do cartão já marca cada item individualmente; isso aqui é só pra
+  // quem está rolando rápido não precisar ler cartão por cartão pra notar que
+  // trocou de faixa.
+  function renderListaDoDia(evs: Evento[]) {
+    let faixaAnterior: "atrasada" | "hoje" | null = null;
+    return montarLista(evs).map((r, i) => {
+      const atrasado = dataRenderavel(r) < hoje;
+      const faixaAtual = atrasado ? "atrasada" : "hoje";
+      const mostrarRotulo = faixaAtual !== faixaAnterior;
+      faixaAnterior = faixaAtual;
+      return (
+        <Fragment key={i}>
+          {mostrarRotulo && (
+            <div className="mob-secao" style={atrasado ? { color: "var(--mob-vermelho)" } : undefined}>
+              {atrasado ? "Atrasada" : "Hoje"}
+            </div>
+          )}
+          {renderRenderavel(r, (i % 2) as 0 | 1)}
+        </Fragment>
+      );
+    });
+  }
+
   function renderCartao(e: Evento, alt: 0 | 1) {
     const { chave, rotulo } = catInfo(e.categoria);
     const feito = feitos.has(e.id);
@@ -1759,7 +1792,7 @@ export default function AgendaMovel() {
               </p>
             </div>
           ) : (
-            montarLista(eventos).map((r, i) => renderRenderavel(r, (i % 2) as 0 | 1))
+            renderListaDoDia(eventos)
           )}
 
           {/* Consulta antecipada: os dois dias seguintes, recolhidos. */}

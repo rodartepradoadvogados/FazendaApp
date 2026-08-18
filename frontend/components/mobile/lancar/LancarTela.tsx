@@ -96,23 +96,38 @@ export function LancarTela() {
         ? <ChipAnimal animal={fixado} onSoltar={() => setFixado(null)} />
         : <BuscaAnimal animais={animais.dados} onEscolher={setFixado} />}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", marginTop: "0.4rem" }}>
-        <MobBloco icone={<Activity size={22} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
-        <MobBloco icone={<Milk size={22} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
-        <MobBloco icone={<Syringe size={22} />} label="Sanidade" onClick={() => setTela("sanidade")} />
+      {/* Os 3 destinos de maior frequência de uso real (rotina diária de
+          campo) ganham um bloco maior, empilhado, acima da grade normal —
+          menos rolagem pro toque mais comum. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "0.4rem" }}>
+        <MobBloco variante="grande" icone={<Activity size={24} />} label="Reprodutivo" onClick={() => setTela("reprodutivo")} />
+        <MobBloco variante="grande" icone={<Milk size={24} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
+        <MobBloco variante="grande" icone={<Syringe size={24} />} label="Sanidade" onClick={() => setTela("sanidade")} />
+      </div>
+
+      <div className="mob-secao">Outros lançamentos</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem" }}>
         <MobBloco icone={<Wheat size={22} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
         <MobBloco icone={<ListChecks size={22} />} label="Protocolos" onClick={() => setTela("protocolos")} />
         <MobBloco icone={<ArrowLeftRight size={22} />} label="Movimentar" onClick={() => setTela("movimentar")} />
-        {/* Vermelho reservado para as 2 ações realmente destrutivas/irreversíveis
-            (baixa de animal, exclusão de lançamento) — as demais usam o mesmo
-            dourado neutro, sem uma cor por seção (ver .mob-bloco .icone). */}
-        <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
         {montado && podeModulo("financeiro") && (
           <MobBloco icone={<Landmark size={22} />} label="Financeiro" onClick={() => { setTipoFinanceiroInicial(undefined); setTela("financeiro"); }} />
         )}
         {montado && podeModulo("estoque") && (
           <MobBloco icone={<Boxes size={22} />} label="Balanço de estoque" onClick={() => setTela("estoque")} />
         )}
+      </div>
+
+      {/* Ações realmente destrutivas/irreversíveis — separadas estruturalmente
+          do resto da grade, não só pela cor do ícone (ver .mob-bloco .icone),
+          pra não ficarem lado a lado com um toque comum do dia a dia. */}
+      <div className="mob-secao" style={{ color: "var(--mob-vermelho)" }}>Ações irreversíveis</div>
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem", padding: "0.6rem", borderRadius: "var(--r-app)",
+        border: "1px solid color-mix(in srgb, var(--mob-vermelho) 35%, transparent)",
+        background: "color-mix(in srgb, var(--mob-vermelho) 6%, transparent)",
+      }}>
+        <MobBloco icone={<Skull size={22} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
         <MobBloco icone={<Trash2 size={22} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
       </div>
     </div>
