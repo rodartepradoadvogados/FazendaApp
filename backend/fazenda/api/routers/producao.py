@@ -175,19 +175,29 @@ def criar_controles(
         if fazenda_id is not None:
             animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
         animal = session.exec(animal_query).first()
-        registro = ControleLeiteiro(
-            fazenda_id=fazenda_id,
-            animal_id=animal.id if animal else None,
-            numero_matriz=entrada.numero_matriz,
-            raca=animal.raca if animal else None,
-            data_controle=dados.data_controle,
-            producao_kg=producao_kg,
-            del_no_controle=animal.del_dias if animal else None,
-            ordenha1_kg=o1,
-            ordenha2_kg=o2,
-            ordenha3_kg=o3,
-            usuario_id=usuario_id,
+        # Upsert por (numero_matriz, data_controle) — sem isso, reenviar o
+        # mesmo lançamento (ex.: funcionário achando que "guardado" na fila
+        # offline não tinha ido de verdade e relançando) duplicava a
+        # produção do dia, inflando médias/relatórios em silêncio. Upsert em
+        # vez de bloquear com erro: também cobre o caso legítimo de corrigir
+        # um valor digitado errado relançando o mesmo dia.
+        existente_query = select(ControleLeiteiro).where(
+            ControleLeiteiro.numero_matriz == entrada.numero_matriz,
+            ControleLeiteiro.data_controle == dados.data_controle,
         )
+        if fazenda_id is not None:
+            existente_query = existente_query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        registro = session.exec(existente_query).first()
+        if registro is None:
+            registro = ControleLeiteiro(fazenda_id=fazenda_id, numero_matriz=entrada.numero_matriz, data_controle=dados.data_controle)
+        registro.animal_id = animal.id if animal else None
+        registro.raca = animal.raca if animal else None
+        registro.producao_kg = producao_kg
+        registro.del_no_controle = animal.del_dias if animal else None
+        registro.ordenha1_kg = o1
+        registro.ordenha2_kg = o2
+        registro.ordenha3_kg = o3
+        registro.usuario_id = usuario_id
         session.add(registro)
         criados.append(registro)
     session.commit()
@@ -485,17 +495,24 @@ def criar_pesagens(
         if fazenda_id is not None:
             animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
         animal = session.exec(animal_query).first()
-        registro = PesagemCorporal(
-            fazenda_id=fazenda_id,
-            numero_matriz=entrada.numero_matriz,
-            data_pesagem=dados.data_pesagem,
-            peso_kg=entrada.peso_kg,
-            del_dias=animal.del_dias if animal else None,
-            idade_meses=animal.idade_meses if animal else None,
-            grupo_primario=animal.grupo_primario if animal else None,
-            fase=_fase_transicao(session, animal, dados.data_pesagem),
-            usuario_id=usuario_id,
+        # Upsert por (numero_matriz, data_pesagem) — mesma razão do upsert em
+        # criar_controles (ControleLeiteiro): reenvio do mesmo lançamento não
+        # deve duplicar o peso do dia.
+        existente_query = select(PesagemCorporal).where(
+            PesagemCorporal.numero_matriz == entrada.numero_matriz,
+            PesagemCorporal.data_pesagem == dados.data_pesagem,
         )
+        if fazenda_id is not None:
+            existente_query = existente_query.where(PesagemCorporal.fazenda_id == fazenda_id)
+        registro = session.exec(existente_query).first()
+        if registro is None:
+            registro = PesagemCorporal(fazenda_id=fazenda_id, numero_matriz=entrada.numero_matriz, data_pesagem=dados.data_pesagem)
+        registro.peso_kg = entrada.peso_kg
+        registro.del_dias = animal.del_dias if animal else None
+        registro.idade_meses = animal.idade_meses if animal else None
+        registro.grupo_primario = animal.grupo_primario if animal else None
+        registro.fase = _fase_transicao(session, animal, dados.data_pesagem)
+        registro.usuario_id = usuario_id
         session.add(registro)
         criados.append(registro)
     session.commit()
