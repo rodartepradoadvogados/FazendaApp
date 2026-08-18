@@ -2496,10 +2496,30 @@ function RelatorioCompraVendaAnimaisView() {
 
       {linhas && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-            <KPI v={String(linhas.length)} l="Lançamentos" />
-            <KPI v={formatBRL(totalCompra)} l="Total comprado" c="var(--red)" />
-            <KPI v={formatBRL(totalVenda)} l="Total vendido" c="var(--green-light)" />
+          {/* "Par de contraste": comprado e vendido são igualmente relevantes
+              em sentidos opostos — nenhum dos dois deve virar âncora do outro
+              (diferente do padrão de métrica-âncora usado no resto do app).
+              Os dois dividem o mesmo card com peso visual igual, separados
+              por um filete; Lançamentos vira legenda pequena no rodapé. */}
+          <div className="card mb-4" style={{ padding: "1.2rem 1.4rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total comprado</div>
+                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.1rem", fontWeight: 800, lineHeight: 1, color: "var(--red)", marginTop: ".3rem", fontVariantNumeric: "tabular-nums" }}>
+                  {formatBRL(totalCompra)}
+                </div>
+              </div>
+              <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)", margin: "0 1.6rem" }} />
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total vendido</div>
+                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.1rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".3rem", fontVariantNumeric: "tabular-nums" }}>
+                  {formatBRL(totalVenda)}
+                </div>
+              </div>
+            </div>
+            <div style={{ marginTop: "1rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", fontSize: ".72rem", color: "var(--text-muted)" }}>
+              {linhas.length} lançamento{linhas.length !== 1 ? "s" : ""} no período
+            </div>
           </div>
           <div className="card">
             <div className="flex items-center justify-between mb-3">

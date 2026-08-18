@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertOctagon, AlertTriangle, CheckCircle2, PartyPopper } from "lucide-react";
 import { fetchNaoConformidades, NaoConformidadeItem, NaoConformidadeSemMeta, NaoConformidadesResp } from "@/lib/api";
-import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { SecaoRecolhivel } from "@/components/ui";
 
 const DOMINIO_LABEL: Record<string, string> = {
   reproducao: "Reprodução", recria: "Recria", financeiro: "Financeiro", manejo: "Manejo",
@@ -119,10 +119,32 @@ export default function NaoConformidades() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0.7rem", marginBottom: "1.2rem" }}>
-        <Indicador categoria="geral" icon={AlertOctagon} cor="var(--red)" valor={dados.resumo.critico} rotulo="Crítico" />
-        <Indicador categoria="geral" icon={AlertTriangle} cor="var(--amber)" valor={dados.resumo.atencao} rotulo="Atenção" />
-        <Indicador categoria="geral" icon={CheckCircle2} cor="var(--green-light)" valor={dados.resumo.ok} rotulo="Em dia" />
+      {/* "Estados por severidade": os 3 números são estados do MESMO todo
+          (dados.resumo.total), não métricas independentes — e o pior estado
+          (Crítico) nem sempre é o maior valor, então eleger uma âncora por
+          tamanho seria enganoso. A ordem (pior→melhor) carrega a hierarquia;
+          cada linha ganha uma barra proporcional ao total, mesma técnica já
+          usada em Análise Reprodutiva ("Concepção por dimensão"). */}
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-app)", marginBottom: "1.2rem" }}>
+        {([
+          { chave: "critico", label: "Crítico", cor: "var(--red)", Icone: AlertOctagon, valor: dados.resumo.critico },
+          { chave: "atencao", label: "Atenção", cor: "var(--amber)", Icone: AlertTriangle, valor: dados.resumo.atencao },
+          { chave: "ok", label: "Em dia", cor: "var(--green-light)", Icone: CheckCircle2, valor: dados.resumo.ok },
+        ] as const).map((s, i) => {
+          const pct = dados.resumo.total > 0 ? Math.round((s.valor / dados.resumo.total) * 100) : 0;
+          return (
+            <div key={s.chave} style={{ display: "flex", alignItems: "center", gap: "0.9rem", padding: "0.8rem 1.1rem", borderBottom: i < 2 ? "1px solid var(--border)" : "none" }}>
+              <s.Icone size={16} style={{ color: s.cor, flexShrink: 0 }} />
+              <span style={{ width: 90, flexShrink: 0, fontWeight: 700, fontSize: "0.85rem", color: s.cor }}>{s.label}</span>
+              <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: 999, height: 14, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: s.cor }} />
+              </div>
+              <span style={{ width: 100, flexShrink: 0, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {s.valor} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>({pct}%)</span>
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem", marginBottom: "1.2rem" }}>
