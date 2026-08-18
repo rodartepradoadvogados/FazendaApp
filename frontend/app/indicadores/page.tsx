@@ -117,14 +117,32 @@ export function IndicadoresGerais() {
             onClick={() => abrir("Vazias", (a) => (a.sit_rep || "").startsWith("Vaz."))} />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <Indicador categoria="producao" cor="var(--green-light)" valor={num(prod?.producao_total_dia_kg, " kg")}
-            rotulo="Produção/dia (últ. controle)" extra={<Milk size={16} style={{ color: "var(--text-muted)" }} />}
-            onClick={abrirUltimoControle} />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.producao_media_kg, " kg")} rotulo="Média por vaca" />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.del_medio)} rotulo="DEL médio (dias)" />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(reb?.vacas_lactacao)} rotulo="Vacas em lactação atual"
-            onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )} />
+        {/* Produção do dia é o número que o dono olha primeiro todo dia — vira a
+            âncora da tela em vez de disputar o mesmo tamanho dos outros 3 dados
+            de produção, que continuam do lado, só menores. */}
+        <div className="card mb-6" style={{ padding: "1.1rem 1.4rem", display: "flex", alignItems: "center", gap: "2.2rem", flexWrap: "wrap" }}>
+          <div style={{ cursor: "pointer" }} onClick={abrirUltimoControle}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+              <Milk size={13} /> Produção do dia · último controle
+            </div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "3rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
+              {num(prod?.producao_total_dia_kg, " kg")}
+            </div>
+          </div>
+          <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: "2rem", flexWrap: "wrap" }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.producao_media_kg, " kg")}</div>
+              <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Média/vaca</div>
+            </div>
+            <div style={{ textAlign: "right", ...clickable }} onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )}>
+              <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: animais.length ? "var(--dourado-light)" : undefined }}>{num(reb?.vacas_lactacao)}</div>
+              <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Em lactação</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.del_medio)}</div>
+              <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>DEL médio</div>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

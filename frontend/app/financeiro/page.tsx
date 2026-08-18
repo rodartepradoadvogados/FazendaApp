@@ -734,15 +734,33 @@ export default function FinanceiroPage() {
         {CONTAS_IDS.has(rel) ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-              <div className={kpisContas?.vencido != null ? "grid grid-cols-3 gap-2 mb-4" : "grid grid-cols-1 gap-2 mb-4"}>
+              <div className="mb-4">
                 {kpisContas?.vencido != null ? (
-                  <>
-                    <KPI v={formatBRL(kpisContas.total)} l={rel === "a_pagar" ? "Total em aberto" : "Total a receber"} c="var(--dourado-light)" />
-                    <KPI v={formatBRL(kpisContas.vencido)} l="Vencido" c="var(--red)" />
-                    <KPI v={formatBRL(kpisContas.aVencer ?? 0)} l="Vence em 7 dias" c="var(--amber)" />
-                  </>
+                  // Um número dominante (o que decide se precisa agir agora) em vez
+                  // de 3 cartões do mesmo peso competindo pelo olhar — vencido e
+                  // "vence em 7 dias" continuam os mesmos dados, só menores.
+                  <div className="card" style={{ padding: "1.1rem 1.3rem" }}>
+                    <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+                      {rel === "a_pagar" ? "Total em aberto" : "Total a receber"}
+                    </div>
+                    <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
+                      {formatBRL(kpisContas.total)}
+                    </div>
+                    <div style={{ display: "flex", gap: "1.6rem", marginTop: "0.9rem", paddingTop: "0.8rem", borderTop: "1px solid var(--border)" }}>
+                      <div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--red)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(kpisContas.vencido)}</div>
+                        <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.1rem" }}>Vencido</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(kpisContas.aVencer ?? 0)}</div>
+                        <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.1rem" }}>Vence em 7 dias</div>
+                      </div>
+                    </div>
+                  </div>
                 ) : (
-                  <KPI v={formatBRL(kpisContas?.total ?? 0)} l="Total do período" c="var(--dourado-light)" />
+                  <div className="grid grid-cols-1 gap-2">
+                    <KPI v={formatBRL(kpisContas?.total ?? 0)} l="Total do período" c="var(--dourado-light)" />
+                  </div>
                 )}
               </div>
               {filtrosCard}
@@ -3462,7 +3480,6 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
                 <ThOrd rotulo={emAberto ? "Vencimento" : "Data"} chave="data" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
                 <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
                 <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
-                <th style={theadStickyStyle}>Centro custo</th><th style={theadStickyStyle}>Documento</th>
                 <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
                 {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />}
                 {!emAberto && <th style={theadStickyStyle}>Conta bancária</th>}
@@ -3488,10 +3505,26 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
                           vale
                         </span>
                       )}
+                      {/* Centro de custo e documento não são ordenáveis nem filtrados
+                          por coluna própria (o filtro de documento já busca aqui
+                          também) — viram apoio dentro da célula em vez de coluna
+                          fixa, pra reduzir a rolagem horizontal em notebook. */}
+                      {(r.centro_custo || r.tipo_documento || r.numero_documento) && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.25rem" }}>
+                          {r.centro_custo && (
+                            <span style={{ fontSize: "0.64rem", padding: "0.08rem 0.42rem", borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                              {r.centro_custo}
+                            </span>
+                          )}
+                          {(r.tipo_documento || r.numero_documento) && (
+                            <span style={{ fontSize: "0.64rem", padding: "0.08rem 0.42rem", borderRadius: "999px", background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                              {r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
-                    <td style={{ fontSize: "0.75rem" }}>{r.centro_custo}</td>
-                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
                     {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
@@ -3510,7 +3543,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo, o
                   </tr>
                 );
               })}
-              {!ordenados.length && <tr><td colSpan={admin ? 11 : 10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
+              {!ordenados.length && <tr><td colSpan={admin ? 9 : 8} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
             </tbody>
           </table>
         </div>
