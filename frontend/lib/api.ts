@@ -1,6 +1,15 @@
 // Funções de comunicação com o backend FastAPI
 export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Mesmo gerador de `lib/offline.ts::gerarId` (não importado de lá pra evitar
+// import circular — offline.ts já importa authFetch daqui). Usado só pelo
+// header Idempotency-Key em POST/PUT sensíveis a duplo clique/retry de rede
+// (ver main.py::_idempotencia) — não crypto.randomUUID() porque WebView
+// Android desatualizado (uso rural comum) pode não ter a API.
+function gerarChaveIdempotencia(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /**
  * Extrai uma mensagem legível do `detail` de um erro da API.
  *
@@ -4908,7 +4917,9 @@ export async function atualizarClassificacao(id: number, dados: { nome: string; 
 
 export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() },
+    body: JSON.stringify(dados),
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
@@ -5077,7 +5088,9 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() },
+    body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();

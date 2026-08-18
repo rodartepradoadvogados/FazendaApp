@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -360,6 +361,17 @@ class XmlIn(BaseModel):
 
 def _proximo_numero_lancamento(session: Session, ano: int) -> str:
     prefixo = f"LC-{ano}-"
+    # Trava (advisory lock, só em Postgres — produção) presa à transação
+    # atual: sem ela, duas requisições quase simultâneas liam o mesmo "maior
+    # número existente" e geravam o MESMO numero_lancamento para notas
+    # diferentes — a partir daí, excluir/estornar/detectar duplicado (que
+    # agrupam por numero_lancamento) passavam a tratar as duas notas como se
+    # fossem parcelas uma da outra. `pg_advisory_xact_lock` libera sozinho no
+    # commit/rollback da transação que chamou esta função — não precisa de
+    # unlock manual. SQLite (testes/dev local) não tem esse lock e os testes
+    # não têm concorrência real entre conexões, então o no-op é seguro ali.
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:chave))"), {"chave": prefixo})
     existentes = session.exec(
         select(ContaGerencial.numero_lancamento).where(ContaGerencial.numero_lancamento.like(f"{prefixo}%"))
     ).all()

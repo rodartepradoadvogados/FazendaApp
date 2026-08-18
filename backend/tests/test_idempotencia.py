@@ -105,3 +105,49 @@ class TestIdempotencia:
         assert r2.status_code == 201
         assert _contar(engine, AnaliseBromatologica) == 1
         assert _contar(engine, IdempotenciaChave) == 1
+
+
+class TestIdempotenciaFinanceiro:
+    """#69 — o frontend desktop (criarLancamentoFinanceiro/marcarPagoFinanceiro
+    em lib/api.ts) agora manda Idempotency-Key nesses dois endpoints
+    (double-click/retry de rede podia duplicar a nota inteira, ou duplicar
+    parcelas de diferença ao pagar). O middleware já é genérico — este teste
+    só confirma que os dois endpoints específicos ficam protegidos."""
+
+    def test_criar_lancamento_com_mesma_chave_nao_duplica_a_nota(self, client):
+        c, engine = client
+        from fazenda.models import ContaGerencial
+
+        corpo = {
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "valor_total": 500.0}],
+            "centro_custo": "Pecuária Leiteira",
+            "data_emissao": "2026-07-01",
+        }
+        r1 = c.post("/financeiro/lancamentos", json=corpo, headers={"Idempotency-Key": "nota-1"})
+        assert r1.status_code == 201, r1.text
+        r2 = c.post("/financeiro/lancamentos", json=corpo, headers={"Idempotency-Key": "nota-1"})
+        assert r2.status_code == 201
+        assert r2.json() == r1.json()
+        assert _contar(engine, ContaGerencial) == 1
+
+    def test_pagar_lancamento_com_mesma_chave_nao_reaplica_o_pagamento(self, client):
+        c, engine = client
+        from fazenda.models import ContaGerencial
+
+        criado = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "valor_total": 500.0}],
+            "centro_custo": "Pecuária Leiteira",
+            "data_emissao": "2026-07-01",
+        })
+        assert criado.status_code == 201, criado.text
+        lancamento_id = criado.json()["ids"][0]
+
+        pagamento = {"data_pagamento": "2026-07-05", "valor_pago": 500.0}
+        r1 = c.put(f"/financeiro/lancamentos/{lancamento_id}/pagar", json=pagamento, headers={"Idempotency-Key": "pg-1"})
+        assert r1.status_code == 200, r1.text
+        r2 = c.put(f"/financeiro/lancamentos/{lancamento_id}/pagar", json=pagamento, headers={"Idempotency-Key": "pg-1"})
+        assert r2.status_code == 200
+        assert r2.json() == r1.json()
+        assert _contar(engine, ContaGerencial) == 1
