@@ -901,6 +901,18 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-card[data-estado="normal"]   { border-left-color: var(--mob-aco); }
 .mob-card[data-estado="feito"]    { border-left-color: var(--mob-verde); }
 
+/* Card de seção do Menu (app de campo) — mesma base do .mob-card, mas sem o
+   filete de estado (data-estado) à esquerda, que é exclusivo da Agenda.
+   Combinado com .mob-tint (abaixo) quando a seção tem cor de categoria. */
+.mob-secao-card {
+  background: var(--mob-surface);
+  border: 1px solid var(--mob-border);
+  border-radius: var(--r-app);
+  box-shadow: var(--mob-sombra);
+  margin-bottom: 0.7rem;
+  overflow: hidden;
+}
+
 /* Alternância de cor dos cartões em sequência (Agenda, Ficha do animal;
    Rebanho > Animais via .mob-linha): .mob-card-a = 1º, 3º, 5º... fica no
    fundo padrão (herda de .mob-card/.mob-linha, sem regra própria); .mob-card-b

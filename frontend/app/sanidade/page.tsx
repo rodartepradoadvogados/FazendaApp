@@ -1224,11 +1224,28 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
           </p>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <Indicador categoria="sanidade" valor={filtrados.length} rotulo="Aplicações" />
-          <Indicador categoria="sanidade" valor={animaisTratados} cor="var(--green-light)" rotulo="Animais tratados" />
-          <Indicador categoria="sanidade" valor={produtos} rotulo="Produtos distintos" />
-          <Indicador categoria="sanidade" valor={porCategoria.length} rotulo="Categorias" />
+        {/* Aplicações é o volume de atividade real da tela — vira a métrica-âncora
+            em vez de competir em pé de igualdade com Animais tratados/Produtos
+            distintos/Categorias, que continuam do lado, menores. */}
+        <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+          <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Aplicações</div>
+          <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+            {filtrados.length}
+          </div>
+          <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--green-light)", fontVariantNumeric: "tabular-nums" }}>{animaisTratados}</div>
+              <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Animais tratados</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{produtos}</div>
+              <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Produtos distintos</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{porCategoria.length}</div>
+              <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Categorias</div>
+            </div>
+          </div>
         </div>
 
         <SecaoRecolhivel titulo="Aplicações por Categoria e por Mês" descricao="Clique numa barra para filtrar as aplicações por categoria">

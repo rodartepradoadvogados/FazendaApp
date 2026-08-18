@@ -15,7 +15,6 @@ import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { FormFinanceiro, type PrefillPedido } from "@/components/FormFinanceiro";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import type { ContaPlano } from "@/lib/contaGerencial";
-import { Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type PedidoItemRow = PedidoItemPayload & { id: number; valor_atendido: number };
@@ -48,10 +47,6 @@ function Badge({ status }: { status: string }) {
       {info.label}
     </span>
   );
-}
-
-function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <Indicador categoria="geral" valor={v} rotulo={l} cor={c} />;
 }
 
 export default function PedidosPage() {
@@ -136,11 +131,28 @@ export default function PedidosPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String((pedidos ?? []).length)} l="Pedidos" c="var(--dourado-light)" />
-        <KPI v={formatBRL(totalEstimado)} l="Valor estimado" c="var(--dourado-light)" />
-        <KPI v={formatBRL(totalAtendido)} l="Valor já atendido" c="var(--green-light)" />
-        <KPI v={String((pedidos ?? []).filter((p) => p.status === "aberto").length)} l="Em aberto" c="var(--amber)" />
+      {/* Valor estimado é o dado de maior peso pra decisão de caixa — vira a
+          métrica-âncora em vez de competir em pé de igualdade com Pedidos/
+          Valor já atendido/Em aberto, que continuam do lado, menores. */}
+      <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+        <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Valor estimado</div>
+        <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+          {formatBRL(totalEstimado)}
+        </div>
+        <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{(pedidos ?? []).length}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Pedidos</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--green-light)", fontVariantNumeric: "tabular-nums" }}>{formatBRL(totalAtendido)}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Valor já atendido</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{(pedidos ?? []).filter((p) => p.status === "aberto").length}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Em aberto</div>
+          </div>
+        </div>
       </div>
 
       <div className="card">

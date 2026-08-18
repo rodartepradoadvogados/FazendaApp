@@ -227,25 +227,56 @@ const SECOES_PADRAO_COLAPSADAS = ["protocolos-restrito", "reproducao", "sanidade
  *  ao dos outros cards do app —, com os itens (LinhaMenu) dentro dele quando
  *  expandido, separados por um filete, não mais soltos em cards individuais.
  *  Lembra a escolha do usuário entre visitas (localStorage, chave
- *  CHAVE_SECOES_COLAPSADAS). */
-function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children }: {
+ *  CHAVE_SECOES_COLAPSADAS).
+ *
+ *  Quando `cor`/`icone` são passados (grupos de GRUPOS, que já carregam
+ *  iconeSecao), o cabeçalho ganha um círculo de ícone de 52px na cor da
+ *  categoria, a contagem de itens no lugar do rótulo em caixa alta, e o card
+ *  inteiro reaproveita `.mob-tint` (mesma técnica já usada em Rebanho >
+ *  Lotes) para o fundo/borda tingidos — sem inventar paleta nova. Seções sem
+ *  cor própria (Módulos, Administração, App) continuam no cabeçalho neutro
+ *  de sempre. */
+function SecaoRetratil({ chave, titulo, colapsada, onAlternar, children, cor, icone, contagem }: {
   chave: string; titulo: string; colapsada: boolean; onAlternar: (chave: string) => void; children: React.ReactNode;
+  cor?: string; icone?: React.ReactNode; contagem?: number;
 }) {
   return (
-    <div style={{
-      background: "var(--mob-surface)", border: "1px solid var(--mob-border)",
-      borderRadius: "var(--r-app)", boxShadow: "var(--mob-sombra)",
-      marginBottom: "0.7rem", overflow: "hidden",
-    }}>
+    <div className={cor ? "mob-secao-card mob-tint" : "mob-secao-card"} style={cor ? { ["--tint-cor" as any]: cor } : undefined}>
       <button type="button" aria-expanded={!colapsada} onClick={() => onAlternar(chave)}
-        style={{
+        style={cor ? {
+          width: "100%", display: "flex", alignItems: "center", gap: "0.9rem",
+          padding: "1rem 1.1rem", minHeight: 76, background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+        } : {
           width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem",
           padding: "0.85rem 1rem", background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
           fontSize: "var(--mob-fs-rotulo)", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
           color: "var(--mob-muted)",
         }}>
-        <span>{titulo}</span>
-        {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+        {cor ? (
+          <>
+            <span style={{
+              width: 52, height: 52, borderRadius: "50%", flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: `color-mix(in srgb, ${cor} 20%, transparent)`, color: cor,
+            }}>
+              {icone}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontWeight: 800, fontSize: "1.02rem", color: "var(--mob-text)" }}>{titulo}</span>
+              {typeof contagem === "number" && (
+                <span style={{ display: "block", fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>
+                  {contagem} {contagem === 1 ? "item" : "itens"}
+                </span>
+              )}
+            </span>
+            {colapsada ? <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} /> : <ChevronDown size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />}
+          </>
+        ) : (
+          <>
+            <span>{titulo}</span>
+            {colapsada ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+          </>
+        )}
       </button>
       {!colapsada && children}
     </div>
@@ -436,7 +467,8 @@ export default function Pagina() {
       )}
 
       {grupos.map((g) => (
-        <SecaoRetratil key={g.secao} chave={g.secao} titulo={g.titulo} colapsada={secoesColapsadas.has(g.secao)} onAlternar={alternarSecao}>
+        <SecaoRetratil key={g.secao} chave={g.secao} titulo={g.titulo} colapsada={secoesColapsadas.has(g.secao)} onAlternar={alternarSecao}
+          cor={g.cor} icone={g.iconeSecao} contagem={g.itens.length}>
           {g.itens.map((i) => (
             <LinhaMenu key={i.chave} icone={i.icone} titulo={i.titulo} subtitulo={statsSub[i.chave] || i.subtitulo}
               cor={i.cor || g.cor} onClick={() => setSub(i.chave)} />
