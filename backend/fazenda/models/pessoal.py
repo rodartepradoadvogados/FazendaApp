@@ -101,6 +101,45 @@ class Pessoa(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Documentos anexados à Pessoa — RG, CPF, carteira de trabalho, contratos,
+# holerite, comprovantes. Mesmo padrão de PedidoAnexo (fazenda/models/
+# financeiro.py): lista fixa de categorias (não uma tabela cadastrável — o
+# conjunto é fechado, específico de RH), conteúdo no Supabase Storage (bucket
+# `settings.supabase_bucket_financeiro`, mesmo de PedidoAnexo/LancamentoAnexo
+# — documento de pessoa é financeiramente adjacente, sem precisar de bucket
+# próprio), `data_validade` opcional é dela que a Agenda tira o alerta de
+# vencimento (ver fazenda/rules/agenda_engine.py) — só faz sentido para
+# "Contrato de trabalho por prazo determinado" na prática, mas o campo fica
+# livre para qualquer categoria em que o usuário queira acompanhar validade.
+# "Contrato de trabalho por prazo indeterminado" é o funcionário com carteira
+# assinada — não pede validade nem documento adicional além do que já existe
+# aqui (Carteira de trabalho, Ficha de registro).
+CATEGORIAS_PESSOA_ANEXO = [
+    "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
+    "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
+    "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale",
+]
+
+
+class PessoaAnexo(SQLModel, table=True):
+    """Documento anexado a uma Pessoa — ver CATEGORIAS_PESSOA_ANEXO."""
+
+    __tablename__ = "pessoa_anexo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id", index=True)
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    categoria: str  # um de CATEGORIAS_PESSOA_ANEXO
+    data_validade: Optional[date] = None
+    caminho_storage: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+# ---------------------------------------------------------------------------
 # Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
 # ---------------------------------------------------------------------------
 class FolhaPagamento(SQLModel, table=True):
@@ -622,6 +661,14 @@ class DiariaDia(SQLModel, table=True):
     diaria_id: int = Field(foreign_key="diaria.id", index=True)
     data: date = Field(index=True)
     trabalhado: bool = False
+    # Fração da diária cumprida neste dia (0 a 1) — None em linhas antigas
+    # (só existiam folgas antes desta feature) equivale a 0.0, o mesmo que
+    # `trabalhado=False` já significava. 0.5 = meia diária (metade do valor);
+    # ver `_fracao_dia` em routers/cadastro/rh_contratos.py. Uma linha de dia
+    # CHEIO nunca é gravada (o calendário é esparso — ausência de linha já
+    # significa dia cheio), então `trabalhado` continua sempre False em toda
+    # linha existente; ele fica só por compatibilidade com dado histórico.
+    fracao: Optional[float] = None
     observacao: Optional[str] = None
     registrado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

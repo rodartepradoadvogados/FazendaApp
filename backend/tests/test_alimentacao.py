@@ -182,6 +182,32 @@ class TestBaixaAutomatica:
             movimentos = s.exec(MovimentoEstoque.__table__.select()).fetchall()
             assert len(movimentos) == 1
 
+    def test_baixa_converte_kg_para_a_unidade_ensacada_do_item(self, client):
+        """Item cadastrado como "saca 30kg" — a baixa precisa converter os kg
+        consumidos para sacas antes de debitar, senão o saldo desaba ~30x mais
+        rápido do que deveria (ver resolver_kg_por_unidade)."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Ração", quantidade=5.0, unidade="kg"))
+            s.add(Estoque(nome="Ração", categoria="alimento", quantidade=1000.0, unidade="saca 30kg"))
+            s.commit()
+
+        c.get("/alimentacao/")  # estabelece baseline = hoje
+        with Session(engine) as s:
+            estado = s.get(AlimentacaoEstado, 1)
+            estado.ultima_data_deducao = date.today() - timedelta(days=3)
+            s.add(estado)
+            s.commit()
+
+        r = c.get("/alimentacao/")
+        assert r.status_code == 200
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração")).first()
+            # 5kg/cabeça * 2 animais * 3 dias = 30kg -> 30kg / 30kg/saca = 1 saca
+            assert item.quantidade == 999.0
+
     def test_item_nao_estocavel_nao_sofre_baixa_automatica(self, client):
         c, engine = client
         _seed(engine)

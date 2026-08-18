@@ -1530,6 +1530,28 @@ class TestDiaria:
         assert dados["numero_diarias"] == 5
         assert dados["total_ate_hoje"] == 500.0
 
+    def test_encerrar_diaria_some_da_listagem_padrao_e_volta_com_incluir_finalizadas(self, client):
+        c, engine = client
+        pessoa_id = self._diarista(c)
+        diaria_id = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": date.today().isoformat(),
+        }).json()["id"]
+
+        r = c.put(f"/cadastro/diarias/{diaria_id}/encerrar")
+        assert r.status_code == 200
+        assert r.json()["status"] == "encerrado"
+
+        ids_padrao = [d["id"] for d in c.get("/cadastro/diarias").json()]
+        assert diaria_id not in ids_padrao
+
+        ids_com_finalizadas = [d["id"] for d in c.get("/cadastro/diarias", params={"incluir_finalizadas": True}).json()]
+        assert diaria_id in ids_com_finalizadas
+
+    def test_encerrar_diaria_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.put("/cadastro/diarias/999/encerrar")
+        assert r.status_code == 404
+
 
 class TestValeAvulso:
     def test_abate_proxima_parcela_de_empreitada(self, client):

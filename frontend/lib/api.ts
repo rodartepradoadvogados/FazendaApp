@@ -1627,6 +1627,42 @@ export async function excluirPessoa(id: number) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir pessoa"); }
   return res.json();
 }
+
+// Anexos de Pessoa — RG, CPF, carteira de trabalho, contratos, holerite,
+// comprovantes (ver PessoaAnexo no backend), com validade opcional; quando
+// há validade, a Agenda alerta antes do vencimento — hoje só para "Contrato
+// de trabalho por prazo determinado" (15 dias antes).
+export const CATEGORIAS_PESSOA_ANEXO = [
+  "RG", "CPF", "Carteira de trabalho", "Ficha de registro",
+  "Contrato de trabalho por prazo indeterminado", "Contrato de trabalho por prazo determinado",
+  "Contrato de empreita", "Holerite", "Comprovante de pagamento", "Comprovante de vale",
+];
+export type AnexoPessoa = {
+  id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; categoria: string;
+  data_validade?: string | null; criado_em?: string;
+};
+export async function anexarArquivoPessoa(pessoaId: number, file: File, categoria: string, dataValidade?: string | null): Promise<AnexoPessoa> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("categoria", categoria);
+  if (dataValidade) form.append("data_validade", dataValidade);
+  const res = await authFetch(`${API}/cadastro/pessoas/${pessoaId}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+export async function listarAnexosPessoa(pessoaId: number): Promise<AnexoPessoa[]> {
+  const res = await authFetch(`${API}/cadastro/pessoas/${pessoaId}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos da pessoa");
+  return res.json();
+}
+export function urlAnexoPessoa(anexoId: number): string {
+  return `${API}/cadastro/pessoas/anexos/${anexoId}`;
+}
+export async function excluirAnexoPessoa(anexoId: number) {
+  const res = await authFetch(`${API}/cadastro/pessoas/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir anexo"); }
+  return res.json();
+}
 export async function fetchInseminadores(): Promise<string[]> {
   const res = await authFetch(`${API}/cadastro/pessoas/inseminadores`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Inseminadores error: ${res.status}`);
@@ -1930,9 +1966,17 @@ export async function encerrarContrato(id: number) {
 }
 
 // ── Diária (Financeiro > Ações > Folha de Pagamento) ──
-export async function fetchDiarias() {
-  const res = await authFetch(`${API}/cadastro/diarias`, { cache: "no-store" });
+// Por padrão só traz quem ainda está fazendo diárias (status "ativo") — ver
+// `incluirFinalizadas` para trazer também as encerradas (ver encerrarDiaria).
+export async function fetchDiarias(incluirFinalizadas = false) {
+  const qs = incluirFinalizadas ? "?incluir_finalizadas=true" : "";
+  const res = await authFetch(`${API}/cadastro/diarias${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Diárias error: ${res.status}`);
+  return res.json();
+}
+export async function encerrarDiaria(id: number) {
+  const res = await authFetch(`${API}/cadastro/diarias/${id}/encerrar`, { method: "PUT" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao encerrar diária"); }
   return res.json();
 }
 export async function criarDiaria(dados: {
@@ -1994,7 +2038,7 @@ export async function responderAuditoriaDiaria(auditoriaId: number, diasTrabalha
 // de folga pra desmarcar. `dias` sempre vem denso (um item por dia corrido no
 // período), então o componente só precisa renderizar o que a API manda, sem
 // nenhuma lógica de "default" no cliente.
-export type DiaTrabalhadoDiaria = { data: string; trabalhado: boolean; pago: boolean };
+export type DiaTrabalhadoDiaria = { data: string; trabalhado: boolean; meia_diaria: boolean; pago: boolean };
 export type DiasDiariaResposta = {
   diaria_id: number; pessoa_nome: string; valor_diaria: number;
   data_inicio: string; data_fim: string | null; hoje: string;
@@ -2003,7 +2047,7 @@ export type DiasDiariaResposta = {
   ultima_folga: string | null; controle_por_dia_desde: string | null;
   nunca_auditado: boolean; pago_ate: string | null;
   dias: DiaTrabalhadoDiaria[];
-  resumo_periodo: { dias_no_periodo: number; dias_trabalhados: number; dias_folga: number; valor_periodo: number };
+  resumo_periodo: { dias_no_periodo: number; dias_trabalhados: number; dias_folga: number; dias_meia_diaria: number; valor_periodo: number };
 };
 export async function fetchDiasDiaria(
   diariaId: number, params?: { modo?: "ultimo_periodo" | "completo"; desde?: string; ate?: string },
@@ -2023,7 +2067,8 @@ export async function fetchDiasDiaria(
  * `confirmar_periodo_pago: true`; mesmo idioma de `atualizarParcelaVale` etc.
  * (ver `err.status` nesta função). */
 export async function salvarDiasDiaria(diariaId: number, dados: {
-  periodo_inicio: string; periodo_fim: string; dias_nao_trabalhados: string[]; confirmar_periodo_pago?: boolean;
+  periodo_inicio: string; periodo_fim: string; dias_nao_trabalhados: string[];
+  dias_meia_diaria?: string[]; confirmar_periodo_pago?: boolean;
 }): Promise<unknown> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/dias`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

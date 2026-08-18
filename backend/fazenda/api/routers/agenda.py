@@ -18,8 +18,8 @@ from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
-    DiariaAuditoria, DiariaDia, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pedido, PedidoAnexo, Pessoa, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
+    Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Secagem, SeedFlag, Servico,
@@ -356,6 +356,30 @@ def calcular_agenda(
         for anexo, pedido in session.exec(query_docs_pedido).all()
     ]
 
+    # Documento de Pessoa vencendo — hoje só "Contrato de trabalho por prazo
+    # determinado" (ver AgendaEngine.calcular, param `pessoas_documentos_
+    # vencendo`), pessoa ainda ativa. Antecedência maior que a de Pedido (15
+    # dias, não 2): decidir renovar ou encerrar um vínculo de trabalho
+    # precisa de mais prazo do que aprovar um orçamento.
+    query_docs_pessoa = (
+        select(PessoaAnexo, Pessoa)
+        .join(Pessoa, PessoaAnexo.pessoa_id == Pessoa.id)
+        .where(
+            PessoaAnexo.data_validade.is_not(None),
+            PessoaAnexo.categoria == "Contrato de trabalho por prazo determinado",
+            Pessoa.ativo == True,  # noqa: E712
+        )
+    )
+    if fazenda_id is not None:
+        query_docs_pessoa = query_docs_pessoa.where(Pessoa.fazenda_id == fazenda_id)
+    pessoas_documentos_vencendo = [
+        {
+            "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome,
+            "categoria": anexo.categoria, "data_validade": anexo.data_validade,
+        }
+        for anexo, pessoa in session.exec(query_docs_pessoa).all()
+    ]
+
     # Cadastro de lotes (identifica qual é o lote "Pré-parto" pela flag real —
     # ver AgendaEngine.calcular, param `lotes`) para não repetir o alerta
     # "Pré-parto" de quem já foi movido para esse lote.
@@ -433,6 +457,7 @@ def calcular_agenda(
         lotes=lotes,
         secagens=secagens,
         pedidos_documentos_vencendo=pedidos_documentos_vencendo,
+        pessoas_documentos_vencendo=pessoas_documentos_vencendo,
         inducoes_cio=inducoes_cio,
     )
 
@@ -1126,6 +1151,61 @@ def calcular_agenda(
             "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "diaria_fim", "diaria_id": diaria.id,
         })
 
+    # Empreitada por etapa — quando a PENÚLTIMA etapa é paga, avisa no dia
+    # seguinte para preparar/fechar a última etapa. "Paga" = a ContaGerencial
+    # gerada pela etapa (EmpreitadaEtapa.numero_lancamento_gerado, ver
+    # concluir_etapa_empreitada em rh_contratos.py) já tem data_pagamento —
+    # distinto de "concluída" (só marca que a etapa terminou e a conta a
+    # pagar foi lançada, ainda sem baixa). Contrato (não-empreita) não tem
+    # conceito de etapas hoje (só parcelamento fixo, ver ContratoParcela) —
+    # este alerta cobre só Empreitada.
+    eventos_empreitada_penultima_etapa = []
+    ontem = data - timedelta(days=1)
+    query_contas_pagas_ontem = select(ContaGerencial).where(
+        ContaGerencial.data_pagamento == ontem, ContaGerencial.valor_pago.is_not(None),
+    )
+    if fazenda_id is not None:
+        query_contas_pagas_ontem = query_contas_pagas_ontem.where(ContaGerencial.fazenda_id == fazenda_id)
+    numeros_pagos_ontem = {
+        c.numero_lancamento for c in session.exec(query_contas_pagas_ontem).all() if c.numero_lancamento
+    }
+    if numeros_pagos_ontem:
+        query_etapas_pagas = select(EmpreitadaEtapa).where(
+            EmpreitadaEtapa.numero_lancamento_gerado.in_(numeros_pagos_ontem)
+        )
+        if fazenda_id is not None:
+            query_etapas_pagas = query_etapas_pagas.where(EmpreitadaEtapa.fazenda_id == fazenda_id)
+        etapas_pagas_ontem = session.exec(query_etapas_pagas).all()
+        empreitada_ids = {e.empreitada_id for e in etapas_pagas_ontem}
+        if empreitada_ids:
+            todas_etapas_por_empreitada: dict[int, list] = {}
+            for e in session.exec(
+                select(EmpreitadaEtapa).where(EmpreitadaEtapa.empreitada_id.in_(empreitada_ids))
+            ).all():
+                todas_etapas_por_empreitada.setdefault(e.empreitada_id, []).append(e)
+            empreitadas_map = {
+                emp.id: emp for emp in session.exec(select(Empreitada).where(Empreitada.id.in_(empreitada_ids))).all()
+            }
+            pessoas_nome_map = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+            for etapa in etapas_pagas_ontem:
+                ordenadas = sorted(todas_etapas_por_empreitada.get(etapa.empreitada_id, []), key=lambda x: (x.ordem, x.id))
+                if len(ordenadas) < 2 or ordenadas[-2].id != etapa.id:
+                    continue  # só a PENÚLTIMA etapa dispara o aviso
+                emp = empreitadas_map.get(etapa.empreitada_id)
+                if not emp:
+                    continue
+                chave = f"empreitada_penultima_etapa_{etapa.id}"
+                if chave in realizados:
+                    continue
+                eventos_empreitada_penultima_etapa.append({
+                    "id": chave, "data": data.isoformat(), "categoria": "Gestão/Financeiro",
+                    "descricao": f"Penúltima etapa da empreita de {pessoas_nome_map.get(emp.pessoa_id, '—')} ({emp.descricao}) foi paga — falta a última etapa",
+                    "numero_animal": None, "observacao": f"Etapa paga: {etapa.nome}",
+                    "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+                    "tipo": "empreitada_penultima_etapa", "empreitada_id": emp.id,
+                    "link": "/financeiro?ir=folha&categoria=empreitada",
+                })
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -1160,7 +1240,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

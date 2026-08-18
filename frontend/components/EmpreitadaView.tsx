@@ -5,10 +5,11 @@
 // empreita: pagamento "por etapa" (com sua própria tabela de etapas) e a
 // listagem das etapas já lançadas. Nenhum endpoint mudou.
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, CheckCircle2, Upload } from "lucide-react";
 import {
   fetchPessoas, fetchEmpreitadas, criarEmpreitada, concluirEtapaEmpreitada, formatBRL,
   atualizarParcelaEmpreitada, redistribuirParcelasEmpreitada, confirmarExclusao, ehAdmin,
+  anexarArquivoPessoa,
 } from "@/lib/api";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 import { inputSm } from "@/components/estiloCampoAvulso";
@@ -47,6 +48,9 @@ export default function EmpreitadaView() {
   const [error, setError] = useState<string | null>(null);
   const [etapasForm, setEtapasForm] = useState<EtapaForm[]>(etapaFormVazia);
   const [msgEtapa, setMsgEtapa] = useState<string | null>(null);
+  // Anexo opcional do contrato de empreita — guardado na Pessoa (empreiteiro),
+  // igual aos demais documentos dela (ver PessoaAnexo / categoria "Contrato de empreita").
+  const [contratoAnexo, setContratoAnexo] = useState<File | null>(null);
   // G9 — exclusão do cabeçalho da empreita (motor genérico: admin exclui na
   // hora, operador só solicita). Erro (ex.: 400 de parcela já paga) fica
   // escopado ao item, exibido junto das etapas em renderItemExtra.
@@ -108,7 +112,7 @@ export default function EmpreitadaView() {
         formaPagamento === "por_etapa" && !etapasForm.some((e) => e.nome.trim() && e.valor)
           ? "Informe ao menos uma etapa com nome e valor." : null
       }
-      resetExtra={() => setEtapasForm(etapaFormVazia)}
+      resetExtra={() => { setEtapasForm(etapaFormVazia); setContratoAnexo(null); }}
       renderExtra={({ valorTotal }) => (
         <div className="mb-3">
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginBottom: "0.5rem" }}>
@@ -138,6 +142,22 @@ export default function EmpreitadaView() {
               Dividir proporcionalmente
             </button>
           </div>
+          <div className="card" style={{ marginTop: "0.6rem", padding: "0.6rem 0.8rem" }}>
+            <label style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+              <Upload size={13} style={{ flexShrink: 0, color: "var(--dourado-light)" }} />
+              Anexar contrato de empreita (opcional)
+              <input type="file" style={{ display: "none" }} onChange={(e) => setContratoAnexo(e.target.files?.[0] || null)} />
+            </label>
+            {contratoAnexo && (
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                {contratoAnexo.name}{" "}
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setContratoAnexo(null)}>remover</button>
+              </p>
+            )}
+            <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+              Salvo junto aos documentos do empreiteiro em Pessoas (categoria "Contrato de empreita").
+            </p>
+          </div>
         </div>
       )}
       tituloNovo="Nova empreita" descricaoNovo="Lançamento global (por frequência) ou por etapa" labelSalvar="Lançar empreita"
@@ -150,6 +170,9 @@ export default function EmpreitadaView() {
             ? etapasForm.filter((e) => e.nome.trim() && e.valor).map((e) => ({ nome: e.nome.trim(), valor: parseFloat(e.valor) || 0 }))
             : undefined,
         });
+        if (contratoAnexo) {
+          await anexarArquivoPessoa(Number(pessoaId), contratoAnexo, "Contrato de empreita");
+        }
         return "Empreita lançada.";
       }}
       tituloVale="Vale de empreita" descricaoVale="Adiantamento abatido da próxima parcela/etapa pendente"

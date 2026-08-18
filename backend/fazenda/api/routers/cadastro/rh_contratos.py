@@ -797,21 +797,33 @@ def _dias_legado_ate(session: Session, d: Diaria, ate: date) -> int:
     return max((ate - d.data_inicio).days + 1, 0)
 
 
-def _dias_por_dia(session: Session, d: Diaria, desde: date, ate: date) -> tuple[int, int]:
-    """(dias_trabalhados, dias_folga) no intervalo [desde, ate], pelo modelo
-    esparso de `DiariaDia`: todo dia corrido é trabalhado por padrão — só os
-    dias com uma linha `trabalhado=False` (folga) reduzem a contagem."""
+def _fracao_dia(linha: DiariaDia) -> float:
+    """Fração da diária cumprida num dia com linha de exceção — 1.0 = dia
+    cheio (nunca gravado como linha; só chega aqui quem já tem exceção),
+    0.5 = meia diária, 0.0 = folga. `fracao=None` (dado histórico, de antes
+    desta feature) sempre significava folga, então cai em 0.0."""
+    return linha.fracao if linha.fracao is not None else 0.0
+
+
+def _dias_por_dia(session: Session, d: Diaria, desde: date, ate: date) -> tuple[float, int, int]:
+    """(dias_efetivos, dias_folga, dias_meia_diaria) no intervalo [desde,
+    ate], pelo modelo esparso de `DiariaDia`: todo dia corrido é trabalhado
+    (fração 1.0) por padrão — só os dias com linha de exceção reduzem a
+    contagem, por fração de dia perdida (1.0 = folga, 0.5 = meia diária)."""
     corridos = max((ate - desde).days + 1, 0)
     if corridos == 0:
-        return 0, 0
-    folgas = session.exec(
+        return 0.0, 0, 0
+    excecoes = session.exec(
         select(DiariaDia).where(
             DiariaDia.diaria_id == d.id, DiariaDia.trabalhado == False,  # noqa: E712
             DiariaDia.data >= desde, DiariaDia.data <= ate,
         )
     ).all()
-    dias_folga = len(folgas)
-    return max(corridos - dias_folga, 0), dias_folga
+    dias_folga = sum(1 for e in excecoes if _fracao_dia(e) == 0.0)
+    dias_meia = sum(1 for e in excecoes if _fracao_dia(e) == 0.5)
+    perdido = sum(1 - _fracao_dia(e) for e in excecoes)
+    dias_efetivos = max(round(corridos - perdido, 2), 0)
+    return dias_efetivos, dias_folga, dias_meia
 
 
 def _pago_ate_diaria(session: Session, diaria_id: int) -> date | None:
@@ -874,6 +886,7 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         else:
             numero_diarias = max((hoje_ou_fim - d.data_inicio).days + 1, 0)
         dias_folga = 0
+        dias_meia_diaria = 0
     else:
         # Calendário assumiu o controle a partir de `controle_por_dia_desde`
         # — tudo antes do corte continua pela regra legada (auditorias +
@@ -882,7 +895,7 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         # construção (ver `salvar_dias_diaria`), então soma sem sobreposição.
         corte = d.controle_por_dia_desde
         legado = _dias_legado_ate(session, d, corte - timedelta(days=1))
-        por_dia, dias_folga = _dias_por_dia(session, d, corte, hoje_ou_fim)
+        por_dia, dias_folga, dias_meia_diaria = _dias_por_dia(session, d, corte, hoje_ou_fim)
         numero_diarias = legado + por_dia
     total_ate_hoje = round(numero_diarias * d.valor_diaria, 2)
     pagamentos = sorted(
@@ -909,6 +922,7 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         "vales": vales,
         "auditorias_pendentes": [a.model_dump() for a in auditorias_pendentes],
         "dias_folga": dias_folga,
+        "dias_meia_diaria": dias_meia_diaria,
         "ultima_folga": _ultima_folga_diaria(session, d.id, hoje_ou_fim),
         "pago_ate": pagamentos[-1].data_pagamento if pagamentos else None,
     }
@@ -916,13 +930,18 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
 
 @router.get("/diarias")
 def listar_diarias(
+    incluir_finalizadas: bool = False,
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
+    """Por padrão só lista quem ainda está fazendo diárias (status "ativo") —
+    ver `incluir_finalizadas` para trazer também as encerradas."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     query = select(Diaria)
     if fazenda_id is not None:
         query = query.where(Diaria.fazenda_id == fazenda_id)
+    if not incluir_finalizadas:
+        query = query.where(Diaria.status != "encerrado")
     diarias = session.exec(query.order_by(Diaria.criado_em.desc())).all()
     return [_resumo_diaria(session, d, pessoas.get(d.pessoa_id, "—")) for d in diarias]
 
@@ -1035,6 +1054,25 @@ def editar_diaria(
     return _resumo_diaria(session, diaria, pessoa.nome)
 
 
+@router.put("/diarias/{diaria_id}/encerrar")
+def encerrar_diaria(
+    diaria_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Marca a diária como finalizada — some do Controle de Diárias por
+    padrão (ver `incluir_finalizadas` em `listar_diarias`) e para de gerar
+    card "diária de hoje"/auditoria periódica na Agenda (que já filtram por
+    `status == "ativo"`, ver routers/agenda.py)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    diaria = _diaria_ou_404(session, diaria_id, fazenda_id)
+    diaria.status = "encerrado"
+    session.add(diaria)
+    session.commit()
+    session.refresh(diaria)
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
+    return _resumo_diaria(session, diaria, pessoa.nome if pessoa else "—")
+
+
 class DiariaAuditoriaResponderIn(BaseModel):
     dias_trabalhados: int
 
@@ -1112,6 +1150,8 @@ class DiariaDiasPutIn(BaseModel):
     periodo_inicio: date
     periodo_fim: date
     dias_nao_trabalhados: list[date] = []
+    # Meia diária — metade do valor de uma diária cheia (ver _fracao_dia).
+    dias_meia_diaria: list[date] = []
     confirmar_periodo_pago: bool = False
 
 
@@ -1134,9 +1174,9 @@ def obter_dias_diaria(
         periodo_inicio = max(desde or diaria.data_inicio, diaria.data_inicio)
         periodo_fim = min(ate or hoje_ou_fim, hoje_ou_fim)
     pago_ate = _pago_ate_diaria(session, diaria.id)
-    folgas_no_periodo = {
-        f for f in session.exec(
-            select(DiariaDia.data).where(
+    fracao_no_periodo = {
+        e.data: _fracao_dia(e) for e in session.exec(
+            select(DiariaDia).where(
                 DiariaDia.diaria_id == diaria.id, DiariaDia.trabalhado == False,  # noqa: E712
                 DiariaDia.data >= periodo_inicio, DiariaDia.data <= periodo_fim,
             )
@@ -1144,15 +1184,20 @@ def obter_dias_diaria(
     }
     dias = []
     cursor = periodo_inicio
+    soma_fracao = 0.0
     while cursor <= periodo_fim:
+        fracao = fracao_no_periodo.get(cursor, 1.0)
+        soma_fracao += fracao
         dias.append({
             "data": cursor,
-            "trabalhado": cursor not in folgas_no_periodo,
+            "trabalhado": fracao == 1.0,
+            "meia_diaria": fracao == 0.5,
             "pago": pago_ate is not None and cursor <= pago_ate,
         })
         cursor += timedelta(days=1)
     dias_trabalhados_periodo = sum(1 for x in dias if x["trabalhado"])
-    dias_folga_periodo = len(dias) - dias_trabalhados_periodo
+    dias_meia_periodo = sum(1 for x in dias if x["meia_diaria"])
+    dias_folga_periodo = len(dias) - dias_trabalhados_periodo - dias_meia_periodo
     return {
         "diaria_id": diaria.id,
         "pessoa_nome": pessoa.nome if pessoa else "—",
@@ -1172,7 +1217,8 @@ def obter_dias_diaria(
             "dias_no_periodo": len(dias),
             "dias_trabalhados": dias_trabalhados_periodo,
             "dias_folga": dias_folga_periodo,
-            "valor_periodo": round(dias_trabalhados_periodo * diaria.valor_diaria, 2),
+            "dias_meia_diaria": dias_meia_periodo,
+            "valor_periodo": round(soma_fracao * diaria.valor_diaria, 2),
         },
     }
 
@@ -1201,6 +1247,13 @@ def salvar_dias_diaria(
         if dia in dias_informados:
             raise HTTPException(status_code=400, detail=f"Data {dia.isoformat()} duplicada em dias_nao_trabalhados")
         dias_informados.add(dia)
+    dias_meia: set[date] = set()
+    for dia in dados.dias_meia_diaria:
+        if dia < dados.periodo_inicio or dia > dados.periodo_fim:
+            raise HTTPException(status_code=400, detail=f"Data {dia.isoformat()} fora do período informado")
+        if dia in dias_informados or dia in dias_meia:
+            raise HTTPException(status_code=400, detail=f"Data {dia.isoformat()} não pode ser folga e meia diária ao mesmo tempo")
+        dias_meia.add(dia)
     pago_ate = _pago_ate_diaria(session, diaria_id)
     if pago_ate is not None and dados.periodo_inicio <= pago_ate and not dados.confirmar_periodo_pago:
         raise HTTPException(
@@ -1220,7 +1273,11 @@ def salvar_dias_diaria(
         session.delete(e)
     for dia in sorted(dias_informados):
         session.add(DiariaDia(
-            diaria_id=diaria_id, data=dia, trabalhado=False, usuario_id=user.id, fazenda_id=fazenda_id,
+            diaria_id=diaria_id, data=dia, trabalhado=False, fracao=0.0, usuario_id=user.id, fazenda_id=fazenda_id,
+        ))
+    for dia in sorted(dias_meia):
+        session.add(DiariaDia(
+            diaria_id=diaria_id, data=dia, trabalhado=False, fracao=0.5, usuario_id=user.id, fazenda_id=fazenda_id,
         ))
 
     # 2) Marca/recua o marco do calendário — nunca avança, só recua, e nunca
