@@ -157,12 +157,28 @@ export default function AnaliseReprodutivaPage() {
             )}
           </div>
 
-          {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <Indicador categoria="reprodutivo" valor={kpi.pct === null ? "—" : `${kpi.pct}%`} cor="var(--green-light)" rotulo="Taxa de concepção" />
-            <Indicador categoria="reprodutivo" valor={kpi.diag} rotulo="Serviços diagnosticados" />
-            <Indicador categoria="reprodutivo" valor={kpi.pos} cor="var(--blue)" rotulo="Positivos" />
-            <Indicador categoria="reprodutivo" valor={perdas} cor="var(--amber)" rotulo="Perdas de prenhez" />
+          {/* Taxa de concepção já era o único KPI marcado em verde — é a própria
+              razão de ser da tela. Vira métrica-âncora; os outros 3 números
+              continuam, só menores, mesmos dados de antes. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Taxa de concepção</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {kpi.pct === null ? "—" : `${kpi.pct}%`}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{kpi.diag}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Serviços diagnosticados</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--blue)", fontVariantNumeric: "tabular-nums" }}>{kpi.pos}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Positivos</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--amber)", fontVariantNumeric: "tabular-nums" }}>{perdas}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Perdas de prenhez</div>
+              </div>
+            </div>
           </div>
 
           {/* Análise interativa configurável (cruzamento de métricas) */}

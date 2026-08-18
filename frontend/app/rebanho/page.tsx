@@ -88,15 +88,30 @@ function EstratificacaoRebanho({ animais }: { animais: Animal[] }) {
   return (
     <div className="card mb-4">
       <div className="card-header mb-3 flex items-center gap-2"><CowIcon size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_vacas}%`} cor="var(--green-light)" rotulo="% de vacas em lactação"
-          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
-        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_total}%`} rotulo="% de vacas em lactação em relação ao rebanho"
-          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
-        <Indicador categoria="geral" valor={d.estratos.vacas_lactacao} rotulo="Vacas em lactação"
-          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
-        <Indicador categoria="geral" valor={d.vacas_total} rotulo="Vacas (adultas)"
-          onClick={() => abrir("Vacas (adultas)", d.numeros_vacas_total)} />
+      {/* % de vacas em lactação já era o único KPI marcado em verde — vira
+          métrica-âncora. Os outros 3 continuam, só menores, e todos seguem
+          clicáveis (mesmas listas de animais de antes). */}
+      <div style={{ padding: "0 0 .9rem", display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
+        <div onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} style={{ cursor: "pointer" }}>
+          <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>% de vacas em lactação</div>
+          <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+            {d.pct_lactacao_sobre_vacas}%
+          </div>
+        </div>
+        <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: "1.8rem", flexWrap: "wrap" }}>
+          <div onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} style={{ cursor: "pointer", textAlign: "right" }}>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.pct_lactacao_sobre_total}%</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>% em relação ao rebanho</div>
+          </div>
+          <div onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} style={{ cursor: "pointer", textAlign: "right" }}>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.estratos.vacas_lactacao}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Vacas em lactação</div>
+          </div>
+          <div onClick={() => abrir("Vacas (adultas)", d.numeros_vacas_total)} style={{ cursor: "pointer", textAlign: "right" }}>
+            <div style={{ fontSize: "1.1rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.vacas_total}</div>
+            <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em" }}>Vacas (adultas)</div>
+          </div>
+        </div>
       </div>
       {/* Barra empilhada 100% — cada fatia clicável abre os animais daquela categoria */}
       <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
