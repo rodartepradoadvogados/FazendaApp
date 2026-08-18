@@ -58,6 +58,9 @@ type ItemCarrinho = {
 const valorTotalItem = (it: ItemCarrinho) => (it.tipoValor === "total" ? it.valor : it.valor * it.doses);
 const valorUnitarioItem = (it: ItemCarrinho) => (it.tipoValor === "total" ? (it.doses ? it.valor / it.doses : 0) : it.valor);
 
+type DadosCompraSemen = Parameters<typeof criarCompraSemen>[0];
+type SalvarCompraSemen = (dados: DadosCompraSemen) => Promise<{ doses_compradas?: number; enviado?: boolean } | any>;
+
 /**
  * Lançamentos > Compra/Venda > Comprar sêmen — permite adicionar UM OU MAIS
  * sêmens/touros à MESMA compra (carrinho de itens), todos vinculados à
@@ -66,7 +69,7 @@ const valorUnitarioItem = (it: ItemCarrinho) => (it.tipoValor === "total" ? (it.
  * CompraSemen própria (com seu próprio touro, doses e valor/dose), somando
  * ao EstoqueSemen escolhido (ou criando uma linha nova casada por NAAB).
  */
-export default function CompraSemenForm() {
+export default function CompraSemenForm({ salvarCompra = criarCompraSemen }: { salvarCompra?: SalvarCompraSemen } = {}) {
   const [origem, setOrigem] = useState<"estoque" | "naab" | null>(null);
   const [estoque, setEstoque] = useState<EstoqueSemenItem[] | null>(null);
   const [naab, setNaab] = useState<Touro[] | null>(null);
@@ -222,7 +225,7 @@ export default function CompraSemenForm() {
         touro_nome: it.touroNome, central: it.central || undefined, tipo: it.tipo,
         valor: it.valor, tipo_valor: it.tipoValor, doses: it.doses,
       }));
-      const r = await criarCompraSemen({
+      const r = await salvarCompra({
         itens: itensPayload,
         vendedor: vendedor.trim(), data_compra: data,
         observacao: observacao || undefined, responsavel: responsavel || undefined,
@@ -239,7 +242,11 @@ export default function CompraSemenForm() {
         numero_documento_pagamento: !parcelado && jaPago ? numeroDocumentoPagamento || undefined : undefined,
       });
       const nomes = itens.map((it) => it.touroNome).join(", ");
-      setMsg({ tipo: "sucesso", texto: `${(r as any).doses_compradas} dose(s) de sêmen registrada(s) e somada(s) ao estoque de ${nomes}.` });
+      if ((r as any)?.enviado === false) {
+        setMsg({ tipo: "sucesso", texto: `Compra de sêmen guardada — será enviada quando conectar.` });
+      } else {
+        setMsg({ tipo: "sucesso", texto: `${(r as any).doses_compradas} dose(s) de sêmen registrada(s) e somada(s) ao estoque de ${nomes}.` });
+      }
       limpar();
       carregar();
     } catch (e: any) {
