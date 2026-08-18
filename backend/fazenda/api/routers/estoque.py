@@ -403,6 +403,7 @@ def criar_item_estoque(
             data_movimento=item.data_inicio_controle or date.today(), observacao="Saldo inicial do cadastro",
             usuario_id=user.id if isinstance(user, Usuario) else None, fazenda_id=fazenda_id,
             estoque_id=item.id, origem_tipo="cadastro_estoque", origem_id=item.id,
+            valor_unitario=item.valor_unitario,
         ))
         session.commit()
         session.refresh(item)
@@ -413,6 +414,7 @@ def criar_item_estoque(
 @router.put("/{item_id}")
 def atualizar_item_estoque(
     item_id: int, dados: EstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Edita o cadastro completo de um item de estoque já existente — mesmos
     campos do cadastro (POST /), usado pelo botão "editar" da tabela filtrada
@@ -427,6 +429,7 @@ def atualizar_item_estoque(
     existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe outro item de estoque chamado "{dados.nome}"')
+    quantidade_antiga = item.quantidade
     item.nome = dados.nome
     item.categoria = dados.categoria
     item.finalidade = dados.finalidade
@@ -462,6 +465,24 @@ def atualizar_item_estoque(
     item.tipo_semen = dados.tipo_semen
     item.atualizado_em = datetime.utcnow()
     session.add(item)
+
+    # Editar a quantidade direto no cadastro mudava o saldo sem deixar
+    # rastro nenhum em MovimentoEstoque — invisível no Mapa de Entradas/
+    # Saídas e no custo físico do RMCA, ao contrário de toda outra baixa/
+    # ajuste do sistema. Mesma convenção do "Saldo inicial" acima (origem_tipo=
+    # "cadastro_estoque"), só que como entrada/saída de ajuste — a correção
+    # pode ir em qualquer direção, dependendo do sinal da diferença.
+    delta = (dados.quantidade or 0) - (quantidade_antiga or 0)
+    if delta != 0:
+        session.add(MovimentoEstoque(
+            nome_item=item.nome, movimento="Entrada de ajuste" if delta > 0 else "Saída de ajuste",
+            quantidade=abs(delta), unidade=item.unidade, data_movimento=date.today(),
+            observacao=f"Ajuste de quantidade editada no cadastro (de {quantidade_antiga or 0:g} para {dados.quantidade or 0:g})",
+            usuario_id=user.id if isinstance(user, Usuario) else None, fazenda_id=fazenda_id,
+            estoque_id=item.id, origem_tipo="cadastro_estoque", origem_id=item.id,
+            valor_unitario=item.valor_unitario,
+        ))
+
     session.commit()
     session.refresh(item)
     return item.model_dump()
@@ -773,6 +794,7 @@ def _criar_movimento_estoque(
         pedido_item_id=dados.pedido_item_id,
         fazenda_id=fazenda_id,
         estoque_id=item.id,
+        valor_unitario=item.valor_unitario,
     ))
     session.commit()
     session.refresh(item)

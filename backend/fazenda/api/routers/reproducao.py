@@ -1756,7 +1756,7 @@ def registrar_servico(
     # pendência "Cadastrar motivo da perda de prenhez" na Agenda). Sem efeito
     # quando não há prenhez vigente, quando a perda já foi registrada
     # (idempotente) ou quando um parto real já resolveu a gestação.
-    detectar_e_registrar_perda_por_reinseminacao(
+    perda_registrada = detectar_e_registrar_perda_por_reinseminacao(
         session, numero_matriz=dados.numero_matriz, nova_data_servico=dados.data_servico, fazenda_id=fazenda_id,
     )
     # E o caso irmão: serviço anterior que ficou SEM diagnóstico. A nova
@@ -1787,6 +1787,12 @@ def registrar_servico(
     )
     session.add(servico)
     session.flush()
+    if perda_registrada is not None:
+        # Guarda quem causou a perda automática — sem isso, excluir esta
+        # inseminação depois não tinha como desfazer a perda que ela mesma
+        # disparou no serviço anterior (ver exclusoes.py).
+        perda_registrada.perda_causada_por_servico_id = servico.id
+        session.add(perda_registrada)
     # Desconta 1 dose do Estoque de Sêmen (mesma regra do lançamento em lote,
     # ver registrar_servico_lote) — não se aplica a monta natural, que não usa
     # sêmen estocado.
@@ -1880,7 +1886,7 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     # Mesma detecção automática de perda por reinseminação de registrar_servico
     # (ver o comentário lá) — este é o caminho usado por lançamento em lote e
     # pelo protocolo IATF, então precisa da mesma regra.
-    detectar_e_registrar_perda_por_reinseminacao(
+    perda_registrada = detectar_e_registrar_perda_por_reinseminacao(
         session, numero_matriz=numero_matriz, nova_data_servico=data_servico, fazenda_id=fazenda_id,
     )
     fechar_servicos_abertos_por_reinseminacao(
@@ -1901,6 +1907,11 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
             aplicacao_insem.realizada = True
             aplicacao_insem.data_realizacao = data_servico
             session.add(aplicacao_insem)
+    if perda_registrada is not None:
+        # `servico` só ganha id no flush do chamador (precisa dele pra gravar
+        # o vínculo) — guarda a referência num atributo comum (não é coluna
+        # do model) pro chamador ler depois desse flush.
+        servico._perda_registrada = perda_registrada
     return servico
 
 
@@ -2008,6 +2019,10 @@ def registrar_servico_lote(
             incompativeis.append(numero)
         else:
             session.flush()  # precisa do id antes de usá-lo como origem_id da baixa, abaixo
+            perda_registrada = getattr(s, "_perda_registrada", None)
+            if perda_registrada is not None:
+                perda_registrada.perda_causada_por_servico_id = s.id
+                session.add(perda_registrada)
             servicos_criados.append(s)
             criados += 1
 

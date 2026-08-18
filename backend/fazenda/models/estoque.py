@@ -265,6 +265,12 @@ class MovimentoEstoque(SQLModel, table=True):
     unidade: Optional[str] = None
     data_movimento: date
     observacao: Optional[str] = None
+    # Preço do item NO MOMENTO deste movimento (snapshot de Estoque.valor_unitario
+    # ao gravar) — sem isso, o custo físico do RMCA (rules/rmca.py) multiplicava
+    # todo o histórico pelo preço ATUAL do item, reescrevendo retroativamente o
+    # custo de meses cujo preço já mudou. None em movimentos antigos (de antes
+    # desta coluna existir) — quem lê cai no preço atual como aproximação.
+    valor_unitario: Optional[float] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     # Vínculo opcional ao Pedido de compra que esta entrada física está

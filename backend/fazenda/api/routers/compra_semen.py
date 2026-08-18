@@ -281,7 +281,7 @@ def registrar_compra(
             data_movimento=dados.data_compra, observacao=f"Compra de sêmen — {dados.vendedor} (lançamento {numero_lancamento})",
             usuario_id=usuario_id, fazenda_id=fazenda_id,
             estoque_id=item_espelho.id if item_espelho is not None else None,
-            origem_tipo="compra_semen", origem_id=compra.id,
+            origem_tipo="compra_semen", origem_id=compra.id, valor_unitario=valor_unitario,
         ))
         estoque_semen_ids.append(estoque.id)
 

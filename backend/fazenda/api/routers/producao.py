@@ -1110,9 +1110,14 @@ def relatorio_controle_entrega(
         e.competencia: leite_para_kg(e.quantidade_litros, e.unidade)
         for e in session.exec(entrega_query).all()
     }
+    # Nome do comprador do leite agora é parâmetro configurável
+    # (laticinio_nome, padrão "italac") — antes era fixo no código, então
+    # qualquer fazenda com outro laticínio nunca tinha a receita reconhecida aqui.
+    from fazenda.rules.parametros import get_param_texto
+    nome_laticinio = get_param_texto("laticinio_nome", "italac").strip().lower()
     receita_por_mes: dict[str, float] = {}
     for c in session.exec(conta_query).all():
-        if "italac" not in (c.fornecedor_cliente or "").lower():
+        if nome_laticinio not in (c.fornecedor_cliente or "").lower():
             continue
         comp = _competencia(c.data_competencia)
         if comp:

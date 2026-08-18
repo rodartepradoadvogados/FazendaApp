@@ -41,6 +41,7 @@ from fazenda.models import (
     MotivoMovimentacao,
     MovimentoEstoque,
     Parto,
+    PesagemCorporal,
     Pessoa,
     PrincipioAtivo,
     ProtocoloIatfAplicacao,
@@ -51,6 +52,7 @@ from fazenda.models import (
     ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento,
     Sanidade,
+    Secagem,
     Servico,
     SolicitacaoExclusao,
     Usuario,
@@ -524,7 +526,51 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         p = session.get(Parto, int(id_))
         if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Parto não encontrado")
-        return [f"Parto de {p.numero_matriz} em {_br(p.data_parto)}"], [p]
+        impacto = [f"Parto de {p.numero_matriz} em {_br(p.data_parto)}"]
+        alvos: list = [p]
+
+        # Retenção de placenta gera um item na Agenda no dia do parto (ver
+        # registrar_parto) sem guardar o parto_id — mesma heurística por
+        # matriz/data/prefixo do texto já usada acima para o mirror de
+        # Sanidade dos protocolos.
+        agendas = session.exec(
+            select(AgendaManual).where(
+                AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
+                AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
+            )
+        ).all()
+        if agendas:
+            impacto.append(f"{len(agendas)} pendência(s) de retenção de placenta na Agenda")
+            alvos.extend(agendas)
+
+        # Crias cadastradas por ESTE parto (ver registrar_parto) — só entram
+        # na exclusão se ainda não ganharam vida própria no sistema (nenhum
+        # outro registro as referencia). Uma cria que já tem pesagem, IA,
+        # sanidade etc. lançada fica: apagar a ficha destruiria histórico
+        # real só porque o parto que a originou foi corrigido/apagado.
+        numeros_crias = [n for n in (p.numero_cria_1, p.numero_cria_2) if n]
+        crias_orfas = []
+        for numero_cria in numeros_crias:
+            query_cria = select(Animal).where(Animal.numero == numero_cria)
+            if fazenda_id is not None:
+                query_cria = query_cria.where(Animal.fazenda_id == fazenda_id)
+            cria = session.exec(query_cria).first()
+            if cria is None:
+                continue
+            tem_outros_registros = any([
+                session.exec(select(Servico).where(Servico.numero_matriz == numero_cria)).first(),
+                session.exec(select(Parto).where(Parto.numero_matriz == numero_cria)).first(),
+                session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == numero_cria)).first(),
+                session.exec(select(Sanidade).where(Sanidade.numero_matriz == numero_cria)).first(),
+                session.exec(select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero_cria)).first(),
+            ])
+            if not tem_outros_registros:
+                crias_orfas.append(cria)
+        if crias_orfas:
+            impacto.append(f"{len(crias_orfas)} ficha(s) de cria sem nenhum outro registro (nascida só por este parto)")
+            alvos.extend(crias_orfas)
+
+        return impacto, alvos
 
     if tipo == "controle":
         c = session.get(ControleLeiteiro, int(id_))
@@ -721,8 +767,17 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         estoque = session.get(EstoqueSemen, c.estoque_semen_id)
         if estoque:
             impacto.append(f"{c.doses} dose(s) serão subtraídas do estoque de sêmen de {estoque.touro_nome} (saldo atual: {estoque.doses})")
-            estoque.doses = estoque.doses - c.doses
-            session.add(estoque)
+            # Mesmo motor de todo o resto (`estoque_baixa`), não um ajuste
+            # direto no campo: sem isso, esta baixa não deixava rastro em
+            # MovimentoEstoque — nem no histórico, nem no custo físico do
+            # RMCA. A compra original foi uma ENTRADA; o estorno é uma SAÍDA
+            # (sinal=-1), não uma "Aplicação" (que seria consumo real).
+            estoque_baixa.movimentar_dose_semen(
+                session, touro=estoque, doses=c.doses, data=date.today(), fazenda_id=fazenda_id,
+                usuario_id=None, movimento="Saída de ajuste", sinal=-1,
+                observacao=f"Estorno por exclusão da compra de sêmen #{c.id} ({c.touro_nome})",
+                origem_tipo="estorno_compra_semen", origem_id=c.id,
+            )
         # Uma compra pode ter vários touros/sêmens lançados na mesma nota
         # (mesmo numero_lancamento_gerado) — o lançamento financeiro só é
         # apagado junto quando este é o ÚLTIMO item daquela nota; do
@@ -936,6 +991,91 @@ def _desvincular_vales_dos_alvos(session: Session, alvos: list, fazenda_id: int 
             desvincular_vale_do_item(session, obj, excluir_vale=True, fazenda_id=fazenda_id)
 
 
+def _restaurar_ult_ocorrencia_dos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """Antes de excluir, se algum Servico em `alvos` é o "vigente" do animal
+    (ult_ocorrencia=1 — ver reproducao.py::registrar_servico/registrar_servico_lote,
+    que zera o flag de todo serviço anterior ao criar um novo), promove o
+    serviço anterior mais recente que sobrar a vigente. Sem isso, excluir a
+    IA/cobertura mais recente de um animal deixa NENHUM serviço marcado como
+    vigente — quebra o diagnóstico "atual" usado pela Agenda Reprodutiva e
+    pela sugestão de candidatas a IATF (ver diag_por_animal em reproducao.py)."""
+    excluidos = {obj.id for obj in alvos if isinstance(obj, Servico)}
+    matrizes = {obj.numero_matriz for obj in alvos if isinstance(obj, Servico) and obj.ult_ocorrencia == 1}
+    for matriz in matrizes:
+        query = select(Servico).where(Servico.numero_matriz == matriz)
+        if fazenda_id is not None:
+            query = query.where(Servico.fazenda_id == fazenda_id)
+        restantes = [s for s in session.exec(query).all() if s.id not in excluidos]
+        if not restantes:
+            continue
+        mais_recente = max(restantes, key=lambda s: (s.data_servico or date.min, s.id))
+        mais_recente.ult_ocorrencia = 1
+        session.add(mais_recente)
+
+
+def _reverter_perda_prenhez_causada_pelos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """Um Servico excluído pode ter sido a NOVA inseminação que disparou a
+    detecção automática de perda de prenhez no serviço anterior (ver
+    `Servico.perda_causada_por_servico_id` e
+    `fazenda.rules.perda_prenhez.detectar_e_registrar_perda_por_reinseminacao`)
+    — sem isso, excluir essa inseminação (ex.: lançamento em duplicidade)
+    deixava a perda gravada no anterior sem nenhum jeito de desfazer. Reverte
+    a perda quando ainda está pendente de motivo (ninguém confirmou); se o
+    motivo já foi preenchido, o usuário confirmou a perda como fato — só
+    desvincula a referência ao serviço que não existe mais."""
+    excluidos = {obj.id for obj in alvos if isinstance(obj, Servico)}
+    if not excluidos:
+        return
+    query = select(Servico).where(Servico.perda_causada_por_servico_id.in_(excluidos))
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    for anterior in session.exec(query).all():
+        if anterior.motivo_perda_prenhez is None:
+            anterior.data_perda_prenhez = None
+            anterior.origem_perda_prenhez = None
+        anterior.perda_causada_por_servico_id = None
+        session.add(anterior)
+
+
+def _reajustar_del_dias_apos_excluir_parto(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """`registrar_parto` zera `Animal.del_dias` da mãe no instante do parto
+    (congelado dali em diante, só voltando a bater com a realidade no próximo
+    upload do GERAL.csv — ver `_del_dias_ao_vivo` em api/routers/animais.py).
+    Excluir esse Parto deixava o 0 congelado pra sempre, mesmo quando a vaca
+    na verdade está há dias em lactação (ou já foi seca) por outro parto
+    remanescente. Recalcula com o MESMO critério "ao vivo": parto
+    remanescente mais recente da matriz, e None quando não há nenhum (não dá
+    pra reconstruir o valor pré-parto sem o próximo import do CSV)."""
+    partos_excluidos = [obj for obj in alvos if isinstance(obj, Parto)]
+    if not partos_excluidos:
+        return
+    ids_excluidos = {p.id for p in partos_excluidos}
+    hoje = date.today()
+    for p in partos_excluidos:
+        query_animal = select(Animal).where(Animal.numero == p.numero_matriz)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        mae = session.exec(query_animal).first()
+        if mae is None:
+            continue
+        query_partos = select(Parto).where(Parto.numero_matriz == p.numero_matriz)
+        if fazenda_id is not None:
+            query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        ult_parto = max(
+            (x.data_parto for x in session.exec(query_partos).all() if x.data_parto and x.id not in ids_excluidos),
+            default=None,
+        )
+        query_secagens = select(Secagem).where(Secagem.numero_matriz == p.numero_matriz)
+        if fazenda_id is not None:
+            query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+        ult_secagem = max((x.data_secagem for x in session.exec(query_secagens).all() if x.data_secagem), default=None)
+        if ult_parto is None or (ult_secagem and ult_secagem >= ult_parto):
+            mae.del_dias = None
+        else:
+            mae.del_dias = (hoje - ult_parto).days
+        session.add(mae)
+
+
 def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int | None, tipo_exclusao: str) -> list[str]:
     """Antes de excluir, devolve ao estoque tudo que os objetos em `alvos`
     consumiram — resolvido pelos MovimentoEstoque que apontam pra eles via
@@ -948,6 +1088,14 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
     for obj in alvos:
         origens = _ORIGENS_POR_CLASSE.get(type(obj))
         if not origens or getattr(obj, "id", None) is None:
+            continue
+        # Lançamento já cancelado (POST .../cancelar, ver central_protocolos.py)
+        # — o cancelamento já devolveu ao estoque tudo que ele consumiu, mas
+        # não apaga o MovimentoEstoque de "Aplicação" original (só grava um
+        # estorno ao lado). Sem esta guarda, excluir um lançamento já
+        # cancelado encontrava de novo a MESMA "Aplicação" e devolvia o
+        # estoque uma segunda vez — hormônio em dobro.
+        if getattr(obj, "ativo", True) is False:
             continue
         query = select(MovimentoEstoque).where(
             MovimentoEstoque.origem_tipo.in_(origens),
@@ -1006,6 +1154,9 @@ def confirmar(
 
     if user.papel == "admin":
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
+        _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
+        _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
+        _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
         for obj in alvos:
             session.delete(obj)
@@ -1052,6 +1203,9 @@ def aprovar_pendente(
 
     _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id)
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
+    _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
+    _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
+    _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
     avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
     for obj in alvos:
         session.delete(obj)

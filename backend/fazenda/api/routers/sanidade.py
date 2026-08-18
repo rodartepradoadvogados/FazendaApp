@@ -17,7 +17,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, CronogramaSanitario, CronogramaSanitarioAnimal,
     Doenca, Estoque, EventoRealizado,
-    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial,
+    EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
@@ -334,6 +334,7 @@ def registrar_aplicacao(
 def _ajustar_estoque_por_aplicacao(
     session: Session, produto: str | None, dose: float | None, unidade: str | None,
     fazenda_id: int | None, sinal: int, observacao: str, origem_id: int | None = None,
+    estoque_id: int | None = None,
 ) -> list[str]:
     """Devolve (sinal=+1) ou baixa (sinal=-1) `dose` de `produto` no estoque —
     usado para estornar/reaplicar a baixa quando uma aplicação é editada ou
@@ -341,16 +342,36 @@ def _ajustar_estoque_por_aplicacao(
     portões da baixa original (ver fazenda.rules.estoque_baixa.movimentar) —
     sem isso um estorno criaria estoque fantasma para uma baixa que nunca
     aconteceu. Devolve os avisos gerados (lista vazia se nada precisou avisar).
-    """
+
+    `estoque_id`, quando informado, força o MESMO frasco que a baixa original
+    usou — sem ele, `_resolver_item_estoque` cai no fallback por nome e, se
+    houver mais de um frasco cadastrado com o mesmo produto (comum em
+    Farmácia — lotes/validades diferentes), pode devolver/rebaixar num frasco
+    diferente do que a aplicação de fato consumiu."""
     if not produto or dose is None or not unidade:
         return []
-    estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto)
+    estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id)
     fn = _estoque_devolver if sinal > 0 else _estoque_baixar
     return fn(
         session, item=estoque_item, quantidade=dose, unidade=unidade, data=date.today(),
         fazenda_id=fazenda_id, observacao=observacao, origem_tipo="sanidade", origem_id=origem_id,
         produto=produto,
     )
+
+
+def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> int | None:
+    """`estoque_id` do frasco que a baixa mais recente desta Sanidade de fato
+    usou (lido do próprio rastro em MovimentoEstoque, que `estoque_baixa.
+    movimentar` grava — ver a nota em `_ajustar_estoque_por_aplicacao`).
+    "Mais recente" porque uma aplicação pode já ter sido editada antes: cada
+    edição grava um novo par estorno/rebaixa com o mesmo origem_id."""
+    mov = session.exec(
+        select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == "sanidade", MovimentoEstoque.origem_id == sanidade_id,
+            MovimentoEstoque.movimento == "Aplicação",
+        ).order_by(MovimentoEstoque.id.desc())
+    ).first()
+    return mov.estoque_id if mov else None
 
 
 class EditarAplicacaoIn(BaseModel):
@@ -402,9 +423,11 @@ def editar_aplicacao(
     # em lote de registrar_aplicacao).
     mexe_estoque = any(c in campos for c in ("produto", "dose", "unidade"))
     if mexe_estoque:
+        produto_antigo = s.produto
+        estoque_id_antigo = _frasco_da_ultima_aplicacao(session, s.id)
         _ajustar_estoque_por_aplicacao(
-            session, s.produto, s.dose, s.unidade, fazenda_id, +1,
-            f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id,
+            session, produto_antigo, s.dose, s.unidade, fazenda_id, +1,
+            f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_antigo,
         )
 
     for campo, valor in campos.items():
@@ -413,9 +436,15 @@ def editar_aplicacao(
     session.add(s)
 
     if mexe_estoque:
+        # Produto não mudou: continua no MESMO frasco que a baixa original
+        # usava — não deixa a rebaixa "escolher" outro frasco do mesmo
+        # produto por conta própria. Produto mudou: não há frasco antigo
+        # válido pro produto novo, resolve por nome mesmo (comportamento de
+        # sempre).
+        estoque_id_novo = estoque_id_antigo if s.produto == produto_antigo else None
         avisos.extend(_ajustar_estoque_por_aplicacao(
             session, s.produto, s.dose, s.unidade, fazenda_id, -1,
-            f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id,
+            f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_novo,
         ))
 
     session.commit()
@@ -444,6 +473,7 @@ def excluir_aplicacao(
     _ajustar_estoque_por_aplicacao(
         session, s.produto, s.dose, s.unidade, fazenda_id, +1,
         f"Estorno por exclusão da aplicação #{s.id} — Sanidade", origem_id=s.id,
+        estoque_id=_frasco_da_ultima_aplicacao(session, s.id),
     )
     session.delete(s)
     session.commit()

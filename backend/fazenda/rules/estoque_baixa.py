@@ -273,13 +273,13 @@ def movimentar(
     session.add(MovimentoEstoque(
         nome_item=item.nome, movimento=movimento, quantidade=abs(quantidade), unidade=item.unidade,
         data_movimento=data, observacao=observacao, usuario_id=usuario_id, fazenda_id=fazenda_id,
-        estoque_id=item.id, origem_tipo=origem_tipo, origem_id=origem_id,
+        estoque_id=item.id, origem_tipo=origem_tipo, origem_id=origem_id, valor_unitario=item.valor_unitario,
     ))
 
     # Item espelhado de sêmen (Estoque.estoque_semen_id) — mantém EstoqueSemen
     # em sincronia, senão a compra/baixa fica só do lado genérico e some do
     # Inventário de Sêmen / "touro em estoque" da inseminação (que só leem
-    # EstoqueSemen). Mesmo espelhamento que `_movimentar_dose_semen` já faz no
+    # EstoqueSemen). Mesmo espelhamento que `movimentar_dose_semen` já faz no
     # sentido inverso (dose de sêmen -> Estoque).
     if item.estoque_semen_id:
         touro = session.get(EstoqueSemen, item.estoque_semen_id)
@@ -323,7 +323,7 @@ def devolver(
     )
 
 
-def _movimentar_dose_semen(
+def movimentar_dose_semen(
     session: Session, *, touro: EstoqueSemen, doses: float, data: date, fazenda_id: int | None,
     usuario_id: int | None, observacao: str, origem_tipo: str | None, origem_id: int | None,
     movimento: str, sinal: int,
@@ -331,7 +331,11 @@ def _movimentar_dose_semen(
     """Aplica `sinal * doses` a `touro.doses` e grava o MovimentoEstoque
     correspondente — base compartilhada de `baixar_dose_semen` (sinal=-1) e
     `devolver_dose_semen` (sinal=+1, usada para estornar uma baixa de dose,
-    ex.: exclusão do Serviço/IA que a gerou — ver rotas/exclusoes.py)."""
+    ex.: exclusão do Serviço/IA que a gerou — ver rotas/exclusoes.py). Pública
+    (sem "_") para quem precisa de um `movimento`/`sinal` fora dos dois casos
+    padrão acima — ex.: estornar uma COMPRA de sêmen excluída (sinal=-1,
+    movimento="Saída de ajuste", já que a compra original foi uma ENTRADA,
+    não uma aplicação — ver exclusoes.py, tipo="compra_semen")."""
     delta = sinal * doses
     incrementar_quantidade_atomico(session, "estoque_semen", touro.id, "doses", delta)
     session.flush()
@@ -353,7 +357,7 @@ def _movimentar_dose_semen(
         nome_item=touro.touro_nome, movimento=movimento, quantidade=abs(doses), unidade="dose",
         data_movimento=data, observacao=observacao, usuario_id=usuario_id, fazenda_id=fazenda_id,
         estoque_id=item_espelho.id if item_espelho is not None else None,
-        origem_tipo=origem_tipo, origem_id=origem_id,
+        origem_tipo=origem_tipo, origem_id=origem_id, valor_unitario=touro.valor_unitario,
     ))
 
     avisos: list[str] = []
@@ -375,7 +379,7 @@ def baixar_dose_semen(
     espelhado (`Estoque.estoque_semen_id == touro.id`), mantém os dois em
     sincronia — o mesmo espelhamento que `_criar_movimento_estoque`
     (estoque.py) já faz no sentido inverso (compra de sêmen -> Estoque)."""
-    return _movimentar_dose_semen(
+    return movimentar_dose_semen(
         session, touro=touro, doses=doses, data=data, fazenda_id=fazenda_id, usuario_id=usuario_id,
         observacao=observacao, origem_tipo=origem_tipo, origem_id=origem_id, movimento="Aplicação", sinal=-1,
     )
@@ -387,7 +391,7 @@ def devolver_dose_semen(
 ) -> list[str]:
     """Devolve `doses` a `touro.doses` — estorno de `baixar_dose_semen`, usado
     quando o Serviço/IA que gerou a baixa é excluído (ver rotas/exclusoes.py)."""
-    return _movimentar_dose_semen(
+    return movimentar_dose_semen(
         session, touro=touro, doses=doses, data=data, fazenda_id=fazenda_id, usuario_id=usuario_id,
         observacao=observacao, origem_tipo=origem_tipo, origem_id=origem_id, movimento="Entrada de ajuste", sinal=+1,
     )

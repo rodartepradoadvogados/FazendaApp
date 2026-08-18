@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, X, ChevronDown, UserPlus } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { Modal } from "./Modal";
@@ -14,7 +14,7 @@ import { casaBusca } from "@/lib/busca";
  * (como era em Inseminação/Diagnóstico) ou de overlays reimplementados a cada
  * tela. Mesmo visual do `AnimalPicker` (seleção única), com checkboxes.
  */
-export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false }: {
+export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false, abrirAoMudar }: {
   animais: AnimalRow[];
   selecionados: Set<string>;
   onToggle: (numero: string) => void;
@@ -26,6 +26,12 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   // estar no cadastro. Os animais criados aqui somam-se localmente à lista
   // recebida por prop (persistem até a tela ser recarregada/recém-buscada).
   permitirNovoAnimal?: boolean;
+  // Abre o seletor sozinho sempre que este valor mudar (ex.: a assinatura do(s)
+  // lote(s) escolhido(s) num picker de lote acima) — em vez de depender do
+  // usuário notar e clicar o botão pra revisar quem entrou na seleção. Usado
+  // quando a lista de `animais` vem de uma escolha em lote e o usuário precisa
+  // confirmar explicitamente se quer todos, nenhum ou só alguns.
+  abrirAoMudar?: string | number;
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
@@ -33,6 +39,11 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   const [novoAnimalAberto, setNovoAnimalAberto] = useState(false);
   const [extras, setExtras] = useState<AnimalRow[]>([]);
   const { rotuloDe } = useEstadosReprodutivos();
+
+  useEffect(() => {
+    if (abrirAoMudar === undefined) return;
+    setAberto(true); setBusca(""); setFiltroLote("");
+  }, [abrirAoMudar]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const animaisComExtras = useMemo(() => {
     if (!extras.length) return animais;
