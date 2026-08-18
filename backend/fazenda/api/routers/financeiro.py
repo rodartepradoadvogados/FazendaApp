@@ -997,9 +997,13 @@ def _crud_nome_ativo_financeiro(model, rotulo: str):
         session.refresh(obj)
         return obj.model_dump()
 
-    def atualizar(item_id: int, dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session)) -> dict:
+    def atualizar(
+        item_id: int, dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    ) -> dict:
+        fazenda_id = fazenda_id_seguro(fazenda_id)
         obj = session.get(model, item_id)
-        if not obj:
+        if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail=f"{rotulo.capitalize()} não encontrado(a)")
         nome = dados.nome.strip()
         if not nome:
@@ -1807,6 +1811,14 @@ def criar_lancamento(
 
     criados: list[ContaGerencial] = []
     if dados.parcelas:
+        # A soma das parcelas precisa bater com o valor líquido da nota — sem
+        # essa checagem, um valor digitado errado nas parcelas gera uma nota
+        # onde o total por item (usado em DRE/RMCA) diverge permanentemente
+        # do total em Contas a Pagar/fluxo de caixa (que soma as parcelas).
+        # Mesmo padrão já usado em pagar_lancamento (parcelas_diferenca).
+        soma_parcelas = round(sum(p.valor for p in dados.parcelas), 2)
+        if round(soma_parcelas - valor_liquido, 2) != 0:
+            raise HTTPException(status_code=400, detail="A soma das parcelas precisa bater com o valor líquido do lançamento")
         total_parcelas = len(dados.parcelas)
         for i, p in enumerate(dados.parcelas, start=1):
             # Regra do boleto no nível do lançamento (item 4): se o usuário

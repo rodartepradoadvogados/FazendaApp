@@ -235,7 +235,11 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> dict:
     # Segurança: só aceita chamadas que trazem o segredo combinado no setWebhook.
-    if settings.telegram_webhook_secret and x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
+    # Fail-closed (mesmo padrão de zapsign.py): se TELEGRAM_WEBHOOK_SECRET não
+    # estiver configurado, recusa TODA chamada em vez de deixar passar sem
+    # segredo — evitar que um erro de configuração operacional (esquecer de
+    # setar a env var) abra o webhook para qualquer chamada externa.
+    if not settings.telegram_webhook_secret or x_telegram_bot_api_secret_token != settings.telegram_webhook_secret:
         raise HTTPException(status_code=403, detail="Segredo inválido")
 
     update = await request.json()

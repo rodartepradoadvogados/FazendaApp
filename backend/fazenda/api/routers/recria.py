@@ -27,6 +27,7 @@ from fazenda.models import (
 )
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
@@ -459,6 +460,7 @@ def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
 def _contexto_categoria(
     dias: int | None, peso: float | None, sit_rep: str | None, hoje: date,
     servicos: list[Servico], partos: list[Parto], secagens: list[Secagem],
+    raca: str | None = None,
 ) -> dict:
     """Monta o contexto de classificação de um animal a partir dos lançamentos
     já feitos (serviço/IA, parto, secagem) — mesma referência de cálculo de
@@ -474,7 +476,14 @@ def _contexto_categoria(
             concep = s.data_servico
             break
     dias_gestacao = (hoje - concep).days if concep else None
-    dias_para_parto = (GESTACAO_DIAS_CATEGORIA - dias_gestacao) if dias_gestacao is not None else None
+    # Dias de gestação variam por raça (Holandês 280, Girolando 287, Gir/
+    # Zebu/Nelore 295 — ver fazenda.rules.gestation) — usar sempre 280 fixo
+    # adiantava a classificação de pré-parto/seca em até 15 dias para raças
+    # zebuínas. Mesma correção já aplicada em estado_reprodutivo.py,
+    # relatorios_gerenciais.py e animais.py.
+    dias_para_parto = (
+        (dias_gestacao_da_raca(raca, GESTACAO_DIAS_CATEGORIA) - dias_gestacao) if dias_gestacao is not None else None
+    )
 
     ult_parto = max((p.data_parto for p in partos if p.data_parto), default=None)
     ult_secagem = max((s.data_secagem for s in secagens if s.data_secagem), default=None)
@@ -559,6 +568,7 @@ def composicao_categorias(
         ctx = _contexto_categoria(
             dias, ult_peso.get(a.numero), a.sit_rep, hoje,
             servicos_idx.get(a.numero, []), partos_idx.get(a.numero, []), secagens_idx.get(a.numero, []),
+            raca=a.raca,
         )
         cat = classificar_categoria(ctx, categorias)
         cont[cat] = cont.get(cat, 0) + 1
@@ -602,7 +612,7 @@ def categoria_sugerida_animal(
     servicos = session.exec(servicos_query).all()
     partos = session.exec(partos_query).all()
     secagens = session.exec(secagens_query).all()
-    ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens)
+    ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens, raca=animal.raca)
     return {"categoria": classificar_categoria(ctx, categorias)}
 
 

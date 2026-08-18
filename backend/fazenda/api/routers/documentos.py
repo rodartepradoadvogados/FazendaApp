@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import DocumentoArquivado, TipoDocumento, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -197,7 +197,12 @@ def baixar_documento(
 def excluir_documento(
     documento_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _admin: Usuario = Depends(exigir_admin),
 ) -> dict:
+    # Exclusão é irreversível e o arquivo aqui é fiscal/pessoal do dono (IRPF,
+    # matrícula, contrato...) — mais sensível que o upload/consulta (que o
+    # contador precisa fazer livremente, ver comentário em main.py). Por isso
+    # só a exclusão fica restrita a admin, sem travar o resto do router.
     fazenda_id = fazenda_id_seguro(fazenda_id)
     documento = session.get(DocumentoArquivado, documento_id)
     if not documento or (fazenda_id is not None and documento.fazenda_id != fazenda_id):
