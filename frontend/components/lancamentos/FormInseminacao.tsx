@@ -270,8 +270,14 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                   <div style={{ marginTop: "0.6rem" }}>
                     <AnimalPickerModal
                       animais={animaisDoLoteInsem} selecionados={selLoteInsem} onToggle={toggleLoteInsem}
-                      titulo="Ajustar aptas do(s) lote(s) selecionado(s)"
-                      placeholder="Ajustar aptas do(s) lote(s)…"
+                      titulo="Confirmar aptas do(s) lote(s) selecionado(s)"
+                      placeholder="Confirmar aptas do(s) lote(s)…"
+                      // Sem isso, o lote entrava inteiro por padrão e o
+                      // usuário só via quem foi incluído se lembrasse de
+                      // clicar aqui — a lista de animais do lote escolhido
+                      // agora aparece sozinha, forçando a decisão explícita
+                      // (todos, nenhum, ou alguns) antes de seguir.
+                      abrirAoMudar={lotesSelecionadosInsem.join("|")}
                       colunas={[
                         { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                         { header: "Lote", render: (a) => a.grupo_primario || "—" },
@@ -279,7 +285,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                       ]}
                     />
                     <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                      {selLoteInsem.size} de {animaisDoLoteInsem.length} apta(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
+                      {selLoteInsem.size} de {animaisDoLoteInsem.length} apta(s) no(s) lote(s) selecionado(s) — "Selecionar todos"/"Limpar seleção" ou desmarque uma a uma na janela acima.
                     </p>
                   </div>
                 )}
