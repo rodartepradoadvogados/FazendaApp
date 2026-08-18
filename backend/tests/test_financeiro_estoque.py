@@ -156,3 +156,57 @@ class TestEntradaAutomaticaCompra:
         with Session(engine) as s:
             item_fazenda_2 = s.exec(select(Estoque).where(Estoque.nome == "Ração concentrada", Estoque.fazenda_id == 2)).first()
             assert item_fazenda_2.quantidade == 100  # inalterado
+
+
+class TestEditarQuantidadeReconciliaEstoque:
+    """Gauntlet A-4: editar a quantidade da nota só espelhava o número no
+    LancamentoItem — o Estoque já lançado (entrada automática da compra)
+    nunca era corrigido, deixando o saldo permanentemente errado."""
+
+    def test_aumentar_quantidade_da_nota_aumenta_o_estoque(self, client):
+        c, engine = client
+        lancamento_id = _lancar(c).json()["ids"][0]  # 25 kg lançados → estoque foi de 10 para 35
+
+        r = c.put(f"/financeiro/lancamentos/{lancamento_id}", json={"quantidade": 40})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração concentrada", Estoque.fazenda_id == 1)).first()
+            assert item.quantidade == 50  # 10 (inicial) + 40 (quantidade corrigida), não mais 35
+
+    def test_diminuir_quantidade_da_nota_diminui_o_estoque(self, client):
+        c, engine = client
+        lancamento_id = _lancar(c).json()["ids"][0]
+
+        r = c.put(f"/financeiro/lancamentos/{lancamento_id}", json={"quantidade": 5})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração concentrada", Estoque.fazenda_id == 1)).first()
+            assert item.quantidade == 15  # 10 (inicial) + 5 (quantidade corrigida), não mais 35
+
+    def test_editar_outro_campo_sem_mexer_na_quantidade_nao_toca_estoque(self, client):
+        c, engine = client
+        lancamento_id = _lancar(c).json()["ids"][0]
+
+        r = c.put(f"/financeiro/lancamentos/{lancamento_id}", json={"descricao": "Nota corrigida"})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração concentrada", Estoque.fazenda_id == 1)).first()
+            assert item.quantidade == 35  # inalterado
+            assert s.exec(select(MovimentoEstoque)).all().__len__() == 1  # só a entrada original
+
+    def test_pedido_vinculado_nao_mexe_no_estoque_ao_editar(self, client):
+        # Sem entrada automática na criação (test_com_pedido_id_nao_da_entrada_automatica) —
+        # editar a quantidade também não deve inventar uma reconciliação do nada.
+        c, engine = client
+        lancamento_id = _lancar(c, pedido_id=999).json()["ids"][0]
+
+        r = c.put(f"/financeiro/lancamentos/{lancamento_id}", json={"quantidade": 999})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração concentrada", Estoque.fazenda_id == 1)).first()
+            assert item.quantidade == 10  # inalterado
+            assert s.exec(select(MovimentoEstoque)).first() is None

@@ -419,7 +419,7 @@ def atualizar_item_estoque(
     de Estoque (site)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Estoque, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     query_existente = select(Estoque).where(Estoque.nome == dados.nome, Estoque.id != item_id)
     if fazenda_id is not None:

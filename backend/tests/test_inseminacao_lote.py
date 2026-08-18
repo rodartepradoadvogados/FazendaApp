@@ -272,6 +272,36 @@ class TestDescontoDoseSemen:
             assert mov.quantidade == 1
             assert mov.origem_tipo == "ia_semen"
 
+    def test_lote_grava_um_movimento_por_animal_com_origem_id_proprio(self, client):
+        # Gauntlet A-5: a baixa em lote descontava as N doses numa única
+        # chamada, SEM origem_id — cada MovimentoEstoque saía com
+        # origem_id=None, então excluir o Servico de UM dos N animais nunca
+        # encontrava o que estornar (o estorno de exclusoes.py busca por
+        # origem_id) e a dose daquele animal nunca voltava ao estoque.
+        c, engine = client
+        r = c.post("/reproducao/servico-lote", json={
+            "animais": ["700", "701"], "data_servico": "2026-07-08", "tipo": "cio_natural", "reprodutor": "Coors",
+        })
+        assert r.json()["criados"] == 2
+
+        with Session(engine) as s:
+            servicos = s.exec(select(Servico).where(Servico.numero_matriz.in_(["700", "701"]))).all()
+            assert len(servicos) == 2
+            movimentos = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Coors")).all()
+            assert len(movimentos) == 2  # um por animal, não um agregado
+            assert {m.origem_id for m in movimentos} == {sv.id for sv in servicos}
+            assert all(m.origem_tipo == "ia_semen" and m.quantidade == 1 for m in movimentos)
+            servico_700 = next(sv for sv in servicos if sv.numero_matriz == "700")
+
+        # Excluir o Serviço de só UM dos dois animais devolve exatamente
+        # 1 dose — não 0 (o bug original) nem 2 (devolveria a do outro animal junto).
+        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_700.id)})
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            coors = s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first()
+            assert coors.doses == 29  # 30 - 2 (lote) + 1 (estorno do animal excluído)
+            assert s.exec(select(Servico).where(Servico.numero_matriz == "701")).first() is not None
+
 
 class TestProtocoloVigenteParaInseminacao:
     """"Protocolo de IATF atual" (sub-aba Inseminação) tem que mostrar a

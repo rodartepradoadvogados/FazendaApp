@@ -1958,6 +1958,7 @@ def registrar_servico_lote(
         lanc_escolhido = None
 
     criados, incompativeis = 0, []
+    servicos_criados: list[Servico] = []
     for numero in dados.animais:
         protocolo_name: str | None = None
         if dados.tipo == "iatf":
@@ -2006,17 +2007,25 @@ def registrar_servico_lote(
         if s is None:
             incompativeis.append(numero)
         else:
+            session.flush()  # precisa do id antes de usá-lo como origem_id da baixa, abaixo
+            servicos_criados.append(s)
             criados += 1
 
     # Desconta 1 dose por inseminação realizada (IA — cio natural ou IATF; não
     # se aplica à monta natural, que não usa sêmen estocado) do touro
     # informado — mantém o Estoque de Sêmen em dia com o uso real sem exigir
-    # baixa manual a cada inseminação.
-    if criados and dados.tipo != "monta_natural" and dados.reprodutor:
-        _baixar_dose_semen(
-            session, dados.reprodutor, dados.tipo_semen, criados, fazenda_id=fazenda_id,
-            usuario_id=usuario_id_seguro(user), data=dados.data_servico,
-        )
+    # baixa manual a cada inseminação. Baixa POR ANIMAL, não uma única
+    # agregada pro lote inteiro (mesmo motivo do padrão em sanidade.py
+    # registrar_aplicacao): cada MovimentoEstoque fica com origem_id=servico.id
+    # — sem isso, excluir o Serviço de UM animal do lote nunca achava o que
+    # estornar (o estorno de exclusoes.py busca por origem_id) e a dose
+    # daquele animal nunca voltava ao estoque.
+    if dados.tipo != "monta_natural" and dados.reprodutor:
+        for s in servicos_criados:
+            _baixar_dose_semen(
+                session, dados.reprodutor, dados.tipo_semen, 1, fazenda_id=fazenda_id,
+                usuario_id=usuario_id_seguro(user), data=dados.data_servico, origem_id=s.id,
+            )
 
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}

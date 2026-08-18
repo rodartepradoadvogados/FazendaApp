@@ -1315,11 +1315,17 @@ def rmca(
     ]
     gerencial = calcular_rmca_gerencial(itens, codigos_receita, codigos_custo)
 
+    query_movimentos = select(MovimentoEstoque)
+    if fazenda_id is not None:
+        query_movimentos = query_movimentos.where(MovimentoEstoque.fazenda_id == fazenda_id)
     movimentos = [
-        m.model_dump() for m in session.exec(select(MovimentoEstoque)).all()
+        m.model_dump() for m in session.exec(query_movimentos).all()
         if m.movimento == "Saída de ajuste" and data_inicio <= m.data_movimento <= data_fim
     ]
-    estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(select(Estoque)).all()}
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(query_estoque).all()}
     fisico = calcular_custo_fisico(movimentos, estoque_por_nome)
 
     return {
@@ -2415,7 +2421,38 @@ def editar_lancamento(
             if "valor_total" in enviados:
                 item.valor_total = registro.valor_total
             if "quantidade" in enviados:
+                quantidade_antiga = item.quantidade
                 item.quantidade = registro.quantidade
+                # Este item deu entrada automática no Estoque na criação (ver
+                # criar_lancamento) — mudar só o número aqui deixava o Estoque
+                # com a quantidade ANTIGA pra sempre. Estorna a entrada velha e
+                # aplica a nova, mesmo padrão de sanidade.py::editar_aplicacao.
+                if (
+                    registro.tipo == "despesa" and registro.pedido_id is None
+                    and item.tipo_item == "produto" and not eh_item_de_vale(item)
+                    and quantidade_antiga != registro.quantidade
+                ):
+                    entrada_existente = session.exec(
+                        select(MovimentoEstoque).where(
+                            MovimentoEstoque.origem_tipo == "compra_financeiro",
+                            MovimentoEstoque.origem_id == item.id,
+                        )
+                    ).first()
+                    if entrada_existente is not None:
+                        estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item.produto)
+                        unidade_item = estoque_item.unidade if estoque_item else entrada_existente.unidade
+                        estoque_baixa.movimentar(
+                            session, item=estoque_item, quantidade=quantidade_antiga or 0, unidade=unidade_item,
+                            data=date.today(), fazenda_id=fazenda_id, movimento="Saída de ajuste",
+                            observacao=f"Estorno por edição de quantidade — lançamento {registro.numero_lancamento}",
+                            origem_tipo="compra_financeiro", origem_id=item.id, sinal=-1, produto=item.produto,
+                        )
+                        estoque_baixa.movimentar(
+                            session, item=estoque_item, quantidade=registro.quantidade or 0, unidade=unidade_item,
+                            data=date.today(), fazenda_id=fazenda_id, movimento="Entrada de ajuste",
+                            observacao=f"Ajuste de quantidade editada — lançamento {registro.numero_lancamento}",
+                            origem_tipo="compra_financeiro", origem_id=item.id, sinal=+1, produto=item.produto,
+                        )
             if "valor_unitario" in enviados:
                 item.valor_unitario = registro.valor_unitario
             if "codigo_conta" in enviados:
