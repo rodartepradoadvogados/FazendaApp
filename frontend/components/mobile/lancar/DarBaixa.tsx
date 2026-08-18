@@ -5,7 +5,7 @@
 // Recebimento/Lote), só embrulhadas no shell mobile — nenhuma lógica nova.
 import { useEffect, useState } from "react";
 import { Receipt, HandCoins, Layers } from "lucide-react";
-import { MobVoltar } from "@/components/mobile/ui";
+import { MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
 import { fetchOpcoesFinanceiro } from "@/lib/api";
 import { PagamentoIndividualView, PagamentoLoteView } from "@/app/financeiro/page";
@@ -44,6 +44,7 @@ export default function DarBaixa({ onVoltar }: { onVoltar: () => void }) {
     <div>
       <MobVoltar titulo={TITULOS[modo]} onVoltar={() => setModo(null)} />
       <div className="mob-form-embutido">
+        <MobAviso tipo="offline">Esta tela precisa de internet no momento de salvar — não fica guardada pra enviar depois se a conexão cair.</MobAviso>
         {modo === "pagar" && <PagamentoIndividualView tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={null} />}
         {modo === "receber" && <PagamentoIndividualView tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={null} />}
         {modo === "lote" && <PagamentoLoteView contasBancarias={contasBancarias} />}

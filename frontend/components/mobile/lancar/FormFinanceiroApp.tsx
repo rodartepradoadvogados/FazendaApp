@@ -8,7 +8,7 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { Receipt, HandCoins, ShoppingCart, Tag, Dna, Users, CircleDollarSign } from "lucide-react";
-import { MobVoltar } from "@/components/mobile/ui";
+import { MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type Animal } from "@/components/mobile/lancar/comum";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 
@@ -60,6 +60,10 @@ export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { 
     <div>
       <MobVoltar titulo={TITULOS[tipo]} onVoltar={() => setTipo(null)} />
       <div className="mob-form-embutido">
+        {/* Reaproveita o formulário do site tal como é — salva direto pela
+            rede, sem passar pela fila offline do resto do app de campo (ver
+            mesmo aviso em FormProducao.tsx). */}
+        <MobAviso tipo="offline">Esta tela precisa de internet no momento de salvar — não fica guardada pra enviar depois se a conexão cair.</MobAviso>
         {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={nomesResponsaveis} apresentacaoModais="tela" />}
         {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} />}
         {tipo === "venda_animal" && <CompraVendaAnimalForm key="venda_animal" modo="venda" animais={animais} />}
