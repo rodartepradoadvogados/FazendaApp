@@ -787,11 +787,28 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
               </p>
             )}
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-              <Indicador categoria="producao" valor={ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"} rotulo="Controle projetado" />
-              <Indicador categoria="producao" valor={ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"} rotulo="Entregue projetado" />
-              <Indicador categoria="producao" valor={ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"} cor="var(--dourado-light)" rotulo="Não entregue" />
-              <Indicador categoria="producao" valor={ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"} rotulo={`Receita média${ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}`} />
+            {/* Não entregue já era o único KPI marcado em dourado — é o que mais
+                pede atenção (produção que ainda falta escoar). Vira métrica-âncora;
+                os outros 3 continuam, só menores, mesmos dados de antes. */}
+            <div className="card mb-3" style={{ padding: "1.1rem 1.3rem" }}>
+              <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Não entregue</div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--dourado-light)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+                {ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"}
+              </div>
+              <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Controle projetado</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Entregue projetado</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</div>
+                  <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Receita média{ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}</div>
+                </div>
+              </div>
             </div>
 
             <div className="overflow-x-auto">

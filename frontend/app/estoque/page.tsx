@@ -441,9 +441,19 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <Indicador categoria="geral" valor={filtrados.length} rotulo="Movimentos (filtro)" />
-            <Indicador categoria="geral" valor={totalQtd.toLocaleString("pt-BR")} cor={corQtd} rotulo="Quantidade total" />
+          {/* Quantidade total já era o único KPI com cor (verde nas entradas,
+              vermelho nas saídas) — vira métrica-âncora. Mesmos 2 números de antes. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Quantidade total</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: corQtd, marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {totalQtd.toLocaleString("pt-BR")}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{filtrados.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Movimentos (filtro)</div>
+              </div>
+            </div>
           </div>
 
           <div className="card">

@@ -2623,10 +2623,23 @@ function RelatorioCompraSemenView() {
 
       {linhas && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-            <KPI v={String(linhas.length)} l="Compras" />
-            <KPI v={String(totalDoses)} l="Doses compradas" />
-            <KPI v={formatBRL(totalGasto)} l="Total gasto" c="var(--red)" />
+          {/* Total gasto já era o único KPI marcado em vermelho — vira métrica-
+              âncora. Mesmos 3 números de antes, só reordenados por prioridade. */}
+          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
+            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total gasto</div>
+            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--red)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
+              {formatBRL(totalGasto)}
+            </div>
+            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{linhas.length}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Compras</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{totalDoses}</div>
+                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Doses compradas</div>
+              </div>
+            </div>
           </div>
           <div className="card">
             <div className="flex items-center justify-between mb-3">
