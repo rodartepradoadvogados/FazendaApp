@@ -33,7 +33,10 @@ type Linha = {
   gmd_kg_dia: number | null; gpd_kg_dia: number | null; num_pesagens: number;
 };
 
-export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
+type EntradaPesagem = { numero_matriz: string; peso_kg: number };
+type SalvarPesagens = (dados: { data_pesagem: string; entradas: EntradaPesagem[] }) => Promise<{ criados: number; enviado?: boolean }>;
+
+export function FormPesagemCorporal({ animais, lotes, salvarPesagens = criarPesagensCorporais }: { animais: AnimalRow[]; lotes: string[]; salvarPesagens?: SalvarPesagens }) {
   // Lançamento
   const [modo, setModo] = useState<"vaca" | "lote" | "planilha">("vaca");
   const [vaca, setVaca] = useState("");
@@ -69,8 +72,10 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
     if (!entradas.length) { setErro(modo === "vaca" ? "Selecione o animal e informe o peso." : "Informe o peso de ao menos um animal do lote."); return; }
     setSalvando(true);
     try {
-      const r = await criarPesagensCorporais({ data_pesagem: dataPesagem, entradas });
-      setSucesso(`${r.criados} ${r.criados === 1 ? "pesagem lançada" : "pesagens lançadas"} com sucesso.`);
+      const r = await salvarPesagens({ data_pesagem: dataPesagem, entradas });
+      setSucesso(r.enviado === false
+        ? "Sem internet — guardado, será enviado quando conectar."
+        : `${r.criados} ${r.criados === 1 ? "pesagem lançada" : "pesagens lançadas"} com sucesso.`);
       limpar();
       atualizarRelatorio();
       carregarRecentes();

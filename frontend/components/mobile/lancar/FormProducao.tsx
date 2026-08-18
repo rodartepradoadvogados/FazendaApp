@@ -13,7 +13,44 @@ import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
-import { fetchComCache } from "@/lib/offline";
+import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
+
+// Wrappers que trocam o authFetch direto dos formulários (compartilhados com
+// o desktop) pela fila offline (enviarOuEnfileirar) — só usados aqui, no
+// envoltório mobile; o desktop continua chamando a função de lib/api.ts
+// direto (valor padrão de cada prop `salvar*`/`aplicarBst`/`marcarInapta`).
+async function salvarPesagensOffline(dados: { data_pesagem: string; entradas: { numero_matriz: string; peso_kg: number }[] }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/producao/pesagens", dados, `Pesagem corporal — ${dados.entradas.length} animal(is)`);
+  return { criados: resposta?.criados ?? dados.entradas.length, enviado };
+}
+async function salvarSecagemOffline(dados: Record<string, unknown> & { numero_matriz: string }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/producao/secagem", dados, `Secagem — ${dados.numero_matriz}`);
+  return { lote_sugerido: resposta?.lote_sugerido, enviado };
+}
+async function salvarMovimentacaoOffline(dados: { data_movimento: string; motivo?: string; lote_destino_codigo: string; animais: string[]; origem?: string }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/movimentacoes/mover", dados, `Movimentação — ${dados.animais.join(", ")} → ${dados.lote_destino_codigo}`);
+  return { movidos: resposta?.movidos ?? 0, nao_encontrados: resposta?.nao_encontrados ?? [], enviado };
+}
+async function salvarInducaoOffline(dados: { protocolo_id: number; animais: string[]; data_d0: string; responsavel?: string; observacao?: string }) {
+  const { enviado, resposta } = await enviarOuEnfileirar("/producao/inducao-lactacao", dados, `Indução de lactação — ${dados.animais.length} animal(is)`);
+  return { criado: resposta?.criado, aviso: resposta?.aviso, animais: resposta?.animais ?? dados.animais.length, eventos_criados: resposta?.eventos_criados ?? 0, enviado };
+}
+async function salvarQualidadeOffline(dados: { data_coleta: string; numero_matriz: string | null }) {
+  const { enviado } = await enviarOuEnfileirar("/producao/qualidade-leite", dados, `Qualidade do leite — ${dados.data_coleta}`);
+  return { enviado };
+}
+async function salvarEntregaOffline(dados: { competencia: string }) {
+  const { enviado } = await enviarOuEnfileirar("/producao/entrega-leite", dados, `Entrega de leite — ${dados.competencia}`);
+  return { enviado };
+}
+async function aplicarBstOffline(dados: { numeros_matriz: string[] }) {
+  const { enviado } = await enviarOuEnfileirar("/agenda/bst/aplicar", dados, `BST — ${dados.numeros_matriz.length} animal(is)`);
+  return { enviado };
+}
+async function marcarInaptaBstOffline(dados: { numeros_matriz: string[]; inapta?: boolean }) {
+  const { enviado } = await enviarOuEnfileirar("/agenda/bst/marcar-inapta", dados, `BST — marcar ${dados.inapta ? "inapta" : "apta"} (${dados.numeros_matriz.length})`);
+  return { enviado };
+}
 
 // Cada sub-aba só baixa seu próprio formulário quando aberta pela 1ª vez —
 // importante em conexão de campo, onde o app roda mais.
@@ -72,55 +109,43 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
     );
   }
 
-  // Estas 6 sub-abas reaproveitam o formulário do site tal como é — ele
-  // salva direto pela rede (authFetch), sem passar pela fila offline
-  // (enviarOuEnfileirar) do resto do app de campo. Migrar cada uma pra fila
-  // é trabalho maior (são formulários compartilhados com o desktop) —
-  // enquanto isso não acontece, avisa explicitamente que aqui precisa de
-  // internet no momento de salvar, pra não confiar só no ícone de conexão
-  // do topo (que é global e não reflete esta tela específica).
-  const avisoExigeInternet = (
-    <MobAviso tipo="offline">Esta tela precisa de internet no momento de salvar — não fica guardada pra enviar depois se a conexão cair.</MobAviso>
-  );
-
   return (
     <>
       <MobVoltar titulo={TITULOS_SUB[sub]} onVoltar={() => setSub(null)} />
       {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">
-          {avisoExigeInternet}
-          <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} />
+          <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} salvarPesagens={salvarPesagensOffline} />
         </div>
       )}
       {sub === "secagem" && (
         <div className="mob-form-embutido">
-          {avisoExigeInternet}
-          <FormSecagem animais={animais as any} estoque={estoque} produtos={produtosSanidade} />
+          <FormSecagem
+            animais={animais as any} estoque={estoque} produtos={produtosSanidade}
+            salvarSecagem={salvarSecagemOffline as any} salvarMovimentacao={salvarMovimentacaoOffline as any}
+          />
         </div>
       )}
       {sub === "inducao" && (
         <div className="mob-form-embutido">
-          {avisoExigeInternet}
-          <FormInducaoLactacao animais={animais as any} />
+          <FormInducaoLactacao animais={animais as any} salvarInducao={salvarInducaoOffline} />
         </div>
       )}
       {sub === "qualidade" && (
         <div className="mob-form-embutido">
-          {avisoExigeInternet}
-          <FormQualidadeLeite animais={animais as any} />
+          <FormQualidadeLeite animais={animais as any} salvarQualidade={salvarQualidadeOffline as any} />
         </div>
       )}
       {sub === "entrega" && (
         <div className="mob-form-embutido">
-          {avisoExigeInternet}
-          <FormEntregaLeite />
+          <FormEntregaLeite salvarEntrega={salvarEntregaOffline as any} />
         </div>
       )}
       {sub === "bst" && (
         <div className="mob-form-embutido">
-          {avisoExigeInternet}
-          {agenda ? <PainelLancarBst agenda={agenda} onAtualizado={carregarAgenda} /> : <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Carregando…</p>}
+          {agenda ? (
+            <PainelLancarBst agenda={agenda} onAtualizado={carregarAgenda} aplicarBst={aplicarBstOffline} marcarInapta={marcarInaptaBstOffline} />
+          ) : <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Carregando…</p>}
         </div>
       )}
     </>

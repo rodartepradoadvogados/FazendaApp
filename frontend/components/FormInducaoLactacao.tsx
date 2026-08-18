@@ -62,7 +62,10 @@ function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.Mutable
   );
 }
 
-export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
+type DadosInducaoLactacao = { protocolo_id: number; animais: string[]; data_d0: string; responsavel?: string; observacao?: string };
+type SalvarInducaoLactacao = (dados: DadosInducaoLactacao) => Promise<{ criado?: boolean; aviso?: string; animais?: number; eventos_criados?: number; enviado?: boolean }>;
+
+export function FormInducaoLactacao({ animais, salvarInducao = lancarInducaoLactacao }: { animais: AnimalRow[]; salvarInducao?: SalvarInducaoLactacao }) {
   const [protocolos, setProtocolos] = useState<any[]>([]);
   const [protocoloId, setProtocoloId] = useState("");
   // Animal(is) ou lote(s) — mesmo padrão do Diagnóstico/Secagem.
@@ -105,7 +108,7 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
     if (!dataD0) { setErro(`Informe a data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"}.`); return; }
     setSalvando(true);
     try {
-      const r = await lancarInducaoLactacao({
+      const r = await salvarInducao({
         protocolo_id: Number(protocoloId), animais: animaisAlvo, data_d0: dataD0,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
@@ -114,7 +117,9 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
       // — acontece em duplo clique ou no retry da fila offline do app. Sem
       // este ramo a tela dizia "lançado ... — 0 eventos na Agenda", que parece
       // defeito.
-      setSucesso(r.criado === false
+      setSucesso(r.enviado === false
+        ? "Sem internet — guardado, será enviado quando conectar."
+        : r.criado === false
         ? (r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
         : `Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
       setSel(new Set()); setLotesSelecionados([]);

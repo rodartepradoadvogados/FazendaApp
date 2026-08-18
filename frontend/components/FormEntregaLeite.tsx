@@ -22,7 +22,10 @@ function formatarCompetencia(competencia: string): string {
   return mes && ano ? `${mes}/${ano}` : competencia;
 }
 
-export function FormEntregaLeite() {
+type DadosEntregaLeite = { competencia: string; quantidade_litros: number; unidade?: string; observacao?: string };
+type SalvarEntregaLeite = (dados: DadosEntregaLeite) => Promise<{ enviado?: boolean } | void>;
+
+export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { salvarEntrega?: SalvarEntregaLeite } = {}) {
   const admin = ehAdmin();
   const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
   const [quantidade, setQuantidade] = useState("");
@@ -52,13 +55,17 @@ export function FormEntregaLeite() {
 
     setSalvando(true);
     try {
-      await criarEntregaLeiteMensal({
+      const r = await salvarEntrega({
         competencia, quantidade_litros: Number(quantidade.replace(",", ".")),
         unidade, observacao: observacao || undefined,
       });
-      setSucesso(`Entrega de ${competencia} lançada com sucesso.`);
       setQuantidade(""); setObservacao("");
-      carregarRegistros();
+      if (r?.enviado === false) {
+        setSucesso("Sem internet — guardado, será enviado quando conectar.");
+      } else {
+        setSucesso(`Entrega de ${competencia} lançada com sucesso.`);
+        carregarRegistros(); // só recarrega quando enviou de fato — offline apagaria a lista já carregada
+      }
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar entrega mensal do leite");
     } finally {
