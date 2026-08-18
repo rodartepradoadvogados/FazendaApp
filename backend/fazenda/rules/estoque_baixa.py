@@ -22,6 +22,7 @@ from __future__ import annotations
 import unicodedata
 from datetime import date, datetime
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from fazenda.models import Estoque, EstoqueSemen, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
@@ -100,6 +101,23 @@ def carencia_para_item(
     dados = carencia_dict(leite, carne, proibido, data_aplicacao=data_aplicacao)
     dados["carencia_origem"] = origem
     return dados
+
+
+def incrementar_quantidade_atomico(session: Session, tabela: str, item_id: int, coluna: str, delta: float) -> None:
+    """Aplica `coluna += delta` direto no banco (`UPDATE ... SET coluna =
+    COALESCE(coluna,0) + :delta`) em vez de ler o valor em Python e regravar
+    — dois lançamentos quase simultâneos no mesmo item (`item.quantidade =
+    (item.quantidade or 0) + delta` seguido de `session.add`) podiam perder
+    uma das duas alterações (lost update), porque cada requisição lia o
+    saldo ANTES da outra commitar. O incremento atômico no SQL não tem essa
+    janela — cada UPDATE soma sobre o valor mais recente, não sobre uma
+    cópia lida antes. `session.flush()` + `session.refresh()` no chamador
+    trazem o valor pós-incremento de volta pro objeto ORM, sem precisar de
+    commit aqui (mantém a transação do chamador intacta)."""
+    session.execute(
+        text(f"UPDATE {tabela} SET {coluna} = COALESCE({coluna}, 0) + :delta WHERE id = :item_id"),
+        {"delta": delta, "item_id": item_id},
+    )
 
 
 def resolver_item(
@@ -244,7 +262,10 @@ def movimentar(
             f'"{unidade}" e "{item.unidade}" (unidade de estoque do produto).'
         ]
 
-    item.quantidade = (item.quantidade or 0) + sinal * quantidade
+    delta = sinal * quantidade
+    incrementar_quantidade_atomico(session, "estoque", item.id, "quantidade", delta)
+    session.flush()
+    session.refresh(item)
     if item.estoque_minimo is not None:
         item.abaixo_minimo = item.quantidade < item.estoque_minimo
     item.atualizado_em = datetime.utcnow()
@@ -263,7 +284,9 @@ def movimentar(
     if item.estoque_semen_id:
         touro = session.get(EstoqueSemen, item.estoque_semen_id)
         if touro is not None:
-            touro.doses = (touro.doses or 0) + sinal * quantidade
+            incrementar_quantidade_atomico(session, "estoque_semen", touro.id, "doses", delta)
+            session.flush()
+            session.refresh(touro)
             touro.atualizado_em = datetime.utcnow()
             session.add(touro)
 
@@ -309,13 +332,18 @@ def _movimentar_dose_semen(
     correspondente — base compartilhada de `baixar_dose_semen` (sinal=-1) e
     `devolver_dose_semen` (sinal=+1, usada para estornar uma baixa de dose,
     ex.: exclusão do Serviço/IA que a gerou — ver rotas/exclusoes.py)."""
-    touro.doses = (touro.doses or 0) + sinal * doses
+    delta = sinal * doses
+    incrementar_quantidade_atomico(session, "estoque_semen", touro.id, "doses", delta)
+    session.flush()
+    session.refresh(touro)
     touro.atualizado_em = datetime.utcnow()
     session.add(touro)
 
     item_espelho = session.exec(select(Estoque).where(Estoque.estoque_semen_id == touro.id)).first()
     if item_espelho is not None:
-        item_espelho.quantidade = (item_espelho.quantidade or 0) + sinal * doses
+        incrementar_quantidade_atomico(session, "estoque", item_espelho.id, "quantidade", delta)
+        session.flush()
+        session.refresh(item_espelho)
         if item_espelho.estoque_minimo is not None:
             item_espelho.abaixo_minimo = item_espelho.quantidade < item_espelho.estoque_minimo
         item_espelho.atualizado_em = datetime.utcnow()

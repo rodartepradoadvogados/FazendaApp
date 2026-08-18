@@ -15,7 +15,7 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_
 from fazenda.database import get_session
 from fazenda.models import CompraSemen, Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.estoque_baixa import carencia_para_item, resolver_marca_comercial
+from fazenda.rules.estoque_baixa import carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
@@ -739,7 +739,10 @@ def _criar_movimento_estoque(
         raise HTTPException(status_code=400, detail="Somente itens estocáveis podem ser doados ou recebidos de cortesia")
 
     baixa = dados.movimento in MOVIMENTOS_SAIDA
-    item.quantidade = (item.quantidade or 0) + (-dados.quantidade if baixa else dados.quantidade)
+    delta = -dados.quantidade if baixa else dados.quantidade
+    incrementar_quantidade_atomico(session, "estoque", item.id, "quantidade", delta)
+    session.flush()
+    session.refresh(item)
     if item.estoque_minimo is not None:
         item.abaixo_minimo = item.quantidade < item.estoque_minimo
     item.atualizado_em = datetime.utcnow()
@@ -752,7 +755,9 @@ def _criar_movimento_estoque(
     if item.estoque_semen_id:
         touro = session.get(EstoqueSemen, item.estoque_semen_id)
         if touro:
-            touro.doses = touro.doses + (-round(dados.quantidade) if baixa else round(dados.quantidade))
+            incrementar_quantidade_atomico(session, "estoque_semen", touro.id, "doses", round(delta))
+            session.flush()
+            session.refresh(touro)
             touro.atualizado_em = datetime.utcnow()
             session.add(touro)
 
@@ -858,7 +863,9 @@ def editar_movimento_estoque(
 
     sinal = -1 if mov.movimento in MOVIMENTOS_SAIDA else 1
     delta = sinal * (dados.quantidade - mov.quantidade)
-    item.quantidade = (item.quantidade or 0) + delta
+    incrementar_quantidade_atomico(session, "estoque", item.id, "quantidade", delta)
+    session.flush()
+    session.refresh(item)
     if item.estoque_minimo is not None:
         item.abaixo_minimo = item.quantidade < item.estoque_minimo
     item.atualizado_em = datetime.utcnow()
@@ -867,7 +874,9 @@ def editar_movimento_estoque(
     if item.estoque_semen_id:
         touro = session.get(EstoqueSemen, item.estoque_semen_id)
         if touro:
-            touro.doses = touro.doses + round(delta)
+            incrementar_quantidade_atomico(session, "estoque_semen", touro.id, "doses", round(delta))
+            session.flush()
+            session.refresh(touro)
             touro.atualizado_em = datetime.utcnow()
             session.add(touro)
 

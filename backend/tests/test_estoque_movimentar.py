@@ -4,6 +4,8 @@ na quantidade do item.
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -309,3 +311,48 @@ class TestSindicanciaEstoqueSemen:
         with Session(engine) as s:
             item = s.exec(select(Estoque).where(Estoque.nome == "Semex Titan")).first()
             assert item.estoque_semen_id is None
+
+
+class TestCorridaNaoPerdeAtualizacao:
+    """#70 — item.quantidade = (item.quantidade or 0) + delta seguido de
+    session.add lia o saldo ANTES de outra sessão commitar, então a segunda
+    sessão a commitar sobrescrevia com base numa cópia desatualizada (lost
+    update). O incremento agora é atômico no SQL (UPDATE ... SET quantidade
+    = quantidade + :delta), então cada sessão soma sobre o valor mais
+    recente, mesmo com o objeto Python carregando um valor "velho"."""
+
+    def test_duas_sessoes_baixando_o_mesmo_item_nao_perdem_uma_baixa(self, client_engine):
+        from fazenda.rules import estoque_baixa
+
+        _, engine = client_engine
+        with Session(engine) as s:
+            s.add(Estoque(nome="Item corrida", quantidade=10, unidade="unidade"))
+            s.commit()
+
+        # Duas sessões abrem e leem o item ANTES de qualquer uma das duas
+        # baixar — simula duas requisições concorrentes.
+        sessao_a = Session(engine)
+        sessao_b = Session(engine)
+        item_a = sessao_a.exec(select(Estoque).where(Estoque.nome == "Item corrida")).first()
+        item_b = sessao_b.exec(select(Estoque).where(Estoque.nome == "Item corrida")).first()
+        assert item_a.quantidade == 10 and item_b.quantidade == 10
+
+        estoque_baixa.movimentar(
+            sessao_a, item=item_a, quantidade=3, unidade="unidade", data=date.today(),
+            fazenda_id=None, movimento="Aplicação", observacao="baixa A", sinal=-1,
+        )
+        sessao_a.commit()
+
+        estoque_baixa.movimentar(
+            sessao_b, item=item_b, quantidade=2, unidade="unidade", data=date.today(),
+            fazenda_id=None, movimento="Aplicação", observacao="baixa B", sinal=-1,
+        )
+        sessao_b.commit()
+        sessao_a.close()
+        sessao_b.close()
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Item corrida")).first()
+            # 10 - 3 - 2 = 5. Com o bug antigo, B sobrescrevia com base na
+            # cópia lida antes de A commitar (10 - 2 = 8), perdendo a baixa de A.
+            assert item.quantidade == 5
