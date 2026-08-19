@@ -8,14 +8,36 @@ Protocolo D0/D7/D9/D11:
   D11: IA (Inseminação Artificial)
 
 Candidatas:
-  - sit_rep IN ('Vaz. apt.', 'Vaz. atr.') OU último diagnóstico == 'NEGATIVO'
-  - NÃO devem estar prenhes (Ges.) nem em PEV
+  - estado reprodutivo AO VIVO ∈ {APTA, ATRASADA}, avaliado numa data.
+
+    Antes o critério era `sit_rep IN ('Vaz. apt.', 'Vaz. atr.')` ou último
+    diagnóstico NEGATIVO — texto congelado do GERAL.csv do Ideagri, que só muda
+    no próximo upload. Uma vaca que engravidou pelo app continuava sendo
+    oferecida para protocolo. Além da defasagem, aquele critério tinha quatro
+    furos que a matriz de exclusão de `estado_reprodutivo` fecha de graça:
+
+      - não testava PEV: vaca com diagnóstico negativo DENTRO do PEV entrava;
+      - não testava protocolo em andamento: vaca com D0 implantado hoje
+        continuava na lista;
+      - não testava inseminação em aberto: vaca já inseminada com `sit_rep`
+        velho continuava na lista;
+      - não testava aptidão de novilha: nulípara sem idade/peso entrava se o
+        CSV dissesse "Vaz.".
+
+    O quinto furo — animal marcado a descartar — é fechado por quem chama, via
+    `programa_reprodutivo.estado_no_dia` (regra R1). `classificar_animal`
+    sozinho não consulta esse campo.
+
+  - NÃO usar `EstadoDia.apta` para isto. `ESTADOS_APTOS` inclui INSEMINADA e
+    EM_PROTOCOLO, que contam no denominador da taxa de serviço mas não podem
+    virar candidata a protocolo. O teste é sobre o estado, não sobre `apta`.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.estado_reprodutivo import APTA, ATRASADA, ROTULOS
 
 
 # Protocolo IATF — doses por animal por fase
@@ -43,15 +65,31 @@ EMBALAGEM = {
     "sincrocp_ml": 50.0,     # frasco 50ml
 }
 
+# NÃO decide mais candidata — o critério agora é o estado ao vivo. A constante
+# sobrevive porque tem um segundo dono independente:
+# `indicadores._classificar_situacao_reprodutiva`, o caminho legado do painel de
+# Situação Reprodutiva da Capa, que ainda lê `sit_rep` quando não há registros
+# carregados. Esvaziá-la quebraria aquele painel.
 SIT_REP_CANDIDATAS = frozenset(["Vaz. apt.", "Vaz. atr."])
+
+# Estado ao vivo → o motivo que o produtor lê na tela. Mantém o vocabulário que
+# ele já conhece das listas antigas.
+MOTIVO_POR_ESTADO = {APTA: "Vazia apta", ATRASADA: "Vazia em atraso"}
+MOTIVO_DG_NEGATIVO = "Diagnóstico negativo"
+
+# Os dois únicos estados que podem entrar num protocolo. Ver o docstring do
+# módulo sobre por que `ESTADOS_APTOS` não serve aqui.
+ESTADOS_CANDIDATA = frozenset({APTA, ATRASADA})
 
 
 @dataclass
 class CandidataIATF:
     numero_matriz: str
-    sit_rep: str
+    sit_rep: str  # informativo: o texto do CSV, que já não decide nada
     del_dias: int | None
-    motivo: str  # "vazia apta", "vazia em atraso", "diagnóstico negativo"
+    motivo: str  # "Vazia apta", "Vazia em atraso", "Diagnóstico negativo"
+    estado: str = ""  # estado reprodutivo ao vivo que a tornou candidata
+    estado_rotulo: str = ""  # o mesmo, em português, para a tela
 
 
 @dataclass
@@ -76,13 +114,19 @@ class ResultadoIATF:
 
 def selecionar_candidatas_iatf(
     animais: list[dict],
+    estados: dict[str, dict],
 ) -> list[CandidataIATF]:
-    """
-    Seleciona candidatas ao protocolo IATF.
+    """Seleciona candidatas ao protocolo IATF pelo estado reprodutivo ao vivo.
 
     Args:
-        animais: Lista de dicts com campos:
-                   numero_matriz, sit_rep, del_dias, diagnostico_ultimo
+        animais: dicts com `numero_matriz` e, opcionalmente, `sit_rep` (só
+            informativo — vai para a saída, não decide nada).
+        estados: {numero -> dict de `classificar_animal`}, já filtrado pela
+            regra R1 por quem chamou (ver `estado_no_dia`). Animal ausente do
+            mapa não é candidato: quem não tem estado calculado é porque saiu
+            do programa ou não pôde ser classificado.
+
+    O `del_dias` vem do estado calculado, não do `Animal.del_dias` congelado.
 
     Returns:
         Lista de CandidataIATF ordenada por número.
@@ -90,29 +134,29 @@ def selecionar_candidatas_iatf(
     candidatas: list[CandidataIATF] = []
 
     for a in animais:
-        sit_rep = (a.get("sit_rep") or "").strip()
-        diag = (a.get("diagnostico_ultimo") or "").upper().strip()
         numero = a.get("numero_matriz", "")
+        info = estados.get(numero)
+        if not info or info.get("estado") not in ESTADOS_CANDIDATA:
+            continue
 
-        if sit_rep in SIT_REP_CANDIDATAS:
-            motivo = "Vazia apta" if sit_rep == "Vaz. apt." else "Vazia em atraso"
-            candidatas.append(
-                CandidataIATF(
-                    numero_matriz=numero,
-                    sit_rep=sit_rep,
-                    del_dias=a.get("del_dias"),
-                    motivo=motivo,
-                )
+        estado = info["estado"]
+        # "Diagnóstico negativo" deixou de ser um critério paralelo e virou um
+        # refinamento do motivo: era daquele `elif` solto que vinha o furo de
+        # listar vaca dentro do PEV. Quem tem DG negativo e já passou do PEV
+        # cai em APTA/ATRASADA como qualquer outra.
+        diag = (a.get("diagnostico_ultimo") or "").upper().strip()
+        motivo = MOTIVO_DG_NEGATIVO if diag == "NEGATIVO" else MOTIVO_POR_ESTADO[estado]
+
+        candidatas.append(
+            CandidataIATF(
+                numero_matriz=numero,
+                sit_rep=(a.get("sit_rep") or "").strip(),
+                del_dias=info.get("del_dias"),
+                motivo=motivo,
+                estado=estado,
+                estado_rotulo=ROTULOS.get(estado, estado),
             )
-        elif diag == "NEGATIVO" and sit_rep not in ("Ges.",):
-            candidatas.append(
-                CandidataIATF(
-                    numero_matriz=numero,
-                    sit_rep=sit_rep,
-                    del_dias=a.get("del_dias"),
-                    motivo="Diagnóstico negativo",
-                )
-            )
+        )
 
     return sorted(candidatas, key=lambda c: chave_numero(c.numero_matriz))
 

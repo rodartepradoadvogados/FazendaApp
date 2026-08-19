@@ -7,7 +7,7 @@ Este documento é o inventário que a migração do resto do sistema vai consumi
 Levantado por três varreduras independentes do código, com cada achado
 conferido contra o arquivo antes de entrar aqui.
 
-**Última atualização:** 19/08/2026.
+**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra" e as 8 listas de trabalho + `fluxo_lactacao` migrados).
 
 ---
 
@@ -98,20 +98,25 @@ telas que o produtor abre no mesmo dia.
 
 ---
 
-## 6. Decisão reprodutiva ainda por `sit_rep`
+## 6. Decisão reprodutiva por `sit_rep`
 
-`sit_rep` é o texto congelado do CSV do Ideagri: só muda no próximo upload. Nos
-pontos abaixo ele é o **caminho principal**, não um fallback — ou seja, uma vaca
-que engravidou pelo app continua sendo tratada como vazia até o próximo arquivo
-chegar.
+`sit_rep` é o texto congelado do CSV do Ideagri: só muda no próximo upload. Uma
+vaca que engravidasse pelo app continuava sendo tratada como vazia até o próximo
+arquivo chegar.
 
-| Onde | O que decide por `sit_rep` |
+**Nenhuma decisão de caminho principal lê mais `sit_rep`.** O que sobrou são
+fallbacks, que só ativam quando não há registros carregados (listados no fim
+desta seção).
+
+**Migrados:**
+
+| Onde | O que passou a decidir |
 |---|---|
-| `rules/iatf.py:97-107` | Candidatas a IATF (`"Vaz. apt."`, `"Vaz. atr."`). Alimenta a Agenda **e** `/reproducao/protocolo-iatf/candidatas` |
-| `rules/relatorios_gerenciais.py:544` | `prenhas` do relatório por faixa de DEL |
-| `rules/relatorios_gerenciais.py:573` | Exclusão `"Vaz."` na **projeção de partos e secagens** (`fluxo_lactacao`) |
-| `rules/relatorios_gerenciais.py:167-181` | As 8 listas de trabalho |
-| `rules/agenda_engine.py:463` | "PEV encerra" exclui gestante por `sit_rep not in ("Ges.","Ins.")` |
+| `rules/iatf.py` | Candidatas a IATF: estado ao vivo ∈ {APTA, ATRASADA}, avaliado numa data. Fecha cinco furos do critério antigo — PEV, protocolo em andamento, inseminada em aberto, aptidão de novilha e `a_descartar` |
+| `rules/agenda_engine.py` | "PEV encerra" exclui gestante/inseminada pelo estado ao vivo |
+| `rules/relatorios_gerenciais.py` (`relatorios_manejo`) | As 8 listas de trabalho: gestante/inseminada/"vazia" (disponível para serviço) vêm de `estados_ao_vivo`, não mais dos três booleanos por `sit_rep`. `a_descartar` só corta a lista "a inseminar" — as demais (prenhes, secagem, previsão de partos) continuam biológicas, de propósito (ver seção 7.1) |
+| `rules/relatorios_gerenciais.py` (`fluxo_lactacao`) | Projeção de partos/secagens: filtro `"Vaz."` removido (`ups` já é o sinal ao vivo de gestação); "em lactação" passou a usar a mesma secagem ao vivo de `relatorios_manejo`, não `Animal.del_dias` congelado |
+| `rules/relatorios_gerenciais.py` (`taxa_servico_prenhez`) | `prenhas` da curva acumulada por faixa de DEL: vem de `_ultimo_servico_positivo`, o mesmo predicado do estado GESTANTE |
 
 Fallbacks (ativam quando faltam registros): `indicadores.py:228-236,462,487,594-601`,
 `recria.py:411-489`, `lote_criterios.py:238`, e no front
@@ -123,27 +128,32 @@ Fallbacks (ativam quando faltam registros): `indicadores.py:228-236,462,487,594-
 
 ### 7.1 Quem respeita R1 (`a_descartar`)
 
-**Três lugares no sistema inteiro:** o motor
-(`programa_reprodutivo.py:381`), a agenda do veterinário
-(`agenda_veterinario.py:122`) e o benchmark da Capa
-(`indicadores.py:_repro_benchmark`, corrigido — ver 3.1).
+**Cinco lugares:** o motor (`programa_reprodutivo.py:381`), a agenda do
+veterinário (`agenda_veterinario.py:122`), o benchmark da Capa
+(`indicadores.py:_repro_benchmark`), o painel de candidatas a IATF da Agenda
+(`agenda_engine.py`, via o recorte `no_programa`) e os dois endpoints de
+protocolo em `reproducao.py`, via `estado_no_dia`.
 
 **Não respeitam** — o animal marcado para descarte continua sendo cobrado:
-candidata IATF, retoque, parto provável, pré-parto, secagem, Scratch, "PEV
-encerra", BST, indução de cio, vacina pré-parto, motivo de perda de prenhez,
-sugestão de lote, eventos sanitários, e as 8 listas de trabalho.
+retoque, parto provável, pré-parto, secagem, Scratch, BST, indução de cio,
+vacina pré-parto, motivo de perda de prenhez, sugestão de lote, eventos
+sanitários, e 7 das 8 listas de trabalho — só "a inseminar" corta
+`a_descartar` (de propósito: é a única lista que pede uma ação que contradiz
+o descarte já decidido; as demais são biológicas — vaca a descartar prenhe
+ainda pare e ainda seca). Note que é um corte parcial de R1: só `a_descartar`,
+sem `data_baixa`.
 
 ### 7.2 Motivos e o que os dispara
 
 | Motivo | Origem | Respeita gestação ao vivo? |
 |---|---|---|
-| Candidata IATF | `agenda_engine.py:218` → `iatf.py:77` | Não — `sit_rep` |
+| Candidata IATF | `agenda_engine.py` → `iatf.py` | **Sim** — estado ao vivo, com R1 |
 | Retoque | `agenda_engine.py:252` | Sim (via perda/pré-parto) |
 | Parto provável | `agenda_engine.py:396` | Sim |
 | Pré-parto | `agenda_engine.py:415` | Sim |
 | Secagem | `agenda_engine.py:433` → `dry_off.py` | Sim, com DEL ao vivo |
 | Aplicar Scratch | `agenda_engine.py:448` | Sim |
-| PEV encerra | `agenda_engine.py:462` | **Não** — `sit_rep` |
+| PEV encerra | `agenda_engine.py` | **Sim** — estado ao vivo |
 | BST (aptas/inaptas/reanálise) | `agenda_engine.py:490` → `bst.py` | N/A (critério de lactação) |
 | Observar cio pós-indução | `agenda_engine.py:542` | Parcial |
 | Protocolo IATF D0/D7/D9/D11 | `agenda.py:638` | N/A (execução) |
@@ -234,12 +244,12 @@ contexto:
 
 Do que mais dói para o que menos dói:
 
-1. **`iatf.py`** — decide por `sit_rep` e alimenta a Agenda. É onde o produtor
-   recebe a orientação errada sobre qual vaca inseminar hoje.
-2. **`relatorios_gerenciais.py`** — as 8 listas de trabalho e o `fluxo_lactacao`
-   (projeção de partos e secagens por `sit_rep`).
-4. **`reproducao_analise.py`** — remove a terceira definição de concepção e para
+1. **`reproducao_analise.py`** — remove a terceira definição de concepção e para
    de gerar insight falso no Manual.
-5. **Unificar "apta"** na tabela da seção 8, um consumidor por vez.
-6. **Paridade mobile** — menu e ficha.
-7. **`a_descartar_em` + backfill** — o único que resolve a armadilha 11.3.
+2. **Unificar "apta"** na tabela da seção 8, um consumidor por vez.
+3. **Paridade mobile** — menu e ficha.
+4. **`a_descartar_em` + backfill** — o único que resolve a armadilha 11.3.
+
+Já feito: candidatas a IATF, "PEV encerra" e **todo** o
+`relatorios_gerenciais.py` — as 8 listas de trabalho, a projeção de partos e
+secagens, e a curva de prenhas por faixa de DEL (ver seção 6).

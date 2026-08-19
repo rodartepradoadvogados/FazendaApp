@@ -140,30 +140,100 @@ class TestPEV:
 # ============================================================
 
 class TestIATF:
-    def _animal(self, numero, sit_rep, diag=None, del_dias=100):
-        return {"numero_matriz": numero, "sit_rep": sit_rep, "del_dias": del_dias, "diagnostico_ultimo": diag}
+    """Candidata a IATF sai do ESTADO AO VIVO, não mais do `sit_rep` congelado.
 
-    def test_vazia_apta_e_candidata(self):
-        animais = [self._animal("001", "Vaz. apt.")]
-        candidatas = selecionar_candidatas_iatf(animais)
+    O `sit_rep` continua chegando na entrada porque a tela ainda o exibe, mas
+    ele não decide nada — vários testes abaixo o deixam de propósito
+    contradizendo o estado, que é exatamente a situação que a migração
+    resolve."""
+
+    def _animal(self, numero, sit_rep=None, diag=None):
+        return {"numero_matriz": numero, "sit_rep": sit_rep, "diagnostico_ultimo": diag}
+
+    def _estado(self, numero, estado, del_dias=100):
+        return {numero: {"estado": estado, "del_dias": del_dias}}
+
+    def test_apta_e_candidata(self):
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("001")], self._estado("001", "apta"),
+        )
         assert len(candidatas) == 1
         assert candidatas[0].numero_matriz == "001"
+        assert candidatas[0].motivo == "Vazia apta"
+        assert candidatas[0].estado_rotulo == "Apta"
 
-    def test_vazia_atraso_e_candidata(self):
-        animais = [self._animal("002", "Vaz. atr.")]
-        candidatas = selecionar_candidatas_iatf(animais)
+    def test_atrasada_e_candidata(self):
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("002")], self._estado("002", "atrasada"),
+        )
         assert len(candidatas) == 1
+        assert candidatas[0].motivo == "Vazia em atraso"
 
-    def test_diagnostico_negativo_e_candidata(self):
-        animais = [self._animal("003", "Ins.", diag="NEGATIVO")]
-        candidatas = selecionar_candidatas_iatf(animais)
+    def test_diagnostico_negativo_refina_o_motivo(self):
+        """Deixou de ser critério paralelo. Quem teve DG negativo e já passou do
+        PEV cai em apta/atrasada como qualquer outra; o negativo só troca o
+        texto que o produtor lê."""
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("003", diag="NEGATIVO")], self._estado("003", "apta"),
+        )
         assert len(candidatas) == 1
         assert candidatas[0].motivo == "Diagnóstico negativo"
 
-    def test_prenha_nao_e_candidata(self):
-        animais = [self._animal("004", "Ges.", diag="POSITIVO")]
-        candidatas = selecionar_candidatas_iatf(animais)
-        assert len(candidatas) == 0
+    def test_del_dias_vem_do_estado_calculado(self):
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("003")], self._estado("003", "apta", del_dias=87),
+        )
+        assert candidatas[0].del_dias == 87
+
+    def test_gestante_nao_e_candidata(self):
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("004", diag="POSITIVO")], self._estado("004", "gestante"),
+        )
+        assert candidatas == []
+
+    def test_dentro_do_pev_nao_e_candidata_mesmo_com_dg_negativo(self):
+        """O furo mais caro do critério antigo: o ramo do diagnóstico negativo
+        não testava PEV, então vaca recém-parida com DG negativo do ciclo
+        anterior entrava na lista do curral."""
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("005", diag="NEGATIVO")], self._estado("005", "pev", del_dias=20),
+        )
+        assert candidatas == []
+
+    def test_em_protocolo_nao_e_candidata(self):
+        """Vaca com D0 implantado hoje não pode ser oferecida de novo."""
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("006")], self._estado("006", "em_protocolo"),
+        )
+        assert candidatas == []
+
+    def test_inseminada_aguardando_dg_nao_e_candidata(self):
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("007")], self._estado("007", "inseminada"),
+        )
+        assert candidatas == []
+
+    def test_novilha_sem_idade_ou_peso_nao_e_candidata(self):
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("008")], self._estado("008", "nao_apta"),
+        )
+        assert candidatas == []
+
+    def test_animal_fora_do_mapa_de_estados_nao_e_candidata(self):
+        """É assim que a regra R1 chega aqui: quem chamou tira do mapa o animal
+        marcado a descartar ou baixado, e ele simplesmente não tem estado."""
+        candidatas = selecionar_candidatas_iatf([self._animal("009")], {})
+        assert candidatas == []
+
+    def test_sit_rep_congelado_nao_manda_mais(self):
+        """Os dois lados do defeito, num teste só: o CSV diz que a vaca 010 está
+        prenhe (e ela entra, porque os registros dizem que está apta) e que a
+        011 está vazia apta (e ela sai, porque engravidou pelo app)."""
+        candidatas = selecionar_candidatas_iatf(
+            [self._animal("010", sit_rep="Ges."), self._animal("011", sit_rep="Vaz. apt.")],
+            {**self._estado("010", "apta"), **self._estado("011", "gestante")},
+        )
+        assert [c.numero_matriz for c in candidatas] == ["010"]
 
     def test_calcula_doses_10_candidatas(self):
         n = 10

@@ -112,7 +112,7 @@ export default function HistoricoCiclosIatf() {
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead><tr>
                 <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
-                <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
+                <ThOrdenavel label="Estado" campo="estado_rotulo" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
                 <ThOrdenavel label="Motivo" campo="motivo" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} />
                 <ThOrdenavel label="DEL hoje" campo="del_dias" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} alinhar="right" />
                 <ThOrdenavel label="DEL projetado" campo="del_dias_projetado" coluna={ordCandidatas.coluna} dir={ordCandidatas.dir} ordenar={ordCandidatas.ordenar} alinhar="right" />

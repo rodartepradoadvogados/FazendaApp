@@ -4467,9 +4467,14 @@ export async function fetchProtocolosIatfAtivos() {
   if (!res.ok) throw new Error(`Protocolos IATF ativos error: ${res.status}`);
   return res.json();
 }
+// A lista É a lista da próxima visita: o estado reprodutivo de cada animal é
+// avaliado NAQUELA data, não hoje. Por isso `apta_na_proxima_visita` é sempre
+// true — quem não estará apta lá simplesmente não vem. `apta_hoje` distingue
+// quem já pode ser trabalhada agora de quem só na visita.
 export type CandidataIatfProjetada = {
   numero_matriz: string; sit_rep: string | null; del_dias: number | null; motivo: string;
-  del_dias_projetado: number | null; apta_na_proxima_visita: boolean;
+  estado: string; estado_rotulo: string;
+  del_dias_projetado: number | null; apta_na_proxima_visita: boolean; apta_hoje: boolean;
 };
 export async function fetchCandidatasIatfProjetadas() {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/candidatas`, { cache: "no-store" });

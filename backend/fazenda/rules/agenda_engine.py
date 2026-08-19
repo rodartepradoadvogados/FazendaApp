@@ -28,11 +28,20 @@ from fazenda.rules.iatf import (
 from fazenda.rules.parametros import (
     dias_contas_a_pagar_agenda as _dias_contas_a_pagar_padrao,
     dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
+    get_param,
     gestacao_dias_referencia,
+    idade_apta_min_meses as _idade_apta_min_meses,
     intervalo_bst as _intervalo_bst_padrao,
     intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
     periodo_seco_dias,
+    peso_apta_min as _peso_apta_min,
+    pev_dias as _pev_dias,
     pre_parto_max,
+)
+from fazenda.rules.estado_reprodutivo import (
+    GESTANTE as _E_GESTANTE,
+    INSEMINADA as _E_INSEMINADA,
+    estados_ao_vivo,
 )
 from fazenda.rules.perda_prenhez import retoque_esta_resolvido
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
@@ -134,6 +143,21 @@ class AgendaEngine:
         pedidos_documentos_vencendo: list[dict] | None = None,
         pessoas_documentos_vencendo: list[dict] | None = None,
         inducoes_cio: list[dict] | None = None,
+        # Entram para o estado reprodutivo AO VIVO decidir candidatas a IATF e
+        # "PEV encerra" — antes os dois liam `sit_rep`, o texto congelado do
+        # GERAL.csv. Sem `aplicacoes_iatf` o estado EM_PROTOCOLO nunca sai e a
+        # vaca com D0 implantado hoje volta a ser oferecida; sem
+        # `peso_por_animal` a novilha nulípara nunca é apta por peso. Ambos com
+        # default vazio para não quebrar chamador nenhum.
+        aplicacoes_iatf: list[dict] | None = None,
+        peso_por_animal: dict[str, float] | None = None,
+        # Histórico COMPLETO de serviços, só para a classificação ao vivo.
+        # `servicos` continua sendo o recorte `ult_ocorrencia == 1`, porque o
+        # alerta de retoque varre essa lista e dispararia para serviços antigos
+        # se ela virasse o histórico. `classificar_animal` faz o próprio
+        # recorte "posterior ao último parto"; com só o registro marcado, o
+        # vigente correto pode ficar de fora quando a marcação está velha.
+        servicos_historico: list[dict] | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -215,18 +239,42 @@ class AgendaEngine:
             if n and d and s.get("motivo") == "rotina" and (n not in ult_secagem_rotina_por_animal or d > ult_secagem_rotina_por_animal[n]):
                 ult_secagem_rotina_por_animal[n] = d
 
+        # ── ESTADO REPRODUTIVO AO VIVO
+        # Recalculado dos registros, é o que decide as candidatas a IATF e o
+        # aviso "PEV encerra" mais abaixo. Antes os dois liam `Animal.sit_rep`,
+        # congelado no último GERAL.csv: vaca que engravidasse pelo app seguia
+        # sendo oferecida para protocolo até o próximo upload.
+        no_programa = [
+            a for a in animais
+            if a.get("ativo", True)
+            and not a.get("a_descartar")
+            and not (a.get("data_baixa") and a["data_baixa"] <= data_referencia)
+        ]
+        estados_vivos = estados_ao_vivo(
+            no_programa,
+            hoje=data_referencia,
+            partos=partos,
+            servicos=servicos_historico if servicos_historico is not None else servicos,
+            aplicacoes_iatf=aplicacoes_iatf or [],
+            pev_dias=_pev_dias(),
+            del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
+            peso_por_animal=peso_por_animal or {},
+            idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
+            peso_apta_kg=_peso_apta_min(),
+        )
+
         # 1. CANDIDATAS IATF
+        # `no_programa` já aplicou a regra R1 (a_descartar e baixa datada), que
+        # `classificar_animal` não consulta sozinho.
         iatf_input = [
             {
                 "numero_matriz": a["numero"],
                 "sit_rep": a.get("sit_rep"),
-                "del_dias": a.get("del_dias"),
                 "diagnostico_ultimo": servico_por_animal.get(a["numero"], {}).get("diagnostico"),
             }
-            for a in animais
-            if a.get("ativo", True)
+            for a in no_programa
         ]
-        candidatas = selecionar_candidatas_iatf(iatf_input)
+        candidatas = selecionar_candidatas_iatf(iatf_input, estados_vivos)
         result.candidatas_iatf = candidatas
         if candidatas:
             result.necessidade_iatf = calcular_necessidade_hormonios(len(candidatas))
@@ -460,7 +508,11 @@ class AgendaEngine:
                     ))
 
             # ── PEV (45 dias após parto)
-            if data_parto_real and sit_rep not in ("Ges.", "Ins."):
+            # A exclusão de gestante/inseminada sai do estado AO VIVO. Com o
+            # `sit_rep` congelado, a vaca que engravidasse pelo app continuava
+            # recebendo "PEV encerra — liberar p/ inseminar" até o próximo CSV.
+            estado_vivo = (estados_vivos.get(numero) or {}).get("estado")
+            if data_parto_real and estado_vivo not in (_E_GESTANTE, _E_INSEMINADA):
                 res_pev = calcular_pev(numero, data_parto_real, data_referencia)
                 if not res_pev.liberado:
                     eventos.append(AgendaItem(
