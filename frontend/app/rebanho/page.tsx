@@ -24,15 +24,26 @@ const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
   { header: "Categoria", key: "categoria" }, { header: "Raça", key: "raca" },
   { header: "Sit. Rep.", key: "sit_rep" }, { header: "DEL", key: "del_dias" },
-  { header: "Últ. CL (kg)", key: "ult_cl_kg" },
+  { header: "Últ. CL (kg)", key: "ult_cl_kg" }, { header: "Origem da produção", key: "origem_producao" },
 ];
 
 type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
   categoria_completa: string | null; raca: string | null; sit_rep: string | null;
-  del_dias: number | null; ult_cl_kg: number | null; diagnostico: string | null;
+  del_dias: number | null;
+  /** @deprecated Campo congelado do CSV do Ideagri — prefira `producao_kg`. */
+  ult_cl_kg: number | null;
+  diagnostico: string | null;
+  // Produção AO VIVO (AnimalProducaoAoVivo, lib/api.ts) — cai para `ult_cl_kg`
+  // enquanto o backend novo não estiver publicado.
+  producao_kg?: number | null; producao_data?: string | null; producao_origem?: "controle" | "congelado" | null;
   a_descartar?: boolean; sexo?: string | null; observacoes?: string | null;
 };
+
+// Produção ao vivo com fallback pro campo congelado — ver AnimalProducaoAoVivo em lib/api.ts.
+function producaoDe(a: Animal): number | null {
+  return a.producao_kg ?? a.ult_cl_kg ?? null;
+}
 
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
@@ -241,10 +252,11 @@ function RebanhoDescarte() {
 // independente em cada grupo (cada instância deste componente tem seu
 // próprio estado de ordenação via useOrdenacao).
 function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: Animal[]; femeasApenas: boolean; estadosPorNumero: Map<string, EstadoReprodutivoAnimal> }) {
-  // Enriquece com o rótulo do estado ao vivo só para poder ordenar pela coluna
-  // "Sit. Rep." — useOrdenacao ordena por um campo do próprio objeto.
+  // Enriquece com o rótulo do estado ao vivo e a produção ao vivo (com
+  // fallback) só para poder ordenar pelas colunas "Sit. Rep." e "Últ. CL" —
+  // useOrdenacao ordena por um campo do próprio objeto.
   const comRotulo = useMemo(
-    () => lista.map((a) => ({ ...a, sitRepAoVivo: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ?? null })),
+    () => lista.map((a) => ({ ...a, sitRepAoVivo: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ?? null, producaoAoVivo: producaoDe(a) })),
     [lista, estadosPorNumero]
   );
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(comRotulo);
@@ -257,7 +269,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
         <ThOrdenavel label="Raça" campo="raca" coluna={coluna} dir={dir} ordenar={ordenar} />
         <ThOrdenavel label="Sit. Rep." campo="sitRepAoVivo" coluna={coluna} dir={dir} ordenar={ordenar} />
         <ThOrdenavel label="DEL" campo="del_dias" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
-        <ThOrdenavel label="Últ. CL" campo="ult_cl_kg" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+        <ThOrdenavel label="Últ. CL" campo="producaoAoVivo" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
       </tr></thead>
       <tbody>
         {linhasOrdenadas.map((a) => (
@@ -268,7 +280,10 @@ function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: 
             <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
             <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo || "—"}</span></td>
             <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+            <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
+              title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
+              {a.producaoAoVivo ? `${a.producaoAoVivo.toFixed(1)}${a.producao_origem === "congelado" ? " *" : ""}` : "—"}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -366,7 +381,13 @@ function RebanhoVisaoGeral() {
   // estado ao vivo, não mais o texto cru do CSV.
   const linhasParaExportar = useMemo(
     () => (ordenarPorNumeracao ? porNumero : grupoLista.flatMap(([, lista]) => lista))
-      .map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa, sit_rep: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || null })),
+      .map((a) => ({
+        ...a, categoria: a.categoria_abrev || a.categoria_completa, sit_rep: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || null,
+        // `ult_cl_kg` fica sobrescrito pelo valor AO VIVO (com fallback) para a
+        // planilha exportada não perder a distinção do congelado.
+        ult_cl_kg: producaoDe(a),
+        origem_producao: a.producao_origem === "congelado" ? "CSV importado (congelado)" : a.producao_origem === "controle" ? "Controle leiteiro" : "",
+      })),
     [ordenarPorNumeracao, porNumero, grupoLista, estadosPorNumero]
   );
 
@@ -501,7 +522,10 @@ function RebanhoVisaoGeral() {
                         <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
                         <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) || "—"}</span></td>
                         <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600, color: a.producao_origem === "congelado" ? "var(--text-muted)" : undefined }}
+                          title={a.producao_origem === "congelado" ? "Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal" : undefined}>
+                          {producaoDe(a) ? `${(producaoDe(a) as number).toFixed(1)}${a.producao_origem === "congelado" ? " *" : ""}` : "—"}
+                        </td>
                       </tr>
                     ))}
                     {!porNumero.length && <tr><td colSpan={femeasApenas ? 7 : 8} style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.75rem" }}>Nenhum animal no filtro.</td></tr>}
