@@ -11,6 +11,13 @@ import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { BuscaAnimal, subtituloAnimal, type AnimalMob } from "./comum";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+// Curva de lactação: mesmo componente SVG da ficha de mesa (sem biblioteca de
+// gráfico — é o padrão do projeto). Só o CSS muda: as variáveis genéricas que
+// o componente usa (--text-muted/--dourado-light/--border/--surface) são
+// remapeadas aqui para os tokens --mob-* no `style` do wrapper, a mesma
+// técnica de "--tint-cor" já usada no Menu (app/app/menu/page.tsx) — assim o
+// gráfico nasce com a paleta do app de campo sem duplicar a lógica do SVG.
+import { CurvaLactacao, type FaixaReferencia } from "@/components/CurvaLactacao";
 
 // Campos ordenáveis da lista "Todos os animais" (Rebanho › Ficha do animal).
 const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
@@ -146,6 +153,23 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
   // leiteiro novo lançado no app elas ainda mostram o penúltimo controle.
   const controlesLeiteiros = (ficha?.controles_leiteiros as Record<string, unknown>[] | undefined) || [];
   const ultimoControle = controlesLeiteiros.length ? controlesLeiteiros[controlesLeiteiros.length - 1] : null;
+  // Mesmos pontos (DEL × kg) que a versão de mesa desenha na curva — vêm do
+  // mesmo /animais/{n}/ficha, só que aqui o tipo Ficha é um catch-all
+  // genérico, então lê-se e valida-se campo a campo (sem `!`).
+  const pontosLactacao = controlesLeiteiros
+    .map((c) => ({
+      del: Number(c.del_no_controle),
+      kg: Number(c.producao_kg),
+      data: c.data_controle ? formatDate(String(c.data_controle)) : null,
+    }))
+    .filter((p) => Number.isFinite(p.del) && Number.isFinite(p.kg));
+  const referenciaLactacao = ficha?.curva_referencia_rebanho as unknown as FaixaReferencia[] | undefined;
+  // Na mesa a curva fica atrás de uma aba: quem abre, escolheu vê-la. Aqui é
+  // card sempre visível, e mostrar "Curva de lactação — sem controle" para
+  // uma bezerra de 8 meses é ruído numa tela onde cada centímetro custa. O
+  // card só aparece para quem já pariu (aí o vazio é informativo: falta
+  // lançar o controle) ou para quem já tem ponto na curva.
+  const jaPariu = ((ficha?.partos as unknown[] | undefined) || []).length > 0;
 
   function abrirEditColostro() {
     const c: Record<string, unknown> = colostragem || {};
@@ -251,6 +275,20 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
               <ParDado label="Previsão de parto" valor={ficha?.previsao_parto ? formatDate(ficha.previsao_parto) : "—"} />
             </Grade>
           </MobCard>
+
+          {a.sexo === "F" && (jaPariu || pontosLactacao.length > 0) && (
+            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }}>
+              <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>Curva de lactação</div>
+              <div style={{
+                ["--text-muted" as any]: "var(--mob-muted)",
+                ["--dourado-light" as any]: "var(--mob-dourado-2)",
+                ["--border" as any]: "var(--mob-border)",
+                ["--surface" as any]: "var(--mob-surface)",
+              }}>
+                <CurvaLactacao pontos={pontosLactacao} referencia={referenciaLactacao} />
+              </div>
+            </MobCard>
+          )}
 
           <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem", borderColor: destacar ? "var(--mob-vermelho)" : undefined }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
