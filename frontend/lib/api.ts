@@ -105,6 +105,7 @@ export function logout() {
 export const ROTA_MODULO: Record<string, string> = {
   "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos", "/protocolos": "lancamentos",
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
+  "/ciclos-21-dias": "reproducao",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
   "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
   "/analise-relatorios": "indicadores",
@@ -1256,6 +1257,40 @@ export async function fetchNaoConformidades(): Promise<NaoConformidadesResp> {
 export async function fetchServicosAnalise() {
   const res = await authFetch(`${API}/reproducao/servicos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Análise error: ${res.status}`);
+  return res.json();
+}
+
+// Ciclos de 21 dias — risco de prenhez no padrão BREDSUM\E do DairyComp.
+// BR ELIG (elegíveis para inseminação) → BRED (servidas) → PG ELIG (elegíveis
+// para prenhez) → PREG (prenhes). Ver backend/fazenda/rules/programa_reprodutivo.py.
+export type CicloReprodutivo = {
+  ciclo: number; inicio: string; fim: string;
+  br_elig: number; bred: number; taxa_servico: number | null;
+  pg_elig: number; preg: number; taxa_prenhez: number | null;
+  taxa_concepcao: number | null; servicos_com_resultado: number;
+  animais: { br_elig: string[]; bred: string[]; pg_elig: string[]; preg: string[] };
+};
+export type CiclosResposta = {
+  ancora: string; modo: "inicio" | "fim"; categoria: string;
+  periodo: { inicio: string; fim: string };
+  ciclos: CicloReprodutivo[];
+  resumo: {
+    taxa_servico: number | null; taxa_prenhez: number | null;
+    taxa_concepcao: number | null; animais_avaliados: number;
+  };
+  metas: { taxa_servico: number; taxa_prenhez: number; taxa_concepcao: number };
+  parametros: { pev_dias: number; dias_minimos_no_ciclo: number; dias_resultado_conhecido: number };
+  ressalva_historica: string;
+};
+export async function fetchCiclos21Dias(
+  ancora: string, modo: "inicio" | "fim", nCiclos: number, categoria: string,
+): Promise<CiclosResposta> {
+  const qs = new URLSearchParams({ ancora, modo, n_ciclos: String(nCiclos), categoria });
+  const res = await authFetch(`${API}/reproducao/ciclos-21-dias?${qs}`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(mensagemErroApi(d.detail) || `Ciclos de 21 dias error: ${res.status}`);
+  }
   return res.json();
 }
 type ServicoEditPayload = {

@@ -706,4 +706,33 @@ def ficha_animal(
         "ocorrencias_clinicas": _dump(ocorrencias_clinicas),
         "exames_resultados": exames_resultados,
         "linha_tempo_sanitaria": linha_tempo_sanitaria,
+        # Curva média do rebanho por faixa de DEL — é a referência que a
+        # "Curva de lactação" da ficha desenha por trás dos pontos do animal,
+        # para responder "esta vaca está acima ou abaixo do padrão da casa?".
+        # Reusa `rules.producao.calcular_producao`, o mesmo cálculo da tela de
+        # Produção, em vez de inventar um modelo teórico à parte.
+        "curva_referencia_rebanho": _curva_referencia_rebanho(session, fazenda_id),
     }
+
+
+def _curva_referencia_rebanho(session: Session, fazenda_id: int | None) -> list[dict]:
+    """Produção média do rebanho por faixa de DEL (0-30, 31-60, ...).
+
+    Vazia quando ainda não há controle leiteiro suficiente — a ficha
+    simplesmente não desenha a linha de referência nesse caso.
+    """
+    from fazenda.rules.producao import calcular_producao
+
+    query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles = [
+        {
+            "numero_matriz": c.numero_matriz,
+            "data_controle": c.data_controle,
+            "producao_kg": c.producao_kg,
+            "del_no_controle": c.del_no_controle,
+        }
+        for c in session.exec(query).all()
+    ]
+    return calcular_producao(controles)["curva_lactacao"]

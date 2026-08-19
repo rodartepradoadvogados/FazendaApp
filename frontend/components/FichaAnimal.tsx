@@ -5,10 +5,11 @@ import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, regis
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, TabBar } from "@/components/ui";
 import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import { CurvaLactacao, type FaixaReferencia } from "@/components/CurvaLactacao";
 
 type PrecisaoParto = {
   data_ultima_ia_positiva: string | null;
@@ -44,6 +45,9 @@ type Ficha = {
   ocorrencias_clinicas: Record<string, unknown>[];
   exames_resultados: Record<string, unknown>[];
   linha_tempo_sanitaria: { data: string | null; tipo_evento: string; descricao: string | null; gta: string | null; responsavel: string | null }[];
+  // Média do rebanho por faixa de DEL — a linha de referência que a curva de
+  // lactação desenha por trás dos pontos deste animal.
+  curva_referencia_rebanho?: FaixaReferencia[];
 };
 
 function classeColostro(brix: number | null): string {
@@ -208,6 +212,67 @@ function SecaoHistoricoTabela({ chave, titulo, colunas, linhas, onAbrirCria }: {
           </tbody>
         </table>
       </div>
+    </SecaoRecolhivel>
+  );
+}
+
+// Controle leiteiro: a mesma seção, em duas leituras — a tabela (o dado bruto,
+// linha a linha) e a curva de lactação (a forma da lactação ao longo do DEL,
+// comparada com a média do rebanho). São perguntas diferentes sobre os mesmos
+// números: "o que foi medido?" e "isto está bom?".
+function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCria }: {
+  colunas: ColunaExport[];
+  linhas: Record<string, unknown>[];
+  brutas: Record<string, unknown>[];
+  referencia?: FaixaReferencia[];
+  onAbrirCria: (numero: string) => void;
+}) {
+  const [aba, setAba] = useState<"tabela" | "curva">("tabela");
+  const ord = useOrdenacao(linhas);
+
+  const pontos = brutas
+    .map((c) => ({
+      del: Number(c.del_no_controle),
+      kg: Number(c.producao_kg),
+      data: c.data_controle ? formatDate(String(c.data_controle)) : null,
+    }))
+    .filter((p) => Number.isFinite(p.del) && Number.isFinite(p.kg));
+
+  return (
+    <SecaoRecolhivel titulo="Controle leiteiro" badge={String(linhas.length)}>
+      <TabBar<"tabela" | "curva">
+        abas={[
+          { id: "tabela", label: "Tabela", title: "Os controles leiteiros lançados, linha a linha" },
+          { id: "curva", label: "Curva de lactação", title: "Produção por DEL, com a média do rebanho como referência" },
+        ]}
+        ativa={aba}
+        onChange={setAba}
+      />
+      {aba === "curva" ? (
+        <CurvaLactacao pontos={pontos} referencia={referencia} />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead>
+              <tr>
+                {colunas.map((c) => {
+                  const campo = c.key.endsWith("Fmt") ? c.key.slice(0, -3) : c.key;
+                  return <ThOrdenavel key={c.key} label={c.header} campo={campo} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />;
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {ord.linhasOrdenadas.map((l, i) => (
+                <tr key={i}>
+                  {colunas.map((c) => (
+                    <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(l[c.key] ?? "—")}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </SecaoRecolhivel>
   );
 }
@@ -606,6 +671,13 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             const linhasBrutas = (ficha[s.chave] as Record<string, unknown>[]) || [];
             if (!linhasBrutas.length) return null;
             const linhas = formatarLinhas(s.chave, linhasBrutas);
+            // Controle leiteiro ganha a alternância tabela ↔ curva de lactação.
+            if (s.chave === "controles_leiteiros") {
+              return (
+                <SecaoControleLeiteiro key={s.chave} colunas={s.colunas} linhas={linhas}
+                  brutas={linhasBrutas} referencia={ficha.curva_referencia_rebanho} onAbrirCria={buscar} />
+              );
+            }
             return (
               <SecaoHistoricoTabela key={s.chave} chave={s.chave} titulo={s.titulo} colunas={s.colunas} linhas={linhas} onAbrirCria={buscar} />
             );
