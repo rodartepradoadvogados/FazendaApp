@@ -118,7 +118,7 @@ export default function Home() {
       extra={onClick ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}
     />
   );
-  const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
+  const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.estado_rotulo || c.sit_rep, del_dias: c.del_dias }));
   const aDescartarList: AnimalRow[] = animais.filter((a) => a.a_descartar);
   const descartadosList = baixas.filter((b) => TIPOS_DESCARTE.includes(b.tipo_baixa) && (!desdeDescarte || b.data_baixa >= desdeDescarte));
 

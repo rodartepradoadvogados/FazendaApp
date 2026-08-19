@@ -1993,7 +1993,7 @@ export default function AgendaPage() {
               <table className="fazenda-table">
                 <thead><tr>
                   <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
-                  <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
+                  <ThOrdenavel label="Estado" campo="estado_rotulo" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
                   <ThOrdenavel label="DEL" campo="del_dias" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
                   <ThOrdenavel label="Motivo" campo="motivo" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
                   <th></th>
@@ -2002,7 +2002,10 @@ export default function AgendaPage() {
                   {ordIatf.linhasOrdenadas.map((c: any, i: number) => (
                     <tr key={i}>
                       <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
-                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "var(--r-sm)", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
+                      {/* Estado recalculado dos registros, não o `sit_rep` do
+                          CSV: era ele que fazia a tela escrever "Gestante" ao
+                          lado de uma candidata a protocolo. */}
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "var(--r-sm)", fontSize: "0.75rem" }}>{c.estado_rotulo || c.sit_rep}</span></td>
                       <td>{c.del_dias ?? "—"}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
                       <td><BotaoAgendar numero={c.numero_matriz} descricao="IATF: candidata a novo serviço" categoria="Reprodutivo" /></td>

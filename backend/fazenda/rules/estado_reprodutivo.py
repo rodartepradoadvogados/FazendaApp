@@ -246,3 +246,72 @@ def descrever_servico(servico: Any) -> str:
     if protocolo and protocolo.lower() not in ("cio natural", "cio", "-", "—"):
         return f"IA — IATF ({protocolo})"
     return "IA — cio natural"
+
+
+def estados_ao_vivo(
+    animais: list[Any],
+    *,
+    hoje: date,
+    partos: list[Any],
+    servicos: list[Any],
+    aplicacoes_iatf: list[Any],
+    pev_dias: int,
+    del_max_1o_servico: int | None,
+    peso_por_animal: dict[str, float] | None = None,
+    idade_apta_dias: int | None = None,
+    peso_apta_kg: float | None = None,
+) -> dict[str, dict]:
+    """`classificar_animal` em lote: devolve {numero -> dict completo}.
+
+    Existe porque três lugares (Agenda, candidatas a IATF, protocolos ativos)
+    montavam o mesmo agrupamento na mão e depois decidiam por `sit_rep`.
+
+    Devolve o dict INTEIRO de `classificar_animal`, não só o estado — quem
+    chama precisa de `del_dias` e `data_servico` junto. (`indicadores.py`
+    tem uma variante que guarda só a string; esta é a versão rica.)
+
+    `eh_vaca` sai de ter parto registrado OU de "vaca" na categoria, mesma
+    convenção de `programa_reprodutivo.montar_perfil`.
+
+    ATENÇÃO: `classificar_animal` NÃO consulta `a_descartar` nem `data_baixa`.
+    Quem precisa da regra R1 do programa reprodutivo tem que aplicá-la por
+    cima — ou usar `programa_reprodutivo.estado_no_dia`, que já faz isso.
+    """
+    peso_por_animal = peso_por_animal or {}
+
+    servicos_por: dict[str, list] = {}
+    for s in servicos:
+        servicos_por.setdefault(_get(s, "numero_matriz"), []).append(s)
+    partos_por: dict[str, list] = {}
+    for p in partos:
+        partos_por.setdefault(_get(p, "numero_matriz"), []).append(p)
+    iatf_por: dict[str, list] = {}
+    for ap in aplicacoes_iatf:
+        iatf_por.setdefault(_get(ap, "numero_matriz"), []).append(ap)
+
+    resultado: dict[str, dict] = {}
+    for a in animais:
+        numero = _get(a, "numero")
+        if not numero:
+            continue
+        partos_do_animal = partos_por.get(numero, [])
+        categoria_txt = (
+            _get(a, "categoria_abrev") or _get(a, "categoria_completa") or ""
+        ).lower()
+        nasc = _d(_get(a, "data_nasc"))
+        resultado[numero] = classificar_animal(
+            numero,
+            hoje=hoje,
+            partos=partos_do_animal,
+            servicos=servicos_por.get(numero, []),
+            aplicacoes_iatf=iatf_por.get(numero, []),
+            pev_dias=pev_dias,
+            del_max_1o_servico=del_max_1o_servico,
+            eh_vaca=bool(partos_do_animal) or "vaca" in categoria_txt,
+            idade_dias=(hoje - nasc).days if nasc else None,
+            peso_kg=peso_por_animal.get(numero) or _get(a, "peso_kg"),
+            idade_apta_dias=idade_apta_dias,
+            peso_apta_kg=peso_apta_kg,
+            raca=_get(a, "raca"),
+        )
+    return resultado

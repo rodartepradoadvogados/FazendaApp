@@ -19,7 +19,7 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
-    Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Secagem, SeedFlag, Servico,
@@ -311,7 +311,28 @@ def calcular_agenda(
             _da_fazenda(select(Servico).where(Servico.ult_ocorrencia == 1), Servico)
         ).all()
     ]
+    # Histórico COMPLETO de serviços — alimenta só a classificação reprodutiva
+    # ao vivo dentro do motor (candidatas a IATF e "PEV encerra"). O recorte
+    # `ult_ocorrencia == 1` acima continua sendo o que o resto da agenda usa.
+    servicos_todos = [_model_to_dict(s) for s in session.exec(_da_fazenda(select(Servico), Servico)).all()]
     partos = [_model_to_dict(p) for p in session.exec(_da_fazenda(select(Parto), Parto)).all()]
+    # Aplicações de IATF SEM o filtro `realizada == False` usado mais abaixo:
+    # `_d0_protocolo_ativo` precisa das linhas de D0, que já estão realizadas
+    # quando o implante foi colocado. Sem elas o estado EM_PROTOCOLO nunca sai
+    # e a vaca com D0 de hoje volta a aparecer como candidata a protocolo.
+    aplicacoes_iatf_todas = [
+        _model_to_dict(ap) for ap in session.exec(
+            _da_fazenda(select(ProtocoloIatfAplicacao), ProtocoloIatfAplicacao)
+        ).all()
+    ]
+    # Peso vivo mais recente por matriz — entra na aptidão da novilha nulípara
+    # (mesmo padrão de routers/indicadores.py e routers/reproducao.py).
+    peso_por_animal: dict[str, float] = {}
+    _ultima_pesagem: dict[str, date] = {}
+    for _pes in session.exec(_da_fazenda(select(PesagemCorporal), PesagemCorporal)).all():
+        if _pes.numero_matriz not in _ultima_pesagem or _pes.data_pesagem > _ultima_pesagem[_pes.numero_matriz]:
+            _ultima_pesagem[_pes.numero_matriz] = _pes.data_pesagem
+            peso_por_animal[_pes.numero_matriz] = _pes.peso_kg
     # Alimenta o DEL AO VIVO no motor (ver AgendaEngine.calcular, param
     # `secagens`) — sem isso, Secagem/Pré-parto e o DEL usado no BST ficavam
     # presos ao `Animal.del_dias` congelado no último GERAL.csv.
@@ -459,6 +480,9 @@ def calcular_agenda(
         pedidos_documentos_vencendo=pedidos_documentos_vencendo,
         pessoas_documentos_vencendo=pessoas_documentos_vencendo,
         inducoes_cio=inducoes_cio,
+        aplicacoes_iatf=aplicacoes_iatf_todas,
+        peso_por_animal=peso_por_animal,
+        servicos_historico=servicos_todos,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que

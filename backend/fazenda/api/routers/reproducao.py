@@ -1467,25 +1467,48 @@ def listar_protocolos_iatf_ativos(
     def candidatas_herd() -> list[dict]:
         nonlocal _candidatas_cache
         if _candidatas_cache is None:
-            query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
-            if fazenda_id is not None:
-                query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
-            animais = session.exec(query_animais).all()
+            from fazenda.rules.parametros import (
+                get_param, idade_apta_min_meses, peso_apta_min, pev_dias,
+            )
+            from fazenda.rules.programa_reprodutivo import estado_no_dia
+
+            hoje_ref = date.today()
+            perfis = carregar_perfis_reprodutivos(session, fazenda_id)
             query_servicos = select(Servico).where(Servico.ult_ocorrencia == 1)
             if fazenda_id is not None:
                 query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
-            servicos = session.exec(query_servicos).all()
-            diag_por_animal = {s.numero_matriz: s.diagnostico for s in servicos}
-            iatf_input = [
-                {
-                    "numero_matriz": a.numero, "sit_rep": a.sit_rep, "del_dias": a.del_dias,
-                    "diagnostico_ultimo": diag_por_animal.get(a.numero),
+            diag_por_animal = {
+                s.numero_matriz: s.diagnostico for s in session.exec(query_servicos).all()
+            }
+            query_sit = select(Animal)
+            if fazenda_id is not None:
+                query_sit = query_sit.where(Animal.fazenda_id == fazenda_id)
+            sit_por_animal = {a.numero: a.sit_rep for a in session.exec(query_sit).all()}
+
+            kwargs_estado = {
+                "pev_dias": pev_dias(),
+                "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
+                "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
+                "peso_apta_kg": peso_apta_min(),
+            }
+            # Mesmo critério da Agenda: quem está apta HOJE. `estado_no_dia` já
+            # aplica R1 (a descartar / baixada), que `classificar_animal` não faz.
+            estados = {
+                perfil.numero: {
+                    "estado": estado_no_dia(perfil, hoje_ref, **kwargs_estado).estado_reprodutivo,
+                    "del_dias": _del_em(perfil, hoje_ref),
                 }
-                for a in animais
+                for perfil in perfis
+            }
+            entrada = [
+                {"numero_matriz": perfil.numero, "sit_rep": sit_por_animal.get(perfil.numero),
+                 "diagnostico_ultimo": diag_por_animal.get(perfil.numero)}
+                for perfil in perfis
             ]
-            candidatas = selecionar_candidatas_iatf(iatf_input)
+            candidatas = selecionar_candidatas_iatf(entrada, estados)
             _candidatas_cache = [
-                {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo}
+                {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias,
+                 "motivo": c.motivo, "estado": c.estado, "estado_rotulo": c.estado_rotulo}
                 for c in candidatas
             ]
         return _candidatas_cache
@@ -1612,6 +1635,26 @@ def listar_protocolos_iatf_ativos(
     return ativos
 
 
+def _del_em(perfil, d: date) -> int | None:
+    """DEL do animal NA DATA `d` — dias desde o último parto que já tinha
+    acontecido até ali.
+
+    Substitui a conta antiga de "DEL projetado" (`Animal.del_dias` congelado +
+    dias até a visita), que herdava a defasagem do CSV e ainda somava dias a um
+    número que podia estar errado desde o começo."""
+    datas = []
+    for p in perfil.partos:
+        dp = p.get("data_parto") if isinstance(p, dict) else getattr(p, "data_parto", None)
+        if isinstance(dp, str):
+            try:
+                dp = date.fromisoformat(dp[:10])
+            except ValueError:
+                dp = None
+        if dp and dp <= d:
+            datas.append(dp)
+    return (d - max(datas)).days if datas else None
+
+
 @router.get("/protocolo-iatf/candidatas")
 def candidatas_iatf_projetadas(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1620,43 +1663,83 @@ def candidatas_iatf_projetadas(
     usado na Agenda), com projeção de aptidão na data da próxima visita reprodutiva —
     último serviço do rebanho + `intervalo_visita_reprodutiva` dias (Configurações
     > Parâmetros). Usado em Histórico > Reprodução > Ciclos de IATF."""
-    from fazenda.rules.iatf import selecionar_candidatas_iatf
-    from fazenda.rules.parametros import get_param, intervalo_visita_reprodutiva
+    from fazenda.rules.iatf import ESTADOS_CANDIDATA, selecionar_candidatas_iatf
+    from fazenda.rules.parametros import (
+        get_param, idade_apta_min_meses, intervalo_visita_reprodutiva, peso_apta_min,
+    )
+    from fazenda.rules.programa_reprodutivo import estado_no_dia
 
     fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
-    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
-    if fazenda_id is not None:
-        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
-    animais = session.exec(query_animais).all()
+    # `carregar_perfis_reprodutivos` traz as cinco cargas (Animal, Servico,
+    # Parto, aplicações de IATF e pesagem) já indexadas, com escopo de fazenda e
+    # sem machos nem sêmen — este endpoint antes não filtrava nem isso.
+    perfis = carregar_perfis_reprodutivos(session, fazenda_id)
+
     query_servicos = select(Servico)
     if fazenda_id is not None:
         query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
     todos_servicos = session.exec(query_servicos).all()
     diag_por_animal = {s.numero_matriz: s.diagnostico for s in todos_servicos if s.ult_ocorrencia == 1}
-    iatf_input = [
-        {"numero_matriz": a.numero, "sit_rep": a.sit_rep, "del_dias": a.del_dias,
-         "diagnostico_ultimo": diag_por_animal.get(a.numero)}
-        for a in animais
-    ]
-    candidatas = selecionar_candidatas_iatf(iatf_input)
+    sit_rep_por_animal = {}
+    query_sit = select(Animal)
+    if fazenda_id is not None:
+        query_sit = query_sit.where(Animal.fazenda_id == fazenda_id)
+    for a in session.exec(query_sit).all():
+        sit_rep_por_animal[a.numero] = a.sit_rep
 
     datas_servico = [s.data_servico for s in todos_servicos if s.data_servico]
     intervalo = intervalo_visita_reprodutiva()
     proxima_visita = (max(datas_servico) + timedelta(days=intervalo)) if (datas_servico and intervalo > 0) else None
-    dias_ate_visita = (proxima_visita - hoje).days if proxima_visita else None
-    pev_dias = int(get_param("pev_dias", 45) or 45)
+    pev = int(get_param("pev_dias", 45) or 45)
+    kwargs_estado = {
+        "pev_dias": pev,
+        "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
+        "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
+        "peso_apta_kg": peso_apta_min(),
+    }
+
+    # A pergunta desta tela é "quem planejo para a VISITA", não "quem trabalho
+    # hoje" — por isso o estado é avaliado na data da visita, e não somando dias
+    # ao `Animal.del_dias` congelado como antes. Quem sai do PEV entre hoje e a
+    # visita aparece; quem entra em protocolo ou é inseminada nesse meio-tempo,
+    # não. A Agenda continua respondendo pelo dia de hoje.
+    data_alvo = proxima_visita or hoje
+    estados_hoje = {}
+    estados_visita = {}
+    for perfil in perfis:
+        estados_hoje[perfil.numero] = estado_no_dia(perfil, hoje, **kwargs_estado)
+        estados_visita[perfil.numero] = estado_no_dia(perfil, data_alvo, **kwargs_estado)
+
+    entrada = [
+        {"numero_matriz": p.numero, "sit_rep": sit_rep_por_animal.get(p.numero),
+         "diagnostico_ultimo": diag_por_animal.get(p.numero)}
+        for p in perfis
+    ]
+    # `estado_no_dia` já aplicou R1 (a descartar / baixada) na data da visita.
+    mapa_visita = {
+        n: {"estado": e.estado_reprodutivo, "del_dias": None}
+        for n, e in estados_visita.items()
+    }
+    del_por_animal = {p.numero: _del_em(p, hoje) for p in perfis}
+    del_visita = {p.numero: _del_em(p, data_alvo) for p in perfis}
+    for n in mapa_visita:
+        mapa_visita[n]["del_dias"] = del_por_animal.get(n)
+    candidatas = selecionar_candidatas_iatf(entrada, mapa_visita)
 
     resultado = []
     for c in candidatas:
-        del_projetado = (c.del_dias + dias_ate_visita) if (c.del_dias is not None and dias_ate_visita is not None) else c.del_dias
-        # "Diagnóstico negativo" não depende de DEL/PEV — já é candidata apta
-        # independente da data; as demais (vazia apta/em atraso) só se
-        # confirmam se o DEL projetado ainda cobrir o PEV na data da visita.
-        apta_projetada = True if c.motivo == "Diagnóstico negativo" else (del_projetado is not None and del_projetado >= pev_dias)
+        estado_agora = estados_hoje.get(c.numero_matriz)
         resultado.append({
-            "numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo,
-            "del_dias_projetado": del_projetado, "apta_na_proxima_visita": apta_projetada,
+            "numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias,
+            "motivo": c.motivo, "estado": c.estado, "estado_rotulo": c.estado_rotulo,
+            "del_dias_projetado": del_visita.get(c.numero_matriz),
+            # Ela É candidata na visita por construção — a lista já foi montada
+            # com o estado daquela data. O campo sobrevive para a tela, e agora
+            # significa o que o nome diz.
+            "apta_na_proxima_visita": True,
+            # Quem já está apta hoje pode ser trabalhada sem esperar a visita.
+            "apta_hoje": bool(estado_agora and estado_agora.estado_reprodutivo in ESTADOS_CANDIDATA),
         })
     return {"candidatas": resultado, "proxima_visita_iatf": proxima_visita.isoformat() if proxima_visita else None}
 
