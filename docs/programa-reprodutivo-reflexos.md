@@ -31,26 +31,37 @@ Capa e da tela de Ciclos de 21 dias. A lista dessas superfícies é a seção 5.
 
 | Superfície | Caminho | Observação |
 |---|---|---|
-| Ciclos de 21 dias | `/reproducao/ciclos-21-dias` | R1–R9 completos; único lugar com `a_descartar` e baixa datada |
+| Ciclos de 21 dias | `/reproducao/ciclos-21-dias` | R1–R9 completos; único lugar que reconstrói a baixa pela data |
 | Recria — taxa de prenhez | `/recria/reproducao/taxa-prenhez` | motor filtrado em novilha |
 | Dossiê Zootécnico | `/recria/dossie` | herda de Recria |
 | Situação reprodutiva ao vivo | `/indicadores/estados-reprodutivos` | usa `classificar_animal`; falta o corte de `a_descartar` |
-| Medidores da Capa | `indicadores._repro_benchmark` | `ESTADOS_APTOS` + `conta_em_taxa`; ver ressalva em 3.1 |
+| Medidores da Capa | `indicadores._repro_benchmark` | `ESTADOS_APTOS` + `conta_em_taxa` + `a_descartar`; ver ressalva em 3.2 |
 
 ---
 
 ## 3. Onde o motor foi aplicado pela metade
 
-### 3.1 `_repro_benchmark` não exclui `a_descartar`
+### 3.1 `a_descartar` no benchmark da Capa — CORRIGIDO
 
-`rules/indicadores.py:224` filtra o denominador por `ESTADOS_APTOS`, mas
-`a_descartar` não é consultado em lugar nenhum do caminho: a string não existe
-em `estado_reprodutivo.py` nem em `indicadores.py`, e `classificar_animal` não
-recebe esse campo. Só `estado_no_dia` faz o corte de R1.
+Ficou pela metade por um tempo: `_repro_benchmark` filtrava o denominador por
+`ESTADOS_APTOS` mas não consultava `a_descartar`, porque `classificar_animal`
+não recebe esse campo — só `estado_no_dia` faz o corte de R1.
 
-**Efeito:** vaca marcada para descarte continua no denominador da taxa de
-serviço da Capa, inflando o "não inseminamos" com animais que ninguém pretende
-inseminar.
+Corrigido. `_repro_benchmark` recebe `descartar_nums` e tira esses animais do
+denominador **e** do numerador. Dois detalhes que valem para quem for repetir o
+corte em outro módulo:
+
+- **Cortar só o denominador quebra a conta.** A vaca marcada *depois* de ter
+  sido inseminada continuaria no numerador, e a taxa de serviço podia passar de
+  100%.
+- **O conjunto vem do rebanho inteiro**, não do recorte da categoria. Os animais
+  são separados em vaca/novilha por `vacas_nums` e os serviços por
+  `ordem_parto` — dois cortes independentes. Derivar o conjunto dentro de cada
+  painel deixaria escapar o serviço de uma novilha descartada que caísse no
+  painel de vacas.
+- **`perc_vacas_prenhas` continua sobre o rebanho inteiro**, de propósito: é
+  inventário ("quantas fêmeas estão prenhes"), não taxa do programa. A vaca
+  marcada para descarte que está prenhe continua prenhe e continua comendo.
 
 ### 3.2 Denominador instantâneo contra numerador acumulado
 
@@ -112,8 +123,10 @@ Fallbacks (ativam quando faltam registros): `indicadores.py:228-236,462,487,594-
 
 ### 7.1 Quem respeita R1 (`a_descartar`)
 
-**Exatamente dois lugares:** `programa_reprodutivo.py:381` e
-`agenda_veterinario.py:122`.
+**Três lugares no sistema inteiro:** o motor
+(`programa_reprodutivo.py:381`), a agenda do veterinário
+(`agenda_veterinario.py:122`) e o benchmark da Capa
+(`indicadores.py:_repro_benchmark`, corrigido — ver 3.1).
 
 **Não respeitam** — o animal marcado para descarte continua sendo cobrado:
 candidata IATF, retoque, parto provável, pré-parto, secagem, Scratch, "PEV
@@ -223,8 +236,7 @@ Do que mais dói para o que menos dói:
 
 1. **`iatf.py`** — decide por `sit_rep` e alimenta a Agenda. É onde o produtor
    recebe a orientação errada sobre qual vaca inseminar hoje.
-2. **`a_descartar` em `_repro_benchmark`** — muda o denominador da Capa.
-3. **`relatorios_gerenciais.py`** — as 8 listas de trabalho e o `fluxo_lactacao`
+2. **`relatorios_gerenciais.py`** — as 8 listas de trabalho e o `fluxo_lactacao`
    (projeção de partos e secagens por `sit_rep`).
 4. **`reproducao_analise.py`** — remove a terceira definição de concepção e para
    de gerar insight falso no Manual.

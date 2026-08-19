@@ -191,6 +191,7 @@ def _metas_benchmark(categoria: str) -> dict[str, dict]:
 def _repro_benchmark(
     animais: list[dict], servicos: list[dict], partos: list[dict], desde: date, categoria: str = "todas",
     estados: dict[str, str] | None = None, hoje: date | None = None,
+    descartar_nums: set[str] | None = None,
 ) -> list[dict]:
     """Painel de benchmark reprodutivo de um subconjunto do rebanho — usado
     para 'todas', 'vaca' e 'novilha'.
@@ -210,18 +211,36 @@ def _repro_benchmark(
        antes, preservando o comportamento desses consumidores.
     3. **Taxa de prenhez deixou de ser serviço × concepção** (regra R9). Passa
        a ser prenhes do período ÷ aptas, com os mesmos serviços avaliáveis.
+    4. **`a_descartar` saiu do programa** (regra R1). O animal marcado para
+       descarte não estava sendo cortado: ficava no denominador cobrando uma
+       inseminação que ninguém pretende fazer. E se chegou a ser inseminado
+       antes da marcação, ficava no numerador também — o que podia levar a
+       taxa de serviço acima de 100%.
 
     E aplica a regra dos 28 dias (R7): serviço dos últimos 27 dias não entra em
     taxa nenhuma enquanto o desfecho não for conhecido.
+
+    `descartar_nums` deve vir do rebanho INTEIRO, não do recorte desta
+    categoria: os animais são separados em vaca/novilha por `vacas_nums` e os
+    serviços por `ordem_parto`, dois cortes independentes — derivar o conjunto
+    aqui dentro deixaria escapar o serviço de uma novilha descartada que caísse
+    no painel de vacas. Sem o argumento, cai no recorte local, que é o que os
+    chamadores diretos e os testes precisam.
     """
     from fazenda.rules.programa_reprodutivo import ESTADOS_APTOS, conta_em_taxa
     from fazenda.rules.estado_reprodutivo import GESTANTE as _GESTANTE
 
     hoje = hoje or date.today()
     estados = estados or {}
+    if descartar_nums is None:
+        descartar_nums = {
+            a.get("numero") for a in animais if a.get("a_descartar") and a.get("numero")
+        }
+    # R1 — quem está marcado a descartar não está mais no programa reprodutivo.
+    no_programa = [a for a in animais if a.get("numero") not in descartar_nums]
 
     if estados:
-        aptas = sum(1 for a in animais if estados.get(a.get("numero")) in ESTADOS_APTOS)
+        aptas = sum(1 for a in no_programa if estados.get(a.get("numero")) in ESTADOS_APTOS)
         prenhes = sum(1 for a in animais if estados.get(a.get("numero")) == _GESTANTE)
     else:
         # Fallback legado: sem registros carregados não há o que recalcular.
@@ -229,15 +248,24 @@ def _repro_benchmark(
         for a in animais:
             sit = (a.get("sit_rep") or "").strip()
             if sit == "Ges.":
-                prenhes += 1
+                prenhes += 1  # inventário — ver `total` abaixo
+            elif a.get("numero") in descartar_nums:
+                continue
             elif sit.startswith("Vaz."):
                 vazias += 1
             elif sit == "Ins.":
                 inseminadas += 1
         aptas = vazias + inseminadas  # sem as prenhes, ao contrário de antes
+    # `prenhes` e `total` são INVENTÁRIO, não taxa do programa: respondem
+    # "quantas das fêmeas estão prenhes hoje". A vaca marcada para descarte que
+    # está prenhe continua prenhe e continua comendo — por isso os dois ficam
+    # sobre o rebanho inteiro, ao contrário de `aptas`.
     total = len(animais)
 
-    serv_periodo = [s for s in servicos if _no_periodo(s, desde)]
+    serv_periodo = [
+        s for s in servicos
+        if _no_periodo(s, desde) and s.get("numero_matriz") not in descartar_nums
+    ]
     # R7 — o serviço só entra na conta quando dá para saber se pegou. Sem isto,
     # as IAs dos últimos dias entram no denominador da concepção sem nenhuma
     # chance de já terem virado prenhez, e a taxa despenca artificialmente.
@@ -318,7 +346,12 @@ def _benchmark_categorias(
     animais_novilha = [a for a in animais if a.get("numero") not in vacas_nums]
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
     serv_novilha = [s for s in servicos if (s.get("ordem_parto") or 0) < 1]
-    comum = {"estados": estados, "hoje": hoje}
+    # Do rebanho inteiro, antes de qualquer recorte de categoria — ver a nota
+    # sobre `descartar_nums` no docstring de `_repro_benchmark`.
+    descartar_nums = {
+        a.get("numero") for a in animais if a.get("a_descartar") and a.get("numero")
+    }
+    comum = {"estados": estados, "hoje": hoje, "descartar_nums": descartar_nums}
     return {
         "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas", **comum),
         "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca", **comum),

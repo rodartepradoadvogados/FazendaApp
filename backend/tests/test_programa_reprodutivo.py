@@ -509,3 +509,73 @@ class TestJanelaDgIncompleta:
         assert r.preg == ["100"], "só a diagnosticada no numerador"
         assert r.taxa_prenhez == 50.0
         assert r.janela_dg_completa is False, "o aviso que impede ler isso como fracasso"
+
+
+# ═══════════ R1 no benchmark da Capa — `a_descartar` fora do programa ═══════
+class TestDescartadaForaDoBenchmark:
+    """`_repro_benchmark` filtrava o denominador por ESTADOS_APTOS mas não
+    consultava `a_descartar` em lugar nenhum — `classificar_animal` não recebe
+    esse campo. A vaca marcada para descarte seguia sendo cobrada por uma
+    inseminação que ninguém pretende fazer."""
+
+    def _valores(self, animais, servicos, estados, **kw):
+        from fazenda.rules.indicadores import _repro_benchmark
+
+        lista = _repro_benchmark(
+            animais, servicos, [], date(2026, 1, 1), categoria="todas",
+            estados=estados, hoje=HOJE, **kw,
+        )
+        return {x["chave"]: x["valor"] for x in lista}
+
+    def test_descartada_sai_do_denominador_da_taxa_de_servico(self):
+        animais = [{"numero": "1"}, {"numero": "2"}, {"numero": "3", "a_descartar": True}]
+        estados = {"1": "apta", "2": "apta", "3": "apta"}
+        servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
+        v = self._valores(animais, servicos, estados)
+        assert v["taxa_servico"] == 50.0, "1 servida de 2 no programa — a descartada não conta"
+
+    def test_descartada_inseminada_sai_tambem_do_numerador(self):
+        """O caso que quebrava a conta: marcada DEPOIS de ter sido inseminada.
+        Cortar só o denominador deixaria o serviço dela no numerador e levaria
+        a taxa acima de 100%."""
+        animais = [{"numero": "1", "a_descartar": True}, {"numero": "2"}]
+        estados = {"1": "apta", "2": "apta"}
+        servicos = [
+            _servico(date(2026, 1, 5), "POSITIVO", "1"),
+            _servico(date(2026, 1, 6), "POSITIVO", "2"),
+        ]
+        v = self._valores(animais, servicos, estados)
+        assert v["taxa_servico"] == 100.0, "1 servida de 1 no programa"
+        assert v["taxa_servico"] <= 100.0
+
+    def test_descartada_prenhe_continua_no_inventario(self):
+        """`perc_vacas_prenhas` é inventário, não taxa do programa: a vaca
+        marcada para descarte que está prenhe continua prenhe."""
+        animais = [{"numero": "1"}, {"numero": "2", "a_descartar": True}]
+        estados = {"1": "apta", "2": "gestante"}
+        v = self._valores(animais, [], estados)
+        assert v["perc_vacas_prenhas"] == 50.0, "1 prenhe de 2 fêmeas — o rebanho inteiro"
+
+    def test_o_corte_vale_no_fallback_de_sit_rep(self):
+        animais = [
+            {"numero": "1", "sit_rep": "Vaz."},
+            {"numero": "2", "sit_rep": "Ins."},
+            {"numero": "3", "sit_rep": "Vaz.", "a_descartar": True},
+        ]
+        servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
+        v = self._valores(animais, servicos, estados=None)
+        assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a descartada"
+
+    def test_descartar_nums_explicito_vence_o_recorte_local(self):
+        """O painel de vacas recebe só os animais que já pariram, mas os
+        serviços são separados por `ordem_parto` — dois cortes independentes.
+        Por isso o conjunto vem do rebanho inteiro."""
+        animais_vaca = [{"numero": "1"}, {"numero": "2"}]
+        servicos = [
+            _servico(date(2026, 1, 5), "POSITIVO", "1"),
+            _servico(date(2026, 1, 6), "POSITIVO", "9"),  # novilha descartada que vazou
+        ]
+        estados = {"1": "apta", "2": "apta"}
+        v = self._valores(animais_vaca, servicos, estados, descartar_nums={"9"})
+        assert v["taxa_concepcao"] == 100.0
+        assert v["servicos_por_prenhez"] == 1.0, "o serviço da descartada não entra na conta"
