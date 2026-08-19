@@ -1202,6 +1202,19 @@ export async function excluirProtocoloInducaoLactacao(id: number) {
   return res.json();
 }
 
+// Produção do animal AO VIVO, em GET /animais/ — do ControleLeiteiro mais
+// recente lançado no app, caindo para o campo congelado `ult_cl_kg` (CSV do
+// Ideagri) só para quem nunca teve controle lançado. `producao_origem` existe
+// para a tela poder dizer de onde o número veio: "congelado" é dado que não
+// anda mais, e o usuário tem direito de saber olhando.
+export type ProducaoOrigem = "controle" | "congelado";
+
+export type AnimalProducaoAoVivo = {
+  producao_kg: number | null;
+  producao_data: string | null;
+  producao_origem: ProducaoOrigem | null;
+};
+
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
@@ -1218,7 +1231,56 @@ export async function fetchFichaAnimal(numero: string) {
   return res.json();
 }
 
-export async function fetchIndicadores(data?: string) {
+// Bloco "producao" de GET /indicadores/ (fazenda/rules/indicadores.py::calcular_indicadores).
+// Contrato único das quatro telas que mostram produção — Capa, Indicadores,
+// e as duas do app. Antes cada uma redeclarava seu próprio tipo parcial sobre
+// um `any`, e foi por aí que o card e a lista passaram a mostrar números
+// diferentes com o mesmo nome sem ninguém notar.
+//
+// A separação que este tipo torna explícita:
+//   - o bloco de cima é O CONTROLE DO DIA: `producao_total_dia_kg` é a soma
+//     exata das linhas de `controle_nums` na data `data_controle`. O card é a
+//     soma da sua própria lista por construção, não por coincidência;
+//   - `ultimo_por_animal` é o acumulado antigo (último controle de CADA vaca,
+//     em qualquer data, com fallback para o campo congelado do CSV). Continua
+//     disponível, mas com nome que diz o que ele é.
+export type IndicadoresProducaoUltimoPorAnimal = {
+  producao_total_kg: number;
+  producao_media_kg: number | null;
+  vacas_com_producao: number;
+  /** Quantas vieram de um ControleLeiteiro lançado no app. */
+  de_controle: number;
+  /** Quantas ainda vêm de Animal.ult_cl_kg (CSV do Ideagri, importação aposentada). */
+  congelado: number;
+  congelado_nums: string[];
+};
+
+export type IndicadoresProducao = {
+  /** Dia do controle leiteiro mais recente lançado. null = nenhum controle. */
+  data_controle: string | null;
+  producao_total_dia_kg: number;
+  producao_media_kg: number | null;
+  vacas_no_controle: number;
+  /** Números das matrizes controladas em `data_controle` — a lista do card. */
+  controle_nums: string[];
+  vacas_lactacao: number;
+  cobertura_controle_pct: number | null;
+  /** DEL médio AO VIVO (último parto, zerado por secagem posterior). */
+  del_medio: number | null;
+  del_medio_animais: number;
+  ultimo_por_animal: IndicadoresProducaoUltimoPorAnimal;
+  /** Compatibilidade: igual a `vacas_no_controle`. */
+  vacas_com_producao: number;
+};
+
+// O resto do payload segue destipado (cada tela declara o recorte que usa);
+// a assinatura de índice existe para isso não quebrar enquanto migramos.
+export type IndicadoresResposta = {
+  producao?: IndicadoresProducao;
+  [chave: string]: any;
+};
+
+export async function fetchIndicadores(data?: string): Promise<IndicadoresResposta> {
   const url = data ? `${API}/indicadores/?data=${data}` : `${API}/indicadores/`;
   const res = await authFetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Indicadores error: ${res.status}`);
