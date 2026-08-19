@@ -373,76 +373,121 @@ class TestR8R9Metricas:
 
 
 # ═══════════ Retrofit: o painel de benchmark da Capa (indicadores.py) ═══════
+# Um período que rende EXATAMENTE UM ciclo de 21 dias fechando em HOJE
+# (`n_ciclos = ceil(((hoje - desde).days + 1) / 21)`): é o recorte que deixa as
+# asserções de taxa de serviço legíveis como "X servidas de Y elegíveis", sem
+# diluição por ciclos vizinhos.
+DESDE_1_CICLO = HOJE - timedelta(days=20)   # 2026-02-09 .. 2026-03-01
+# Três ciclos: 2025-12-29..01-18 (única janela de DG já fechada em HOJE),
+# 01-19..02-08 e 02-09..03-01.
+DESDE_3_CICLOS = date(2026, 1, 1)
+
+
 class TestRetrofitBenchmarkDaCapa:
     """`indicadores._repro_benchmark` alimenta a Capa, os Indicadores e o
-    Manual da Fazenda. Tinha os mesmos três defeitos, agora corrigidos."""
+    Manual da Fazenda. As três taxas do painel (serviço, concepção, prenhez)
+    saem do motor de ciclos deste módulo — antes eram um acumulado do período
+    dividido pelas aptas de HOJE, e estouravam 100% por construção."""
 
-    def _valores(self, animais, servicos, estados, desde=date(2026, 1, 1)):
+    def _valores(self, animais, servicos, estados, partos=(), desde=DESDE_1_CICLO, **kw):
         from fazenda.rules.indicadores import _repro_benchmark
 
         lista = _repro_benchmark(
-            animais, servicos, [], desde, categoria="todas", estados=estados, hoje=HOJE,
+            animais, servicos, list(partos), desde, categoria="todas",
+            estados=estados, hoje=HOJE, **kw,
         )
         return {x["chave"]: x["valor"] for x in lista}
 
+    def _vacas(self, *numeros, data_parto=date(2025, 6, 1)):
+        """Vacas paridas há muito tempo: fora do PEV e elegíveis todos os dias
+        do ciclo, que é o que estes testes precisam de pano de fundo."""
+        animais = [{"numero": n} for n in numeros]
+        return animais, [_parto(data_parto, n) for n in numeros]
+
     def test_gestante_saiu_do_denominador_da_taxa_de_servico(self):
         """Antes: `aptas = prenhes + vazias + inseminadas`, com a prenhe
-        dentro. Uma vaca prenhe não pode ser inseminada — inflava o
-        denominador e afundava a taxa de serviço."""
-        animais = [{"numero": "1"}, {"numero": "2"}, {"numero": "3"}]
+        dentro. Uma vaca prenhe não pode ser inseminada — não entra no
+        denominador de uma taxa de serviço (R2/R4). A "3" está prenhe desde
+        ANTES do ciclo, então fica suspensa os 21 dias e sai do BR ELIG."""
+        animais, partos = self._vacas("1", "2", "3")
         estados = {"1": "apta", "2": "apta", "3": "gestante"}
-        servicos = [{"numero_matriz": "1", "data_servico": date(2026, 1, 5), "diagnostico": "POSITIVO"}]
-        v = self._valores(animais, servicos, estados)
-        assert v["taxa_servico"] == 50.0, "1 servida de 2 APTAS — não de 3"
+        servicos = [
+            _servico(date(2025, 12, 15), "POSITIVO", "3"),  # prenhe antes do ciclo
+            _servico(date(2026, 2, 15), None, "1"),         # servida DENTRO do ciclo
+        ]
+        v = self._valores(animais, servicos, estados, partos=partos)
+        assert v["taxa_servico"] == 50.0, "BRED 1 de BR ELIG 2 — a gestante não conta"
 
     def test_atrasada_continua_no_denominador(self):
         """A vaca que deveria ter sido inseminada e não foi é justamente a que
-        o indicador precisa enxergar."""
+        o indicador precisa enxergar: ATRASADA está em ESTADOS_APTOS."""
         animais = [{"numero": "1"}, {"numero": "2"}]
+        partos = [
+            _parto(date(2025, 12, 1), "1"),  # DEL ~70 no ciclo: APTA
+            _parto(date(2025, 6, 1), "2"),   # DEL ~250: ATRASADA (passou do DEL máx.)
+        ]
         estados = {"1": "apta", "2": "atrasada"}
-        servicos = [{"numero_matriz": "1", "data_servico": date(2026, 1, 5), "diagnostico": "POSITIVO"}]
-        v = self._valores(animais, servicos, estados)
-        assert v["taxa_servico"] == 50.0
+        servicos = [_servico(date(2026, 2, 15), None, "1")]
+        v = self._valores(animais, servicos, estados, partos=partos)
+        assert v["taxa_servico"] == 50.0, "a atrasada continua no BR ELIG"
 
-    def test_servico_dos_ultimos_27_dias_sem_dg_nao_conta(self):
-        """R7 — ainda não deu tempo de saber se pegou."""
-        animais = [{"numero": "1"}, {"numero": "2"}]
+    def test_ia_recente_sem_dg_conta_como_servico_mas_nao_como_prenhez(self):
+        """Onde R7 opera — e onde NÃO opera.
+
+        A taxa de serviço mede o que o manejo fez: a IA aconteceu dentro do
+        ciclo, e entra no BRED no dia em que foi feita (ela não fica esperando
+        o diagnóstico para "virar" serviço). Quem espera é o RESULTADO: com a
+        janela de DG do ciclo ainda aberta, prenhez e concepção não são
+        exibidas — o denominador já está cheio e o numerador não.
+        """
+        animais, partos = self._vacas("1", "2")
         estados = {"1": "apta", "2": "apta"}
-        recente = [{"numero_matriz": "1", "data_servico": HOJE - timedelta(days=5), "diagnostico": None}]
-        assert self._valores(animais, recente, estados)["taxa_servico"] == 0.0
-
-        com_dg = [{"numero_matriz": "1", "data_servico": HOJE - timedelta(days=5), "diagnostico": "NEGATIVO"}]
-        assert self._valores(animais, com_dg, estados)["taxa_servico"] == 50.0, (
-            "com DG negativo o desfecho é conhecido e o serviço volta a contar"
-        )
+        recente = [_servico(HOJE - timedelta(days=5), None, "1")]
+        v = self._valores(animais, recente, estados, partos=partos)
+        assert v["taxa_servico"] == 50.0, "a inseminação do ciclo conta como serviço"
+        assert v["taxa_prenhez_ciclo"] is None, "janela de DG aberta — não se afirma nada"
+        assert v["taxa_concepcao"] is None
 
     def test_prenhez_deixou_de_ser_servico_vezes_concepcao(self):
-        """R9 no painel da Capa. Divergem quando um animal é inseminado mais de
-        uma vez no período: `taxa_servico` conta ANIMAIS servidos e
-        `taxa_concepcao` conta SERVIÇOS com resultado."""
-        animais = [{"numero": "1"}, {"numero": "2"}]
+        """R9 no painel da Capa: os denominadores são diferentes (BR ELIG,
+        PG ELIG e serviços com resultado), então o atalho
+        serviço × concepção não reproduz a prenhez.
+
+        Rebanho: duas vacas paridas há muito tempo. A "1" foi inseminada duas
+        vezes dentro do 1º ciclo (negativo em 02/01, positivo em 12/01) — é o
+        único ciclo com janela de DG já fechada; a "2" nunca foi inseminada.
+        """
+        animais, partos = self._vacas("1", "2")
         estados = {"1": "apta", "2": "apta"}
         servicos = [
-            {"numero_matriz": "1", "data_servico": date(2026, 1, 5), "diagnostico": "NEGATIVO"},
-            {"numero_matriz": "1", "data_servico": date(2026, 1, 20), "diagnostico": "POSITIVO"},
+            _servico(date(2026, 1, 2), "NEGATIVO", "1"),
+            _servico(date(2026, 1, 12), "POSITIVO", "1"),
         ]
-        v = self._valores(animais, servicos, estados)
+        v = self._valores(animais, servicos, estados, partos=partos, desde=DESDE_3_CICLOS)
+        # 1º ciclo: BRED 1 / BR ELIG 2; PREG 1 / PG ELIG 2; 1 prenhez / 2
+        # serviços com resultado. Nos 2 ciclos seguintes a "1" já está gestante
+        # e só a "2" fica elegível, sem ser servida — daí o serviço diluir.
+        assert v["taxa_servico"] == 25.0, "1 servida / (2 + 1 + 1) elegíveis"
+        assert v["taxa_concepcao"] == 50.0, "1 prenhez / 2 serviços com resultado"
+        assert v["taxa_prenhez_ciclo"] == 50.0, "1 prenhe / 2 no PG ELIG"
         atalho = round(v["taxa_servico"] * v["taxa_concepcao"] / 100, 1)
-        assert v["taxa_servico"] == 50.0 and v["taxa_concepcao"] == 50.0
-        assert atalho == 25.0
-        assert v["taxa_prenhez_ciclo"] == 50.0
+        assert atalho == 12.5
         assert v["taxa_prenhez_ciclo"] != atalho
 
-    def test_sem_estados_ao_vivo_cai_no_sit_rep_mas_ja_sem_as_prenhes(self):
-        """Chamador legado (só a lista de animais, sem registros): continua
-        lendo `sit_rep`, mas a prenhe já não entra no denominador."""
+    def test_sem_registro_nenhum_as_tres_taxas_ficam_none(self):
+        """Chamador legado (só a lista de animais, sem parto nem serviço): não
+        há ciclo nenhum para calcular, e as três taxas voltam None em vez de um
+        número inventado. Os indicadores de INVENTÁRIO continuam saindo do
+        `sit_rep` congelado, como sempre saíram."""
         animais = [
             {"numero": "1", "sit_rep": "Vaz."}, {"numero": "2", "sit_rep": "Ins."},
             {"numero": "3", "sit_rep": "Ges."},
         ]
-        servicos = [{"numero_matriz": "1", "data_servico": date(2026, 1, 5), "diagnostico": "POSITIVO"}]
-        v = self._valores(animais, servicos, estados=None)
-        assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a gestante"
+        v = self._valores(animais, [], estados=None)
+        assert v["taxa_servico"] is None
+        assert v["taxa_concepcao"] is None
+        assert v["taxa_prenhez_ciclo"] is None
+        assert v["perc_vacas_prenhas"] == 33.3, "1 prenhe de 3 — inventário pelo sit_rep"
 
 
 # ═══════════════ Janela de DG incompleta — o ciclo que ainda não fechou ══════
@@ -518,20 +563,23 @@ class TestDescartadaForaDoBenchmark:
     esse campo. A vaca marcada para descarte seguia sendo cobrada por uma
     inseminação que ninguém pretende fazer."""
 
-    def _valores(self, animais, servicos, estados, **kw):
+    def _valores(self, animais, servicos, estados, partos=(), desde=DESDE_1_CICLO, **kw):
         from fazenda.rules.indicadores import _repro_benchmark
 
         lista = _repro_benchmark(
-            animais, servicos, [], date(2026, 1, 1), categoria="todas",
+            animais, servicos, list(partos), desde, categoria="todas",
             estados=estados, hoje=HOJE, **kw,
         )
         return {x["chave"]: x["valor"] for x in lista}
 
+    def _partos_antigos(self, *numeros):
+        return [_parto(date(2025, 6, 1), n) for n in numeros]
+
     def test_descartada_sai_do_denominador_da_taxa_de_servico(self):
         animais = [{"numero": "1"}, {"numero": "2"}, {"numero": "3", "a_descartar": True}]
         estados = {"1": "apta", "2": "apta", "3": "apta"}
-        servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
-        v = self._valores(animais, servicos, estados)
+        servicos = [_servico(date(2026, 2, 15), None, "1")]
+        v = self._valores(animais, servicos, estados, partos=self._partos_antigos("1", "2", "3"))
         assert v["taxa_servico"] == 50.0, "1 servida de 2 no programa — a descartada não conta"
 
     def test_descartada_inseminada_sai_tambem_do_numerador(self):
@@ -541,10 +589,10 @@ class TestDescartadaForaDoBenchmark:
         animais = [{"numero": "1", "a_descartar": True}, {"numero": "2"}]
         estados = {"1": "apta", "2": "apta"}
         servicos = [
-            _servico(date(2026, 1, 5), "POSITIVO", "1"),
-            _servico(date(2026, 1, 6), "POSITIVO", "2"),
+            _servico(date(2026, 2, 15), None, "1"),
+            _servico(date(2026, 2, 16), None, "2"),
         ]
-        v = self._valores(animais, servicos, estados)
+        v = self._valores(animais, servicos, estados, partos=self._partos_antigos("1", "2"))
         assert v["taxa_servico"] == 100.0, "1 servida de 1 no programa"
         assert v["taxa_servico"] <= 100.0
 
@@ -587,15 +635,23 @@ class TestDescartadaForaDoBenchmark:
         # ANTES (rebanho inteiro, 4): 100*1/4 = 25.0. DEPOIS (programa, 2): 100*1/2 = 50.0.
         assert v["perc_vacas_prenhas"] == 50.0, "só '1' e '4' estão no programa"
 
-    def test_o_corte_vale_no_fallback_de_sit_rep(self):
+    def test_o_corte_vale_nos_indicadores_do_periodo(self):
+        """As três taxas passaram a sair do motor de ciclos, que já aplica a R1
+        sozinho (`estado_no_dia` derruba a descartada em todos os dias). O
+        corte por `descartar_nums` continua valendo para os indicadores que
+        seguem sendo contados sobre os SERVIÇOS do período — aqui,
+        `servicos_por_prenhez`: o serviço da descartada "3" não entra."""
         animais = [
             {"numero": "1", "sit_rep": "Vaz."},
             {"numero": "2", "sit_rep": "Ins."},
             {"numero": "3", "sit_rep": "Vaz.", "a_descartar": True},
         ]
-        servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
+        servicos = [
+            _servico(date(2026, 2, 12), "POSITIVO", "1"),
+            _servico(date(2026, 2, 13), "POSITIVO", "3"),
+        ]
         v = self._valores(animais, servicos, estados=None)
-        assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a descartada"
+        assert v["servicos_por_prenhez"] == 1.0, "só o serviço da '1' entra na conta"
 
     def test_perc_vacas_prenhas_no_fallback_de_sit_rep(self):
         """Sem estado ao vivo (nenhum registro carregado), `perc_vacas_prenhas`
@@ -618,10 +674,187 @@ class TestDescartadaForaDoBenchmark:
         Por isso o conjunto vem do rebanho inteiro."""
         animais_vaca = [{"numero": "1"}, {"numero": "2"}]
         servicos = [
-            _servico(date(2026, 1, 5), "POSITIVO", "1"),
-            _servico(date(2026, 1, 6), "POSITIVO", "9"),  # novilha descartada que vazou
+            _servico(date(2026, 2, 12), "POSITIVO", "1"),
+            _servico(date(2026, 2, 13), "POSITIVO", "9"),  # novilha descartada que vazou
         ]
         estados = {"1": "apta", "2": "apta"}
         v = self._valores(animais_vaca, servicos, estados, descartar_nums={"9"})
-        assert v["taxa_concepcao"] == 100.0
         assert v["servicos_por_prenhez"] == 1.0, "o serviço da descartada não entra na conta"
+
+
+# ═════ As três taxas da Capa saem do motor de ciclos (não de um acumulado) ═══
+class TestTaxasDaCapaSaemDoMotorDeCiclos:
+    """O painel da Capa dividia conjuntos ACUMULADOS desde a data de corte
+    (~7,6 meses) pela contagem INSTANTÂNEA de aptas de HOJE. Toda fêmea que
+    emprenhava saía do denominador e ficava no numerador: o resultado estourava
+    100% por construção. Agora as três taxas vêm de `calcular_series` — os
+    mesmos ciclos de 21 dias da tela de Ciclos —, agregados por SOMA de
+    numeradores e denominadores.
+    """
+
+    HOJE = date(2026, 8, 19)
+    DESDE = date(2026, 1, 1)   # a data de corte de produção: 11 ciclos
+
+    def _valores(self, animais, servicos, partos, *, desde=None, hoje=None,
+                 categoria="todas", **kw):
+        from fazenda.rules.indicadores import _repro_benchmark
+
+        lista = _repro_benchmark(
+            animais, servicos, partos, desde or self.DESDE, categoria=categoria,
+            hoje=hoje or self.HOJE, **kw,
+        )
+        return {x["chave"]: x["valor"] for x in lista}
+
+    # ---------------------------------------------------------------- sentinela
+    def test_sentinela_as_tres_taxas_nunca_passam_de_100(self):
+        """SENTINELA do defeito relatado em produção.
+
+        Com o cálculo ANTIGO, a Capa exibia — com estes mesmos dados reais de
+        fazenda — taxa de serviço 241,9% e prenhez 161,3% em "todas"; 104,3% e
+        47,8% em vacas; e 687,5% e 487,5% em novilhas. O denominador era
+        `aptas` = 31 fêmeas aptas HOJE (0 aptas + 3 atrasadas + 9 em protocolo
+        + 19 inseminadas), contra um numerador acumulado de 7,6 meses.
+
+        O rebanho abaixo reproduz a mecânica: 12 vacas servidas ao longo de
+        vários ciclos, 10 delas gestantes hoje (fora do denominador antigo,
+        dentro do numerador antigo) e só 2 aptas. O próprio teste refaz a conta
+        antiga para mostrar que ela estoura, e exige que a nova fique no lugar.
+        """
+        from fazenda.rules.programa_reprodutivo import ESTADOS_APTOS
+
+        numeros = [str(100 + i) for i in range(12)]
+        animais = [{"numero": n} for n in numeros]
+        partos = [_parto(date(2025, 9, 1), n) for n in numeros]
+        # Uma inseminação por vaca, espalhadas ao longo do período. As 10
+        # primeiras pegaram e estão gestantes hoje; as 2 últimas voltaram a
+        # ficar aptas (DG negativo).
+        servicos = [
+            _servico(date(2026, 1, 10) + timedelta(days=15 * i), "POSITIVO", n)
+            for i, n in enumerate(numeros[:10])
+        ] + [
+            _servico(date(2026, 2, 1), "NEGATIVO", n) for n in numeros[10:]
+        ]
+        estados = {n: ("gestante" if n in numeros[:10] else "apta") for n in numeros}
+
+        # --- a conta ANTIGA, refeita aqui: acumulado ÷ aptas de hoje ---------
+        aptas_hoje = sum(1 for n in numeros if estados[n] in ESTADOS_APTOS)
+        servidas = {s["numero_matriz"] for s in servicos}
+        concebidas = {s["numero_matriz"] for s in servicos if s["diagnostico"] == "POSITIVO"}
+        assert 100 * len(servidas) / aptas_hoje == 600.0, "o defeito: 12 servidas ÷ 2 aptas"
+        assert 100 * len(concebidas) / aptas_hoje == 500.0
+
+        # --- a conta NOVA ----------------------------------------------------
+        for categoria in ("todas", "vaca", "novilha"):
+            v = self._valores(animais, servicos, partos, categoria=categoria, estados=estados)
+            for chave in ("taxa_servico", "taxa_concepcao", "taxa_prenhez_ciclo"):
+                valor = v[chave]
+                assert valor is None or 0 <= valor <= 100, f"{categoria}/{chave} = {valor}"
+
+        # E não passa por vacuidade: o rebanho é todo de vacas, e as taxas
+        # delas saem de verdade (~19% de serviço e ~17% de prenhez por ciclo,
+        # números de manejo — não os 600% da conta antiga).
+        v = self._valores(animais, servicos, partos, categoria="vaca", estados=estados)
+        assert v["taxa_servico"] is not None and v["taxa_prenhez_ciclo"] is not None
+
+    # -------------------------------------------------- janela de DG incompleta
+    def test_ciclo_com_janela_de_dg_aberta_fica_fora_da_prenhez_e_da_concepcao(self):
+        """R7 — no ciclo cuja janela de diagnóstico ainda não fechou, o
+        denominador (PG ELIG) já está cheio e o numerador (PREG) não: a taxa
+        sairia subestimada por construção. Só a taxa de SERVIÇO, que não
+        depende de desfecho, enxerga esse ciclo.
+
+        Mesma vaca, mesma prenhez, duas datas: no ciclo mais recente (janela
+        aberta) ela não produz prenhez nem concepção nenhuma; deslocada para um
+        ciclo antigo (janela fechada), produz as duas.
+        """
+        animais = [{"numero": "1"}]
+        partos = [_parto(date(2025, 9, 1), "1")]
+
+        # Período de UM ciclo, que fecha hoje: a janela de DG está aberta.
+        aberta = [_servico(self.HOJE - timedelta(days=3), "POSITIVO", "1")]
+        v = self._valores(animais, aberta, partos, desde=self.HOJE - timedelta(days=20))
+        assert v["taxa_servico"] == 100.0, "a IA do último ciclo conta como serviço"
+        assert v["taxa_prenhez_ciclo"] is None, "nenhum ciclo com janela fechada"
+        assert v["taxa_concepcao"] is None
+
+        # Três ciclos: o primeiro (que contém a IA) já passou dos 28 dias.
+        fechada = [_servico(self.HOJE - timedelta(days=50), "POSITIVO", "1")]
+        v = self._valores(animais, fechada, partos, desde=self.HOJE - timedelta(days=62))
+        assert v["taxa_prenhez_ciclo"] == 100.0
+        assert v["taxa_concepcao"] == 100.0
+
+    # ------------------------------------------------- agregação por soma
+    def test_agregacao_soma_numeradores_e_denominadores_nao_media_de_pct(self):
+        """Média PONDERADA pelo tamanho de cada ciclo, não média simples das
+        porcentagens — um ciclo de 2 vacas não pode pesar igual a um de 10.
+
+        Dois ciclos: no 1º, 10 vacas elegíveis e 1 servida (10%); no 2º, 2
+        vacas elegíveis e as 2 servidas (100%). A média simples daria 55%; a
+        soma de numeradores e denominadores dá 3/12 = 25%.
+        """
+        hoje = self.HOJE
+        desde = hoje - timedelta(days=41)          # exatamente 2 ciclos
+        inicio_c1 = hoje - timedelta(days=41)
+        inicio_c2 = hoje - timedelta(days=20)
+
+        # Grupo A: 10 vacas elegíveis no 1º ciclo e VENDIDAS no começo do 2º.
+        grupo_a = [str(200 + i) for i in range(10)]
+        animais = [{"numero": n, "data_baixa": inicio_c2} for n in grupo_a]
+        partos = [_parto(hoje - timedelta(days=200), n) for n in grupo_a]
+        servicos = [_servico(inicio_c1 + timedelta(days=5), None, grupo_a[0])]
+
+        # Grupo B: 2 vacas que saem do PEV (45 dias) só no meio do 2º ciclo —
+        # zero dia apto no 1º, 14 no 2º, e por isso só entram no BR ELIG do 2º.
+        grupo_b = ["300", "301"]
+        animais += [{"numero": n} for n in grupo_b]
+        partos += [_parto(hoje - timedelta(days=58), n) for n in grupo_b]
+        servicos += [_servico(inicio_c2 + timedelta(days=15), None, n) for n in grupo_b]
+
+        v = self._valores(animais, servicos, partos, desde=desde)
+        assert v["taxa_servico"] == 25.0, "3 servidas / 12 elegíveis somados"
+        media_simples = round((10.0 + 100.0) / 2, 1)
+        assert media_simples == 55.0 and v["taxa_servico"] != media_simples
+
+    # --------------------------------------- novilha que pariu no meio do ano
+    def test_novilha_que_pariu_no_periodo_nao_conta_nas_duas_categorias(self):
+        """`_benchmark_categorias` separa os ANIMAIS por parto (vaca × novilha)
+        mas fatiava os SERVIÇOS por `ordem_parto`: a novilha que pariu no meio
+        do período tinha as IAs de antes do parto no recorte de novilha e as de
+        depois no de vaca — e era contada nos DOIS painéis. Agora a categoria
+        sai do próprio perfil (`eh_vaca`), montado do rebanho inteiro.
+
+        Rebanho: "50" é a novilha que pariu em março; "51" é uma novilha pura,
+        nunca servida; "60" é uma vaca. No painel de NOVILHAS, o denominador é
+        só a "51", e ninguém foi servida — 0%. Pelo recorte antigo, a IA de
+        novilha da "50" caía no numerador desse painel sem que ela estivesse no
+        denominador, e a taxa dava 100%.
+        """
+        from fazenda.rules.indicadores import _benchmark_categorias
+
+        hoje = self.HOJE
+        animais = [
+            {"numero": "50", "data_nasc": date(2024, 1, 1)},
+            {"numero": "51", "data_nasc": date(2024, 1, 1)},
+            {"numero": "60"},
+        ]
+        partos = [
+            {"numero_matriz": "50", "data_parto": date(2026, 3, 10), "ordem_parto": 1},
+            {"numero_matriz": "60", "data_parto": date(2025, 9, 1), "ordem_parto": 3},
+        ]
+        servicos = [
+            # IA de NOVILHA da "50" (ordem_parto 0), que a emprenhou
+            {**_servico(date(2025, 6, 1), "POSITIVO", "50"), "ordem_parto": 0},
+            # IA de VACA da "50", já depois do parto
+            {**_servico(date(2026, 5, 20), "POSITIVO", "50"), "ordem_parto": 1},
+            {**_servico(date(2026, 6, 1), "POSITIVO", "60"), "ordem_parto": 3},
+        ]
+        cats = _benchmark_categorias(
+            animais, servicos, partos, vacas_nums={"50", "60"}, desde=self.DESDE, hoje=hoje,
+            peso_por_animal={"50": 400.0, "51": 400.0},
+        )
+
+        def val(categoria, chave):
+            return next(b["valor"] for b in cats[categoria] if b["chave"] == chave)
+
+        assert val("novilha", "taxa_servico") == 0.0, "a '50' não é novilha — ela pariu"
+        assert val("vaca", "taxa_servico") > 0, "as IAs dela contam no painel de vacas"

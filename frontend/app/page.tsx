@@ -191,7 +191,12 @@ export default function Home() {
       {/* Medidores reprodutivos (modelo velocímetro) */}
       <div className="card mb-5">
         <div className="card-header mb-3 flex flex-wrap items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
-          <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} · Prenhez = prenhes ÷ aptas, não Serviço × Concepção</span>
+          {/* A legenda descreve a conta que o backend faz hoje (ver
+              rules/indicadores._taxas_por_ciclos): as três taxas saem do motor
+              de ciclos de 21 dias, agregadas por soma de numeradores e
+              denominadores — média PONDERADA pelo tamanho de cada ciclo, não
+              um acumulado do período dividido pelas aptas de hoje. */}
+          <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· ciclos de 21 dias desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} (média ponderada) · Prenhez = prenhes ÷ elegíveis do ciclo</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
             {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
               <button key={k} onClick={() => setCatRep(k)} title={`Ver eficiência reprodutiva — ${lbl}`}
