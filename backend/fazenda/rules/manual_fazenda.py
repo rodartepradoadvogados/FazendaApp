@@ -26,7 +26,9 @@ from fazenda.models import (
 )
 from fazenda.rules.email import enviar_email
 from fazenda.rules.indicadores import calcular_indicadores
-from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, intervalo_visita_reprodutiva
+from fazenda.rules.parametros import (
+    bst_ajuste_ancora_data, dias_resultado_conhecido, intervalo_bst, intervalo_visita_reprodutiva,
+)
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 MARCADORES_BST = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
@@ -40,6 +42,15 @@ METRICAS_INSIGHT = [
     ("num_secagens", "Produção", "Secagens", ""),
     ("del_medio", "Produção", "DEL médio", "d"),
 ]
+
+# Subconjunto de METRICAS_INSIGHT cujo valor mensal depende de diagnóstico
+# (regra R7 — ver `agregar_mensal.janela_dg_completa`). Só "taxa_concepcao" se
+# encaixa: é positivos/serviços-com-resultado-conhecido, então o mês corrente
+# — cujos serviços recentes majoritariamente ainda não têm 28 dias nem DG —
+# fica com uma amostra pequena e enviesada. As demais (produção, perdas já
+# registradas, secagens, DEL) não esperam diagnóstico nenhum e não devem
+# perder o mês corrente da comparação.
+METRICAS_DEPENDEM_DE_DG = frozenset({"taxa_concepcao"})
 
 
 def parametro_manual(session: Session, fazenda_id: int | None) -> ParametroManualFazenda:
@@ -146,16 +157,25 @@ def _insights(session: Session, fazenda_id: int | None) -> list[dict]:
     registros = analisar_servicos(servicos)
     secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
     controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
-    agregado = agregar_mensal(registros, secagens, controles)
+    agregado = agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
     meses = agregado["meses"]
     if len(meses) < 2:
         return []
+    janela_dg_completa = agregado["janela_dg_completa"]
     janela = min(3, len(meses) // 2) or 1
     insights = []
     for chave, categoria, label, unidade in METRICAS_INSIGHT:
         serie = agregado["series"].get(chave, [])
-        recentes = [v for v in serie[-janela:] if v is not None]
-        anteriores = [v for v in serie[-2 * janela:-janela] if v is not None]
+        # Métrica que depende de diagnóstico descarta o mês com janela de DG
+        # aberta das duas janelas de comparação — senão o mês corrente (quase
+        # sem diagnóstico, por definição) inventa uma "queda" que é só falta
+        # de tempo. As demais métricas comparam todos os meses normalmente.
+        completos = janela_dg_completa if chave in METRICAS_DEPENDEM_DE_DG else [True] * len(meses)
+        recentes = [v for v, completo in zip(serie[-janela:], completos[-janela:]) if v is not None and completo]
+        anteriores = [
+            v for v, completo in zip(serie[-2 * janela:-janela], completos[-2 * janela:-janela])
+            if v is not None and completo
+        ]
         if not recentes or not anteriores:
             continue
         media_recente = sum(recentes) / len(recentes)

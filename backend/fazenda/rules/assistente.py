@@ -379,12 +379,18 @@ def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None
     # proposta de separação fazenda/empresa, Parte 1.6; sem filtro por enquanto.
     secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
     controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
-    agregado = agregar_mensal(registros, secagens, controles)
+    from fazenda.rules.parametros import dias_resultado_conhecido
+
+    agregado = agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
     # Só os últimos 12 meses — evita mandar um histórico enorme para a Claude.
     meses = agregado["meses"][-12:]
     offset = len(agregado["meses"]) - len(meses)
     series = {k: v[offset:] for k, v in agregado["series"].items()}
-    return {"meses": meses, "series": series}
+    # A Claude precisa saber que o mês mais recente pode estar com a janela de
+    # diagnóstico aberta (R7) — sem isto ela lê o número baixo como piora de
+    # manejo em vez de "ainda não deu tempo de saber".
+    janela_dg_completa = agregado["janela_dg_completa"][offset:]
+    return {"meses": meses, "series": series, "janela_dg_completa": janela_dg_completa}
 
 
 _EXECUTORES = {

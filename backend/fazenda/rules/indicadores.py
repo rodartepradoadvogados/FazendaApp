@@ -93,6 +93,24 @@ def _diag_upper(s: str | None) -> str:
     return (s or "").strip().upper()
 
 
+def _baixada_em(a: dict, hoje: date) -> bool:
+    """R1 do programa reprodutivo (ver `programa_reprodutivo.baixada_em`),
+    reescrita sobre dict em vez de `PerfilAnimal` — é o formato que circula
+    aqui. Usada pelos indicadores de INVENTÁRIO (quantas fêmeas do rebanho
+    ATUAL estão prenhas/vazias hoje) para tirar do denominador quem já saiu
+    da fazenda. `data_baixa` é datada, então a baixa é reconstruída na data
+    certa; `ativo=False` sem data de baixa é tratado como baixa já vigente."""
+    data_baixa = a.get("data_baixa")
+    if isinstance(data_baixa, str):
+        try:
+            data_baixa = date.fromisoformat(data_baixa[:10])
+        except ValueError:
+            data_baixa = None
+    if data_baixa is not None:
+        return hoje >= data_baixa
+    return a.get("ativo") is False
+
+
 def _no_periodo(s: dict, desde: date) -> bool:
     ds = s.get("data_servico")
     return isinstance(ds, date) and ds >= desde
@@ -228,7 +246,7 @@ def _repro_benchmark(
     chamadores diretos e os testes precisam.
     """
     from fazenda.rules.programa_reprodutivo import ESTADOS_APTOS, conta_em_taxa
-    from fazenda.rules.estado_reprodutivo import GESTANTE as _GESTANTE
+    from fazenda.rules.estado_reprodutivo import GESTANTE as _GESTANTE, NAO_APTA as _NAO_APTA
 
     hoje = hoje or date.today()
     estados = estados or {}
@@ -241,13 +259,19 @@ def _repro_benchmark(
 
     if estados:
         aptas = sum(1 for a in no_programa if estados.get(a.get("numero")) in ESTADOS_APTOS)
-        prenhes = sum(1 for a in animais if estados.get(a.get("numero")) == _GESTANTE)
+        # Baixada É porta de saída sem exceção (diferente de a_descartar):
+        # sem o corte, uma gestante baixada ficaria no numerador mesmo já
+        # fora de `total` (abaixo), podendo passar de 100%.
+        prenhes = sum(
+            1 for a in animais
+            if estados.get(a.get("numero")) == _GESTANTE and not _baixada_em(a, hoje)
+        )
     else:
         # Fallback legado: sem registros carregados não há o que recalcular.
         prenhes = vazias = inseminadas = 0
         for a in animais:
             sit = (a.get("sit_rep") or "").strip()
-            if sit == "Ges.":
+            if sit == "Ges." and not _baixada_em(a, hoje):
                 prenhes += 1  # inventário — ver `total` abaixo
             elif a.get("numero") in descartar_nums:
                 continue
@@ -256,11 +280,36 @@ def _repro_benchmark(
             elif sit == "Ins.":
                 inseminadas += 1
         aptas = vazias + inseminadas  # sem as prenhes, ao contrário de antes
-    # `prenhes` e `total` são INVENTÁRIO, não taxa do programa: respondem
-    # "quantas das fêmeas estão prenhes hoje". A vaca marcada para descarte que
-    # está prenhe continua prenhe e continua comendo — por isso os dois ficam
-    # sobre o rebanho inteiro, ao contrário de `aptas`.
-    total = len(animais)
+    # `prenhes` é INVENTÁRIO, não taxa do programa: responde "quantas das
+    # fêmeas estão prenhes hoje". A vaca marcada para descarte que está
+    # prenhe continua prenhe e continua comendo — por isso ela fica no
+    # numerador mesmo fora de `no_programa` (que a R1 já derrubou acima).
+    #
+    # `total` (denominador de perc_vacas_prenhas) ERA `len(animais)` — o
+    # rebanho fêmeo INTEIRO, bezerra incluída: uma bezerra de seis meses não
+    # pode estar prenhe, e incluí-la no denominador de "% de fêmeas prenhas"
+    # dilui o número sem significado nenhum. Agora é o rebanho no PROGRAMA
+    # reprodutivo (R1: puberdade ∧ ¬a_descartar ∧ ¬baixada) — MAIS a exceção
+    # da gestante marcada a_descartar, que R1 sozinha excluiria mas que aqui
+    # precisa continuar (mesmo motivo do numerador: ela está prenhe e vai
+    # parir, isto é inventário, não a taxa do programa).
+    if estados:
+        total = sum(
+            1 for a in animais
+            if estados.get(a.get("numero")) != _NAO_APTA  # impúbere nunca entrou no programa
+            and not _baixada_em(a, hoje)
+            and (a.get("numero") not in descartar_nums or estados.get(a.get("numero")) == _GESTANTE)
+        )
+    else:
+        # Fallback sem estado ao vivo: o sit_rep congelado não diz puberdade,
+        # então o corte aqui é parcial (só descarte/baixa) — menos preciso
+        # que o caminho ao vivo, mas evita voltar ao antigo denominador
+        # (rebanho inteiro) quando não há registros carregados.
+        total = sum(
+            1 for a in animais
+            if not _baixada_em(a, hoje)
+            and (a.get("numero") not in descartar_nums or (a.get("sit_rep") or "").strip() == "Ges.")
+        )
 
     serv_periodo = [
         s for s in servicos
@@ -613,32 +662,80 @@ def calcular_indicadores(
     # CSV entrava no card mas sumia da lista que abre ao clicar nele.
     numeros_gestantes_vivo: set[str] = set()
     prenhes = vazias = inseminadas = 0
+    # Numerador/denominador do PROGRAMA reprodutivo (R1), usados só por
+    # taxa_prenhez_pct/perc_vazias_pct logo abaixo. `prenhes`/`vazias`/
+    # `inseminadas` acima são o rebanho INTEIRO e alimentam outros
+    # consumidores (ex.: card "Vazias" do app mobile) — não são o escopo
+    # desta correção, e continuam de pé.
+    #
+    # `prenhes_programa` (não só `vazias_programa`) também precisou de corte
+    # próprio: `prenhes` conta toda gestante, mesmo baixada — a baixa é
+    # porta de saída SEM exceção (ao contrário da a_descartar), então uma
+    # gestante baixada some do denominador mas ficaria no numerador cru,
+    # o que poderia passar de 100%. `prenhes_programa` é sempre <=
+    # `rebanho_programa` por construção (é contado dentro do mesmo `if`).
+    rebanho_programa = vazias_programa = prenhes_programa = 0
     for a in animais:
-        estado = estados_por_animal.get(a.get("numero"))
+        numero = a.get("numero")
+        estado = estados_por_animal.get(numero)
+        descartar = bool(a.get("a_descartar"))
+        baixada = _baixada_em(a, hoje)
         if estado is not None:
             if estado == "gestante":
                 prenhes += 1
-                numeros_gestantes_vivo.add(a.get("numero"))
+                numeros_gestantes_vivo.add(numero)
             elif estado == "inseminada":
                 inseminadas += 1
             else:
+                # Era aqui o defeito: este `else` é um catch-all que absorve
+                # TUDO que não é gestante nem inseminada — inclusive a
+                # bezerra impúbere (estado 'nao_apta'), que nunca poderia
+                # estar prenhe. `vazias` (linha acima) mantém esse sentido
+                # antigo para não mudar os outros consumidores; o corte de
+                # verdade é feito abaixo, só para o denominador dos 2%.
                 vazias += 1
+            # R1 (puberdade ∧ ¬a_descartar ∧ ¬baixada), com a exceção da
+            # gestante marcada a_descartar: ela já saiu do programa por R1,
+            # mas aqui é INVENTÁRIO — está prenhe e ainda vai parir, então
+            # continua no numerador e no denominador. Baixada NÃO tem essa
+            # exceção — já saiu da fazenda de verdade, nem gestante escapa.
+            if estado != "nao_apta" and not baixada and (not descartar or estado == "gestante"):
+                rebanho_programa += 1
+                if estado == "gestante":
+                    prenhes_programa += 1
+                elif estado != "inseminada":
+                    # `perc_vazias_pct` alimenta o card rotulado "Vazias", cujo
+                    # drill-down abre a lista filtrada por sit_rep "Vaz." — sem
+                    # as inseminadas. Jogar a inseminada aqui faria o número do
+                    # card divergir da lista que abre ao clicar nele, o mesmo
+                    # defeito que `numeros_gestantes_vivo` já corrigiu acima.
+                    # Por isso os três baldes não somam `rebanho_programa`: a
+                    # diferença são justamente as inseminadas.
+                    vazias_programa += 1
             continue
         sit = (a.get("sit_rep") or "").strip()
-        if sit == "Ges.":
+        eh_gestante = sit == "Ges."
+        if eh_gestante:
             prenhes += 1
-            numeros_gestantes_vivo.add(a.get("numero"))
+            numeros_gestantes_vivo.add(numero)
         elif sit.startswith("Vaz."):
             vazias += 1
         elif sit == "Ins.":
             inseminadas += 1
-    # Denominador de taxa_prenhez_pct/perc_vazias_pct: mantém o cálculo
-    # histórico desses dois indicadores (soma dos 3 estados com situação
-    # reprodutiva definida) — não é o mesmo "aptas" do painel abaixo.
-    _rebanho_com_situacao = prenhes + vazias + inseminadas
+        # Fallback sem estado ao vivo (sit_rep congelado): o texto do CSV não
+        # diz puberdade, então o corte de impúbere não é possível aqui — só
+        # descarte/baixa. Menos preciso que o caminho ao vivo, mas evita
+        # regredir ao denominador antigo (rebanho inteiro) quando não há
+        # registros carregados.
+        if not baixada and (not descartar or eh_gestante):
+            rebanho_programa += 1
+            if eh_gestante:
+                prenhes_programa += 1
+            elif sit.startswith("Vaz."):
+                vazias_programa += 1
 
-    taxa_prenhez = round(100 * prenhes / _rebanho_com_situacao, 1) if _rebanho_com_situacao else None
-    perc_vazias = round(100 * vazias / _rebanho_com_situacao, 1) if _rebanho_com_situacao else None
+    taxa_prenhez = round(100 * prenhes_programa / rebanho_programa, 1) if rebanho_programa else None
+    perc_vazias = round(100 * vazias_programa / rebanho_programa, 1) if rebanho_programa else None
 
     # "Aptas" (elegibilidade de 1ª cobertura): só novilha nulípara (nunca
     # inseminada) com peso mínimo — ver `_reproducao_categorias`. Corrige o

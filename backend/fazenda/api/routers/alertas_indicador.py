@@ -24,7 +24,11 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 router = APIRouter(prefix="/alertas-indicador", tags=["alertas-indicador"])
 
 INDICADORES_CATALOGO = [
-    {"chave": "taxa_prenhez_pct", "label": "Taxa de prenhez (%)", "caminho": ("reproducao", "taxa_prenhez_pct")},
+    # Rótulo "Fêmeas prenhas", não "Taxa de prenhez": este campo é inventário
+    # (% do rebanho apto prenhe hoje), não a taxa formal do programa
+    # reprodutivo (PREG ÷ PG ELIG) de /reproducao/ciclos-21-dias — mesmo nome
+    # que passaria a colidir com este aqui. Mesmo rótulo usado na Capa.
+    {"chave": "taxa_prenhez_pct", "label": "Fêmeas prenhas (%)", "caminho": ("reproducao", "taxa_prenhez_pct")},
     {"chave": "perc_vazias_pct", "label": "Percentual de vazias (%)", "caminho": ("reproducao", "perc_vazias_pct")},
     {"chave": "taxa_concepcao_pct", "label": "Taxa de concepção (%)", "caminho": ("reproducao", "taxa_concepcao_pct")},
     {"chave": "producao_media_kg", "label": "Produção média por vaca (kg/dia)", "caminho": ("producao", "producao_media_kg")},

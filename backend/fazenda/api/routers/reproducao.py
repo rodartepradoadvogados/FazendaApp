@@ -746,7 +746,9 @@ def indicadores_mensais_analise(
         secagens = [s for s in secagens if no_periodo(s.get("data_secagem"))]
         controles = [c for c in controles if no_periodo(c.get("data_controle"))]
 
-    return agregar_mensal(registros, secagens, controles)
+    from fazenda.rules.parametros import dias_resultado_conhecido
+
+    return agregar_mensal(registros, secagens, controles, dias_resultado=dias_resultado_conhecido())
 
 
 class DiagnosticoIn(BaseModel):

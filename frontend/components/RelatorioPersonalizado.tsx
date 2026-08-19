@@ -18,7 +18,12 @@ const RESUMO_ITENS: { key: keyof ResumoRelatorioPersonalizado; label: string; su
   { key: "quantidade_animais", label: "Quantidade de animais" },
   { key: "taxa_servico_pct", label: "Taxa de serviço", sufixo: "%" },
   { key: "taxa_concepcao_pct", label: "Taxa de concepção", sufixo: "%" },
-  { key: "taxa_prenhez_pct", label: "Taxa de prenhez", sufixo: "%" },
+  // Rótulo "Fêmeas prenhas" (não "Taxa de prenhez"): o campo é inventário —
+  // % do rebanho APTO que está prenhe hoje — e não a taxa formal do
+  // programa reprodutivo (PREG ÷ PG ELIG) de /reproducao/ciclos-21-dias, que
+  // já usa esse mesmo nome "Taxa de prenhez". Mesmo texto usado na Capa
+  // (Indicadores > Gerais) e nas outras 3 telas que mostram este campo.
+  { key: "taxa_prenhez_pct", label: "Fêmeas prenhas", sufixo: "%" },
   { key: "novilhas_aptas_ate_meses", label: "Novilhas aptas até X meses" },
   { key: "quantidade_perda_prenhez", label: "Quantidade de perda de prenhez" },
   { key: "percentual_perda_prenhez_pct", label: "Percentual de perda de prenhez", sufixo: "%" },

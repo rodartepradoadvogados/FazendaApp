@@ -75,7 +75,10 @@ def _bloco_resultado(resultado: dict) -> str:
     itens = [
         ("Total de animais", resultado.get("total_animais")),
         ("Vacas em lactação", resultado.get("vacas_lactacao")),
-        ("Taxa de prenhez", f"{resultado['taxa_prenhez_pct']}%" if resultado.get("taxa_prenhez_pct") is not None else "—"),
+        # "Fêmeas prenhas", não "Taxa de prenhez": é inventário (% do rebanho
+        # apto prenhe hoje), não a taxa formal PREG/PG ELIG do BREDSUM — mesmo
+        # rótulo usado na Capa e nas demais telas que mostram este campo.
+        ("Fêmeas prenhas", f"{resultado['taxa_prenhez_pct']}%" if resultado.get("taxa_prenhez_pct") is not None else "—"),
         ("Taxa de concepção", f"{resultado['taxa_concepcao_pct']}%" if resultado.get("taxa_concepcao_pct") is not None else "—"),
         ("Taxa de serviço", f"{resultado['taxa_servico_pct']}%" if resultado.get("taxa_servico_pct") is not None else "—"),
         ("Produção média (kg)", resultado.get("producao_media_kg")),

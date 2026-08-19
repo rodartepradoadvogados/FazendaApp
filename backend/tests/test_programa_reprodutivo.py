@@ -550,11 +550,42 @@ class TestDescartadaForaDoBenchmark:
 
     def test_descartada_prenhe_continua_no_inventario(self):
         """`perc_vacas_prenhas` é inventário, não taxa do programa: a vaca
-        marcada para descarte que está prenhe continua prenhe."""
+        marcada para descarte que está prenhe continua prenhe — ela é a
+        ÚNICA exceção que a R1 (puberdade ∧ ¬a_descartar ∧ ¬baixada) não
+        aplica aqui, porque `total` (o denominador) passou a ser o rebanho
+        no PROGRAMA reprodutivo, não mais `len(animais)` — os dois batem
+        neste exemplo só porque nenhuma das 2 fêmeas é impúbere/baixada."""
         animais = [{"numero": "1"}, {"numero": "2", "a_descartar": True}]
         estados = {"1": "apta", "2": "gestante"}
         v = self._valores(animais, [], estados)
-        assert v["perc_vacas_prenhas"] == 50.0, "1 prenhe de 2 fêmeas — o rebanho inteiro"
+        assert v["perc_vacas_prenhas"] == 50.0, "1 prenhe de 2 no programa — a gestante entra pela exceção"
+
+    def test_bezerra_impubere_fora_do_denominador_de_prenhas(self):
+        """O defeito relatado: o denominador ERA `len(animais)`, o rebanho
+        fêmeo inteiro — uma bezerra de 6 meses (estado 'nao_apta', nunca
+        atingiu puberdade) entrava nele mesmo sem poder, por definição,
+        estar prenhe. Agora ela nem entra no programa (R1)."""
+        animais = [{"numero": "1"}, {"numero": "2"}]  # "2" = bezerra
+        estados = {"1": "gestante", "2": "nao_apta"}
+        v = self._valores(animais, [], estados)
+        # ANTES: 100*1/2 = 50.0 (bezerra no denominador). DEPOIS: 100*1/1 = 100.0.
+        assert v["perc_vacas_prenhas"] == 100.0, "só '1' está no programa — a bezerra nunca entrou"
+
+    def test_a_descartar_e_baixada_fora_do_denominador_de_prenhas(self):
+        """Duas portas de saída do programa (R1), as duas de uma vez: a
+        vazia marcada a_descartar ("2", não é gestante, não tem exceção) e a
+        baixada ("3", ativo=False — já saiu da fazenda, ninguém escapa desta
+        porta, nem gestante)."""
+        animais = [
+            {"numero": "1"},                               # apta, no programa
+            {"numero": "2", "a_descartar": True},           # vazia + descarte: fora
+            {"numero": "3", "ativo": False},                # baixada: fora
+            {"numero": "4"},                                # gestante, no programa
+        ]
+        estados = {"1": "apta", "2": "vazia", "3": "apta", "4": "gestante"}
+        v = self._valores(animais, [], estados)
+        # ANTES (rebanho inteiro, 4): 100*1/4 = 25.0. DEPOIS (programa, 2): 100*1/2 = 50.0.
+        assert v["perc_vacas_prenhas"] == 50.0, "só '1' e '4' estão no programa"
 
     def test_o_corte_vale_no_fallback_de_sit_rep(self):
         animais = [
@@ -565,6 +596,21 @@ class TestDescartadaForaDoBenchmark:
         servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
         v = self._valores(animais, servicos, estados=None)
         assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a descartada"
+
+    def test_perc_vacas_prenhas_no_fallback_de_sit_rep(self):
+        """Sem estado ao vivo (nenhum registro carregado), `perc_vacas_prenhas`
+        cai no sit_rep congelado: sem como enxergar puberdade nesse texto, o
+        corte fica parcial (só descarte/baixa) — menos preciso, mas continua
+        funcionando em vez de voltar ao denominador antigo (rebanho inteiro)."""
+        animais = [
+            {"numero": "1", "sit_rep": "Ges."},                                  # prenhe, fica
+            {"numero": "2", "sit_rep": "Vaz.", "a_descartar": True},             # descarte: fora
+            {"numero": "3", "sit_rep": "Ges.", "ativo": False},                  # baixada: fora, mesmo gestante
+            {"numero": "4", "sit_rep": "Vaz."},                                  # vazia, fica
+        ]
+        v = self._valores(animais, [], estados=None)
+        # ANTES (rebanho inteiro, 4): 100*2/4 = 50.0. DEPOIS (programa, 2): 100*1/2 = 50.0.
+        assert v["perc_vacas_prenhas"] == 50.0, "só '1' e '4' ficam — '3' sai mesmo gestante (baixada é porta sem exceção)"
 
     def test_descartar_nums_explicito_vence_o_recorte_local(self):
         """O painel de vacas recebe só os animais que já pariram, mas os

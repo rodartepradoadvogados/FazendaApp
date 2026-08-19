@@ -7,7 +7,7 @@ Este documento é o inventário que a migração do resto do sistema vai consumi
 Levantado por três varreduras independentes do código, com cada achado
 conferido contra o arquivo antes de entrar aqui.
 
-**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra" e as 8 listas de trabalho + `fluxo_lactacao` migrados).
+**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores de `taxa_prenhez_pct`/`perc_vazias_pct`/`perc_vacas_prenhas` e a série mensal de concepção).
 
 ---
 
@@ -72,16 +72,27 @@ achar diferença sem entender por quê.
 
 ---
 
-## 4. Denominadores legados que ainda convivem
+## 4. Denominadores legados — CORRIGIDOS
 
-Estes números **não batem** com a Capa nem com Ciclos de 21 dias, e estão em
+Estes números **não batiam** com a Capa nem com Ciclos de 21 dias, e estavam em
 telas que o produtor abre no mesmo dia.
 
-| Onde | Denominador | Consequência |
+| Onde | Denominador ANTES | Denominador AGORA |
 |---|---|---|
-| `rules/indicadores.py:604-608` | `prenhes + vazias + inseminadas`, com `else: vazias += 1` engolindo PEV, `nao_apta`, bezerra e `em_protocolo` | É o `taxa_prenhez_pct` que alimenta **os alertas**, o Manual da Fazenda e o Relatório personalizado |
-| `rules/indicadores.py:273` | `total = len(animais)` | `perc_vacas_prenhas` com bezerras no denominador |
-| `rules/reproducao_analise.py:146` | universo = tabela `Servico` | O defeito nº 2 do motor, ainda vivo: quem não foi inseminada some da conta. Alimenta Análise Reprodutiva, Manual da Fazenda e o assistente |
+| `taxa_prenhez_pct` / `perc_vazias_pct` (`rules/indicadores.py`) | `prenhes + vazias + inseminadas`, com `else: vazias += 1` engolindo PEV, `nao_apta`, bezerra e `em_protocolo` | `rebanho_programa` (R1): sem impúbere, sem `a_descartar` (exceto gestante — inventário), sem baixada. Alimenta **os alertas**, o Manual da Fazenda e o Relatório personalizado |
+| `perc_vacas_prenhas` (`rules/indicadores.py`) | `total = len(animais)` — bezerras no denominador | mesmo corte R1 |
+| `taxa_concepcao` mensal (`rules/reproducao_analise.py`) | universo = tabela `Servico`, sem janela de DG | `conta_em_taxa` (R7) + `janela_dg_completa` por mês na série |
+
+Dois detalhes que a correção obrigou:
+
+- **Os numeradores também precisaram do corte.** Deixar `vazias`/`prenhes` crus
+  sobre um denominador menor passaria de 100%. Por isso `perc_vazias_pct` pode
+  **cair** quando a população excluída é majoritariamente vazia.
+- **`vazias_programa` não conta inseminada.** O card é rotulado "Vazias" e o
+  drill-down abre a lista filtrada por `sit_rep` "Vaz." — sem as inseminadas.
+  Contá-las faria o card divergir da lista que ele abre. As contagens cruas
+  (`prenhes`/`vazias`/`inseminadas`) continuam sobre o rebanho inteiro, porque
+  outros consumidores (card "Vazias" do mobile) dependem delas.
 
 ---
 
@@ -90,8 +101,8 @@ telas que o produtor abre no mesmo dia.
 | Onde | Efeito |
 |---|---|
 | `rules/indicadores.py:623-626` | `taxa_concepcao_pct` sem `conta_em_taxa`, **no mesmo JSON** que a versão correta do benchmark — dois números de "taxa de concepção" na mesma resposta |
-| `rules/reproducao_analise.py` (séries mensais) | O mês corrente entra sem os DGs pendentes |
-| `rules/manual_fazenda.py:141` | `_insights` gera **sugestão automática** de "queda de concepção" a partir dessa série. O sistema inventa um problema que não existe |
+| ~~`rules/reproducao_analise.py` (séries mensais)~~ | **CORRIGIDO** — `agregar_mensal` recebe `hoje`/`dias_resultado` e devolve `janela_dg_completa: list[bool]` |
+| ~~`rules/manual_fazenda.py:141`~~ | **CORRIGIDO** — `METRICAS_DEPENDEM_DE_DG` faz `_insights` descartar o mês em apuração só para as métricas que dependem de DG. O sistema parou de inventar a "queda de concepção" |
 | `api/routers/reproducao.py:558` | O front agrega concepção no cliente, sem janela |
 | `rules/indicadores.py:271-272` | `taxa_perda_prenhez` mistura numerador sem janela com denominador com janela |
 | `api/routers/indicadores.py:257` | `percentual_perda_prenhez_pct` |
@@ -244,12 +255,16 @@ contexto:
 
 Do que mais dói para o que menos dói:
 
-1. **`reproducao_analise.py`** — remove a terceira definição de concepção e para
-   de gerar insight falso no Manual.
-2. **Unificar "apta"** na tabela da seção 8, um consumidor por vez.
-3. **Paridade mobile** — menu e ficha.
-4. **`a_descartar_em` + backfill** — o único que resolve a armadilha 11.3.
+1. **`taxa_concepcao_pct` de `indicadores.py`** — é a última definição
+   concorrente de concepção: DG bruto (`pos/(pos+neg)`) **no mesmo JSON** que a
+   versão correta do benchmark. A série mensal já migrou; este campo não.
+2. **Paridade mobile** — menu sem `/ciclos-21-dias`, ficha sem a curva de
+   lactação.
+3. **`a_descartar_em` + backfill** — o único que resolve a armadilha 11.3, e a
+   única migração de schema da fila.
 
-Já feito: candidatas a IATF, "PEV encerra" e **todo** o
-`relatorios_gerenciais.py` — as 8 listas de trabalho, a projeção de partos e
-secagens, e a curva de prenhas por faixa de DEL (ver seção 6).
+Já feito: candidatas a IATF, "PEV encerra", **todo** o
+`relatorios_gerenciais.py` (as 8 listas de trabalho, a projeção de partos e
+secagens, a curva de prenhas por faixa de DEL — seção 6), os denominadores da
+seção 4, a série mensal de concepção (seção 5) e a unificação de "apta" da
+seção 8.
