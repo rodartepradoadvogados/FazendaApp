@@ -1345,7 +1345,11 @@ export async function atualizarSecagem(id: number, dados: { data_secagem?: strin
   return res.json();
 }
 
-export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]> };
+// `janela_dg_completa` — mesmo vocabulário de `ResultadoCiclo.janela_dg_completa`
+// (ciclos de 21 dias): alinhado 1:1 com `meses`, indica se aquele mês já
+// passou da janela de diagnóstico (R7) ou ainda está "em apuração" — a
+// concepção ainda pode subir. O mês corrente quase sempre vem `false`.
+export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]>; janela_dg_completa: boolean[] };
 export type IndicadoresMensaisFiltros = {
   ini?: string;
   fim?: string;

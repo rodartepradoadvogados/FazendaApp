@@ -481,6 +481,163 @@ class TestIndicadores:
         r = calcular_indicadores(animais, [], partos, data_ref=date(2026, 7, 5))
         assert r["reproducao"]["iep_dias"] is None
 
+    def test_taxa_prenhez_e_vazias_usam_rebanho_no_programa(self):
+        """Denominador de taxa_prenhez_pct/perc_vazias_pct: ERA o rebanho
+        fêmeo INTEIRO (prenhes+vazias+inseminadas — no caminho ao vivo,
+        `vazias` é um `else` que absorve tudo que não é gestante nem
+        inseminada, inclusive a bezerra impúbere, que nunca poderia estar
+        prenhe). Agora é o rebanho no PROGRAMA reprodutivo (R1): fora a
+        impúbere, a descartada (a menos que esteja gestante — aí é
+        inventário, ela vai parir do mesmo jeito) e a baixada.
+
+        Rebanho de exemplo (7 fêmeas): "1" gestante; "2" vaca vazia (no
+        programa); "3" bezerra impúbere (fora — nunca entrou no programa);
+        "4" novilha apta (no programa); "5" vaca a_descartar vazia (fora —
+        só a exceção da gestante entra); "6" vaca gestante a_descartar (fica
+        — inventário); "7" vaca baixada/ativo=False (fora, mesmo "vazia").
+
+        ANTES (denominador = 7, o rebanho inteiro):
+          taxa_prenhez_pct = 100*2/7 = 28.6%
+          perc_vazias_pct  = 100*5/7 = 71.4%
+        DEPOIS (denominador = 4, o programa: "1","2","4","6"):
+          taxa_prenhez_pct = 100*2/4 = 50.0%  (sobe, como esperado — o
+            numerador `prenhes` não muda, o denominador encolhe)
+          perc_vazias_pct  = 100*2/4 = 50.0%  (o numerador de vazias
+            também precisou ficar restrito ao programa — "2" e "4" — senão
+            o 5 antigo sobre o 4 novo daria 125%, pior que o bug original;
+            por isso este percentual pode CAIR em vez de subir quando a
+            população excluída é majoritariamente "vazia", como aqui)
+        """
+        hoje = date(2026, 8, 19)
+        animais = [
+            {"numero": "1"},                                          # gestante, no programa
+            {"numero": "2"},                                          # vazia, no programa
+            {"numero": "3", "data_nasc": hoje - timedelta(days=200)},  # bezerra impúbere
+            {"numero": "4", "data_nasc": hoje - timedelta(days=600)},  # novilha apta
+            {"numero": "5", "a_descartar": True},                     # vazia + descarte: fora
+            {"numero": "6", "a_descartar": True},                     # gestante + descarte: fica
+            {"numero": "7", "ativo": False},                          # baixada: fora
+        ]
+        servicos = [
+            {"numero_matriz": "1", "data_servico": hoje - timedelta(days=60), "diagnostico": "POSITIVO"},
+            {"numero_matriz": "6", "data_servico": hoje - timedelta(days=50), "diagnostico": "POSITIVO"},
+        ]
+        partos = [
+            {"numero_matriz": "1", "data_parto": hoje - timedelta(days=200)},
+            {"numero_matriz": "2", "data_parto": hoje - timedelta(days=200)},
+            {"numero_matriz": "5", "data_parto": hoje - timedelta(days=200)},
+            {"numero_matriz": "6", "data_parto": hoje - timedelta(days=250)},
+            {"numero_matriz": "7", "data_parto": hoje - timedelta(days=200)},
+        ]
+        peso_por_animal = {"4": 350.0}
+        r = calcular_indicadores(animais, servicos, partos, data_ref=hoje, peso_por_animal=peso_por_animal)
+        rep = r["reproducao"]
+        # Contagens cruas (fora de escopo desta correção — continuam sobre o
+        # rebanho inteiro, é o que outras telas ainda consomem):
+        assert rep["prenhes"] == 2   # "1" e "6" — gestante conta mesmo descartada
+        assert rep["vazias"] == 5    # "2","3","4","5","7" — inclui a bezerra
+        # O que este teste prova: os PERCENTUAIS usam o programa (4 fêmeas),
+        # não o rebanho inteiro (7).
+        assert rep["taxa_prenhez_pct"] == 50.0
+        assert rep["perc_vazias_pct"] == 50.0
+
+    def test_inseminada_entra_no_denominador_mas_nao_conta_como_vazia(self):
+        """A inseminada está no programa (denominador), mas NÃO é "vazia".
+
+        `perc_vazias_pct` alimenta o card rotulado "Vazias", cujo drill-down
+        abre a lista filtrada por `sit_rep` começando em "Vaz." — que não
+        inclui as inseminadas. Se o card contasse a inseminada, o número
+        divergiria da lista que abre ao clicar nele: exatamente o defeito
+        que `numeros_gestantes_vivo` já corrigiu do lado das gestantes.
+
+        Rebanho de exemplo (4 vacas, todas paridas e no programa): "1"
+        gestante; "2" e "4" vazias; "3" inseminada (serviço recente, ainda
+        sem diagnóstico).
+
+        Denominador = 4 nos dois percentuais — a inseminada CONTA, ela está
+        no programa e pode emprenhar. Numeradores: 1 gestante e 2 vazias.
+        Os baldes de propósito não somam o denominador; a diferença é
+        justamente a inseminada.
+        """
+        hoje = date(2026, 8, 19)
+        animais = [{"numero": "1"}, {"numero": "2"}, {"numero": "3"}, {"numero": "4"}]
+        servicos = [
+            {"numero_matriz": "1", "data_servico": hoje - timedelta(days=60), "diagnostico": "POSITIVO"},
+            {"numero_matriz": "3", "data_servico": hoje - timedelta(days=20)},  # sem DG: inseminada
+        ]
+        partos = [
+            {"numero_matriz": n, "data_parto": hoje - timedelta(days=200)}
+            for n in ("1", "2", "3", "4")
+        ]
+        r = calcular_indicadores(animais, servicos, partos, data_ref=hoje)
+        rep = r["reproducao"]
+        assert rep["inseminadas"] == 1
+        assert rep["taxa_prenhez_pct"] == 25.0   # 1 gestante / 4 no programa
+        assert rep["perc_vazias_pct"] == 50.0    # 2 vazias / 4 — NÃO 75.0
+
+
+class TestReproducaoCategoriasFallback:
+    """`_reproducao_categorias` no caminho de FALLBACK (sem `estados` ao
+    vivo — ativa só quando `calcular_indicadores` não tem nenhum Parto/
+    Servico carregado, ver `_estados_ao_vivo`). Risco baixo (só ativa sem
+    registros), mas divergia da matriz canônica em dois pontos: DEL mínimo
+    de aptidão da vaca era uma constante fixa (45) paralela e independente
+    de `pev_dias()`, e a novilha apta não checava idade — só peso."""
+
+    def test_vaca_apta_usa_pev_dias_nao_constante_fixa(self):
+        from fazenda.rules.indicadores import _reproducao_categorias
+        # pev_dias() padrão = 45 — DEL de 50 dias já é apta a novo serviço.
+        animais = [{"numero": "1", "del_dias": 50, "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={}, vacas_nums={"1"},
+            hoje=date(2026, 7, 5),
+        )
+        assert "1" in r["todas"]["aptas_nums"]
+
+    def test_vaca_dentro_do_pev_nao_e_apta(self):
+        from fazenda.rules.indicadores import _reproducao_categorias
+        animais = [{"numero": "1", "del_dias": 20, "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={}, vacas_nums={"1"},
+            hoje=date(2026, 7, 5),
+        )
+        assert "1" not in r["todas"]["aptas_nums"]
+
+    def test_novilha_com_peso_mas_sem_idade_nao_e_apta(self):
+        """Peso acima do mínimo (peso_apta_min padrão 300 kg) não basta
+        sozinho — a matriz canônica (estado_reprodutivo.classificar_animal,
+        regra 7) exige idade E peso. 300 dias (~9,9 meses) fica abaixo de
+        idade_apta_min_meses padrão (15 meses)."""
+        from fazenda.rules.indicadores import _reproducao_categorias
+        hoje = date(2026, 7, 5)
+        animais = [{"numero": "2", "data_nasc": hoje - timedelta(days=300), "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={"2": 320}, vacas_nums=set(),
+            hoje=hoje,
+        )
+        assert "2" not in r["todas"]["aptas_nums"]
+
+    def test_novilha_com_idade_e_peso_e_apta(self):
+        from fazenda.rules.indicadores import _reproducao_categorias
+        hoje = date(2026, 7, 5)
+        animais = [{"numero": "3", "data_nasc": hoje - timedelta(days=470), "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={"3": 320}, vacas_nums=set(),
+            hoje=hoje,
+        )
+        assert "3" in r["todas"]["aptas_nums"]
+
+    def test_sem_hoje_cai_no_criterio_antigo_so_peso(self):
+        """Retrocompatibilidade: chamador que não informa `hoje` (nenhum
+        hoje, dentro do repositório, chama assim hoje — mas a função
+        continua aceitando) mantém o critério de só peso, sem quebrar."""
+        from fazenda.rules.indicadores import _reproducao_categorias
+        animais = [{"numero": "4", "data_nasc": date(2026, 7, 5) - timedelta(days=300), "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={"4": 320}, vacas_nums=set(),
+        )
+        assert "4" in r["todas"]["aptas_nums"]
+
 
 # ============================================================
 # ALIMENTAÇÃO
@@ -572,6 +729,48 @@ class TestAnaliseReprodutiva:
         # método de IA: IA sem protocolo = cio natural; cobertura = monta
         assert r0["metodo_ia"] == "IA em cio natural"
         assert r[1]["metodo_ia"] == "Monta natural"
+
+    def test_taxa_concepcao_aplica_r7_servico_antigo_sem_diagnostico_conta_como_fracasso(self):
+        """Regra dos 28 dias (R7): serviço com 28+ dias e ninguém diagnosticou
+        entra no denominador da concepção como fracasso — antes (denominador
+        = só "diagnosticado") ele simplesmente sumia da conta."""
+        from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
+
+        hoje = date(2026, 8, 19)
+        servicos = [
+            # Maio: 1 positivo diagnosticado + 1 sem diagnóstico algum, mas já
+            # com bem mais de 28 dias — antes do fix sumia do denominador
+            # (taxa = 100%); com R7 entra como fracasso (taxa = 50%).
+            {"numero_matriz": "1", "data_servico": date(2026, 5, 3), "diagnostico": "POSITIVO", "data_perda_prenhez": None},
+            {"numero_matriz": "2", "data_servico": date(2026, 5, 10), "diagnostico": None, "data_perda_prenhez": None},
+        ]
+        regs = analisar_servicos(servicos)
+        agregado = agregar_mensal(regs, [], [], hoje=hoje)
+        i = agregado["meses"].index("2026-05")
+        assert agregado["series"]["taxa_concepcao"][i] == 50.0
+
+    def test_janela_dg_completa_marca_mes_corrente_como_incompleto(self):
+        """Mês cujos serviços ainda não completaram os `dias_resultado` dias
+        vem marcado com `janela_dg_completa=False`; mês antigo, maduro, vem
+        `True` — mesmo vocabulário/contrato de `ResultadoCiclo.janela_dg_completa`
+        nos ciclos de 21 dias."""
+        from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
+
+        hoje = date(2026, 8, 19)
+        servicos = [
+            {"numero_matriz": "1", "data_servico": date(2026, 5, 3), "diagnostico": "POSITIVO", "data_perda_prenhez": None},
+            {"numero_matriz": "2", "data_servico": date(2026, 8, 15), "diagnostico": None, "data_perda_prenhez": None},
+        ]
+        regs = analisar_servicos(servicos)
+        agregado = agregar_mensal(regs, [], [], hoje=hoje)
+        completo_por_mes = dict(zip(agregado["meses"], agregado["janela_dg_completa"]))
+        assert completo_por_mes["2026-05"] is True
+        assert completo_por_mes["2026-08"] is False
+        # E o mês em apuração sai do denominador de concepção enquanto ninguém
+        # o diagnostica (nenhum serviço ali tem 28 dias nem DG) — fica None,
+        # não zero, para não parecer "concepção zero" quando é só falta de tempo.
+        i = agregado["meses"].index("2026-08")
+        assert agregado["series"]["taxa_concepcao"][i] is None
 
 
 # ============================================================

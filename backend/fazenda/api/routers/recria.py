@@ -27,7 +27,9 @@ from fazenda.models import (
 )
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.estado_reprodutivo import APTA, ATRASADA, GESTANTE, INSEMINADA, classificar_animal
 from fazenda.rules.gestation import dias_gestacao_da_raca
+from fazenda.rules.parametros import get_param, idade_apta_min_meses, peso_apta_min, pev_dias as pev_dias_param
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
@@ -408,26 +410,55 @@ def montar_dossie(
 GESTACAO_DIAS_CATEGORIA = 280  # gestação média — mesma referência de fazenda.rules.relatorios_gerenciais
 
 
-def _status_reprodutivo(sit_rep: str | None) -> str:
-    """Refina a categoria de aptidão pelo status reprodutivo (a partir do sit_rep)."""
-    s = (sit_rep or "").strip().lower()
-    if s.startswith("ges") or "prenh" in s:
+def _parametros_estado_vivo() -> tuple[int, int, int, float]:
+    """(pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg) lidos uma
+    vez só — cada chamador desta função (composicao_categorias, ficha do
+    animal, critérios de lote) roda `classificar_animal` em loop por animal,
+    e cada parâmetro lido por `get_param`/os acessores de parametros.py abre
+    uma sessão de banco própria (ver mesmo cuidado em eventos_sanitarios.py e
+    agenda.py::calcular_agenda) — ler dentro do loop multiplicaria a mesma
+    consulta uma vez por animal."""
+    del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
+    idade_apta_dias = round(idade_apta_min_meses() * 30.44)
+    return pev_dias_param(), del_max, idade_apta_dias, peso_apta_min()
+
+
+def _status_reprodutivo(estado_vivo: str | None) -> str:
+    """Refina a categoria de aptidão legada (usa_status_reprodutivo) pelo
+    estado reprodutivo AO VIVO (estado_reprodutivo.classificar_animal, motor
+    canônico das regras R1-R9 do programa reprodutivo) — não mais pelo
+    `sit_rep`, texto congelado do último GERAL.csv importado. Antes, uma
+    novilha que engravidava pelo app continuava "Apta" (por eliminação sobre
+    o texto velho) até o próximo upload de planilha."""
+    if estado_vivo == GESTANTE:
         return "Gestante"
-    if s.startswith("ins") or "insem" in s:
+    if estado_vivo == INSEMINADA:
         return "Inseminada"
     return "Apta"
 
 
-def _situacao_reprodutiva_3(sit_rep: str | None) -> str | None:
+def _situacao_reprodutiva_3(estado_vivo: str | None) -> str | None:
     """Situação reprodutiva em 3 categorias (inseminada/vazia/prenha), usada
-    para casar com CategoriaManejo.situacao_reprodutiva. None = sem sit_rep
-    confiável (não filtra nem casa com nenhum critério cadastrado)."""
-    s = (sit_rep or "").strip().lower()
-    if s.startswith("ges") or "prenh" in s:
+    para casar com CategoriaManejo.situacao_reprodutiva — a partir do ESTADO
+    AO VIVO (estado_reprodutivo.classificar_animal: GESTANTE/INSEMINADA/APTA/
+    ATRASADA/PEV/EM_PROTOCOLO/NAO_APTA), não mais do `sit_rep` congelado do
+    GERAL.csv (só mudava no próximo upload — uma vaca que engravidava pelo
+    app continuava "vazia" pra sempre, até o próximo CSV, e alimentava a
+    sugestão de movimentação de lote errada — ver rules.lote_criterios).
+
+    "Vazia" = APTA ou ATRASADA (mesma convenção de relatorios_gerenciais.py e
+    agenda_engine.py: livre para receber serviço). PEV, EM_PROTOCOLO e
+    NAO_APTA são estados reais, mas nenhum dos três é "vazia" (PEV é
+    descanso obrigatório; EM_PROTOCOLO já está sendo trabalhada; NAO_APTA é
+    novilha que ainda não deu a idade/peso) — por isso caem em None, igual a
+    um estado desconhecido: não casam com NENHUM dos três critérios
+    cadastráveis (prenha/inseminada/vazia), então não filtram nem devem
+    "inventar" um bucket que não corresponde à realidade do animal."""
+    if estado_vivo == GESTANTE:
         return "prenha"
-    if s.startswith("ins") or "insem" in s:
+    if estado_vivo == INSEMINADA:
         return "inseminada"
-    if s.startswith("vaz"):
+    if estado_vivo in (APTA, ATRASADA):
         return "vazia"
     return None
 
@@ -459,9 +490,7 @@ def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
     if dias is None:
         return "Sem data de nascimento"
     peso = ctx.get("peso")
-    # Prefere a situação calculada dos lançamentos; só cai no texto do CSV
-    # quando o animal não tem serviço nem parto registrado.
-    sit_rep_3 = ctx.get("situacao_reprodutiva_viva") or _situacao_reprodutiva_3(ctx.get("sit_rep"))
+    sit_rep_3 = ctx.get("situacao_reprodutiva_viva")
     peso_faltou: CategoriaManejo | None = None
     for cat in sorted(categorias, key=lambda c: (c.ordem, c.dia_min)):
         if dias < cat.dia_min:
@@ -486,7 +515,7 @@ def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
         if not _dentro_faixa(ctx.get("dias_pos_parto"), cat.dias_pos_parto_min, cat.dias_pos_parto_max):
             continue
         if cat.usa_status_reprodutivo:
-            return _status_reprodutivo(ctx.get("sit_rep"))
+            return _status_reprodutivo(ctx.get("estado_vivo"))
         return cat.nome
     # Idade compatível com uma categoria, mas o peso ainda não alcançou o alvo.
     if peso_faltou is not None:
@@ -497,12 +526,27 @@ def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
 def _contexto_categoria(
     dias: int | None, peso: float | None, sit_rep: str | None, hoje: date,
     servicos: list[Servico], partos: list[Parto], secagens: list[Secagem],
-    raca: str | None = None,
+    raca: str | None = None, numero: str | None = None,
+    pev_dias: int | None = None, del_max_1o_servico: int | None = None,
+    idade_apta_dias: int | None = None, peso_apta_kg: float | None = None,
 ) -> dict:
     """Monta o contexto de classificação de um animal a partir dos lançamentos
     já feitos (serviço/IA, parto, secagem) — mesma referência de cálculo de
     fazenda.rules.relatorios_gerenciais (concepção = data do serviço com
-    diagnóstico positivo e sem perda de prenhez)."""
+    diagnóstico positivo e sem perda de prenhez).
+
+    `pev_dias`/`del_max_1o_servico`/`idade_apta_dias`/`peso_apta_kg`: os 4
+    parâmetros que `estado_reprodutivo.classificar_animal` (chamado abaixo)
+    precisa — opcionais aqui porque o chamador que roda em loop por animal
+    (composicao_categorias, lote_criterios) já leu tudo uma vez via
+    `_parametros_estado_vivo()` e passa pronto; só quando ausentes (ex.:
+    chamada avulsa de um único animal) é que lemos aqui, na hora."""
+    if pev_dias is None or del_max_1o_servico is None or idade_apta_dias is None or peso_apta_kg is None:
+        _pev, _del_max, _idade_apta, _peso_apta = _parametros_estado_vivo()
+        pev_dias = pev_dias if pev_dias is not None else _pev
+        del_max_1o_servico = del_max_1o_servico if del_max_1o_servico is not None else _del_max
+        idade_apta_dias = idade_apta_dias if idade_apta_dias is not None else _idade_apta
+        peso_apta_kg = peso_apta_kg if peso_apta_kg is not None else _peso_apta
     servs = sorted((s for s in servicos if s.data_servico), key=lambda s: s.data_servico)
     ult_serv = servs[-1] if servs else None
     dias_desde_servico = (hoje - ult_serv.data_servico).days if ult_serv else None
@@ -532,26 +576,31 @@ def _contexto_categoria(
         situacao_produtiva = None  # novilha — nunca pariu, não se aplica
     dias_pos_parto = (hoje - ult_parto).days if ult_parto else None
 
-    # Situação reprodutiva AO VIVO, derivada dos mesmos lançamentos acima em
-    # vez do texto congelado de sit_rep (que só muda no próximo GERAL.csv).
-    # Regra: prenha = tem concepção vigente; inseminada = último serviço é
-    # POSTERIOR ao último parto e ainda sem diagnóstico fechado; vazia = o
-    # resto de quem já tem histórico. None = animal sem nenhum lançamento,
-    # aí o `sit_rep` continua servindo de última referência.
-    if concep is not None and (not ult_parto or concep > ult_parto):
-        situacao_reprodutiva_viva = "prenha"
-    elif ult_serv and (not ult_parto or ult_serv.data_servico > ult_parto) and \
-            (ult_serv.diagnostico or "").strip().upper() not in ("POSITIVO", "NEGATIVO") and \
-            not ult_serv.data_perda_prenhez:
-        situacao_reprodutiva_viva = "inseminada"
-    elif servs or ult_parto:
-        situacao_reprodutiva_viva = "vazia"
-    else:
-        situacao_reprodutiva_viva = None
+    # Estado reprodutivo AO VIVO — mesmo motor canônico das regras R1-R9 do
+    # programa reprodutivo (estado_reprodutivo.classificar_animal), em vez do
+    # texto congelado de sit_rep (que só muda no próximo GERAL.csv — uma
+    # vaca que engravidava pelo app continuava "vazia"/"apta" até o próximo
+    # upload de planilha). `eh_vaca` = tem Parto registrado (mesma convenção
+    # de relatorios_gerenciais._eh_vaca); sem categoria de texto disponível
+    # aqui pra reforçar isso como o `estados_ao_vivo` em lote faz.
+    #
+    # `aplicacoes_iatf=[]`: este contexto não carrega o histórico de IATF (os
+    # 3 chamadores — composição de categorias, ficha do animal e critérios de
+    # lote — não pedem essa tabela) — o estado EM_PROTOCOLO nunca sai daqui;
+    # um animal em protocolo aparece como PEV/APTA/ATRASADA, conforme o resto
+    # dos dados. Consequência aceita: as categorias/lotes que dependem deste
+    # contexto não distinguem "em protocolo" das demais novilhas/vacas aptas.
+    estado_vivo = classificar_animal(
+        numero or "", hoje=hoje, partos=partos, servicos=servicos, aplicacoes_iatf=[],
+        pev_dias=pev_dias, del_max_1o_servico=del_max_1o_servico,
+        eh_vaca=bool(ult_parto), idade_dias=dias, peso_kg=peso,
+        idade_apta_dias=idade_apta_dias, peso_apta_kg=peso_apta_kg, raca=raca,
+    )["estado"]
 
     return {
         "dias": dias, "peso": peso, "sit_rep": sit_rep,
-        "situacao_reprodutiva_viva": situacao_reprodutiva_viva,
+        "estado_vivo": estado_vivo,
+        "situacao_reprodutiva_viva": _situacao_reprodutiva_3(estado_vivo),
         "dias_gestacao": dias_gestacao, "dias_desde_servico": dias_desde_servico,
         "dias_para_parto": dias_para_parto, "dias_pos_parto": dias_pos_parto,
         "situacao_produtiva": situacao_produtiva,
@@ -597,6 +646,7 @@ def composicao_categorias(
         if s.numero_matriz:
             secagens_idx.setdefault(s.numero_matriz, []).append(s)
     hoje = date.today()
+    pev, del_max, idade_apta_dias, peso_apta_kg = _parametros_estado_vivo()
     cont: dict[str, int] = {}
     for a in session.exec(animais_query).all():
         if a.eh_semen or a.sexo == "M":
@@ -605,7 +655,8 @@ def composicao_categorias(
         ctx = _contexto_categoria(
             dias, ult_peso.get(a.numero), a.sit_rep, hoje,
             servicos_idx.get(a.numero, []), partos_idx.get(a.numero, []), secagens_idx.get(a.numero, []),
-            raca=a.raca,
+            raca=a.raca, numero=a.numero,
+            pev_dias=pev, del_max_1o_servico=del_max, idade_apta_dias=idade_apta_dias, peso_apta_kg=peso_apta_kg,
         )
         cat = classificar_categoria(ctx, categorias)
         cont[cat] = cont.get(cat, 0) + 1
@@ -649,7 +700,7 @@ def categoria_sugerida_animal(
     servicos = session.exec(servicos_query).all()
     partos = session.exec(partos_query).all()
     secagens = session.exec(secagens_query).all()
-    ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens, raca=animal.raca)
+    ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens, raca=animal.raca, numero=numero)
     return {"categoria": classificar_categoria(ctx, categorias)}
 
 
@@ -1247,21 +1298,35 @@ _BENCHMARK_PADRAO = [
 # negativa para serem tentadas ANTES da "Recria apta" legada (ordem=3), que
 # do contrário classificaria todo adulto fértil (idade/peso ok) sem chegar a
 # olhar estes critérios mais ricos.
-_CATEGORIAS_NOVAS_PADRAO: list[dict] = [
-    dict(nome="Pós-parto - PEV", dias_pos_parto_max=45, ordem=-8),
-    dict(nome="Pré-parto", dias_para_parto_max=30, ordem=-7),
-    dict(nome="Seca", dias_para_parto_min=30, dias_para_parto_max=60, ordem=-6),
-    # "Atrasada" = já passou 30 dias desde a última tentativa de serviço sem
-    # nova IA/monta; senão (nunca servida ou servida há pouco) cai em "apta".
-    dict(nome="Vazia atrasada", situacao_reprodutiva="vazia", dias_pos_parto_min=46, dias_desde_servico_min=30, ordem=-5),
-    dict(nome="Liberada/apta", situacao_reprodutiva="vazia", dias_pos_parto_min=46, ordem=-4),
-    dict(nome="Inseminada", situacao_reprodutiva="inseminada", ordem=-3),
-    dict(nome="Prenha", situacao_reprodutiva="prenha", ordem=-2),
-    dict(nome="Em lactação", situacao_produtiva="lactacao", ordem=-1),
-    # Mesma faixa de idade da "Recria apta" legada (dia_min=391), mas abaixo
-    # do peso mínimo — ordem menor para ser tentada antes dela.
-    dict(nome="Recria atrasada", dia_min=391, peso_max_kg=369.99, ordem=2),
-]
+def _categorias_novas_padrao() -> list[dict]:
+    """Lista-modelo lida por `seed_categorias_novas` — função (não constante)
+    porque "Vazia atrasada" e "Liberada/apta" derivam `dias_pos_parto_min` de
+    `pev_dias()` na hora da semeadura, em vez de números fixos (45/46)
+    paralelos e independentes do parâmetro. As três têm de sair do MESMO
+    valor, senão mudar o parâmetro abre um buraco: "Pós-parto - PEV" cobre
+    os dias 0..pev e "liberada/atrasada" começa em pev+1, o dia seguinte ao
+    fim do descanso — com o padrão de 45, 0-45 e 46. Isto é só a SEMENTE
+    inicial — depois
+    de criada, a categoria fica editável normalmente em Configurações >
+    Cadastro > Recria, sem vínculo nenhum com o parâmetro daí em diante."""
+    pev = pev_dias_param()
+    liberada_desde = pev + 1
+    return [
+        dict(nome="Pós-parto - PEV", dias_pos_parto_max=pev, ordem=-8),
+        dict(nome="Pré-parto", dias_para_parto_max=30, ordem=-7),
+        dict(nome="Seca", dias_para_parto_min=30, dias_para_parto_max=60, ordem=-6),
+        # "Atrasada" = já passou 30 dias desde a última tentativa de serviço
+        # sem nova IA/monta; senão (nunca servida ou servida há pouco) cai
+        # em "apta".
+        dict(nome="Vazia atrasada", situacao_reprodutiva="vazia", dias_pos_parto_min=liberada_desde, dias_desde_servico_min=30, ordem=-5),
+        dict(nome="Liberada/apta", situacao_reprodutiva="vazia", dias_pos_parto_min=liberada_desde, ordem=-4),
+        dict(nome="Inseminada", situacao_reprodutiva="inseminada", ordem=-3),
+        dict(nome="Prenha", situacao_reprodutiva="prenha", ordem=-2),
+        dict(nome="Em lactação", situacao_produtiva="lactacao", ordem=-1),
+        # Mesma faixa de idade da "Recria apta" legada (dia_min=391), mas
+        # abaixo do peso mínimo — ordem menor para ser tentada antes dela.
+        dict(nome="Recria atrasada", dia_min=391, peso_max_kg=369.99, ordem=2),
+    ]
 
 
 def seed_categorias_novas(session: Session, fazenda_id: int | None = None) -> None:
@@ -1273,7 +1338,7 @@ def seed_categorias_novas(session: Session, fazenda_id: int | None = None) -> No
     if fazenda_id is not None:
         query = query.where(CategoriaManejo.fazenda_id == fazenda_id)
     existentes = {c.nome for c in session.exec(query).all()}
-    for dados in _CATEGORIAS_NOVAS_PADRAO:
+    for dados in _categorias_novas_padrao():
         if dados["nome"] not in existentes:
             session.add(CategoriaManejo(**dados, fazenda_id=fazenda_id))
     session.commit()

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, CalendarioSanitario, Estoque, MovimentoLote, PrincipioAtivo, Sanidade
+from fazenda.models import Animal, CalendarioSanitario, Estoque, MovimentoLote, Parto, PrincipioAtivo, Sanidade
 
 
 @pytest.fixture
@@ -154,6 +154,77 @@ class TestAgendaPorEvento:
         eventos = _agenda_sanidade(c)
         assert not any(e["numero_animal"] == "03M" for e in eventos)
         assert any(e["numero_animal"] == "404" for e in eventos)
+
+
+class TestGatilhoNovilhaApta:
+    """O gatilho `novilha_apta` é "a novilha atingiu a idade-alvo configurada
+    no cadastro do evento" — não a aptidão reprodutiva da regra 7 (que exige
+    idade_apta_min_meses E peso_apta_min). O rótulo da tela é "Aptidão
+    (novilha atingir certa idade)" e a semente do sistema traz Brucelose
+    RB51 aos 13 meses, abaixo do idade_apta_min_meses padrão (15): amarrar
+    este gatilho aos parâmetros de aptidão apagaria a vacina de brucelose da
+    Agenda, e exigir peso apagaria o gatilho inteiro em fazenda que não pesa.
+
+    O que É defeito, e o que estes testes fixam: o filtro antigo era só
+    "fêmea ativa com data de nascimento", então agendava manejo de NOVILHA
+    para vaca que já pariu e para animal marcado a descartar."""
+
+    def _cadastrar(self, c, gatilho_idade_meses: int = 13):
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Exame de entrada em reprodução", "tipo_agendamento": "evento", "gatilho": "novilha_apta",
+            "gatilho_idade_meses": gatilho_idade_meses, "produto_padrao": "ExameX", "dose_padrao": 1, "unidade_padrao": "un",
+        })
+
+    def test_novilha_na_idade_alvo_recebe(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="801", data_nasc=HOJE - timedelta(days=400), sexo="F", ativo=True))
+            s.commit()
+        self._cadastrar(c)
+        assert any(e["numero_animal"] == "801" for e in _agenda_sanidade(c))
+
+    def test_sem_pesagem_registrada_recebe_do_mesmo_jeito(self, client):
+        """Sentinela: peso NÃO faz parte deste gatilho. A "801" acima também
+        não tem pesagem — este teste existe para que uma tentativa futura de
+        exigir peso aqui quebre com a razão escrita, em vez de silenciosamente
+        esvaziar a Agenda de brucelose em fazenda que não pesa animal."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="806", data_nasc=HOJE - timedelta(days=400), sexo="F", ativo=True))
+            s.commit()
+        self._cadastrar(c)
+        assert any(e["numero_animal"] == "806" for e in _agenda_sanidade(c))
+
+    def test_idade_alvo_abaixo_do_parametro_de_aptidao_continua_valendo(self, client):
+        """A idade-alvo é a do CADASTRO, não `idade_apta_min_meses()` (padrão
+        15). Aos 4 meses — a idade legal da vacina de brucelose — o evento
+        tem de aparecer."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="807", data_nasc=HOJE - timedelta(days=130), sexo="F", ativo=True))
+            s.commit()
+        self._cadastrar(c, gatilho_idade_meses=4)
+        assert any(e["numero_animal"] == "807" for e in _agenda_sanidade(c))
+
+    def test_vaca_multipara_nao_recebe(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Vaca com Parto registrado já não é novilha — não faz sentido
+            # reagendar nela um manejo de novilha. Antes da correção, o
+            # gatilho só olhava sexo+ativo+data_nasc.
+            s.add(Animal(numero="804", data_nasc=HOJE - timedelta(days=1500), sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="804", data_parto=HOJE - timedelta(days=100)))
+            s.commit()
+        self._cadastrar(c)
+        assert not any(e["numero_animal"] == "804" for e in _agenda_sanidade(c))
+
+    def test_marcada_a_descartar_nao_recebe(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="805", data_nasc=HOJE - timedelta(days=400), sexo="F", ativo=True, a_descartar=True))
+            s.commit()
+        self._cadastrar(c)
+        assert not any(e["numero_animal"] == "805" for e in _agenda_sanidade(c))
 
 
 class TestAplicacaoAgendadaNaAgenda:

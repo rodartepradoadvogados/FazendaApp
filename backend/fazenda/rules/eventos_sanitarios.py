@@ -34,7 +34,11 @@ ROTULOS_GATILHO = {
     "nascimento": "Nascimento",
     "desmama": "Desmama",
     "mudanca_recria": "Mudança para recria",
-    "novilha_apta": "Aptidão (novilha apta)",
+    # "atingir certa idade", não "apta" — o gatilho usa a idade-alvo do
+    # cadastro do evento, não os parâmetros de aptidão reprodutiva (ver
+    # `_datas_gatilho`). Mesmo texto do seletor da tela
+    # (CadastroSanitario.tsx), para os dois não sugerirem coisas diferentes.
+    "novilha_apta": "Aptidão (novilha atingir certa idade)",
     "inseminacao": "Inseminação",
     "gestacao_confirmada": "Gestação confirmada",
     "secagem": "Secagem",
@@ -135,9 +139,32 @@ def _datas_gatilho(
         for m in session.exec(_da_fazenda(select(MovimentoLote).where(MovimentoLote.lote_destino == gatilho_lote), MovimentoLote)).all():
             saida.append((m.numero_matriz, m.data_movimento + offset))
     elif gatilho == "novilha_apta" and gatilho_idade_meses:
+        # Este gatilho NÃO é a aptidão reprodutiva da regra 7
+        # (`estado_reprodutivo.classificar_animal`, idade_apta_min_meses ∧
+        # peso_apta_min). É "a novilha atingiu a idade-alvo que VOCÊ
+        # configurou" — o rótulo da tela é literalmente "Aptidão (novilha
+        # atingir certa idade)" (`CadastroSanitario.tsx`), o cadastro EXIGE
+        # `gatilho_idade_meses` (`cadastro/sanitario.py`) e a semente do
+        # sistema traz Brucelose RB51 e a Primovacinação reprodutiva em 13
+        # meses — abaixo do `idade_apta_min_meses()` padrão de 15. Amarrar
+        # este gatilho aos parâmetros de aptidão sobrescreveria a idade
+        # configurada pelo produtor e faria os dois eventos semeados nunca
+        # serem agendados. Peso também não entra: fazenda que não pesa
+        # perderia o gatilho inteiro, e a vacina de brucelose é obrigatória.
+        #
+        # O que É defeito e está corrigido aqui: o filtro antigo era só
+        # "fêmea ativa com data de nascimento", então agendava manejo de
+        # NOVILHA para vaca que já pariu, e para animal marcado a descartar
+        # (que `models/animais.py` promete tirar das ações de manejo).
+        matriz_com_parto = {
+            p.numero_matriz
+            for p in session.exec(_da_fazenda(select(Parto).where(Parto.numero_matriz != None), Parto)).all()  # noqa: E711
+        }
         for a in session.exec(
             _da_fazenda(select(Animal).where(Animal.sexo == "F", Animal.ativo == True, Animal.data_nasc != None), Animal)  # noqa: E711,E712
         ).all():
+            if a.numero in matriz_com_parto or a.a_descartar:
+                continue
             saida.append((a.numero, _somar_meses(a.data_nasc, gatilho_idade_meses) + offset))
     elif gatilho == "desmama":
         dia_desmama, _ = _limiares_categoria(session, fazenda_id)

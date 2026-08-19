@@ -182,7 +182,10 @@ function AbaResultado({ manual }: { manual: ManualFazenda }) {
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       <CardResultado valor={r.total_animais} label="Total de animais" />
       <CardResultado valor={r.vacas_lactacao} label="Vacas em lactação" />
-      <CardResultado valor={r.taxa_prenhez_pct != null ? `${r.taxa_prenhez_pct}%` : null} label="Taxa de prenhez" />
+      {/* "Fêmeas prenhas", não "Taxa de prenhez": é inventário (% do rebanho
+          apto prenhe hoje), não a taxa formal PREG/PG ELIG do BREDSUM — mesmo
+          rótulo da Capa e das outras telas que mostram taxa_prenhez_pct. */}
+      <CardResultado valor={r.taxa_prenhez_pct != null ? `${r.taxa_prenhez_pct}%` : null} label="Fêmeas prenhas" />
       <CardResultado valor={r.taxa_concepcao_pct != null ? `${r.taxa_concepcao_pct}%` : null} label="Taxa de concepção" />
       <CardResultado valor={r.taxa_servico_pct != null ? `${r.taxa_servico_pct}%` : null} label="Taxa de serviço" />
       <CardResultado valor={r.producao_media_kg != null ? `${r.producao_media_kg} kg` : null} label="Produção média/vaca" />

@@ -284,3 +284,47 @@ class TestCamposGeradoresVsRestritivos(object):
         motivo = r.json()["sugestoes"][0]["motivo"]
         assert "Dias pós-parto" in motivo
         assert "Categoria" not in motivo
+
+
+class TestSituacaoReprodutivaAoVivo:
+    """`lote.situacao_reprodutiva` (prenha/inseminada/vazia) seguia o
+    `sit_rep` congelado do último GERAL.csv — corrigido para ler o estado
+    reprodutivo AO VIVO (estado_reprodutivo.classificar_animal, dentro de
+    recria._contexto_categoria), a mesma fonte usada nas listas de Rebanho,
+    na Agenda e nos relatórios gerenciais."""
+
+    def test_engravidou_pelo_app_csv_ainda_diz_vazia(self, client):
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            # sit_rep congelado ainda diz "vazia" (o CSV não foi reimportado
+            # desde a inseminação), mas o serviço lançado pelo próprio app
+            # já confirma a prenhez.
+            s.add(Animal(numero="10", categoria_completa="Vaca", categoria_abrev="Vaca",
+                         sit_rep="Vaz. atr.", data_nasc=hoje - timedelta(days=1800), ativo=True))
+            s.add(Parto(numero_matriz="10", data_parto=hoje - timedelta(days=300)))
+            s.add(Servico(numero_matriz="10", data_servico=hoje - timedelta(days=60), diagnostico="POSITIVO"))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "prenha"})
+        assert r.json()["animais"] == ["10"]
+        # E ela NÃO deve mais casar com "vazia" (o critério antigo, lendo
+        # sit_rep, casaria — era exatamente esse o furo).
+        r2 = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia"})
+        assert r2.json()["animais"] == []
+
+    def test_pariu_pelo_app_csv_ainda_diz_gestante(self, client):
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            # sit_rep congelado ainda diz "Ges." — mas ela já pariu, e o
+            # parto já passou do PEV padrão (45 dias): está livre pra novo
+            # serviço, "vazia" ao vivo, não mais "prenha".
+            s.add(Animal(numero="11", categoria_completa="Vaca", categoria_abrev="Vaca",
+                         sit_rep="Ges.", data_nasc=hoje - timedelta(days=1800), ativo=True))
+            s.add(Servico(numero_matriz="11", data_servico=hoje - timedelta(days=340), diagnostico="POSITIVO"))
+            s.add(Parto(numero_matriz="11", data_parto=hoje - timedelta(days=60)))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia"})
+        assert r.json()["animais"] == ["11"]
+        r2 = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "prenha"})
+        assert r2.json()["animais"] == []
