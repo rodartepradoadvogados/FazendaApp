@@ -132,6 +132,7 @@ def _contexto_animal(animal: dict, hoje: date, dados: dict) -> dict:
         # vezes um por animal por lote em `sugerir_movimentacoes`).
         pev_dias=dados.get("pev_dias"), del_max_1o_servico=dados.get("del_max_1o_servico"),
         idade_apta_dias=dados.get("idade_apta_dias"), peso_apta_kg=dados.get("peso_apta_kg"),
+        idade_atraso_dias=dados.get("idade_atraso_dias"),
     )
 
 

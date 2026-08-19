@@ -25,6 +25,7 @@ from fazenda.rules.parametros import (
     dias_reinseminacao_min,
     get_param,
     idade_apta_min_meses as _idade_apta_min_meses,
+    idade_max_1a_cobertura_meses as _idade_max_1a_cobertura_meses,
     meta_taxa_servico,
     peso_apta_min as _peso_apta_min,
 )
@@ -173,6 +174,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         del_max_1o_servico=meta_1a,
         peso_por_animal=peso_por_animal or {},
         idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
+        idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
         peso_apta_kg=_peso_apta_min(),
     )
 

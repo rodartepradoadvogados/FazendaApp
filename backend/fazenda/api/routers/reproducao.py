@@ -132,7 +132,8 @@ def ciclos_de_21_dias(
     """
     from fazenda.rules.parametros import (
         dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
-        idade_apta_min_meses, meta_taxa_concepcao, meta_taxa_prenhez,
+        idade_apta_min_meses,
+        idade_max_1a_cobertura_meses, meta_taxa_concepcao, meta_taxa_prenhez,
         meta_taxa_servico, pev_dias, peso_apta_min,
     )
 
@@ -152,6 +153,7 @@ def ciclos_de_21_dias(
         dias_resultado=dias_resultado_conhecido(),
         del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
         idade_apta_dias=int(idade_apta_min_meses() * 30.44),
+        idade_atraso_dias=int(idade_max_1a_cobertura_meses() * 30.44),
         peso_apta_kg=peso_apta_min(),
     )
 
@@ -1470,7 +1472,7 @@ def listar_protocolos_iatf_ativos(
         nonlocal _candidatas_cache
         if _candidatas_cache is None:
             from fazenda.rules.parametros import (
-                get_param, idade_apta_min_meses, peso_apta_min, pev_dias,
+                get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min, pev_dias,
             )
             from fazenda.rules.programa_reprodutivo import estado_no_dia
 
@@ -1490,7 +1492,7 @@ def listar_protocolos_iatf_ativos(
             kwargs_estado = {
                 "pev_dias": pev_dias(),
                 "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
-                "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
+                "idade_apta_dias": int(idade_apta_min_meses() * 30.44), "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),
                 "peso_apta_kg": peso_apta_min(),
             }
             # Mesmo critério da Agenda: quem está apta HOJE. `estado_no_dia` já
@@ -1667,7 +1669,8 @@ def candidatas_iatf_projetadas(
     > Parâmetros). Usado em Histórico > Reprodução > Ciclos de IATF."""
     from fazenda.rules.iatf import ESTADOS_CANDIDATA, selecionar_candidatas_iatf
     from fazenda.rules.parametros import (
-        get_param, idade_apta_min_meses, intervalo_visita_reprodutiva, peso_apta_min,
+        get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses,
+        intervalo_visita_reprodutiva, peso_apta_min,
     )
     from fazenda.rules.programa_reprodutivo import estado_no_dia
 
@@ -1697,7 +1700,7 @@ def candidatas_iatf_projetadas(
     kwargs_estado = {
         "pev_dias": pev,
         "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
-        "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
+        "idade_apta_dias": int(idade_apta_min_meses() * 30.44), "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),
         "peso_apta_kg": peso_apta_min(),
     }
 

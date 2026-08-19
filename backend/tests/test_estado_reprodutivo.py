@@ -479,3 +479,73 @@ class TestEhVacaVemDoParto:
         r = _classificar("V3", eh_vaca=False, idade_dias=120, peso_kg=None,
                          idade_apta_dias=457, peso_apta_kg=300.0)
         assert r["estado"] == NAO_APTA
+
+
+class TestNovilhaEmAtraso:
+    """ATRASADA era sintaticamente inalcançável para quem nunca pariu: o único
+    `return ATRASADA` está dentro do ramo `eh_vaca or ultimo_parto is not
+    None`, e a definição no docstring do módulo era inteiramente DEL-based —
+    DEL só existe com parto.
+
+    Isso fazia o sistema PERDER uma informação que o GERAL.csv do Ideagri já
+    entregava. Nesta fazenda, de recria pesada (74 novilhas contra 37 vacas),
+    o CSV classifica 11 como "Novilha vazia em atraso" e — o detalhe que
+    calibra o teto — **nenhuma** como "Novilha vazia apta". Lá o teto de
+    atraso coincide com o piso de aptidão, nos 16 meses.
+
+    As idades abaixo são as reais, calculadas das datas de nascimento do CSV
+    (a coluna "Idade em meses" do arquivo foi computada na data da exportação,
+    então não serve para conferir contra hoje).
+    """
+
+    APTA_DIAS = 457      # 15 meses — piso de aptidão
+    ATRASO_DIAS = 487    # 16 meses — teto para a 1ª cobertura
+
+    def _novilha(self, idade_dias, servicos=()):
+        return _classificar(
+            "N", eh_vaca=False, servicos=list(servicos), idade_dias=idade_dias, peso_kg=None,
+            idade_apta_dias=self.APTA_DIAS, peso_apta_kg=300.0,
+            idade_atraso_dias=self.ATRASO_DIAS,
+        )["estado"]
+
+    def test_as_onze_do_csv_saem_todas_como_atrasadas(self):
+        """As 11 "Novilha vazia em atraso" reais, em dias de idade."""
+        reais = [538, 538, 538, 617, 726, 748, 748, 748, 748, 809, 918]
+        assert [self._novilha(d) for d in reais] == [ATRASADA] * 11
+
+    def test_o_teto_nao_atropela_os_estados_anteriores_da_matriz(self):
+        """As 4 novilhas INSEMINADAS do CSV têm as MESMAS idades de algumas
+        atrasadas (538, 538, 652, 748 dias). O que as separa é o serviço, não a
+        idade — se o teto fosse testado antes da matriz, elas virariam
+        atrasadas e o painel passaria a acusar atraso em quem acabou de ser
+        coberta."""
+        recente = [{"data_servico": HOJE - timedelta(days=20)}]
+        assert [self._novilha(d, recente) for d in (538, 538, 652, 748)] == [INSEMINADA] * 4
+
+    def test_a_gestante_velha_continua_gestante(self):
+        prenha = [{"data_servico": HOJE - timedelta(days=60), "diagnostico": "POSITIVO"}]
+        assert self._novilha(918, prenha) == GESTANTE
+
+    def test_a_janela_de_apta_existe_entre_o_piso_e_o_teto(self):
+        assert self._novilha(450) == NAO_APTA, "abaixo do piso — impúbere"
+        assert self._novilha(457) == APTA, "no piso"
+        assert self._novilha(480) == APTA, "dentro da janela"
+        assert self._novilha(487) == APTA, "no teto ainda é apta"
+        assert self._novilha(488) == ATRASADA, "um dia além do teto"
+
+    def test_sem_o_parametro_o_comportamento_e_o_de_antes(self):
+        """Retrocompatibilidade: quem não passa `idade_atraso_dias` (chamador
+        legado, teste antigo) continua vendo APTA, como antes da mudança."""
+        r = _classificar("N", eh_vaca=False, idade_dias=918, peso_kg=None,
+                         idade_apta_dias=self.APTA_DIAS, peso_apta_kg=300.0)
+        assert r["estado"] == APTA
+
+    def test_atrasada_por_idade_sem_pesagem_mantem_o_sinal(self):
+        """A novilha atrasada classificada sem pesagem continua marcada como
+        tal — o aviso da tela ("classificada só por idade") não pode sumir só
+        porque ela passou do teto."""
+        r = _classificar("N", eh_vaca=False, idade_dias=918, peso_kg=None,
+                         idade_apta_dias=self.APTA_DIAS, peso_apta_kg=300.0,
+                         idade_atraso_dias=self.ATRASO_DIAS)
+        assert r["estado"] == ATRASADA
+        assert r["aptidao_por_idade"] is True

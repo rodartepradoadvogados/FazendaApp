@@ -18,7 +18,9 @@ from fazenda.models import (
 )
 from fazenda.rules.estado_reprodutivo import classificar_animal
 from fazenda.rules.indicadores import calcular_indicadores
-from fazenda.rules.parametros import get_param, idade_apta_min_meses, peso_apta_min, pev_dias
+from fazenda.rules.parametros import (
+    get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min, pev_dias,
+)
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/indicadores", tags=["indicadores"])
@@ -407,6 +409,7 @@ def estados_reprodutivos(
     pev = pev_dias()
     del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
     idade_apta = int(idade_apta_min_meses() * 30.44)
+    idade_atraso = int(idade_max_1a_cobertura_meses() * 30.44)
     peso_apta = peso_apta_min()
 
     resultado = []
@@ -426,6 +429,7 @@ def estados_reprodutivos(
             idade_dias=idade,
             peso_kg=peso_por.get(a.numero),
             idade_apta_dias=idade_apta,
+            idade_atraso_dias=idade_atraso,
             peso_apta_kg=peso_apta,
             raca=a.raca,
         )
@@ -446,5 +450,6 @@ def estados_reprodutivos(
         "animais": resultado,
         "contagem": por_estado,
         "parametros": {"pev_dias": pev, "del_max_1o_servico": del_max,
-                       "idade_apta_dias": idade_apta, "peso_apta_kg": peso_apta},
+                       "idade_apta_dias": idade_apta, "peso_apta_kg": peso_apta,
+                       "idade_atraso_dias": idade_atraso},
     }

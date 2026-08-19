@@ -37,8 +37,13 @@ por isso a ordem abaixo importa mais que qualquer condição individual:
   5. APTA         passou do PEV (vaca), ou teve diagnóstico negativo/perda
                   sem serviço depois, ou é novilha que atingiu idade e peso
                   de aptidão. É a definição dada pelo produtor.
-  6. ATRASADA     seria APTA, mas já passou do DEL máximo para 1º serviço —
-                  subconjunto de "deveria ter sido inseminada e não foi".
+  6. ATRASADA     seria APTA, mas passou do prazo — subconjunto de "deveria
+                  ter sido inseminada e não foi". Dois prazos, um por origem:
+                  a VACA, pelo DEL máximo para o 1º serviço (conta a partir do
+                  parto, que é o evento que a habilitou); a NOVILHA nulípara,
+                  pela idade máxima para a 1ª cobertura (conta a partir do
+                  nascimento, porque para ela o evento habilitador é atingir
+                  idade/peso, e DEL não existe).
   7. NAO_APTA     novilha que ainda não atingiu idade/peso.
   8. VAZIA        fallback (sem dados suficientes para classificar).
 
@@ -118,6 +123,7 @@ def classificar_animal(
     idade_dias: int | None = None,
     peso_kg: float | None = None,
     idade_apta_dias: int | None = None,
+    idade_atraso_dias: int | None = None,
     peso_apta_kg: float | None = None,
     raca: str | None = None,
 ) -> dict:
@@ -227,6 +233,22 @@ def classificar_animal(
     atingiu_idade = idade_apta_dias is None or (tem_idade and idade_dias >= idade_apta_dias)
     atingiu_peso = peso_apta_kg is None or not tem_peso or peso_kg >= peso_apta_kg
     if atingiu_idade and atingiu_peso and (tem_idade or tem_peso):
+        # ATRASADA para nulípara — o análogo exato do teste da vaca logo acima.
+        # A vaca fica atrasada quando passa N dias do evento que a habilitou (o
+        # parto); a novilha, quando passa da idade-teto para a 1ª cobertura.
+        #
+        # Sem isto, ATRASADA era sintaticamente inalcançável para quem nunca
+        # pariu (o único `return ATRASADA` está dentro do ramo
+        # `eh_vaca or ultimo_parto is not None`), e o sistema perdia uma
+        # informação que o GERAL.csv do Ideagri já entregava: nesta fazenda,
+        # 11 das 74 novilhas são "Novilha vazia em atraso" — e não existe uma
+        # única "Novilha vazia apta", porque lá o teto coincide com o piso.
+        #
+        # Note que isto só SUBDIVIDE o balde das aptas: ATRASADA já está em
+        # ESTADOS_APTOS e em ESTADOS_CANDIDATA, então nenhum animal entra ou
+        # sai de conjunto nenhum, e nenhuma taxa muda de valor.
+        if idade_atraso_dias is not None and tem_idade and idade_dias > idade_atraso_dias:
+            return {**base, "estado": ATRASADA, "aptidao_por_idade": not tem_peso}
         return {**base, "estado": APTA, "aptidao_por_idade": not tem_peso}
     return {**base, "estado": NAO_APTA, "aptidao_por_idade": False}
 
@@ -280,6 +302,7 @@ def estados_ao_vivo(
     del_max_1o_servico: int | None,
     peso_por_animal: dict[str, float] | None = None,
     idade_apta_dias: int | None = None,
+    idade_atraso_dias: int | None = None,
     peso_apta_kg: float | None = None,
 ) -> dict[str, dict]:
     """`classificar_animal` em lote: devolve {numero -> dict completo}.
@@ -332,6 +355,7 @@ def estados_ao_vivo(
             idade_dias=(hoje - nasc).days if nasc else None,
             peso_kg=peso_por_animal.get(numero) or _get(a, "peso_kg"),
             idade_apta_dias=idade_apta_dias,
+            idade_atraso_dias=idade_atraso_dias,
             peso_apta_kg=peso_apta_kg,
             raca=_get(a, "raca"),
         )

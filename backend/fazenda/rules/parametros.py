@@ -46,7 +46,6 @@ DEFINICOES: list[dict] = [
     {"chave": "intervalo_visita_reprodutiva", "grupo": "manejo", "label": "Intervalo da visita reprodutiva", "valor": 21, "unidade": "dias"},
     {"chave": "intervalo_bst", "grupo": "manejo", "label": "Intervalo de aplicação de BST", "valor": 12, "unidade": "dias"},
     {"chave": "intervalo_visita_vet", "grupo": "manejo", "label": "Intervalo de visitas do veterinário", "valor": 30, "unidade": "dias"},
-    {"chave": "idade_maturidade_novilha", "grupo": "manejo", "label": "Idade de maturidade da novilha", "valor": 16, "unidade": "meses"},
 
     # ---- Aptidão de novilhas (gate de entrada em listas de análise/
     # relatório/vacinação/protocolos de novilhas aptas) ----------------------
@@ -54,6 +53,13 @@ DEFINICOES: list[dict] = [
     {"chave": "peso_verificar_aptidao_min", "grupo": "aptidao_novilha", "label": "Peso mínimo p/ verificar aptidão", "valor": 280, "unidade": "kg"},
     {"chave": "idade_apta_min_meses", "grupo": "aptidao_novilha", "label": "Idade mínima de aptidão", "valor": 15, "unidade": "meses"},
     {"chave": "idade_verificar_aptidao_meses", "grupo": "aptidao_novilha", "label": "Idade mínima p/ verificar aptidão", "valor": 14, "unidade": "meses"},
+    # Teto: passada esta idade, a novilha VAZIA deixa de ser "apta" e passa a
+    # "em atraso" — o análogo de `meta_del_max_1o_servico` para quem nunca
+    # pariu. O padrão de 16 meses reproduz a classificação do Ideagri: no
+    # GERAL.csv desta fazenda as 11 "Novilha vazia em atraso" começam em
+    # exatamente 16,0 meses, e NÃO existe uma única "Novilha vazia apta" —
+    # ou seja, lá o teto coincide com o piso de aptidão.
+    {"chave": "idade_max_1a_cobertura_meses", "grupo": "aptidao_novilha", "label": "Idade máxima para a 1ª cobertura (novilha em atraso)", "valor": 16, "unidade": "meses"},
 
     # ---- Gestação e parto ---------------------------------------------------
     {"chave": "gestacao_dias_min", "grupo": "gestacao_parto", "label": "Gestação — dias mínimo", "valor": 280, "unidade": "dias"},
@@ -165,6 +171,17 @@ def seed_parametros(session: Session) -> None:
     existe (nunca sobrescreve um valor já editado). Idempotente, chamado no
     startup como os demais `seed_*`."""
     from fazenda.models import ParametroFazenda
+
+    # `idade_maturidade_novilha` era um parâmetro editável na tela de
+    # Parâmetros que NENHUM código lia — a única ocorrência no backend era a
+    # própria linha de seed. Apagar é seguro justamente por isso: como nada o
+    # consultava, nenhum comportamento muda, e quem por acaso o editou nunca
+    # teve efeito algum. O conceito que ele parecia prometer agora existe de
+    # verdade em `idade_max_1a_cobertura_meses`.
+    for orfao in session.exec(
+        select(ParametroFazenda).where(ParametroFazenda.chave == "idade_maturidade_novilha")
+    ).all():
+        session.delete(orfao)
 
     existentes = {p.chave for p in session.exec(select(ParametroFazenda)).all()}
     for item in DEFINICOES:
@@ -287,6 +304,10 @@ def peso_verificar_aptidao_min() -> float:
 
 def idade_apta_min_meses() -> float:
     return float(get_param("idade_apta_min_meses", 15) or 15)
+
+
+def idade_max_1a_cobertura_meses() -> float:
+    return float(get_param("idade_max_1a_cobertura_meses", 16) or 16)
 
 
 def idade_verificar_aptidao_meses() -> float:

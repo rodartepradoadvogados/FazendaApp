@@ -1038,3 +1038,59 @@ class TestPainelMedeNovilhasSemPesagem:
         )
         nov = {b["chave"]: b["valor"] for b in cats["novilha"]}
         assert nov["taxa_servico"] is None
+
+
+class TestAtrasoDeNovilhaNaoMoveTaxa:
+    """Dar ATRASADA à novilha é informação, não mudança de conta.
+
+    ATRASADA já está em `ESTADOS_APTOS` (com a justificativa escrita no módulo:
+    é justamente a fêmea que deveria ter sido inseminada e não foi, e tirá-la
+    do denominador inflava a taxa de serviço) e em `ESTADOS_CANDIDATA` de
+    `iatf.py`. Logo o teto apenas SUBDIVIDE o balde das aptas — nenhum animal
+    entra ou sai de conjunto nenhum.
+
+    Se esta sentinela quebrar, o teto passou a mexer em denominador, e a
+    mudança deixou de ser segura.
+    """
+
+    HOJE = date(2026, 8, 19)
+    DESDE = date(2026, 1, 1)
+
+    def _cats(self, monkeypatch, *, com_teto: bool):
+        import fazenda.rules.indicadores as ind
+        from fazenda.rules.indicadores import _benchmark_categorias
+        # Sem teto = teto tão alto que nenhuma novilha o alcança; é o
+        # comportamento anterior à mudança, com o mesmo caminho de código.
+        monkeypatch.setattr(ind, "idade_max_1a_cobertura_meses", (lambda: 16.0) if com_teto else (lambda: 999.0))
+        animais, servicos, partos = [], [], []
+        for i in range(14):   # novilhas bem acima do teto (idades reais do CSV)
+            n = f"N{i}"
+            animais.append({"numero": n, "categoria_completa": "Novilha",
+                            "data_nasc": self.HOJE - timedelta(days=[538, 617, 726, 748, 809, 918][i % 6])})
+            if i % 2:
+                servicos.append({"numero_matriz": n,
+                                 "data_servico": self.HOJE - timedelta(days=60 + i * 11),
+                                 "diagnostico": "POSITIVO" if i % 3 else "NEGATIVO"})
+        for i in range(8):
+            n = f"V{i}"
+            animais.append({"numero": n, "categoria_completa": "Vaca",
+                            "data_nasc": self.HOJE - timedelta(days=1600)})
+            partos.append({"numero_matriz": n, "data_parto": self.HOJE - timedelta(days=130 + i * 9)})
+            servicos.append({"numero_matriz": n, "data_servico": self.HOJE - timedelta(days=55 + i * 10),
+                             "diagnostico": "POSITIVO" if i % 3 else "NEGATIVO"})
+        cats = _benchmark_categorias(
+            animais, servicos, partos, {p["numero_matriz"] for p in partos},
+            self.DESDE, hoje=self.HOJE, peso_por_animal={},
+        )
+        return {c: {b["chave"]: b["valor"] for b in cats[c]} for c in cats}
+
+    def test_as_tres_taxas_sao_identicas_com_e_sem_o_teto(self, monkeypatch):
+        com = self._cats(monkeypatch, com_teto=True)
+        sem = self._cats(monkeypatch, com_teto=False)
+        for cat in ("todas", "vaca", "novilha"):
+            for chave in ("taxa_servico", "taxa_concepcao", "taxa_prenhez_ciclo"):
+                assert com[cat][chave] == sem[cat][chave], (
+                    f"{cat}/{chave} mudou ao subdividir APTA/ATRASADA — o teto "
+                    "vazou para o denominador"
+                )
+        assert com["novilha"]["taxa_servico"] is not None, "cenário sem novilha medida não prova nada"

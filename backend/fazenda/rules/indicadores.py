@@ -25,6 +25,7 @@ from fazenda.rules.parametros import (
     gestacao_dias_referencia,
     get_param,
     idade_apta_min_meses,
+    idade_max_1a_cobertura_meses,
     meta_concepcao_novilha,
     meta_taxa_concepcao,
     meta_taxa_prenhez,
@@ -223,6 +224,7 @@ def _parametros_ciclos() -> dict:
         "dias_resultado": dias_resultado_conhecido(),
         "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
         "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
+        "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),
         "peso_apta_kg": peso_apta_min(),
     }
 
@@ -643,6 +645,7 @@ def _estados_ao_vivo(
     pev = pev_dias()
     del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
     idade_apta = int(idade_apta_min_meses() * 30.44)
+    idade_atraso = int(idade_max_1a_cobertura_meses() * 30.44)
     peso_apta = peso_apta_min()
 
     estados: dict[str, str] = {}
@@ -662,6 +665,7 @@ def _estados_ao_vivo(
             idade_dias=_idade_dias(a.get("data_nasc"), hoje),
             peso_kg=peso_por_animal.get(numero),
             idade_apta_dias=idade_apta,
+            idade_atraso_dias=idade_atraso,
             peso_apta_kg=peso_apta,
         )["estado"]
     return estados
