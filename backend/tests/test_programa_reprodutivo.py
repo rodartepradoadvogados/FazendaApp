@@ -958,3 +958,83 @@ class TestTodasEDerivadaDeVacaMaisNovilha:
             for chave in ("taxa_servico", "taxa_prenhez_ciclo", "taxa_concepcao")
         )
         assert obtido == esperado
+
+
+class TestPainelMedeNovilhasSemPesagem:
+    """O defeito relatado pelo produtor: com o filtro "Novilhas", os três
+    medidores da Capa apareciam VAZIOS (travessão), e "Todas" exibia números
+    idênticos aos de "Vacas".
+
+    Não era falha de recorte: sem PesagemCorporal lançada, toda novilha
+    nulípara era NAO_APTA todos os dias, ficava fora do BR ELIG de todo ciclo,
+    e as três taxas voltavam None. Como "Todas" é derivado somando vaca +
+    novilha, somar zero fazia "Todas" virar cópia exata de "Vacas" — passando
+    por número do rebanho inteiro quando descrevia só as vacas.
+
+    Nesta fazenda são 74 novilhas contra 37 vacas (GERAL.csv), com 59
+    prenhezes de novilha que o painel não enxergava.
+    """
+
+    HOJE = date(2026, 8, 19)
+    DESDE = date(2026, 1, 1)
+
+    def _rebanho_sem_pesagem(self):
+        """Novilhas com idade de sobra e ZERO pesagens; vacas normais."""
+        animais, servicos, partos = [], [], []
+        for i in range(12):  # novilhas servidas ao longo do período
+            n = f"N{i}"
+            animais.append({"numero": n, "categoria_completa": "Novilha",
+                            "data_nasc": self.HOJE - timedelta(days=640 + i)})
+            servicos.append({"numero_matriz": n,
+                             "data_servico": self.HOJE - timedelta(days=60 + i * 14),
+                             "diagnostico": "POSITIVO" if i % 2 else "NEGATIVO"})
+        for i in range(6):   # novilhas em idade, ainda não servidas
+            animais.append({"numero": f"L{i}", "categoria_completa": "Novilha",
+                            "data_nasc": self.HOJE - timedelta(days=600 + i)})
+        for i in range(8):   # vacas
+            n = f"V{i}"
+            animais.append({"numero": n, "categoria_completa": "Vaca",
+                            "data_nasc": self.HOJE - timedelta(days=1600)})
+            partos.append({"numero_matriz": n, "data_parto": self.HOJE - timedelta(days=120 + i * 10)})
+            servicos.append({"numero_matriz": n,
+                             "data_servico": self.HOJE - timedelta(days=50 + i * 12),
+                             "diagnostico": "POSITIVO" if i % 3 else "NEGATIVO"})
+        return animais, servicos, partos
+
+    def _cats(self):
+        from fazenda.rules.indicadores import _benchmark_categorias
+        animais, servicos, partos = self._rebanho_sem_pesagem()
+        vacas_nums = {p["numero_matriz"] for p in partos}
+        cats = _benchmark_categorias(
+            animais, servicos, partos, vacas_nums, self.DESDE, hoje=self.HOJE,
+            peso_por_animal={},   # <- o ponto: fazenda que não pesa
+        )
+        return {c: {b["chave"]: b["valor"] for b in cats[c]} for c in cats}
+
+    def test_as_tres_taxas_de_novilha_deixam_de_ser_none(self):
+        nov = self._cats()["novilha"]
+        for chave in ("taxa_servico", "taxa_concepcao", "taxa_prenhez_ciclo"):
+            assert nov[chave] is not None, (
+                f"{chave} de novilha voltou None sem pesagem — o painel voltou a "
+                "apagar o rebanho de recria da medição"
+            )
+
+    def test_todas_deixa_de_ser_copia_de_vacas(self):
+        c = self._cats()
+        assert c["novilha"]["taxa_servico"] > 0, "cenário sem novilha medida não prova nada"
+        assert (c["todas"]["taxa_servico"], c["todas"]["taxa_prenhez_ciclo"]) != (
+            c["vaca"]["taxa_servico"], c["vaca"]["taxa_prenhez_ciclo"]
+        ), '"Todas" repetindo "Vacas" é o sintoma de novilha com denominador zerado'
+
+    def test_pesagem_abaixo_do_minimo_continua_tirando_a_novilha_do_denominador(self):
+        """A regra não virou permissiva: quem PESA e está abaixo do mínimo
+        continua fora. Só a AUSÊNCIA de pesagem deixou de reprovar."""
+        from fazenda.rules.indicadores import _benchmark_categorias
+        animais, servicos, partos = self._rebanho_sem_pesagem()
+        leves = {a["numero"]: 150.0 for a in animais if a["numero"].startswith(("N", "L"))}
+        cats = _benchmark_categorias(
+            animais, servicos, partos, {p["numero_matriz"] for p in partos},
+            self.DESDE, hoje=self.HOJE, peso_por_animal=leves,
+        )
+        nov = {b["chave"]: b["valor"] for b in cats["novilha"]}
+        assert nov["taxa_servico"] is None

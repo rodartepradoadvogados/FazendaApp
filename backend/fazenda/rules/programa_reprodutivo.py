@@ -319,12 +319,28 @@ def montar_perfil(
 ) -> PerfilAnimal:
     """Normaliza um `Animal` + seus registros num `PerfilAnimal`.
 
-    `eh_vaca` deriva de ter parto registrado OU da categoria — mesma convenção
-    já usada por `estado_reprodutivo.classificar_animal`.
+    `eh_vaca` deriva EXCLUSIVAMENTE de ter parto registrado. O fallback pelo
+    texto da categoria ("vaca" em `categoria_abrev`/`categoria_completa`) foi
+    removido por dois motivos:
+
+    1. **Dois critérios divergiam dentro do mesmo painel.** Os cards e o donut
+       usam `vacas_nums` (`rules/indicadores.py`), que é só parto; os medidores
+       usavam este `eh_vaca`, que aceitava o texto. Uma fêmea com categoria
+       "Vaca" e sem parto importado caía no grupo novilha de um painel e no
+       grupo vaca do outro.
+    2. **O texto sozinho abria um buraco pior.** `eh_vaca=True` sem parto deixa
+       `del_dias = None` em `estado_reprodutivo.classificar_animal`; o teste de
+       ATRASADA não dispara e o animal volta APTA todo santo dia, entrando no
+       BR ELIG de vacas indefinidamente e inflando o denominador. Derivar de
+       parto fecha isso por construção: `eh_vaca` passa a implicar que existe
+       um parto, logo existe DEL.
+
+    Efeito colateral aceito: uma vaca real cujo histórico de partos não foi
+    importado é tratada como novilha. É a resposta honesta — sem parto não há
+    DEL, e sem DEL não dá para dizer se ela está no PEV ou atrasada.
     """
-    categoria_txt = (_get(animal, "categoria_abrev") or _get(animal, "categoria_completa") or "").lower()
     tem_parto = any(_d(_get(p, "data_parto")) for p in partos)
-    eh_vaca = tem_parto or "vaca" in categoria_txt
+    eh_vaca = tem_parto
     return PerfilAnimal(
         numero=_get(animal, "numero"),
         partos=list(partos),

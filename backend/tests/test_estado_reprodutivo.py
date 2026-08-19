@@ -375,3 +375,107 @@ class TestRecriaSituacaoAoVivo:
             servicos=[], partos=[], secagens=[],
         )
         assert ctx["situacao_reprodutiva_viva"] is None
+
+
+class TestAptidaoDeNovilhaSemPesagem:
+    """A regra 7 exigia idade E peso para a novilha nulípara ser APTA. Como
+    `peso_kg` só vem de PesagemCorporal e NENHUM importador escreve essa
+    tabela, a fazenda que não pesa tinha toda novilha em NAO_APTA todos os
+    dias — fora do BR ELIG de todo ciclo, com as três taxas do painel voltando
+    None.
+
+    Nesta fazenda (GERAL.csv na raiz) isso apagava a maior parte do rebanho da
+    medição: 74 novilhas contra 37 vacas, com 59 prenhezes de novilha
+    invisíveis ao painel. E, como "Todas" é derivado somando vaca + novilha,
+    somar zero fazia "Todas" virar cópia exata de "Vacas" — passando por
+    número do rebanho inteiro.
+
+    A regra agora distingue peso AUSENTE (não afirma nada, a idade decide) de
+    peso LANÇADO abaixo do mínimo (o dado existe e diz que ela não está
+    pronta).
+    """
+
+    def _novilha(self, *, idade_dias, peso_kg=None):
+        return _classificar(
+            "N1", eh_vaca=False, idade_dias=idade_dias, peso_kg=peso_kg,
+            idade_apta_dias=457, peso_apta_kg=300.0,
+        )
+
+    def test_sem_pesagem_a_idade_decide(self):
+        r = self._novilha(idade_dias=600)
+        assert r["estado"] == APTA
+        assert r["aptidao_por_idade"] is True, "a tela precisa poder avisar que foi só por idade"
+
+    def test_sem_pesagem_e_nova_demais_continua_nao_apta(self):
+        assert self._novilha(idade_dias=200)["estado"] == NAO_APTA
+
+    def test_peso_lancado_abaixo_do_minimo_ainda_desqualifica(self):
+        """Quem PESA continua com o critério completo — este é o ponto que
+        separa 'dado ausente' de 'dado que diz não'."""
+        r = self._novilha(idade_dias=600, peso_kg=250.0)
+        assert r["estado"] == NAO_APTA
+
+    def test_idade_e_peso_ok_nao_marca_aptidao_por_idade(self):
+        r = self._novilha(idade_dias=600, peso_kg=320.0)
+        assert r["estado"] == APTA
+        assert r["aptidao_por_idade"] is False
+
+    def test_sem_idade_e_sem_peso_nao_ha_o_que_afirmar(self):
+        r = _classificar("N9", eh_vaca=False, idade_dias=None, peso_kg=None,
+                         idade_apta_dias=457, peso_apta_kg=300.0)
+        assert r["estado"] == NAO_APTA
+
+    def test_sem_data_de_nascimento_o_peso_sozinho_nao_basta(self):
+        """A assimetria é deliberada: peso ausente é perdoado, data de
+        nascimento ausente não.
+
+        O motivo é a origem do dado. `data_nasc` vem em toda importação do
+        GERAL.csv, então a ausência dela é excepcional e merece desconfiança.
+        `peso_kg` não vem de importação nenhuma — só de lançamento manual de
+        pesagem —, então a ausência dele é o caso NORMAL, e tratá-la como
+        reprovação apagava o rebanho da medição.
+
+        (Este comportamento já era o de antes da mudança: com
+        `idade_apta_dias` configurado e `idade_dias` None, `atingiu_idade` era
+        falso e o animal caía em NAO_APTA.)"""
+        r = _classificar("N8", eh_vaca=False, idade_dias=None, peso_kg=320.0,
+                         idade_apta_dias=457, peso_apta_kg=300.0)
+        assert r["estado"] == NAO_APTA
+
+
+class TestEhVacaVemDoParto:
+    """`montar_perfil` aceitava o TEXTO da categoria ("vaca" em
+    categoria_abrev/completa) como prova de que o animal era vaca, enquanto os
+    cards usavam só o registro de Parto. Além de separar os dois painéis em
+    grupos diferentes, o texto sozinho abria um buraco pior: sem parto,
+    `del_dias` é None, o teste de ATRASADA não dispara, e o animal volta APTA
+    todo dia — entrando no BR ELIG de vacas indefinidamente."""
+
+    def test_categoria_dizendo_vaca_nao_faz_vaca_sem_parto(self):
+        from fazenda.rules.programa_reprodutivo import montar_perfil
+        perfil = montar_perfil(
+            {"numero": "V1", "categoria_completa": "Vaca em lactação",
+             "data_nasc": HOJE - timedelta(days=1600)},
+            partos=[], servicos=[], aplicacoes_iatf=[],
+        )
+        assert perfil.eh_vaca is False
+        assert perfil.categoria == "novilha"
+
+    def test_com_parto_e_vaca(self):
+        from fazenda.rules.programa_reprodutivo import montar_perfil
+        perfil = montar_perfil(
+            {"numero": "V2", "categoria_completa": "Indefinido"},
+            partos=[{"data_parto": HOJE - timedelta(days=100)}],
+            servicos=[], aplicacoes_iatf=[],
+        )
+        assert perfil.eh_vaca is True
+        assert perfil.categoria == "vaca"
+
+    def test_vaca_sem_parto_nao_fica_apta_para_sempre(self):
+        """O buraco antigo: `eh_vaca=True` sem parto deixava del_dias None, o
+        ramo de ATRASADA não disparava e o animal caía em APTA todo dia. Com
+        `eh_vaca` derivado do parto, ela é avaliada como nulípara — e uma
+        bezerra nova continua NAO_APTA."""
+        r = _classificar("V3", eh_vaca=False, idade_dias=120, peso_kg=None,
+                         idade_apta_dias=457, peso_apta_kg=300.0)
+        assert r["estado"] == NAO_APTA

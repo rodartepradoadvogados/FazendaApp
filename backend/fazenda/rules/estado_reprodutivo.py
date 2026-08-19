@@ -202,12 +202,33 @@ def classificar_animal(
             return {**base, "estado": ATRASADA}
         return {**base, "estado": APTA}
 
-    # 7. Novilha nulípara: aptidão por idade E peso, conforme parâmetros.
-    atingiu_idade = idade_apta_dias is None or (idade_dias is not None and idade_dias >= idade_apta_dias)
-    atingiu_peso = peso_apta_kg is None or (peso_kg is not None and peso_kg >= peso_apta_kg)
-    if atingiu_idade and atingiu_peso and (idade_dias is not None or peso_kg is not None):
-        return {**base, "estado": APTA}
-    return {**base, "estado": NAO_APTA}
+    # 7. Novilha nulípara: aptidão por idade E peso — mas peso AUSENTE não
+    # desqualifica.
+    #
+    # Por quê: `peso_kg` vem exclusivamente da tabela PesagemCorporal, e nenhum
+    # importador a escreve — só lançamento manual. Com a regra estrita, a
+    # fazenda que não pesa tinha TODA novilha nulípara em NAO_APTA todos os
+    # dias, o que a tira do BR ELIG de todo ciclo e faz as três taxas do painel
+    # voltarem None. Numa fazenda de recria pesada isso apagava a maior parte
+    # do rebanho da medição: 74 novilhas contra 37 vacas, com 59 prenhezes
+    # invisíveis. Pior, "Todas" virava cópia de "Vacas" (é derivado por soma) e
+    # passava por número do rebanho inteiro.
+    #
+    # A distinção que o código faz agora: peso LANÇADO abaixo do mínimo
+    # desqualifica (o dado existe e diz que ela não está pronta); peso NUNCA
+    # LANÇADO não afirma nada, e a idade decide sozinha. Quem pesa continua com
+    # o critério completo. `aptidao_por_idade` marca o caso para a tela poder
+    # avisar que aquela classificação foi feita sem pesagem.
+    #
+    # A guarda final continua: sem data de nascimento E sem peso não há dado
+    # nenhum, e aí NAO_APTA é a resposta honesta.
+    tem_idade = idade_dias is not None
+    tem_peso = peso_kg is not None
+    atingiu_idade = idade_apta_dias is None or (tem_idade and idade_dias >= idade_apta_dias)
+    atingiu_peso = peso_apta_kg is None or not tem_peso or peso_kg >= peso_apta_kg
+    if atingiu_idade and atingiu_peso and (tem_idade or tem_peso):
+        return {**base, "estado": APTA, "aptidao_por_idade": not tem_peso}
+    return {**base, "estado": NAO_APTA, "aptidao_por_idade": False}
 
 
 def _d0_protocolo_ativo(aplicacoes_iatf: list[Any], hoje: date) -> date | None:
