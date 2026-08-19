@@ -136,9 +136,11 @@ class Lote(SQLModel, table=True):
     idade_dias_max: Optional[int] = None
     novilhas_inseminadas: Optional[bool] = None
     novilhas_gestantes: Optional[bool] = None
-    # Situação reprodutiva ("vazia"|"inseminada"|"prenha") — mesmos 3 valores e
-    # mesma derivação de Animal.sit_rep que CategoriaManejo.situacao_reprodutiva
-    # (ver fazenda.api.routers.recria._situacao_reprodutiva_3).
+    # Situação reprodutiva ("vazia"|"vazia_atrasada"|"inseminada"|"prenha") —
+    # mesmos valores e mesma derivação AO VIVO que
+    # CategoriaManejo.situacao_reprodutiva (ver
+    # fazenda.api.routers.recria._situacao_reprodutiva_3); "vazia" também casa
+    # com a atrasada, por retrocompatibilidade.
     situacao_reprodutiva: Optional[str] = None
     dias_gestacao_min: Optional[int] = None
     dias_gestacao_max: Optional[int] = None

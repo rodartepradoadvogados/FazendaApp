@@ -57,7 +57,7 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 const rotuloSituacaoProdutiva = (v: string | null) => (v === "lactacao" ? "Em lactação" : v === "seca" ? "Seca" : "Ambas");
-const rotuloSituacaoReprodutiva = (v: string | null) => (v === "vazia" ? "Vazia" : v === "inseminada" ? "Inseminada" : v === "prenha" ? "Prenha" : "Qualquer");
+const rotuloSituacaoReprodutiva = (v: string | null) => (v === "vazia" ? "Vazia" : v === "vazia_atrasada" ? "Vazia em atraso" : v === "inseminada" ? "Inseminada" : v === "prenha" ? "Prenha" : "Qualquer");
 const rotuloCategorias = (v: string | null) => (v ? v.split(",").map((c) => c.trim()).filter(Boolean).map((c) => c[0].toUpperCase() + c.slice(1)).join(", ") : "—");
 
 // Monta o payload que a API espera a partir do form (strings vazias -> null).
@@ -436,7 +436,8 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
         <div><label style={labelStyle}>Situação reprodutiva</label>
           <select style={inputStyle} value={form.situacao_reprodutiva} onChange={(e) => setForm({ ...form, situacao_reprodutiva: e.target.value })}>
             <option value="">Qualquer</option>
-            <option value="vazia">Vazia</option>
+            <option value="vazia">Vazia (inclui em atraso)</option>
+            <option value="vazia_atrasada">Vazia em atraso</option>
             <option value="inseminada">Inseminada</option>
             <option value="prenha">Prenha</option>
           </select></div>

@@ -369,7 +369,9 @@ class TestStatusReprodutivoAoVivo:
         assert _situacao_reprodutiva_3(GESTANTE) == "prenha"
         assert _situacao_reprodutiva_3(INSEMINADA) == "inseminada"
         assert _situacao_reprodutiva_3(APTA) == "vazia"
-        assert _situacao_reprodutiva_3(ATRASADA) == "vazia"
+        # ATRASADA devolve o refinamento "vazia_atrasada" — quem cadastrou
+        # "vazia" continua casando com ela (ver TestVaziaAtrasada abaixo).
+        assert _situacao_reprodutiva_3(ATRASADA) == "vazia_atrasada"
 
     def test_situacao_reprodutiva_3_estado_desconhecido_e_none(self):
         """PEV, EM_PROTOCOLO e NAO_APTA não casam com nenhum dos 3 critérios
@@ -515,3 +517,72 @@ class TestExclusaoBenchmark:
         r = c.delete("/recria/benchmark/9999")
         assert r.status_code == 200
         assert r.json()["ok"] is True
+
+
+class TestVaziaAtrasada:
+    """`CategoriaManejo.situacao_reprodutiva` só conhecia prenha/inseminada/
+    vazia, e APTA e ATRASADA caíam as duas em "vazia" — não havia como
+    cadastrar uma categoria só para a novilha em atraso: a categoria semeada
+    "Vazia atrasada" usa `dias_pos_parto_min`, que NUNCA casa com nulípara
+    (sem parto não há DEL). Agora ATRASADA vira "vazia_atrasada", e "vazia"
+    aceita as duas para não mexer em nada já cadastrado."""
+
+    def test_criterio_vazia_aceita_a_atrasada(self):
+        from fazenda.api.routers.recria import situacao_reprodutiva_casa
+        assert situacao_reprodutiva_casa("vazia", "vazia") is True
+        assert situacao_reprodutiva_casa("vazia", "vazia_atrasada") is True
+        assert situacao_reprodutiva_casa("vazia", "prenha") is False
+
+    def test_criterio_vazia_atrasada_e_estrito(self):
+        from fazenda.api.routers.recria import situacao_reprodutiva_casa
+        assert situacao_reprodutiva_casa("vazia_atrasada", "vazia_atrasada") is True
+        assert situacao_reprodutiva_casa("vazia_atrasada", "vazia") is False
+
+    def test_criterio_vazio_nao_filtra(self):
+        from fazenda.api.routers.recria import situacao_reprodutiva_casa
+        assert situacao_reprodutiva_casa(None, None) is True
+        assert situacao_reprodutiva_casa(None, "vazia_atrasada") is True
+
+    def test_semente_da_categoria_nova(self, monkeypatch):
+        import fazenda.api.routers.recria as recria_mod
+        monkeypatch.setattr(recria_mod, "idade_max_1a_cobertura_meses", lambda: 16.0)
+        cats = recria_mod._categorias_novas_padrao()
+        por_nome = {c["nome"]: c for c in cats}
+        nova = por_nome["Novilha vazia em atraso"]
+        assert nova["situacao_reprodutiva"] == "vazia_atrasada"
+        assert nova["dia_min"] == round(16.0 * 30.44)
+        # Tem de ser tentada ANTES de "Liberada/apta" (senão a novilha em
+        # atraso continua caindo lá junto com a recém-apta) e DEPOIS de
+        # "Vazia atrasada" (a vaca atrasada continua na categoria antiga) —
+        # a ordenação de `classificar_categoria` é por (ordem, dia_min).
+        chave = lambda c: (c["ordem"], c.get("dia_min", 0))  # noqa: E731
+        assert chave(por_nome["Vazia atrasada"]) < chave(nova) < chave(por_nome["Liberada/apta"])
+
+    def test_novilha_em_atraso_cai_na_categoria_nova(self):
+        from fazenda.api.routers.recria import _situacao_reprodutiva_3, classificar_categoria
+        from fazenda.models import CategoriaManejo
+        from fazenda.rules.estado_reprodutivo import APTA, ATRASADA
+
+        categorias = [
+            CategoriaManejo(nome="Vazia atrasada", situacao_reprodutiva="vazia",
+                            dias_pos_parto_min=46, dias_desde_servico_min=30, ordem=-5),
+            CategoriaManejo(nome="Novilha vazia em atraso", situacao_reprodutiva="vazia_atrasada",
+                            dia_min=487, ordem=-5),
+            CategoriaManejo(nome="Liberada/apta", situacao_reprodutiva="vazia",
+                            dias_pos_parto_min=46, ordem=-4),
+        ]
+        base = {"peso": 400, "dias_gestacao": None, "dias_desde_servico": None,
+                "dias_para_parto": None, "dias_pos_parto": None, "situacao_produtiva": None}
+        atrasada = {**base, "dias": 790, "situacao_reprodutiva_viva": _situacao_reprodutiva_3(ATRASADA)}
+        assert classificar_categoria(atrasada, categorias) == "Novilha vazia em atraso"
+        # A recém-apta continua fora dela (e fora de "Liberada/apta", que pede
+        # dias pós-parto — nulípara não tem).
+        apta = {**base, "dias": 472, "situacao_reprodutiva_viva": _situacao_reprodutiva_3(APTA)}
+        assert classificar_categoria(apta, categorias) == "Fora das faixas"
+        # Sentinela da retrocompatibilidade: a VACA atrasada (que agora também
+        # sai como "vazia_atrasada") continua na categoria antiga, cadastrada
+        # com "vazia" e tentada primeiro.
+        vaca = {**base, "dias": 1800, "dias_pos_parto": 150, "dias_desde_servico": 300,
+                "situacao_produtiva": "lactacao",
+                "situacao_reprodutiva_viva": _situacao_reprodutiva_3(ATRASADA)}
+        assert classificar_categoria(vaca, categorias) == "Vazia atrasada"

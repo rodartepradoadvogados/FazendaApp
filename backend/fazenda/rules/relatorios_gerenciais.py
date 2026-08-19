@@ -243,7 +243,16 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                 if vazia and dpp > meta_1a:
                     cor = "vermelho"
             else:
-                cor = "verde"
+                # Novilha (e qualquer animal sem DPP): a cor sai do ESTADO AO
+                # VIVO, não de um "verde" fixo. Antes, toda novilha era verde
+                # por construção — e como o relatório de não conformidades
+                # conta exatamente os "vermelho" desta lista
+                # (api/routers/nao_conformidades.py), o indicador era
+                # estruturalmente cego para a categoria majoritária desta
+                # fazenda (74 novilhas contra 37 vacas). ATRASADA é o análogo
+                # exato do "passou do DEL máximo" da vaca: passou da idade
+                # máxima para a 1ª cobertura e segue vazia.
+                cor = "vermelho" if estado_vivo == ATRASADA else "verde"
             l_inseminar.append({"numero": num, "grupo": grupo, "dias_pos_parto": dpp,
                                  "eh_vaca": eh_vaca, "situacao": ROTULOS.get(estado_vivo, "—"), "cor": cor})
 

@@ -6013,7 +6013,10 @@ export type CategoriaManejo = {
   id?: number; nome: string; dia_min: number; dia_max?: number | null;
   peso_min_kg?: number | null; peso_max_kg?: number | null; usa_status_reprodutivo: boolean;
   // Critérios adicionais — todos opcionais; deixe em branco para não filtrar por eles.
-  situacao_reprodutiva?: "vazia" | "inseminada" | "prenha" | null;
+  // "vazia" casa também com a atrasada (retrocompatibilidade); "vazia_atrasada"
+  // restringe à novilha/vaca que passou do prazo — ver
+  // fazenda/api/routers/recria.py::situacao_reprodutiva_casa.
+  situacao_reprodutiva?: "vazia" | "vazia_atrasada" | "inseminada" | "prenha" | null;
   situacao_produtiva?: "lactacao" | "seca" | null;
   dias_gestacao_min?: number | null; dias_gestacao_max?: number | null;
   dias_desde_servico_min?: number | null; dias_desde_servico_max?: number | null;

@@ -167,7 +167,10 @@ def relatorio_nao_conformidades(
         manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens,
                                        aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
         for chave_lista, label in (
-            ("a_inseminar", "Vacas atrasadas para inseminar"),
+            # "Atrasadas", não "Vacas atrasadas": a lista semaforizada conta
+            # novilha em atraso para a 1ª cobertura junto com a vaca que
+            # passou do DEL máximo (ver rules/relatorios_gerenciais.py).
+            ("a_inseminar", "Atrasadas para inseminar"),
             ("inseminados", "Inseminadas sem diagnóstico há muito tempo"),
             ("a_tocar", "Toque atrasado"),
             ("a_reconfirmar", "Reconfirmação atrasada"),

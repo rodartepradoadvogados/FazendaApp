@@ -444,7 +444,8 @@ def _status_reprodutivo(estado_vivo: str | None) -> str:
 
 
 def _situacao_reprodutiva_3(estado_vivo: str | None) -> str | None:
-    """Situação reprodutiva em 3 categorias (inseminada/vazia/prenha), usada
+    """Situação reprodutiva em 4 categorias (inseminada/vazia/vazia_atrasada/
+    prenha — as 3 antigas mais o refinamento "vazia em atraso"), usada
     para casar com CategoriaManejo.situacao_reprodutiva — a partir do ESTADO
     AO VIVO (estado_reprodutivo.classificar_animal: GESTANTE/INSEMINADA/APTA/
     ATRASADA/PEV/EM_PROTOCOLO/NAO_APTA), não mais do `sit_rep` congelado do
@@ -453,20 +454,48 @@ def _situacao_reprodutiva_3(estado_vivo: str | None) -> str | None:
     sugestão de movimentação de lote errada — ver rules.lote_criterios).
 
     "Vazia" = APTA ou ATRASADA (mesma convenção de relatorios_gerenciais.py e
-    agenda_engine.py: livre para receber serviço). PEV, EM_PROTOCOLO e
+    agenda_engine.py: livre para receber serviço) — a ATRASADA devolve o valor
+    mais específico "vazia_atrasada", que continua sendo aceito por quem
+    cadastrou "vazia" (ver `situacao_reprodutiva_casa`). PEV, EM_PROTOCOLO e
     NAO_APTA são estados reais, mas nenhum dos três é "vazia" (PEV é
     descanso obrigatório; EM_PROTOCOLO já está sendo trabalhada; NAO_APTA é
     novilha que ainda não deu a idade/peso) — por isso caem em None, igual a
-    um estado desconhecido: não casam com NENHUM dos três critérios
-    cadastráveis (prenha/inseminada/vazia), então não filtram nem devem
+    um estado desconhecido: não casam com NENHUM dos critérios cadastráveis
+    (prenha/inseminada/vazia/vazia_atrasada), então não filtram nem devem
     "inventar" um bucket que não corresponde à realidade do animal."""
     if estado_vivo == GESTANTE:
         return "prenha"
     if estado_vivo == INSEMINADA:
         return "inseminada"
-    if estado_vivo in (APTA, ATRASADA):
+    if estado_vivo == ATRASADA:
+        # "vazia_atrasada" é um REFINAMENTO de "vazia", não um bucket novo e
+        # paralelo: quem casa por "vazia" continua casando com ela (ver
+        # `situacao_reprodutiva_casa` logo abaixo). Sem esta distinção não
+        # havia como cadastrar uma categoria/lote só para a novilha em atraso
+        # — a única categoria "Vazia atrasada" semeada usa dias_pos_parto_min,
+        # que nunca casa com nulípara (ela não tem parto, então não tem DEL).
+        return "vazia_atrasada"
+    if estado_vivo == APTA:
         return "vazia"
     return None
+
+
+# Critério cadastrado -> situações vivas que ele aceita. "vazia" aceita também
+# "vazia_atrasada" por RETROCOMPATIBILIDADE: toda categoria/lote já cadastrado
+# com "vazia" (inclusive as sementes "Vazia atrasada" e "Liberada/apta")
+# continua casando exatamente com os mesmos animais de antes, quando ATRASADA
+# ainda era mapeada para "vazia". Só quem escolher explicitamente
+# "vazia_atrasada" fica restrito às atrasadas.
+_SITUACOES_REPRODUTIVAS_ACEITAS = {"vazia": ("vazia", "vazia_atrasada")}
+
+
+def situacao_reprodutiva_casa(criterio: str | None, situacao_viva: str | None) -> bool:
+    """O critério `situacao_reprodutiva` cadastrado (em CategoriaManejo ou em
+    Lote) casa com a situação AO VIVO do animal (`_situacao_reprodutiva_3`)?
+    Critério vazio = não filtra (sempre casa)."""
+    if not criterio:
+        return True
+    return situacao_viva in _SITUACOES_REPRODUTIVAS_ACEITAS.get(criterio, (criterio,))
 
 
 def _dentro_faixa(valor: int | float | None, minimo, maximo) -> bool:
@@ -508,7 +537,7 @@ def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
         if peso_baixo or peso_alto:
             peso_faltou = peso_faltou or cat
             continue
-        if cat.situacao_reprodutiva and cat.situacao_reprodutiva != sit_rep_3:
+        if not situacao_reprodutiva_casa(cat.situacao_reprodutiva, sit_rep_3):
             continue
         if cat.situacao_produtiva and cat.situacao_produtiva != ctx.get("situacao_produtiva"):
             continue
@@ -1311,8 +1340,9 @@ _BENCHMARK_PADRAO = [
 def _categorias_novas_padrao() -> list[dict]:
     """Lista-modelo lida por `seed_categorias_novas` — função (não constante)
     porque "Vazia atrasada" e "Liberada/apta" derivam `dias_pos_parto_min` de
-    `pev_dias()` na hora da semeadura, em vez de números fixos (45/46)
-    paralelos e independentes do parâmetro. As três têm de sair do MESMO
+    `pev_dias()` na hora da semeadura (e "Novilha vazia em atraso" deriva
+    `dia_min` de `idade_max_1a_cobertura_meses()`), em vez de números fixos
+    (45/46) paralelos e independentes do parâmetro. As três têm de sair do MESMO
     valor, senão mudar o parâmetro abre um buraco: "Pós-parto - PEV" cobre
     os dias 0..pev e "liberada/atrasada" começa em pev+1, o dia seguinte ao
     fim do descanso — com o padrão de 45, 0-45 e 46. Isto é só a SEMENTE
@@ -1329,6 +1359,21 @@ def _categorias_novas_padrao() -> list[dict]:
         # sem nova IA/monta; senão (nunca servida ou servida há pouco) cai
         # em "apta".
         dict(nome="Vazia atrasada", situacao_reprodutiva="vazia", dias_pos_parto_min=liberada_desde, dias_desde_servico_min=30, ordem=-5),
+        # Novilha nulípara em atraso — o análogo de "Vazia atrasada" para quem
+        # nunca pariu. "Vazia atrasada" acima depende de `dias_pos_parto_min`,
+        # que NUNCA casa com nulípara (sem parto não há DEL), então até aqui a
+        # novilha em atraso caía em "Liberada/apta" junto com a que acabou de
+        # ficar apta. Casa por `situacao_reprodutiva="vazia_atrasada"` (ver
+        # `_situacao_reprodutiva_3`).
+        #
+        # `ordem=-5` empata de propósito com "Vazia atrasada", e o desempate é
+        # por `dia_min` (ver a ordenação em `classificar_categoria`): a vaca
+        # atrasada continua caindo na categoria antiga, que é tentada primeiro.
+        # `dia_min` é a própria idade-teto da 1ª cobertura — abaixo dela o
+        # motor nunca devolve ATRASADA para nulípara, então o limite não
+        # exclui ninguém que a categoria deveria pegar.
+        dict(nome="Novilha vazia em atraso", situacao_reprodutiva="vazia_atrasada",
+             dia_min=round(idade_max_1a_cobertura_meses() * 30.44), ordem=-5),
         dict(nome="Liberada/apta", situacao_reprodutiva="vazia", dias_pos_parto_min=liberada_desde, ordem=-4),
         dict(nome="Inseminada", situacao_reprodutiva="inseminada", ordem=-3),
         dict(nome="Prenha", situacao_reprodutiva="prenha", ordem=-2),

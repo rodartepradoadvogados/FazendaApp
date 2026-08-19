@@ -328,3 +328,47 @@ class TestSituacaoReprodutivaAoVivo:
         assert r.json()["animais"] == ["11"]
         r2 = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "prenha"})
         assert r2.json()["animais"] == []
+
+
+class TestLoteVaziaAtrasada:
+    """A novilha nulípara em atraso passou a sair de
+    `recria._situacao_reprodutiva_3` como "vazia_atrasada" (antes: "vazia").
+    RETROCOMPATIBILIDADE: o lote já cadastrado com "vazia" tem que continuar
+    casando com ela — este é o ponto que garante que nenhum lote existente
+    muda de comportamento."""
+
+    def _seed(self, engine):
+        hoje = date.today()
+        with Session(engine) as s:
+            # Novilha de 26 meses, nunca servida: passou do teto de idade
+            # para a 1ª cobertura (16 meses) -> ATRASADA -> "vazia_atrasada".
+            s.add(Animal(numero="20", categoria_completa="Novilha", categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=790), ativo=True))
+            # Novilha de 15,5 meses: apta e dentro do prazo -> "vazia".
+            s.add(Animal(numero="21", categoria_completa="Novilha", categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=472), ativo=True))
+            s.commit()
+
+    def test_lote_configurado_com_vazia_continua_pegando_a_atrasada(self, client):
+        c, engine = client
+        self._seed(engine)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia"})
+        assert sorted(r.json()["animais"]) == ["20", "21"]
+
+    def test_lote_configurado_com_vazia_atrasada_pega_so_a_atrasada(self, client):
+        c, engine = client
+        self._seed(engine)
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia_atrasada"})
+        assert r.json()["animais"] == ["20"]
+
+    def test_vazia_atrasada_nao_pega_prenha_nem_inseminada(self, client):
+        c, engine = client
+        hoje = date.today()
+        self._seed(engine)
+        with Session(engine) as s:
+            s.add(Animal(numero="22", categoria_completa="Novilha", categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=790), ativo=True))
+            s.add(Servico(numero_matriz="22", data_servico=hoje - timedelta(days=10)))
+            s.commit()
+        r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "situacao_reprodutiva": "vazia_atrasada"})
+        assert r.json()["animais"] == ["20"]
