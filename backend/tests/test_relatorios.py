@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, EstoqueSemen, ParametroFazenda, Parto, Servico
+from fazenda.models import Animal, EstoqueSemen, ParametroFazenda, Parto, Secagem, Servico
 
 
 @pytest.fixture
@@ -282,6 +282,126 @@ class TestGerencial:
         r = c.get("/relatorios/gerencial/fluxo-lactacao", params={"meses": 6})
         assert r.status_code == 200
         assert len(r.json()["linhas"]) == 6
+
+
+class TestEstadoAoVivo:
+    """Migração de `sit_rep` (texto congelado do último GERAL.csv) para o
+    estado reprodutivo AO VIVO nas 8 listas de manejo e em `fluxo_lactacao`.
+    Cada teste aqui planta um `sit_rep` que MENTE em relação aos registros
+    (Parto/Servico/Secagem) reais — o comportamento correto é ignorar o texto
+    e seguir os registros."""
+
+    def test_engravidou_pelo_app_sai_de_a_inseminar_e_entra_em_prenhes(self, client):
+        """sit_rep ainda diz "Vaz. apt." (não seria atualizado até o próximo
+        upload), mas a vaca já tem serviço positivo lançado pelo app."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="910", sexo="F", ativo=True, sit_rep="Vaz. apt."))
+            s.add(Parto(numero_matriz="910", data_parto=hoje - timedelta(days=150), ordem_parto=1))
+            s.add(Servico(numero_matriz="910", data_servico=hoje - timedelta(days=100),
+                          ordem_tentativa=1, diagnostico="POSITIVO", reprodutor="Touro Z"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert not any(x["numero"] == "910" for x in dados["a_inseminar"])
+        assert any(x["numero"] == "910" for x in dados["prenhes"])
+
+    def test_pariu_pelo_app_entra_em_pev(self, client):
+        """sit_rep ainda diz "Ges." (frozen no upload anterior ao parto), mas
+        o parto já foi lançado pelo app — o ciclo zerou, a vaca está em PEV,
+        não gestante."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="911", sexo="F", ativo=True, sit_rep="Ges."))
+            s.add(Parto(numero_matriz="911", data_parto=hoje - timedelta(days=10), ordem_parto=2))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert any(x["numero"] == "911" for x in dados["pev"])
+        assert not any(x["numero"] == "911" for x in dados["prenhes"])
+
+    def test_a_descartar_some_de_a_inseminar_mas_continua_biologica(self, client):
+        """O corte de `a_descartar` vale só para "a inseminar" (a lista pede
+        uma AÇÃO que contradiz o descarte já decidido). As listas biológicas
+        — prenhes, secagem — continuam valendo: a vaca marcada a descartar
+        que está prenhe ainda vai parir e ainda precisa ser secada."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            # Vaca a descartar, apta (passou do PEV, sem serviço aberto):
+            # sem o corte, cairia em "a inseminar".
+            s.add(Animal(numero="912", sexo="F", ativo=True, sit_rep="Vaz. apt.", a_descartar=True))
+            s.add(Parto(numero_matriz="912", data_parto=hoje - timedelta(days=120), ordem_parto=1))
+            # Vaca a descartar, gestante: precisa continuar em prenhes/secagem.
+            # Concepção há 190 dias -> secagem prevista em ~30 dias (dentro da
+            # janela de 60 dias que a lista de secagem mostra).
+            s.add(Animal(numero="913", sexo="F", ativo=True, sit_rep="Vaz. apt.", a_descartar=True))
+            s.add(Parto(numero_matriz="913", data_parto=hoje - timedelta(days=250), ordem_parto=1))
+            s.add(Servico(numero_matriz="913", data_servico=hoje - timedelta(days=190),
+                          ordem_tentativa=1, diagnostico="POSITIVO", reprodutor="Touro Z"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert not any(x["numero"] == "912" for x in dados["a_inseminar"])
+        assert not any(x["numero"] == "913" for x in dados["a_inseminar"])
+        assert any(x["numero"] == "913" for x in dados["prenhes"])
+        assert any(x["numero"] == "913" for x in dados["secagem"])
+
+    def test_novilha_sem_idade_nem_peso_fora_de_a_inseminar(self, client):
+        """Antes, `vazia = sit.startswith("Vaz.")` bastava para uma novilha
+        cair em "a inseminar" — mesmo sem idade nem peso cadastrados. No
+        estado ao vivo, sem idade/peso a novilha é NAO_APTA (regra 7 de
+        `classificar_animal`), não APTA/ATRASADA: não é candidata a serviço."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="914", sexo="F", ativo=True, sit_rep="Vaz. apt.",
+                        data_nasc=None))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert not any(x["numero"] == "914" for x in dados["a_inseminar"])
+
+    def test_taxa_prenhez_por_del_conta_gestacao_ao_vivo(self, client):
+        """A curva acumulada de prenhas por faixa de DEL contava
+        `sit_rep == "Ges."`. A vaca que engravidava pelo app ficava de fora da
+        curva até o próximo upload, afundando a taxa da faixa dela."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            # DEL 120 (faixa 101-150), gestante pelos registros, sit_rep velho.
+            s.add(Animal(numero="930", sexo="F", ativo=True, sit_rep="Vaz. apt."))
+            s.add(Parto(numero_matriz="930", data_parto=hoje - timedelta(days=120), ordem_parto=1))
+            s.add(Servico(numero_matriz="930", data_servico=hoje - timedelta(days=60),
+                          ordem_tentativa=1, diagnostico="POSITIVO", reprodutor="Touro Z"))
+            s.commit()
+        r = c.get("/relatorios/gerencial/taxa-servico-prenhez")
+        assert r.status_code == 200
+        faixa = next(l for l in r.json()["linhas"] if l["faixa"] == "101-150")
+        assert faixa["vacas"] == 1
+        assert faixa["taxa_prenhez"] == 100
+
+    def test_fluxo_lactacao_vaca_recem_secada_pelo_app_nao_conta(self, client):
+        """`Animal.del_dias` (congelado) continuava > 0 até o próximo upload
+        mesmo com a Secagem já lançada pelo app — a vaca some do saldo AO
+        VIVO (mesmo critério de `relatorios_manejo`: última secagem posterior
+        ao último parto)."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            # Recém-secada pelo app: del_dias congelado ainda positivo, mas a
+            # Secagem (posterior ao parto) já zerou a lactação ao vivo.
+            s.add(Animal(numero="920", sexo="F", ativo=True, del_dias=50))
+            s.add(Parto(numero_matriz="920", data_parto=hoje - timedelta(days=100), ordem_parto=1))
+            s.add(Secagem(numero_matriz="920", data_secagem=hoje - timedelta(days=10), motivo="rotina"))
+            # Controle: mesma situação, sem secagem lançada — continua em lactação.
+            s.add(Animal(numero="921", sexo="F", ativo=True, del_dias=50))
+            s.add(Parto(numero_matriz="921", data_parto=hoje - timedelta(days=100), ordem_parto=1))
+            s.commit()
+        r = c.get("/relatorios/gerencial/fluxo-lactacao", params={"meses": 1})
+        assert r.status_code == 200
+        assert r.json()["lactacao_inicial"] == 1
 
 
 class TestEstoqueSemenCRUD:

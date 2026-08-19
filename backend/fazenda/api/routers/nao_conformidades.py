@@ -68,7 +68,7 @@ def relatorio_nao_conformidades(
     from fazenda.api.routers.indicadores import calcular_indicadores_fazenda
     from fazenda.api.routers.recria import reproducao_idade_parto, reproducao_taxa_prenhez
     from fazenda.api.routers.relatorio_custo_hectare import custo_por_hectare
-    from fazenda.api.routers.relatorios import _dados as _dados_manejo
+    from fazenda.api.routers.relatorios import _dados as _dados_manejo, _dados_estado_vivo
 
     hoje = date.today()
     itens: list[dict] = []
@@ -162,8 +162,10 @@ def relatorio_nao_conformidades(
     # marcação informativa de estágio, não um problema a corrigir. ----
     if tem_modulo(user, "reproducao"):
         animais, servicos, partos, secagens = _dados_manejo(session, fazenda_id)
+        aplicacoes_iatf, peso_por_animal = _dados_estado_vivo(session, fazenda_id)
         semen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]
-        manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens)
+        manejo = rg.relatorios_manejo(animais, servicos, partos, semen, hoje, secagens=secagens,
+                                       aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
         for chave_lista, label in (
             ("a_inseminar", "Vacas atrasadas para inseminar"),
             ("inseminados", "Inseminadas sem diagnóstico há muito tempo"),
