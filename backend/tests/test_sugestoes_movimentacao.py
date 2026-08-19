@@ -219,14 +219,30 @@ class TestCriteriosAoVivo:
         sug = next(s for s in r.json()["sugestoes"] if s["numero_matriz"] == "431")
         assert any(l["codigo"] == "03" for l in sug["lotes_sugeridos"])
 
-    def test_situacao_reprodutiva_filtra_por_sit_rep(self, client):
+    def test_situacao_reprodutiva_segue_os_registros_nao_o_sit_rep(self, client):
+        """`situacao_reprodutiva` do lote seguia o `sit_rep` congelado do
+        último GERAL.csv — passou a ler o estado ao vivo
+        (estado_reprodutivo.classificar_animal, dentro de
+        recria._contexto_categoria), como o resto do sistema.
+
+        Este teste inverte de propósito o texto congelado e os registros: a
+        "432" tem sit_rep "Vaz." e um serviço com diagnóstico POSITIVO (está
+        prenha de verdade); a "433" tem sit_rep "Ges." mas já pariu depois do
+        serviço positivo (não está mais prenha). Se o critério ainda lesse o
+        CSV, as duas trocariam de lugar — que era exatamente o bug."""
         c, engine = client
+        from datetime import date, timedelta
+        hoje = date.today()
         with Session(engine) as s:
             s.add(Lote(codigo="02", nome="Prenhas", situacao_reprodutiva="prenha"))
             s.add(Animal(numero="432", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Sem lote",
-                          sit_rep="Ges.", ativo=True))
+                          sit_rep="Vaz. apt.", data_nasc=hoje - timedelta(days=1800), ativo=True))
+            s.add(Parto(numero_matriz="432", data_parto=hoje - timedelta(days=300)))
+            s.add(Servico(numero_matriz="432", data_servico=hoje - timedelta(days=60), diagnostico="POSITIVO"))
             s.add(Animal(numero="433", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Sem lote",
-                          sit_rep="Vazia", ativo=True))
+                          sit_rep="Ges.", data_nasc=hoje - timedelta(days=1800), ativo=True))
+            s.add(Servico(numero_matriz="433", data_servico=hoje - timedelta(days=340), diagnostico="POSITIVO"))
+            s.add(Parto(numero_matriz="433", data_parto=hoje - timedelta(days=60)))
             s.commit()
 
         r = c.get("/movimentacoes/sugestoes")

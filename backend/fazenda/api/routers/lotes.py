@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.api.routers.recria import _parametros_estado_vivo
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
@@ -356,6 +357,14 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
 
     categorias_ativas = list(session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all())  # noqa: E712
 
+    # Os 4 parâmetros que o estado reprodutivo ao vivo precisa (ver
+    # rules.estado_reprodutivo.classificar_animal, chamado dentro de
+    # recria._contexto_categoria) — lidos uma vez aqui, não a cada animal:
+    # `animal_atende_criterios`/`sugerir_movimentacoes` rodam em loop (às
+    # vezes um por animal por lote), e cada leitura de parâmetro abre uma
+    # sessão de banco própria (mesmo cuidado do calendário sanitário).
+    pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg = _parametros_estado_vivo()
+
     return {
         "animais": animais,
         "servicos_por_animal": servicos_por_animal,
@@ -365,6 +374,8 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
         "partos_obj_por_animal": partos_obj_por_animal,
         "secagens_obj_por_animal": secagens_obj_por_animal,
         "categorias_ativas": categorias_ativas,
+        "pev_dias": pev_dias, "del_max_1o_servico": del_max_1o_servico,
+        "idade_apta_dias": idade_apta_dias, "peso_apta_kg": peso_apta_kg,
     }
 
 

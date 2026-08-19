@@ -6,7 +6,7 @@ em vez do texto congelado de Animal.sit_rep.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from fazenda.rules.estado_reprodutivo import (
     APTA, ATRASADA, EM_PROTOCOLO, GESTANTE, INSEMINADA, NAO_APTA, PEV,
@@ -344,10 +344,16 @@ class TestRecriaSituacaoAoVivo:
     def test_parto_derruba_prenha_mesmo_com_sit_rep_gestante(self):
         from fazenda.api.routers.recria import _contexto_categoria
         from fazenda.models import Parto as P, Servico as S
+        # Parto há 60 dias (> pev_dias padrão de 45): já saiu do PEV e está
+        # livre para novo serviço — "vazia" de verdade, não só "não mais
+        # prenha". Um parto de 2 dias atrás (valor antigo deste teste) cai em
+        # PEV — descanso pós-parto obrigatório, um estado real e distinto de
+        # "vazia" (ver estado_reprodutivo.py) — o que já provaria "não é mais
+        # prenha", mas não provaria "vazia" especificamente.
         ctx = _contexto_categoria(
             dias=1200, peso=500, sit_rep="Ges.", hoje=HOJE,
             servicos=[S(numero_matriz="1", data_servico=date(2025, 10, 1), diagnostico="POSITIVO")],
-            partos=[P(numero_matriz="1", data_parto=date(2026, 7, 26))],
+            partos=[P(numero_matriz="1", data_parto=HOJE - timedelta(days=60))],
             secagens=[],
         )
         assert ctx["situacao_reprodutiva_viva"] == "vazia"

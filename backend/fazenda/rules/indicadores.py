@@ -408,9 +408,6 @@ def _benchmark_categorias(
     }
 
 
-DEL_APTA_MIN = 45  # vaca apta a novo serviço: dias mínimos após o último parto
-
-
 def _estados_ao_vivo(
     animais: list[dict],
     servicos: list[dict],
@@ -453,12 +450,6 @@ def _estados_ao_vivo(
         numero = a.get("numero")
         if not numero:
             continue
-        nasc = a.get("data_nasc")
-        if isinstance(nasc, str):
-            try:
-                nasc = date.fromisoformat(nasc[:10])
-            except ValueError:
-                nasc = None
         estados[numero] = classificar_animal(
             numero,
             hoje=hoje,
@@ -468,12 +459,26 @@ def _estados_ao_vivo(
             pev_dias=pev,
             del_max_1o_servico=del_max,
             eh_vaca=numero in vacas_nums,
-            idade_dias=(hoje - nasc).days if nasc else None,
+            idade_dias=_idade_dias(a.get("data_nasc"), hoje),
             peso_kg=peso_por_animal.get(numero),
             idade_apta_dias=idade_apta,
             peso_apta_kg=peso_apta,
         )["estado"]
     return estados
+
+
+def _idade_dias(data_nasc, hoje: date) -> int | None:
+    """`data_nasc` de um dict de animal (model_dump) pode chegar como `date`
+    ou como string ISO — mesma tolerância dos dois lugares que precisam da
+    idade em dias a partir daí (estado ao vivo e o fallback de aptidão de
+    novilha logo abaixo)."""
+    nasc = data_nasc
+    if isinstance(nasc, str):
+        try:
+            nasc = date.fromisoformat(nasc[:10])
+        except ValueError:
+            nasc = None
+    return (hoje - nasc).days if nasc else None
 
 
 def _reproducao_categorias(
@@ -482,20 +487,21 @@ def _reproducao_categorias(
     peso_por_animal: dict[str, float],
     vacas_nums: set,
     estados: dict[str, str] | None = None,
+    hoje: date | None = None,
 ) -> dict:
     """Situação reprodutiva (prenhes/vazias/inseminadas/aptas) por categoria:
     todas / vaca (já pariu) / novilha.
 
     'Aptas' usa dois critérios diferentes conforme a categoria, porque
     "apta" tem sentido distinto para quem já pariu e para quem nunca pariu:
-    - Vaca: DEL (dias desde o último parto) >= DEL_APTA_MIN e não está
+    - Vaca: DEL (dias desde o último parto) >= pev_dias() e não está
       inseminada nem prenhe (sit_rep diferente de "Ins."/"Ges.") — apta a
       novo serviço.
-    - Novilha: nulípara (nunca teve nenhum Serviço) que já atingiu o peso
-      mínimo de 1ª cobertura (peso_apta_min(), mesmo parâmetro usado em
-      agenda_veterinario.py para "novilhas_aptas_vazias" — reaproveitado
-      aqui para não divergir o número em dois lugares); novilha não tem
-      parto, então o critério de DEL não se aplica a ela.
+    - Novilha: nulípara (nunca teve nenhum Serviço) que já atingiu IDADE
+      (idade_apta_min_meses()) E peso (peso_apta_min()) mínimos de 1ª
+      cobertura — a mesma dupla condição da matriz canônica (ver
+      estado_reprodutivo.classificar_animal, regra 7): peso sozinho não
+      basta, senão uma bezerra pesada mas ainda nova contava como apta.
     "Todas" soma os dois grupos.
 
     `estados` (numero -> estado ao vivo, ver fazenda.rules.estado_reprodutivo)
@@ -503,9 +509,12 @@ def _reproducao_categorias(
     sai dos registros reais (Parto/Servico/ProtocoloIatf) e a Capa/Menu passam
     a bater com as listas de Rebanho. Sem ele, cai no `sit_rep` congelado do
     CSV — mantido só para chamadores legados (ex.: relatório personalizado),
-    que continuam funcionando como antes.
-    """
+    que continuam funcionando como antes. `hoje` só é usado neste caminho de
+    FALLBACK, para calcular a idade da novilha a partir de `data_nasc` —
+    sem `estados` nem `hoje`, a idade não entra no critério (retrocompatível
+    com quem chamava esta função sem essa data)."""
     peso_apta = peso_apta_min()
+    idade_apta_dias = round(idade_apta_min_meses() * 30.44)
     resultado: dict[str, dict] = {}
     for chave, filtro in (
         ("todas", lambda a: True),
@@ -571,14 +580,23 @@ def _reproducao_categorias(
                 continue  # já inseminada ou prenhe — não é "apta" a novo serviço
             if numero in vacas_nums:
                 del_dias = a.get("del_dias")
-                if del_dias is not None and del_dias >= DEL_APTA_MIN:
+                if del_dias is not None and del_dias >= pev_dias():
                     aptas_nums.append(numero)
                 continue
             if numero in numeros_com_servico:
                 continue  # já tem QUALQUER histórico de serviço — não é nulípara
             peso = peso_por_animal.get(numero)
-            if peso is not None and peso >= peso_apta:
-                aptas_nums.append(numero)
+            if peso is None or peso < peso_apta:
+                continue
+            # Idade E peso, a mesma dupla condição da matriz canônica (ver
+            # docstring da função) — sem `hoje` (chamador legado que não a
+            # informou), a idade não dá pra calcular e o critério cai só no
+            # peso, como sempre foi.
+            if hoje is not None:
+                idade_dias = _idade_dias(a.get("data_nasc"), hoje)
+                if idade_dias is None or idade_dias < idade_apta_dias:
+                    continue
+            aptas_nums.append(numero)
 
         resultado[chave] = {
             "aptas": len(aptas_nums), "prenhes": prenhes, "vazias": vazias, "inseminadas": inseminadas,
@@ -743,7 +761,7 @@ def calcular_indicadores(
     # "qualquer fêmea com situação reprodutiva definida"), o oposto de "apta
     # pela 1ª vez".
     reproducao_categorias = _reproducao_categorias(
-        animais, numeros_com_servico, peso_por_animal, vacas_nums, estados_por_animal,
+        animais, numeros_com_servico, peso_por_animal, vacas_nums, estados_por_animal, hoje,
     )
     aptas = reproducao_categorias["todas"]["aptas"]
 

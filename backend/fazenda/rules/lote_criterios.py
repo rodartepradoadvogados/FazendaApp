@@ -31,7 +31,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fazenda.api.routers.recria import _contexto_categoria, _situacao_reprodutiva_3, classificar_categoria
+from fazenda.api.routers.recria import _contexto_categoria, classificar_categoria
+from fazenda.rules.estado_reprodutivo import GESTANTE
 from fazenda.rules.gestation import dias_gestacao
 from fazenda.rules.parametros import pre_parto_max
 
@@ -124,6 +125,13 @@ def _contexto_animal(animal: dict, hoje: date, dados: dict) -> dict:
         dados["servicos_obj_por_animal"].get(numero, []),
         dados["partos_obj_por_animal"].get(numero, []),
         dados["secagens_obj_por_animal"].get(numero, []),
+        numero=numero,
+        # Os 4 parâmetros do estado ao vivo (pev_dias etc.) vêm prontos de
+        # `coletar_dados_criterios` (routers/lotes.py) — lidos uma vez só lá,
+        # não a cada animal: este contexto roda em loop (um por animal, às
+        # vezes um por animal por lote em `sugerir_movimentacoes`).
+        pev_dias=dados.get("pev_dias"), del_max_1o_servico=dados.get("del_max_1o_servico"),
+        idade_apta_dias=dados.get("idade_apta_dias"), peso_apta_kg=dados.get("peso_apta_kg"),
     )
 
 
@@ -170,7 +178,15 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     if lote.status_lactacao and lote.status_lactacao != _situacao_produtiva(animal, ctx):
         return False
 
-    if lote.situacao_reprodutiva and _situacao_reprodutiva_3(animal.get("sit_rep")) != lote.situacao_reprodutiva:
+    # AO VIVO: ctx["situacao_reprodutiva_viva"] já vem do estado reprodutivo
+    # canônico (estado_reprodutivo.classificar_animal, dentro de
+    # _contexto_categoria) — não mais do `sit_rep` congelado do último
+    # GERAL.csv. Antes desta correção, uma vaca que engravidava pelo app
+    # (ou saía do PEV, ou terminava o protocolo de IATF) continuava sendo
+    # avaliada pelo texto velho aqui, e a sugestão de movimentação de lote
+    # (a razão de ser deste módulo) mandava ela pro lote errado até o
+    # próximo upload de planilha.
+    if lote.situacao_reprodutiva and ctx.get("situacao_reprodutiva_viva") != lote.situacao_reprodutiva:
         return False
 
     if lote.categorias:
@@ -226,16 +242,17 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     if lote.idade_dias_max is not None and (idade_dias is None or idade_dias > lote.idade_dias_max):
         return False
 
-    # AO VIVO: prenha = tem concepção vigente (ctx["situacao_reprodutiva_viva"]
-    # já cruza serviço/parto — ver _contexto_categoria em recria.py). Cai para
-    # o texto congelado (sit_rep) só quando o animal não tem NENHUM
-    # serviço/parto lançado ainda — mesmo fallback usado por
-    # `_situacao_produtiva` acima. Antes usava `Animal.diagnostico` (campo
-    # congelado do CSV) OU sit_rep == "Ges." direto: uma vaca reinseminada sem
-    # diagnóstico ainda, ou com a prenhez já perdida, continuava contando como
-    # gestante para os critérios "novilhas inseminadas"/"novilhas gestantes".
-    situacao_viva = ctx.get("situacao_reprodutiva_viva")
-    gestante = situacao_viva == "prenha" if situacao_viva is not None else (animal.get("sit_rep") or "") == "Ges."
+    # AO VIVO: prenha = estado_reprodutivo.GESTANTE, o mesmo motor canônico
+    # usado no resto do sistema (ctx["estado_vivo"], calculado dentro de
+    # _contexto_categoria via classificar_animal). Sem fallback pro sit_rep
+    # congelado: classificar_animal sempre devolve algum estado — mesmo sem
+    # nenhum serviço/parto lançado, cai em NAO_APTA/APTA pela idade/peso —,
+    # então não sobra caso "sem dado" que precise do texto do CSV. Antes
+    # usava `Animal.diagnostico` (campo congelado do CSV) OU sit_rep == "Ges."
+    # direto: uma vaca reinseminada sem diagnóstico ainda, ou com a prenhez
+    # já perdida, continuava contando como gestante para os critérios
+    # "novilhas inseminadas"/"novilhas gestantes".
+    gestante = ctx.get("estado_vivo") == GESTANTE
 
     if lote.novilhas_inseminadas:
         if categoria != "novilha" or not foi_inseminada(numero, servicos_por_animal) or gestante:

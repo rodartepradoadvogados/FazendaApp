@@ -576,6 +576,69 @@ class TestIndicadores:
         assert rep["perc_vazias_pct"] == 50.0    # 2 vazias / 4 — NÃO 75.0
 
 
+class TestReproducaoCategoriasFallback:
+    """`_reproducao_categorias` no caminho de FALLBACK (sem `estados` ao
+    vivo — ativa só quando `calcular_indicadores` não tem nenhum Parto/
+    Servico carregado, ver `_estados_ao_vivo`). Risco baixo (só ativa sem
+    registros), mas divergia da matriz canônica em dois pontos: DEL mínimo
+    de aptidão da vaca era uma constante fixa (45) paralela e independente
+    de `pev_dias()`, e a novilha apta não checava idade — só peso."""
+
+    def test_vaca_apta_usa_pev_dias_nao_constante_fixa(self):
+        from fazenda.rules.indicadores import _reproducao_categorias
+        # pev_dias() padrão = 45 — DEL de 50 dias já é apta a novo serviço.
+        animais = [{"numero": "1", "del_dias": 50, "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={}, vacas_nums={"1"},
+            hoje=date(2026, 7, 5),
+        )
+        assert "1" in r["todas"]["aptas_nums"]
+
+    def test_vaca_dentro_do_pev_nao_e_apta(self):
+        from fazenda.rules.indicadores import _reproducao_categorias
+        animais = [{"numero": "1", "del_dias": 20, "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={}, vacas_nums={"1"},
+            hoje=date(2026, 7, 5),
+        )
+        assert "1" not in r["todas"]["aptas_nums"]
+
+    def test_novilha_com_peso_mas_sem_idade_nao_e_apta(self):
+        """Peso acima do mínimo (peso_apta_min padrão 300 kg) não basta
+        sozinho — a matriz canônica (estado_reprodutivo.classificar_animal,
+        regra 7) exige idade E peso. 300 dias (~9,9 meses) fica abaixo de
+        idade_apta_min_meses padrão (15 meses)."""
+        from fazenda.rules.indicadores import _reproducao_categorias
+        hoje = date(2026, 7, 5)
+        animais = [{"numero": "2", "data_nasc": hoje - timedelta(days=300), "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={"2": 320}, vacas_nums=set(),
+            hoje=hoje,
+        )
+        assert "2" not in r["todas"]["aptas_nums"]
+
+    def test_novilha_com_idade_e_peso_e_apta(self):
+        from fazenda.rules.indicadores import _reproducao_categorias
+        hoje = date(2026, 7, 5)
+        animais = [{"numero": "3", "data_nasc": hoje - timedelta(days=470), "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={"3": 320}, vacas_nums=set(),
+            hoje=hoje,
+        )
+        assert "3" in r["todas"]["aptas_nums"]
+
+    def test_sem_hoje_cai_no_criterio_antigo_so_peso(self):
+        """Retrocompatibilidade: chamador que não informa `hoje` (nenhum
+        hoje, dentro do repositório, chama assim hoje — mas a função
+        continua aceitando) mantém o critério de só peso, sem quebrar."""
+        from fazenda.rules.indicadores import _reproducao_categorias
+        animais = [{"numero": "4", "data_nasc": date(2026, 7, 5) - timedelta(days=300), "sit_rep": ""}]
+        r = _reproducao_categorias(
+            animais, numeros_com_servico=set(), peso_por_animal={"4": 320}, vacas_nums=set(),
+        )
+        assert "4" in r["todas"]["aptas_nums"]
+
+
 # ============================================================
 # ALIMENTAÇÃO
 # ============================================================

@@ -7,7 +7,7 @@ Este documento é o inventário que a migração do resto do sistema vai consumi
 Levantado por três varreduras independentes do código, com cada achado
 conferido contra o arquivo antes de entrar aqui.
 
-**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores de `taxa_prenhez_pct`/`perc_vazias_pct`/`perc_vacas_prenhas` e a série mensal de concepção).
+**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores de `taxa_prenhez_pct`/`perc_vazias_pct`/`perc_vacas_prenhas`, a série mensal de concepção e a unificação de "apta").
 
 ---
 
@@ -129,8 +129,11 @@ desta seção).
 | `rules/relatorios_gerenciais.py` (`fluxo_lactacao`) | Projeção de partos/secagens: filtro `"Vaz."` removido (`ups` já é o sinal ao vivo de gestação); "em lactação" passou a usar a mesma secagem ao vivo de `relatorios_manejo`, não `Animal.del_dias` congelado |
 | `rules/relatorios_gerenciais.py` (`taxa_servico_prenhez`) | `prenhas` da curva acumulada por faixa de DEL: vem de `_ultimo_servico_positivo`, o mesmo predicado do estado GESTANTE |
 
+| `api/routers/recria.py` (`_status_reprodutivo`, `_situacao_reprodutiva_3`, `classificar_categoria`) | Categoria de manejo e situação reprodutiva em 3 baldes: `classificar_animal`, sem cair mais no texto do CSV |
+| `rules/lote_criterios.py` | O critério `situacao_reprodutiva` do lote e o teste de gestante: estado ao vivo. Era daqui que saía a sugestão de movimentação para o lote errado |
+
 Fallbacks (ativam quando faltam registros): `indicadores.py:228-236,462,487,594-601`,
-`recria.py:411-489`, `lote_criterios.py:238`, e no front
+e no front
 `mobile/menu/Indicadores.tsx:62-65`, `FormDiagnostico.tsx:40`.
 
 ---
@@ -182,25 +185,28 @@ vocabulário com a tela, não defeito.
 
 ---
 
-## 8. Definições concorrentes de "apta" — checklist da unificação
+## 8. Definições concorrentes de "apta" — resolvido
 
-Quatro definições de apta e três limiares de aptidão de novilha coexistem.
-Nenhuma delas exclui `EM_PROTOCOLO`, que é justamente o estado criado para não
-listar animal em protocolo como apto.
+O inventário original listava nove. A triagem mostrou que **quatro não eram
+conflito**: eram perguntas diferentes que por acaso usam a mesma palavra.
 
-| # | Onde | "Apta" significa |
+**Corrigidos** (eram a mesma pergunta que R4/R7, respondida de outro jeito):
+
+| Onde | Antes | Agora |
 |---|---|---|
-| 1 | `programa_reprodutivo.py` (R4) | disponível ∧ ¬gestante ∧ (vazia ⊻ inseminada-sem-DG) — **o canônico** |
-| 2 | `agenda_veterinario.py:251` | idade ≥ mín **e** peso ≥ mín |
-| 3 | `agenda_veterinario.py:133` | terceiro limiar, mais baixo: "verificar aptidão" |
-| 4 | `indicadores.py:329,483-497` | `DEL_APTA_MIN = 45` hard-coded (não `pev_dias()`); novilha só por **peso** |
-| 5 | `recria.py:411-419` | por eliminação sobre `sit_rep` |
-| 6 | `eventos_sanitarios.py:137-141` | só **idade**, sem peso |
-| 7 | `api/routers/indicadores.py:206-210` | idade **menor** que N meses — sentido invertido |
-| 8 | `recria.py:1257` | semente de lote com PEV fixo de 46 dias, paralelo a `pev_dias()` |
-| 9 | `bst.py:28` | "elegível" com semântica de lactação — não conflita, mas divide o vocabulário |
+| `indicadores.py::_reproducao_categorias` (fallback) | `DEL_APTA_MIN = 45` hard-coded, paralelo a `pev_dias()`; novilha só por **peso** | `pev_dias()` para a vaca; **idade E peso** para a novilha, a dupla condição da regra 7 |
+| `recria.py::_status_reprodutivo` / `_situacao_reprodutiva_3` | por eliminação sobre `sit_rep` | `classificar_animal` — "vazia" = APTA ∨ ATRASADA; PEV/EM_PROTOCOLO/NAO_APTA devolvem `None` (não casam com nenhum dos três critérios cadastráveis, e não devem inventar um balde) |
+| `recria.py::_categorias_novas_padrao` (semente) | PEV fixo em 46, paralelo a `pev_dias()` | as duas pontas derivam do **mesmo** `pev_dias()`: "Pós-parto - PEV" vai até `pev`, "Liberada/apta" começa em `pev+1`. Só a semente — a categoria criada continua editável |
+| `lote_criterios.py` | `_situacao_reprodutiva_3(sit_rep)` e um fallback para `sit_rep == "Ges."` | `ctx["estado_vivo"] == GESTANTE`; sem fallback, porque `classificar_animal` sempre devolve um estado |
 
----
+**Não eram conflito** — conferidos contra o código e mantidos:
+
+| Onde | Por quê |
+|---|---|
+| `agenda_veterinario.py:251` e `:133` | São **puberdade** (idade ∧ peso para a 1ª cobertura), não a disponibilidade-no-dia de R4. O `:133` é o limiar mais baixo de "verificar aptidão", deliberado e comentado no próprio arquivo |
+| `bst.py:28` | "Elegível" de lactação — outro vocabulário, outra pergunta |
+| `api/routers/indicadores.py:206-210` | O campo já se chama `novilhas_aptas_ate_meses` e o rótulo da tela é "até X meses": o `<=` está certo |
+| `eventos_sanitarios.py` (gatilho `novilha_apta`) | Apesar do nome, **não** é aptidão reprodutiva: o rótulo da tela é "Aptidão (novilha atingir certa idade)", o cadastro exige `gatilho_idade_meses`, e a semente traz Brucelose RB51 aos **13** meses — abaixo do `idade_apta_min_meses()` padrão de 15. Amarrá-lo aos parâmetros de aptidão apagaria a vacina de brucelose da Agenda, e exigir peso apagaria o gatilho inteiro em fazenda que não pesa animal. O que **era** defeito e foi corrigido: o filtro era só "fêmea ativa com data de nascimento", então agendava manejo de novilha para vaca que já pariu e para animal marcado a descartar |
 
 ## 9. Rótulos e paridade no frontend
 
