@@ -5,8 +5,11 @@ Duas análises, sobre os dados que a fazenda já lança (Parto + Serviço):
  - Wisconsin: estatística da IDADE AO 1º PARTO — média, mínima, máxima, desvio,
    assimetria e curtose (mede a uniformidade e a "cauda" de novilhas tardias),
    distribuição e o CUSTO DE RECRIA EXCEDENTE em R$.
- - Taxa de Prenhez em ciclos de 21 dias (método DairyComp): por ciclo,
-   Taxa de Serviço × Taxa de Concepção = Taxa de Prenhez.
+
+A taxa de prenhez em ciclos de 21 dias saiu daqui: vive em
+`fazenda.rules.programa_reprodutivo`, que a calcula como PREG ÷ PG ELIG. A
+fórmula que este módulo anunciava — serviço × concepção — era o atalho que o
+DairyComp não faz, e foi removida (ver R9 do modelo lógico).
 
 Puro Python, testável e isolado de banco.
 """

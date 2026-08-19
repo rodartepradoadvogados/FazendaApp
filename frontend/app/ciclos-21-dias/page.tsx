@@ -17,35 +17,96 @@ import { SecaoRecolhivel, TabBar, Indicador } from "@/components/ui";
  * backend/fazenda/rules/programa_reprodutivo.py (modelo lógico R1–R9).
  */
 
-const hojeISO = () => new Date().toISOString().slice(0, 10);
+// Data local, NÃO `toISOString()` — aquilo é UTC, e no Brasil (UTC−3) faria a
+// tela abrir com a data de amanhã depois das 21h.
+const hojeISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
+// `meta` só é passada quando faz sentido comparar. Num ciclo cuja janela de
+// diagnóstico ainda não fechou, a taxa de prenhez está subestimada por
+// construção — pintá-la de âmbar contra a meta seria acusar de piora o que é
+// só falta de tempo.
 function Pct({ valor, meta }: { valor: number | null; meta?: number }) {
   if (valor === null) return <span style={{ color: "var(--text-muted)" }}>—</span>;
-  const cor = meta === undefined ? "var(--text)" : valor >= meta ? "var(--green-light)" : "var(--amber)";
+  const cor = meta === undefined ? "var(--text-muted)" : valor >= meta ? "var(--green-light)" : "var(--amber)";
   return <span style={{ color: cor, fontWeight: 700 }}>{valor.toFixed(1)}%</span>;
 }
 
-// Funil de um ciclo: mostra a queda BR ELIG → BRED → PG ELIG → PREG em barras
-// proporcionais, que é onde se enxerga de imediato ONDE o rebanho perde.
-function Funil({ c }: { c: CicloReprodutivo }) {
-  const base = Math.max(c.br_elig, 1);
-  const etapas = [
-    { rotulo: "BR ELIG", n: c.br_elig, cor: "var(--dourado-light)", ajuda: "Elegíveis para inseminação: aptas por pelo menos 11 dos 21 dias" },
-    { rotulo: "BRED", n: c.bred, cor: "var(--green-light)", ajuda: "Efetivamente inseminadas dentro do ciclo" },
-    { rotulo: "PG ELIG", n: c.pg_elig, cor: "var(--dourado-light)", ajuda: "Elegíveis para prenhez: continuavam no rebanho na janela de diagnóstico" },
-    { rotulo: "PREG", n: c.preg, cor: "var(--green-light)", ajuda: "Confirmadas prenhes a partir de um serviço deste ciclo" },
+const AJUDA = {
+  br_elig: "BR ELIG — elegíveis para inseminação: estiveram aptas em pelo menos 11 dos 21 dias do ciclo",
+  bred: "BRED — dessas, as que efetivamente receberam inseminação dentro do ciclo",
+  pg_elig: "PG ELIG — elegíveis para prenhez: das BR ELIG, as que continuavam no rebanho no fim da janela de diagnóstico",
+  preg: "PREG — confirmadas prenhes a partir de um serviço deste ciclo",
+  servico: "Taxa de serviço — BRED ÷ BR ELIG. Quanto do rebanho disponível foi inseminado.",
+  prenhez: "Taxa de prenhez — PREG ÷ PG ELIG. NÃO é serviço × concepção: os denominadores são diferentes.",
+  concepcao: "Taxa de concepção — PREG ÷ serviços do ciclo cujo resultado já dá para saber",
+};
+
+// Legenda visível, não tooltip: esta tela é usada em tablet, e `title` não
+// existe em toque. As quatro siglas são inglês abreviado do DairyComp e ninguém
+// as adivinha.
+function Legenda() {
+  const itens = [
+    ["BR ELIG", "aptas ≥ 11 dos 21 dias — quem podia ser inseminada"],
+    ["BRED", "dessas, quem foi inseminada no ciclo"],
+    ["PG ELIG", "das BR ELIG, quem seguia no rebanho no fim do diagnóstico"],
+    ["PREG", "quem ficou prenhe de um serviço deste ciclo"],
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-      {etapas.map((e) => (
-        <div key={e.rotulo} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }} title={e.ajuda}>
-          <span style={{ fontSize: "0.68rem", width: 56, color: "var(--text-muted)", fontWeight: 600 }}>{e.rotulo}</span>
-          <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: 4, height: 14, overflow: "hidden" }}>
-            <div style={{ width: `${(e.n / base) * 100}%`, background: e.cor, height: "100%" }} />
+    <div className="card" style={{ marginBottom: "1rem", background: "var(--surface-2)" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem 1.5rem" }}>
+        {itens.map(([sigla, texto]) => (
+          <span key={sigla} style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+            <strong style={{ color: "var(--dourado-light)", fontWeight: 700 }}>{sigla}</strong> — {texto}
+          </span>
+        ))}
+      </div>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+        Serviço = BRED ÷ BR ELIG · Prenhez = PREG ÷ PG ELIG · Concepção = PREG ÷ serviços com resultado.{" "}
+        <strong>Prenhez não é serviço × concepção</strong> — os denominadores são diferentes.
+      </p>
+    </div>
+  );
+}
+
+// Dois pares, NÃO um funil. PG ELIG é subconjunto de BR ELIG, não de BRED: numa
+// cascata de quatro barras a terceira pode CRESCER, e quem lê como funil conclui
+// que o rebanho "recuperou" vacas no meio do caminho. São duas perguntas
+// distintas — quantas foram inseminadas, e quantas ficaram prenhes — cada uma
+// com seu próprio denominador.
+function Pares({ c }: { c: CicloReprodutivo }) {
+  const pares = [
+    { titulo: "Serviço", den: { rotulo: "BR ELIG", n: c.br_elig, ajuda: AJUDA.br_elig },
+      num: { rotulo: "BRED", n: c.bred, ajuda: AJUDA.bred }, taxa: c.taxa_servico },
+    { titulo: "Prenhez", den: { rotulo: "PG ELIG", n: c.pg_elig, ajuda: AJUDA.pg_elig },
+      num: { rotulo: "PREG", n: c.preg, ajuda: AJUDA.preg }, taxa: c.taxa_prenhez },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.7rem" }}>
+      {pares.map((p) => {
+        const base = Math.max(p.den.n, 1);
+        return (
+          <div key={p.titulo}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.7rem",
+              color: "var(--text-muted)", fontWeight: 700, marginBottom: "0.25rem" }}>
+              <span>{p.titulo}</span>
+              <span>{p.taxa === null ? "—" : `${p.taxa.toFixed(1)}%`}</span>
+            </div>
+            {[p.den, p.num].map((e, i) => (
+              <div key={e.rotulo} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: i ? "0.25rem" : 0 }} title={e.ajuda}>
+                <span style={{ fontSize: "0.68rem", width: 56, color: "var(--text-muted)", fontWeight: 600 }}>{e.rotulo}</span>
+                <div style={{ flex: 1, background: "var(--surface)", borderRadius: 4, height: 14, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, (e.n / base) * 100)}%`,
+                    background: i ? "var(--green-light)" : "var(--dourado-light)", height: "100%" }} />
+                </div>
+                <span style={{ fontSize: "0.72rem", width: 34, textAlign: "right", fontWeight: 700 }}>{e.n}</span>
+              </div>
+            ))}
           </div>
-          <span style={{ fontSize: "0.72rem", width: 34, textAlign: "right", fontWeight: 700 }}>{e.n}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -128,6 +189,8 @@ export default function Ciclos21DiasPage() {
         )}
       </div>
 
+      {dados && !carregando && <Legenda />}
+
       {erro && (
         <div className="card" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start",
           background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)", marginBottom: "1rem" }}>
@@ -159,28 +222,42 @@ export default function Ciclos21DiasPage() {
                 <thead>
                   <tr>
                     <th>Ciclo</th><th>Período</th>
-                    <th style={{ textAlign: "right" }} title="Elegíveis para inseminação">BR ELIG</th>
-                    <th style={{ textAlign: "right" }} title="Inseminadas no ciclo">BRED</th>
-                    <th style={{ textAlign: "right" }}>Serviço</th>
-                    <th style={{ textAlign: "right" }} title="Elegíveis para prenhez">PG ELIG</th>
-                    <th style={{ textAlign: "right" }} title="Confirmadas prenhes">PREG</th>
-                    <th style={{ textAlign: "right" }}>Prenhez</th>
-                    <th style={{ textAlign: "right" }}>Concepção</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.br_elig}>BR ELIG</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.bred}>BRED</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.servico}>Serviço</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.pg_elig}>PG ELIG</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.preg}>PREG</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.prenhez}>Prenhez</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.concepcao}>Concepção</th>
                   </tr>
                 </thead>
                 <tbody>
                   {dados.ciclos.map((c) => (
                     <tr key={c.ciclo} onClick={() => setDetalhe(c)} className="row-clickable"
-                      style={{ cursor: "pointer" }} title="Clique para ver quem entrou em cada denominador">
+                      style={{ cursor: "pointer", opacity: c.janela_dg_completa ? 1 : 0.65 }}
+                      title={c.janela_dg_completa
+                        ? "Clique para ver quem entrou em cada denominador"
+                        : "Janela de diagnóstico ainda aberta: a prenhez e a concepção deste ciclo ainda vão subir. Não compare com a meta."}>
                       <td style={{ fontWeight: 700 }}>{c.ciclo}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{formatDate(c.inicio)} – {formatDate(c.fim)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {formatDate(c.inicio)} – {formatDate(c.fim)}
+                        {!c.janela_dg_completa && (
+                          <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700,
+                            color: "var(--text-muted)", border: "1px solid var(--border)",
+                            borderRadius: 999, padding: "0.05rem 0.4rem", whiteSpace: "nowrap" }}>
+                            em apuração
+                          </span>
+                        )}
+                      </td>
                       <td style={{ textAlign: "right" }}>{c.br_elig}</td>
                       <td style={{ textAlign: "right" }}>{c.bred}</td>
                       <td style={{ textAlign: "right" }}><Pct valor={c.taxa_servico} meta={dados.metas.taxa_servico} /></td>
                       <td style={{ textAlign: "right" }}>{c.pg_elig}</td>
                       <td style={{ textAlign: "right" }}>{c.preg}</td>
-                      <td style={{ textAlign: "right" }}><Pct valor={c.taxa_prenhez} meta={dados.metas.taxa_prenhez} /></td>
-                      <td style={{ textAlign: "right" }}><Pct valor={c.taxa_concepcao} meta={dados.metas.taxa_concepcao} /></td>
+                      {/* Sem `meta` quando a janela está aberta: o número está
+                          estruturalmente baixo e o semáforo mentiria. */}
+                      <td style={{ textAlign: "right" }}><Pct valor={c.taxa_prenhez} meta={c.janela_dg_completa ? dados.metas.taxa_prenhez : undefined} /></td>
+                      <td style={{ textAlign: "right" }}><Pct valor={c.taxa_concepcao} meta={c.janela_dg_completa ? dados.metas.taxa_concepcao : undefined} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -189,14 +266,14 @@ export default function Ciclos21DiasPage() {
           </div>
 
           {/* ---------------- Funis por ciclo ---------------- */}
-          <SecaoRecolhivel titulo="Onde o rebanho perde, ciclo a ciclo" badge={String(dados.ciclos.length)}>
+          <SecaoRecolhivel titulo="Serviço e prenhez, ciclo a ciclo" badge={String(dados.ciclos.length)}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {dados.ciclos.map((c) => (
                 <div key={c.ciclo} className="card" style={{ background: "var(--surface-2)" }}>
                   <p style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.5rem" }}>
                     Ciclo {c.ciclo} — {formatDate(c.inicio)} a {formatDate(c.fim)}
                   </p>
-                  <Funil c={c} />
+                  <Pares c={c} />
                 </div>
               ))}
             </div>

@@ -20,7 +20,7 @@ from fazenda.rules.programa_reprodutivo import (
     MOTIVO_BAIXADA,
     MOTIVO_DENTRO_PEV,
     MOTIVO_GESTANTE,
-    MOTIVO_SEM_APTIDAO,
+    MOTIVO_IMPUBERE,
     SUSPENSA,
     Ciclo,
     calcular_ciclo,
@@ -102,7 +102,7 @@ class TestR1EntradaNoPrograma:
             p, date(2026, 1, 15), pev_dias=PEV, idade_apta_dias=450, peso_apta_kg=300.0,
         )
         assert e.situacao == INATIVA
-        assert e.motivo == MOTIVO_SEM_APTIDAO
+        assert e.motivo == MOTIVO_IMPUBERE
 
 
 # ═══════════════════ R2 — suspensão temporária ══════════════════════════════
@@ -443,3 +443,139 @@ class TestRetrofitBenchmarkDaCapa:
         servicos = [{"numero_matriz": "1", "data_servico": date(2026, 1, 5), "diagnostico": "POSITIVO"}]
         v = self._valores(animais, servicos, estados=None)
         assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a gestante"
+
+
+# ═══════════════ Janela de DG incompleta — o ciclo que ainda não fechou ══════
+class TestJanelaDgIncompleta:
+    """O denominador da prenhez (PG ELIG) não tem a porta dos 28 dias; o
+    numerador (PREG) tem. Enquanto a janela não fecha, a taxa sai subestimada
+    por construção — e a tela não pode comparar esse ciclo com a meta."""
+
+    def _vaca(self, hoje: date, data_servico: date, diagnostico=None):
+        return _perfil(
+            partos=[_parto(hoje - timedelta(days=200))],
+            servicos=[_servico(data_servico, diagnostico)],
+        )
+
+    def test_ciclo_recem_encerrado_marca_janela_aberta(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=21), fim=hoje - timedelta(days=1))
+        r = calcular_ciclo([self._vaca(hoje, ciclo.inicio)], ciclo, hoje, pev_dias=PEV)
+        assert r.janela_dg_completa is False
+        assert r.para_dict()["janela_dg_completa"] is False
+
+    def test_ciclo_antigo_marca_janela_fechada(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=date(2026, 1, 1), fim=date(2026, 1, 21))
+        r = calcular_ciclo([self._vaca(hoje, date(2026, 1, 5))], ciclo, hoje, pev_dias=PEV)
+        assert r.janela_dg_completa is True
+
+    def test_a_fronteira_e_exatamente_dias_resultado(self):
+        hoje = date(2026, 3, 1)
+        fecha = Ciclo(indice=1, inicio=hoje - timedelta(days=48), fim=hoje - timedelta(days=28))
+        abre = Ciclo(indice=1, inicio=hoje - timedelta(days=47), fim=hoje - timedelta(days=27))
+        assert calcular_ciclo([], fecha, hoje, pev_dias=PEV).janela_dg_completa is True
+        assert calcular_ciclo([], abre, hoje, pev_dias=PEV).janela_dg_completa is False
+
+    def test_a_flag_acompanha_dias_resultado_configurado(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=30), fim=hoje - timedelta(days=10))
+        assert calcular_ciclo([], ciclo, hoje, pev_dias=PEV,
+                              dias_resultado=28).janela_dg_completa is False
+        assert calcular_ciclo([], ciclo, hoje, pev_dias=PEV,
+                              dias_resultado=5).janela_dg_completa is True
+
+    def test_a_prenhez_do_ciclo_aberto_e_subestimada_de_proposito(self):
+        """A prova do problema. Duas vacas inseminadas no mesmo ciclo recém
+        encerrado: a 100 já teve o DG lançado, a 200 ainda não — e nem poderia,
+        porque não passaram 28 dias da IA. As duas estão no PG ELIG; só a 100
+        está no PREG. A tela mostraria 50% de prenhez, quando o que se sabe até
+        aqui é "1 de 1 diagnosticada". Não houve piora de manejo nenhuma: falta
+        tempo. É para isso que serve `janela_dg_completa`."""
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=21), fim=hoje - timedelta(days=1))
+        diagnosticada = _perfil(
+            _animal("100"),
+            partos=[_parto(hoje - timedelta(days=200), "100")],
+            servicos=[_servico(ciclo.inicio, "POSITIVO", "100")],
+        )
+        aguardando = _perfil(
+            _animal("200"),
+            partos=[_parto(hoje - timedelta(days=200), "200")],
+            servicos=[_servico(ciclo.fim, None, "200")],
+        )
+        r = calcular_ciclo([diagnosticada, aguardando], ciclo, hoje, pev_dias=PEV)
+        assert sorted(r.pg_elig) == ["100", "200"], "as duas no denominador"
+        assert r.preg == ["100"], "só a diagnosticada no numerador"
+        assert r.taxa_prenhez == 50.0
+        assert r.janela_dg_completa is False, "o aviso que impede ler isso como fracasso"
+
+
+# ═══════════ R1 no benchmark da Capa — `a_descartar` fora do programa ═══════
+class TestDescartadaForaDoBenchmark:
+    """`_repro_benchmark` filtrava o denominador por ESTADOS_APTOS mas não
+    consultava `a_descartar` em lugar nenhum — `classificar_animal` não recebe
+    esse campo. A vaca marcada para descarte seguia sendo cobrada por uma
+    inseminação que ninguém pretende fazer."""
+
+    def _valores(self, animais, servicos, estados, **kw):
+        from fazenda.rules.indicadores import _repro_benchmark
+
+        lista = _repro_benchmark(
+            animais, servicos, [], date(2026, 1, 1), categoria="todas",
+            estados=estados, hoje=HOJE, **kw,
+        )
+        return {x["chave"]: x["valor"] for x in lista}
+
+    def test_descartada_sai_do_denominador_da_taxa_de_servico(self):
+        animais = [{"numero": "1"}, {"numero": "2"}, {"numero": "3", "a_descartar": True}]
+        estados = {"1": "apta", "2": "apta", "3": "apta"}
+        servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
+        v = self._valores(animais, servicos, estados)
+        assert v["taxa_servico"] == 50.0, "1 servida de 2 no programa — a descartada não conta"
+
+    def test_descartada_inseminada_sai_tambem_do_numerador(self):
+        """O caso que quebrava a conta: marcada DEPOIS de ter sido inseminada.
+        Cortar só o denominador deixaria o serviço dela no numerador e levaria
+        a taxa acima de 100%."""
+        animais = [{"numero": "1", "a_descartar": True}, {"numero": "2"}]
+        estados = {"1": "apta", "2": "apta"}
+        servicos = [
+            _servico(date(2026, 1, 5), "POSITIVO", "1"),
+            _servico(date(2026, 1, 6), "POSITIVO", "2"),
+        ]
+        v = self._valores(animais, servicos, estados)
+        assert v["taxa_servico"] == 100.0, "1 servida de 1 no programa"
+        assert v["taxa_servico"] <= 100.0
+
+    def test_descartada_prenhe_continua_no_inventario(self):
+        """`perc_vacas_prenhas` é inventário, não taxa do programa: a vaca
+        marcada para descarte que está prenhe continua prenhe."""
+        animais = [{"numero": "1"}, {"numero": "2", "a_descartar": True}]
+        estados = {"1": "apta", "2": "gestante"}
+        v = self._valores(animais, [], estados)
+        assert v["perc_vacas_prenhas"] == 50.0, "1 prenhe de 2 fêmeas — o rebanho inteiro"
+
+    def test_o_corte_vale_no_fallback_de_sit_rep(self):
+        animais = [
+            {"numero": "1", "sit_rep": "Vaz."},
+            {"numero": "2", "sit_rep": "Ins."},
+            {"numero": "3", "sit_rep": "Vaz.", "a_descartar": True},
+        ]
+        servicos = [_servico(date(2026, 1, 5), "POSITIVO", "1")]
+        v = self._valores(animais, servicos, estados=None)
+        assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a descartada"
+
+    def test_descartar_nums_explicito_vence_o_recorte_local(self):
+        """O painel de vacas recebe só os animais que já pariram, mas os
+        serviços são separados por `ordem_parto` — dois cortes independentes.
+        Por isso o conjunto vem do rebanho inteiro."""
+        animais_vaca = [{"numero": "1"}, {"numero": "2"}]
+        servicos = [
+            _servico(date(2026, 1, 5), "POSITIVO", "1"),
+            _servico(date(2026, 1, 6), "POSITIVO", "9"),  # novilha descartada que vazou
+        ]
+        estados = {"1": "apta", "2": "apta"}
+        v = self._valores(animais_vaca, servicos, estados, descartar_nums={"9"})
+        assert v["taxa_concepcao"] == 100.0
+        assert v["servicos_por_prenhez"] == 1.0, "o serviço da descartada não entra na conta"

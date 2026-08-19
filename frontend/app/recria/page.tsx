@@ -333,7 +333,7 @@ function AbaReproducao() {
   const anoAtras = () => { const x = new Date(); x.setFullYear(x.getFullYear() - 1); return x.toISOString().slice(0, 10); };
   const [ini, setIni] = useState(anoAtras());
   const [fim, setFim] = useState(hoje());
-  const [ciclos, setCiclos] = useState<any | null>(null);
+  const [ciclos, setCiclos] = useState<Awaited<ReturnType<typeof fetchRecriaTaxaPrenhez>> | null>(null);
   useEffect(() => { fetchRecriaIdadeParto().then(setD).catch(() => setD(null)); }, []);
   const calcularPrenhez = () => fetchRecriaTaxaPrenhez(ini, fim).then(setCiclos).catch(() => setCiclos(null));
   useEffect(() => { calcularPrenhez(); }, []);
@@ -419,13 +419,21 @@ function AbaReproducao() {
             )}
             <div style={{ overflowX: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Ciclo</th><th>Período</th><th>Elegíveis</th><th>Servidos</th><th>Prenhes</th><th>Tx. Serviço</th><th>Tx. Concepção</th><th>Tx. Prenhez</th></tr></thead>
+                {/* "Elegíveis p/ prenhez" precisa aparecer: a Tx. Prenhez é
+                    prenhes ÷ elegíveis-p/-prenhez, não prenhes ÷ elegíveis. Os
+                    dois diferem quando há baixa na janela de diagnóstico, e sem
+                    a coluna os números não reconciliam na tela. */}
+                <thead><tr><th>Ciclo</th><th>Período</th><th title="Elegíveis para inseminação: aptas em pelo menos 11 dos 21 dias">Elegíveis</th><th>Servidos</th><th title="Elegíveis para prenhez: das elegíveis, as que seguiam no rebanho no fim da janela de diagnóstico">Eleg. prenhez</th><th>Prenhes</th><th>Tx. Serviço</th><th>Tx. Concepção</th><th title="Prenhes ÷ elegíveis para prenhez. Não é serviço × concepção.">Tx. Prenhez</th></tr></thead>
                 <tbody>
-                  {ciclos.ciclos.map((c: any) => (
-                    <tr key={c.ciclo}>
+                  {ciclos.ciclos.map((c) => (
+                    <tr key={c.ciclo} style={{ opacity: c.janela_dg_completa ? 1 : 0.65 }}
+                      title={c.janela_dg_completa ? undefined : "Janela de diagnóstico ainda aberta: a prenhez e a concepção deste ciclo ainda vão subir."}>
                       <td style={{ fontWeight: 600 }}>{c.ciclo}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{c.inicio.split("-").reverse().join("/")}–{c.fim.split("-").reverse().join("/")}</td>
-                      <td>{c.elegiveis}</td><td>{c.servidos}</td><td>{c.prenhes}</td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {c.inicio.split("-").reverse().join("/")}–{c.fim.split("-").reverse().join("/")}
+                        {!c.janela_dg_completa && <span style={{ marginLeft: "0.35rem", fontSize: "0.68rem", color: "var(--text-muted)" }}>(em apuração)</span>}
+                      </td>
+                      <td>{c.elegiveis}</td><td>{c.servidos}</td><td>{c.pg_elig}</td><td>{c.prenhes}</td>
                       <td>{c.taxa_servico != null ? `${c.taxa_servico}%` : "—"}</td>
                       <td>{c.taxa_concepcao != null ? `${c.taxa_concepcao}%` : "—"}</td>
                       <td><strong>{c.taxa_prenhez != null ? `${c.taxa_prenhez}%` : "—"}</strong></td>
