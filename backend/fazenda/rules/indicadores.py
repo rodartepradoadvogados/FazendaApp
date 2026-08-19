@@ -11,6 +11,7 @@ Referências de negócio (Seção 5 do CONTEXTO_PROJETO_FAZENDA.md):
 from __future__ import annotations
 
 from datetime import date, timedelta
+from math import ceil
 from typing import Optional
 
 from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_raca
@@ -18,6 +19,8 @@ from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.parametros import (
     BENCHMARK_METAS,
     data_corte_taxa_concepcao,
+    dias_minimos_no_ciclo,
+    dias_resultado_conhecido,
     gestacao_dias_min,
     gestacao_dias_referencia,
     get_param,
@@ -206,37 +209,163 @@ def _metas_benchmark(categoria: str) -> dict[str, dict]:
     return metas
 
 
+def _parametros_ciclos() -> dict:
+    """Os mesmos parâmetros que `GET /reproducao/ciclos-21-dias` passa para
+    `calcular_series` — lidos de uma vez só.
+
+    Cada acessor de `fazenda.rules.parametros` abre a sua própria sessão de
+    banco, e `_benchmark_categorias` chama o benchmark 3x (todas/vaca/novilha):
+    ler aqui e repassar o dicionário troca 18 idas ao banco por 6.
+    """
+    return {
+        "pev_dias": pev_dias(),
+        "dias_minimos": dias_minimos_no_ciclo(),
+        "dias_resultado": dias_resultado_conhecido(),
+        "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
+        "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
+        "peso_apta_kg": peso_apta_min(),
+    }
+
+
+def _montar_perfis(
+    animais: list[dict],
+    servicos: list[dict],
+    partos: list[dict],
+    aplicacoes_iatf: list[dict],
+    peso_por_animal: dict[str, float],
+) -> list:
+    """`PerfilAnimal` (ver `programa_reprodutivo.montar_perfil`) de cada animal,
+    com os registros DELE indexados por `numero_matriz`.
+
+    O peso não viaja no dict do animal (vem de outra tabela, a pesagem
+    corporal), então é injetado aqui — sem ele a novilha nulípara nunca atinge
+    a puberdade e cai fora de todo denominador.
+
+    Monte SEMPRE a partir do rebanho inteiro e dos registros completos: o
+    recorte por categoria é feito depois, pelo próprio perfil (`eh_vaca`).
+    """
+    from fazenda.rules.programa_reprodutivo import montar_perfil
+
+    servicos_por: dict[str, list] = {}
+    for s in servicos:
+        servicos_por.setdefault(s.get("numero_matriz"), []).append(s)
+    partos_por: dict[str, list] = {}
+    for p in partos:
+        partos_por.setdefault(p.get("numero_matriz"), []).append(p)
+    iatf_por: dict[str, list] = {}
+    for ap in aplicacoes_iatf:
+        iatf_por.setdefault(ap.get("numero_matriz"), []).append(ap)
+
+    perfis = []
+    for a in animais:
+        numero = a.get("numero")
+        perfis.append(montar_perfil(
+            {**a, "peso_kg": peso_por_animal.get(numero)},
+            partos=partos_por.get(numero, []),
+            servicos=servicos_por.get(numero, []),
+            aplicacoes_iatf=iatf_por.get(numero, []),
+        ))
+    return perfis
+
+
+def _taxas_por_ciclos(
+    perfis: list, categoria: str, desde: date, hoje: date, params: dict,
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Taxas de serviço, prenhez e concepção do painel, saídas do motor de
+    ciclos de 21 dias (`programa_reprodutivo`, regras R1–R9) — o MESMO cálculo
+    de `GET /reproducao/ciclos-21-dias`.
+
+    Por que isto substituiu a conta anterior: ela dividia um conjunto ACUMULADO
+    desde `desde` (~7,6 meses em produção) por uma contagem INSTANTÂNEA de
+    aptas de hoje. Toda fêmea que emprenhava saía do denominador e ficava no
+    numerador, então o resultado estourava 100% POR CONSTRUÇÃO — a Capa exibia
+    241,9% de taxa de serviço e 487,5% de prenhez em novilhas. E as metas
+    (50% de serviço, 18% de prenhez) são metas POR CICLO DE 21 DIAS, padrão
+    DairyComp: comparar um acumulado de 7,6 meses com elas não faria sentido
+    nem com o denominador certo.
+
+    A agregação dos N ciclos soma NUMERADORES e DENOMINADORES (média ponderada
+    pelo tamanho de cada ciclo); a média simples das porcentagens daria o mesmo
+    peso a um ciclo de 3 vacas e a um de 300.
+
+    Só os ciclos com `janela_dg_completa` entram em prenhez e concepção: com a
+    janela de diagnóstico ainda aberta o denominador já está cheio e o
+    numerador não, e a taxa sai subestimada por construção (ver R7). Se nenhum
+    ciclo fechou a janela, as duas voltam None em vez de um número inventado.
+    """
+    from fazenda.rules.programa_reprodutivo import calcular_series, ciclos_21_dias
+
+    # Fallback legado: sem NENHUM registro no rebanho (chamador que passa só a
+    # lista de animais — o relatório personalizado e os testes que fazem isso)
+    # não há ciclo para calcular. O teste é sobre o rebanho INTEIRO, não sobre
+    # a categoria: uma categoria sem serviço nenhum tem taxa 0%, que é um fato
+    # do manejo, e não a ausência de dados que este fallback trata.
+    if not any(p.partos or p.servicos for p in perfis):
+        return None, None, None
+
+    if categoria == "vaca":
+        selecionados = [p for p in perfis if p.eh_vaca]
+    elif categoria == "novilha":
+        selecionados = [p for p in perfis if not p.eh_vaca]
+    else:
+        selecionados = list(perfis)
+
+    if not selecionados:
+        return None, None, None
+
+    n_ciclos = max(1, min(26, ceil(((hoje - desde).days + 1) / 21)))
+    ciclos = ciclos_21_dias(hoje, modo="fim", n_ciclos=n_ciclos)
+    serie = calcular_series(selecionados, ciclos, hoje, **params)
+
+    fechados = [r for r in serie if r.janela_dg_completa]
+    bred = sum(len(r.bred) for r in serie)
+    br_elig = sum(len(r.br_elig) for r in serie)
+    preg = sum(len(r.preg) for r in fechados)
+    pg_elig = sum(len(r.pg_elig) for r in fechados)
+    com_resultado = sum(r.servicos_com_resultado for r in fechados)
+
+    return (
+        round(100 * bred / br_elig, 1) if br_elig else None,
+        round(100 * preg / pg_elig, 1) if pg_elig else None,
+        round(100 * preg / com_resultado, 1) if com_resultado else None,
+    )
+
+
 def _repro_benchmark(
     animais: list[dict], servicos: list[dict], partos: list[dict], desde: date, categoria: str = "todas",
     estados: dict[str, str] | None = None, hoje: date | None = None,
     descartar_nums: set[str] | None = None,
+    aplicacoes_iatf: list[dict] | None = None,
+    peso_por_animal: dict[str, float] | None = None,
+    perfis: list | None = None,
+    params_ciclos: dict | None = None,
 ) -> list[dict]:
     """Painel de benchmark reprodutivo de um subconjunto do rebanho — usado
     para 'todas', 'vaca' e 'novilha'.
 
-    Três correções em relação ao que este painel fazia antes (ver o modelo
-    lógico em `fazenda.rules.programa_reprodutivo`):
+    As TRÊS TAXAS (serviço, concepção e prenhez) saem do motor de ciclos de 21
+    dias — ver `_taxas_por_ciclos`, e o modelo lógico (R1–R9) no topo de
+    `fazenda.rules.programa_reprodutivo`. É o mesmo cálculo que a tela de
+    Ciclos de 21 Dias mostra, então os dois lados do sistema passam a dar o
+    mesmo número. Antes, cada uma dessas taxas dividia um acumulado do período
+    inteiro pela contagem instantânea de aptas de HOJE, e estourava 100% por
+    construção (241,9% de serviço em produção).
 
-    1. **Gestante saiu do denominador.** O denominador era
-       `prenhes + vazias + inseminadas`, ou seja, incluía as prenhes. Vaca
-       prenhe não pode ser inseminada — não pode entrar no denominador de uma
-       taxa de serviço. Agora o denominador são as APTAS (regra R4).
-    2. **Estado ao vivo em vez de `sit_rep`.** O corte era feito pelo texto
-       congelado do GERAL.csv do Ideagri, que só muda no próximo upload. Agora
-       usa o estado recalculado dos registros (`_estados_ao_vivo`), o mesmo que
-       as listas de Rebanho — os dois lados passam a bater. Sem estados (ex.:
-       chamador legado que passa só a lista de animais), cai no `sit_rep` de
-       antes, preservando o comportamento desses consumidores.
-    3. **Taxa de prenhez deixou de ser serviço × concepção** (regra R9). Passa
-       a ser prenhes do período ÷ aptas, com os mesmos serviços avaliáveis.
-    4. **`a_descartar` saiu do programa** (regra R1). O animal marcado para
-       descarte não estava sendo cortado: ficava no denominador cobrando uma
-       inseminação que ninguém pretende fazer. E se chegou a ser inseminado
-       antes da marcação, ficava no numerador também — o que podia levar a
-       taxa de serviço acima de 100%.
+    Os demais indicadores da lista continuam como estavam, sobre os serviços do
+    período: `servicos_por_prenhez`, `taxa_perda_prenhez`, `dias_abertos`,
+    `del_1a_ia`, `del_medio`, `iep_meses` e `perc_vacas_prenhas` (este último é
+    INVENTÁRIO — quantas fêmeas estão prenhes hoje —, não taxa do programa).
 
-    E aplica a regra dos 28 dias (R7): serviço dos últimos 27 dias não entra em
-    taxa nenhuma enquanto o desfecho não for conhecido.
+    Parâmetros do motor de ciclos:
+      - `aplicacoes_iatf`/`peso_por_animal` alimentam `montar_perfil` (o peso
+        não está no dict do animal); ambos opcionais, porque há chamadores
+        legados que passam só animais/serviços/partos.
+      - `perfis`/`params_ciclos`, quando vêm preenchidos, são reaproveitados de
+        `_benchmark_categorias`: os perfis precisam ser montados do rebanho
+        INTEIRO com os registros COMPLETOS de cada animal (o recorte de
+        categoria é feito pelo próprio perfil, ver `_taxas_por_ciclos`), e os
+        parâmetros vêm do banco, uma leitura por acessor. Sem eles, cada um é
+        montado/lido aqui — o caminho dos chamadores diretos e dos testes.
 
     `descartar_nums` deve vir do rebanho INTEIRO, não do recorte desta
     categoria: os animais são separados em vaca/novilha por `vacas_nums` e os
@@ -245,7 +374,7 @@ def _repro_benchmark(
     no painel de vacas. Sem o argumento, cai no recorte local, que é o que os
     chamadores diretos e os testes precisam.
     """
-    from fazenda.rules.programa_reprodutivo import ESTADOS_APTOS, conta_em_taxa
+    from fazenda.rules.programa_reprodutivo import conta_em_taxa
     from fazenda.rules.estado_reprodutivo import GESTANTE as _GESTANTE, NAO_APTA as _NAO_APTA
 
     hoje = hoje or date.today()
@@ -254,36 +383,27 @@ def _repro_benchmark(
         descartar_nums = {
             a.get("numero") for a in animais if a.get("a_descartar") and a.get("numero")
         }
-    # R1 — quem está marcado a descartar não está mais no programa reprodutivo.
-    no_programa = [a for a in animais if a.get("numero") not in descartar_nums]
 
+    # `prenhes` é o numerador de `perc_vacas_prenhas` (INVENTÁRIO). Baixada É
+    # porta de saída sem exceção (diferente de a_descartar): sem o corte, uma
+    # gestante baixada ficaria no numerador mesmo já fora de `total` (abaixo),
+    # podendo passar de 100%.
     if estados:
-        aptas = sum(1 for a in no_programa if estados.get(a.get("numero")) in ESTADOS_APTOS)
-        # Baixada É porta de saída sem exceção (diferente de a_descartar):
-        # sem o corte, uma gestante baixada ficaria no numerador mesmo já
-        # fora de `total` (abaixo), podendo passar de 100%.
         prenhes = sum(
             1 for a in animais
             if estados.get(a.get("numero")) == _GESTANTE and not _baixada_em(a, hoje)
         )
     else:
-        # Fallback legado: sem registros carregados não há o que recalcular.
-        prenhes = vazias = inseminadas = 0
-        for a in animais:
-            sit = (a.get("sit_rep") or "").strip()
-            if sit == "Ges." and not _baixada_em(a, hoje):
-                prenhes += 1  # inventário — ver `total` abaixo
-            elif a.get("numero") in descartar_nums:
-                continue
-            elif sit.startswith("Vaz."):
-                vazias += 1
-            elif sit == "Ins.":
-                inseminadas += 1
-        aptas = vazias + inseminadas  # sem as prenhes, ao contrário de antes
+        # Fallback legado: sem registros carregados não há o que recalcular,
+        # e o único corte possível é o `sit_rep` congelado do CSV.
+        prenhes = sum(
+            1 for a in animais
+            if (a.get("sit_rep") or "").strip() == "Ges." and not _baixada_em(a, hoje)
+        )
     # `prenhes` é INVENTÁRIO, não taxa do programa: responde "quantas das
     # fêmeas estão prenhes hoje". A vaca marcada para descarte que está
     # prenhe continua prenhe e continua comendo — por isso ela fica no
-    # numerador mesmo fora de `no_programa` (que a R1 já derrubou acima).
+    # numerador, embora a R1 a tenha tirado do programa reprodutivo.
     #
     # `total` (denominador de perc_vacas_prenhas) ERA `len(animais)` — o
     # rebanho fêmeo INTEIRO, bezerra incluída: uma bezerra de seis meses não
@@ -333,17 +453,17 @@ def _repro_benchmark(
             avaliaveis.append(s)
 
     pos = sum(1 for s in avaliaveis if _diag_upper(s.get("diagnostico")) == "POSITIVO")
-    neg = sum(1 for s in avaliaveis if _diag_upper(s.get("diagnostico")) == "NEGATIVO")
-    diag = pos + neg
-    taxa_concepcao = round(100 * pos / diag, 1) if diag else None
-    servidas = {s.get("numero_matriz") for s in avaliaveis if s.get("numero_matriz")}
-    taxa_servico = round(100 * len(servidas) / aptas, 1) if aptas else None
-    # R9 — prenhes ÷ aptas, NÃO serviço × concepção.
-    concebidas = {
-        s.get("numero_matriz") for s in avaliaveis
-        if _diag_upper(s.get("diagnostico")) == "POSITIVO" and s.get("numero_matriz")
-    }
-    taxa_prenhez_ciclo = round(100 * len(concebidas) / aptas, 1) if aptas else None
+    # As três taxas do painel vêm do motor de ciclos de 21 dias (R1–R9), não
+    # mais de um acumulado do período dividido pelas aptas de hoje — ver
+    # `_taxas_por_ciclos` para o porquê. A chave de saída continua
+    # `taxa_prenhez_ciclo`: é dela que o frontend depende.
+    if perfis is None:
+        perfis = _montar_perfis(
+            animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal or {},
+        )
+    taxa_servico, taxa_prenhez_ciclo, taxa_concepcao = _taxas_por_ciclos(
+        perfis, categoria, desde, hoje, params_ciclos or _parametros_ciclos(),
+    )
     servicos_por_prenhez = round(len(avaliaveis) / pos, 1) if pos else None
     perdas = sum(1 for s in serv_periodo if s.get("data_perda_prenhez"))
     taxa_perda = round(100 * perdas / pos, 1) if pos else None
@@ -385,11 +505,23 @@ def _repro_benchmark(
 def _benchmark_categorias(
     animais: list[dict], servicos: list[dict], partos: list[dict], vacas_nums: set, desde: date,
     estados: dict[str, str] | None = None, hoje: date | None = None,
+    aplicacoes_iatf: list[dict] | None = None,
+    peso_por_animal: dict[str, float] | None = None,
 ) -> dict:
     """Benchmark separado por categoria: todas / vaca (já pariu) / novilha.
 
     `estados` são os estados reprodutivos AO VIVO (ver `_estados_ao_vivo`) —
     é o que faz o denominador deixar de sair do `sit_rep` congelado do CSV.
+
+    Os PERFIS do motor de ciclos são montados UMA VEZ, aqui, do rebanho inteiro
+    e com os registros completos de cada animal, e o recorte de categoria é
+    feito lá dentro pelo próprio perfil (`eh_vaca`). É o que corrige o
+    double-count da novilha que PARIU no meio do período: `animais_vaca`/
+    `animais_novilha` a separam pelo parto, mas `serv_vaca`/`serv_novilha`
+    fatiam os SERVIÇOS por `ordem_parto` — as inseminações dela de antes do
+    parto caíam no recorte de novilha e as de depois no de vaca, e ela era
+    contada nos dois painéis. (Os dois recortes seguem valendo para os
+    indicadores que não são as três taxas — DEL, IEP, dias abertos etc.)
     """
     animais_vaca = [a for a in animais if a.get("numero") in vacas_nums]
     animais_novilha = [a for a in animais if a.get("numero") not in vacas_nums]
@@ -400,7 +532,13 @@ def _benchmark_categorias(
     descartar_nums = {
         a.get("numero") for a in animais if a.get("a_descartar") and a.get("numero")
     }
-    comum = {"estados": estados, "hoje": hoje, "descartar_nums": descartar_nums}
+    perfis = _montar_perfis(
+        animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal or {},
+    )
+    comum = {
+        "estados": estados, "hoje": hoje, "descartar_nums": descartar_nums,
+        "perfis": perfis, "params_ciclos": _parametros_ciclos(),
+    }
     return {
         "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas", **comum),
         "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca", **comum),
@@ -899,12 +1037,15 @@ def calcular_indicadores(
 
     # ---------------------------------------------------------------
     # Benchmark reprodutivo (eficiência) — desde a data de corte (_concepcao_desde()).
-    # Prenhez = prenhes ÷ aptas (R9) — NÃO é serviço × concepção.
+    # Serviço/concepção/prenhez saem do motor de ciclos de 21 dias (R1–R9), a
+    # mesma conta da tela de Ciclos de 21 Dias: média ponderada dos ciclos que
+    # cabem no período, e NÃO um acumulado dividido pelas aptas de hoje.
     # Calculado para todas / vaca (já pariu) / novilha.
     # ---------------------------------------------------------------
     benchmark_categorias = _benchmark_categorias(
         animais, servicos, partos, vacas_nums, concepcao_desde,
         estados=estados_por_animal, hoje=hoje,
+        aplicacoes_iatf=aplicacoes_iatf or [], peso_por_animal=peso_por_animal,
     )
     benchmark = benchmark_categorias["todas"]
     _bt = {b["chave"]: b["valor"] for b in benchmark}

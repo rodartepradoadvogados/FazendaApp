@@ -778,13 +778,18 @@ class TestAnaliseReprodutiva:
 # ============================================================
 
 class TestBenchmarkCategorias:
+    # As três taxas do painel saem do motor de ciclos de 21 dias, que só conta
+    # quem ENTROU no programa reprodutivo (R1): a novilha precisa de idade e
+    # peso de puberdade para existir em qualquer denominador. Por isso as
+    # novilhas aqui têm `data_nasc` e peso (ver `_peso` abaixo) — sem eles não
+    # há rebanho novilha nenhum para medir.
     def _dados(self):
         # Vaca = já pariu (tem parto); novilha = nunca pariu.
         animais = [
             {"numero": "10", "grupo_primario": "02 - VACAS ALTA", "sit_rep": "Ges."},
             {"numero": "11", "grupo_primario": "02 - VACAS ALTA", "sit_rep": "Vaz. apt."},
-            {"numero": "20", "grupo_primario": "12 - NOVILHAS", "sit_rep": "Ins."},
-            {"numero": "21", "grupo_primario": "12 - NOVILHAS", "sit_rep": "Vaz. apt."},
+            {"numero": "20", "grupo_primario": "12 - NOVILHAS", "sit_rep": "Ins.", "data_nasc": date(2024, 1, 1)},
+            {"numero": "21", "grupo_primario": "12 - NOVILHAS", "sit_rep": "Vaz. apt.", "data_nasc": date(2024, 1, 1)},
         ]
         servicos = [
             # vacas (ordem_parto >= 1)
@@ -800,18 +805,22 @@ class TestBenchmarkCategorias:
         ]
         return animais, servicos, partos
 
+    _peso = {"20": 400.0, "21": 400.0}
+
     def test_separa_vaca_e_novilha(self):
         animais, servicos, partos = self._dados()
-        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 7))
+        r = calcular_indicadores(
+            animais, servicos, partos, data_ref=date(2026, 7, 7), peso_por_animal=self._peso,
+        )
         cats = r["benchmark_categorias"]
         assert set(cats) == {"todas", "vaca", "novilha"}
 
         def val(lista, chave):
             return next(b["valor"] for b in lista if b["chave"] == chave)
 
-        # Vacas: 1 positivo / (1 pos + 1 neg) = 50% concepção.
+        # Vacas: 1 prenhez / 2 serviços com resultado = 50% concepção.
         assert val(cats["vaca"], "taxa_concepcao") == 50.0
-        # Novilhas: 2 positivos, 0 negativos → 100% concepção.
+        # Novilhas: 2 prenhezes / 2 serviços com resultado → 100% concepção.
         assert val(cats["novilha"], "taxa_concepcao") == 100.0
         # Novilhas não têm parto → IEP fica indefinido.
         assert val(cats["novilha"], "iep_meses") is None
