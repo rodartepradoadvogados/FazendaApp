@@ -383,6 +383,7 @@ def baixada_em(perfil: PerfilAnimal, d: date) -> bool:
 def estado_no_dia(
     perfil: PerfilAnimal, d: date, *, pev_dias: int, del_max_1o_servico: int | None = None,
     idade_apta_dias: int | None = None, peso_apta_kg: float | None = None,
+    idade_atraso_dias: int | None = None,
 ) -> EstadoDia:
     """Situação do animal no programa reprodutivo NA DATA `d` (R1–R4).
 
@@ -409,6 +410,7 @@ def estado_no_dia(
         idade_dias=perfil.idade_dias_em(d),
         peso_kg=perfil.peso_kg,
         idade_apta_dias=idade_apta_dias,
+        idade_atraso_dias=idade_atraso_dias,
         peso_apta_kg=peso_apta_kg,
         raca=perfil.raca,
     )

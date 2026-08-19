@@ -363,7 +363,7 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
     # `animal_atende_criterios`/`sugerir_movimentacoes` rodam em loop (às
     # vezes um por animal por lote), e cada leitura de parâmetro abre uma
     # sessão de banco própria (mesmo cuidado do calendário sanitário).
-    pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg = _parametros_estado_vivo()
+    pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg, idade_atraso_dias = _parametros_estado_vivo()
 
     return {
         "animais": animais,
@@ -376,6 +376,7 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
         "categorias_ativas": categorias_ativas,
         "pev_dias": pev_dias, "del_max_1o_servico": del_max_1o_servico,
         "idade_apta_dias": idade_apta_dias, "peso_apta_kg": peso_apta_kg,
+        "idade_atraso_dias": idade_atraso_dias,
     }
 
 

@@ -420,3 +420,43 @@ class TestEstoqueSemenCRUD:
         c, engine = client
         r = c.post("/cadastro/estoque-semen", json={"touro_nome": "X", "tipo": "clone", "doses": 5})
         assert r.status_code == 400
+
+
+class TestNovilhaAtrasadaNaListaAInseminar:
+    """A cor da novilha em "a inseminar" era "verde" por construção (o
+    semáforo só olhava DPP, que nulípara não tem). Como o relatório de não
+    conformidades conta exatamente os "vermelho" desta lista, o indicador era
+    cego para a categoria majoritária desta fazenda. Agora a cor da novilha
+    sai do estado AO VIVO: ATRASADA -> vermelho, APTA -> verde."""
+
+    def test_novilha_atrasada_sai_vermelha_e_apta_sai_verde(self, client):
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            # 26 meses: passou do teto de idade para a 1ª cobertura (16) ->
+            # ATRASADA. Sem parto e sem serviço, entra em "a inseminar".
+            s.add(Animal(numero="940", sexo="F", ativo=True, categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=790)))
+            # 15,5 meses: passou do piso de aptidão (15) e ainda não do teto -> APTA.
+            s.add(Animal(numero="941", sexo="F", ativo=True, categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=472)))
+            s.commit()
+        dados = c.get("/relatorios/manejo").json()
+        por_numero = {x["numero"]: x for x in dados["a_inseminar"]}
+        assert set(por_numero) == {"940", "941"}
+        assert por_numero["940"]["cor"] == "vermelho"
+        assert por_numero["940"]["situacao"] == "Atrasada"
+        assert por_numero["941"]["cor"] == "verde"
+        assert por_numero["941"]["situacao"] == "Apta"
+
+    def test_vaca_dentro_da_meta_continua_verde(self, client):
+        """Sentinela: o ramo da vaca (semáforo por DPP) não mudou."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="942", sexo="F", ativo=True, sit_rep="Vaz. apt."))
+            s.add(Parto(numero_matriz="942", data_parto=hoje - timedelta(days=50), ordem_parto=1))
+            s.commit()
+        dados = c.get("/relatorios/manejo").json()
+        item = next(x for x in dados["a_inseminar"] if x["numero"] == "942")
+        assert item["cor"] == "verde"

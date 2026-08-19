@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fazenda.api.routers.recria import _contexto_categoria, classificar_categoria
+from fazenda.api.routers.recria import _contexto_categoria, classificar_categoria, situacao_reprodutiva_casa
 from fazenda.rules.estado_reprodutivo import GESTANTE
 from fazenda.rules.gestation import dias_gestacao
 from fazenda.rules.parametros import pre_parto_max
@@ -132,6 +132,7 @@ def _contexto_animal(animal: dict, hoje: date, dados: dict) -> dict:
         # vezes um por animal por lote em `sugerir_movimentacoes`).
         pev_dias=dados.get("pev_dias"), del_max_1o_servico=dados.get("del_max_1o_servico"),
         idade_apta_dias=dados.get("idade_apta_dias"), peso_apta_kg=dados.get("peso_apta_kg"),
+        idade_atraso_dias=dados.get("idade_atraso_dias"),
     )
 
 
@@ -186,7 +187,12 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     # avaliada pelo texto velho aqui, e a sugestão de movimentação de lote
     # (a razão de ser deste módulo) mandava ela pro lote errado até o
     # próximo upload de planilha.
-    if lote.situacao_reprodutiva and ctx.get("situacao_reprodutiva_viva") != lote.situacao_reprodutiva:
+    # `situacao_reprodutiva_casa` (e não `!=` direto): "vazia" continua
+    # casando com a novilha/vaca ATRASADA, que hoje sai de
+    # `_situacao_reprodutiva_3` como "vazia_atrasada" — nenhum lote já
+    # cadastrado muda de comportamento. Um lote cadastrado com
+    # "vazia_atrasada" casa só com as atrasadas.
+    if not situacao_reprodutiva_casa(lote.situacao_reprodutiva, ctx.get("situacao_reprodutiva_viva")):
         return False
 
     if lote.categorias:

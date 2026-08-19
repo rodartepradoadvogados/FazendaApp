@@ -128,3 +128,43 @@ class TestNaoConformidades:
         assert corpo["resumo"] == {
             "critico": criticos, "atencao": atencoes, "ok": oks, "total": len(corpo["itens"]),
         }
+
+
+class TestNovilhaAtrasadaContaComoNaoConformidade:
+    """O contador de "a inseminar" soma os vermelhos da lista semaforizada —
+    e toda novilha era verde por construção, então o indicador era
+    estruturalmente cego para dois terços deste rebanho (74 novilhas contra
+    37 vacas). Com a novilha ATRASADA saindo vermelha, ela passa a ser
+    contada; o rótulo perde o "Vacas" junto."""
+
+    def test_novilha_em_atraso_entra_no_contador_de_a_inseminar(self, client):
+        c, engine = client
+        hoje = _hoje()
+        r_antes = c.get("/nao-conformidades/").json()
+        item_antes = next(i for i in r_antes["itens"] if i["chave"] == "manejo_a_inseminar")
+        assert item_antes["valor"] == 0
+        assert item_antes["label"] == "Atrasadas para inseminar"
+
+        with Session(engine) as s:
+            # Novilha nulípara de 26 meses, nunca servida: ATRASADA (passou do
+            # teto de 16 meses para a 1ª cobertura).
+            s.add(Animal(numero="960", sexo="F", ativo=True, categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=790)))
+            s.commit()
+        item = next(i for i in c.get("/nao-conformidades/").json()["itens"]
+                    if i["chave"] == "manejo_a_inseminar")
+        assert item["valor"] == 1
+        assert item["status"] == "atencao"
+
+    def test_novilha_recem_apta_nao_conta(self, client):
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            # 15,5 meses: apta, ainda dentro do prazo — não é não conformidade.
+            s.add(Animal(numero="961", sexo="F", ativo=True, categoria_abrev="Novilha",
+                         data_nasc=hoje - timedelta(days=472)))
+            s.commit()
+        item = next(i for i in c.get("/nao-conformidades/").json()["itens"]
+                    if i["chave"] == "manejo_a_inseminar")
+        assert item["valor"] == 0
+        assert item["status"] == "ok"

@@ -57,7 +57,10 @@ function statusDe(cfg: typeof LISTAS[number], it: Item): string {
     case "inseminadas_1_29": return "Aguardando toque";
     case "inseminadas_30_59": return it.atrasada ? "Toque atrasado" : "Aguardando toque";
     case "inseminadas_60_mais": return it.atrasada ? "Reconfirmação atrasada" : "Aguardando reconfirmação";
-    case "novilhas_aptas_vazias": return "Apta, vazia";
+    // `atrasada` aqui = passou da idade máxima para a 1ª cobertura
+    // (parâmetro idade_max_1a_cobertura_meses) e continua vazia — vem
+    // ordenada no topo da lista pelo backend.
+    case "novilhas_aptas_vazias": return it.atrasada ? "Atrasada para a 1ª cobertura" : "Apta, vazia";
     case "verificar_aptidao": return "Verificar aptidão";
     case "novilhas_gestantes":
     case "vacas_gestantes": return "Gestante confirmada";

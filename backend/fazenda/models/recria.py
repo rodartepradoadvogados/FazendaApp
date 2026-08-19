@@ -174,7 +174,9 @@ class CategoriaManejo(SQLModel, table=True):
     # Critérios adicionais — todos opcionais; None = não filtra por aquele
     # critério. Permitem compor categorias como "Prenha", "Em lactação",
     # "Seca", "Vazia atrasada" etc. além de idade/peso.
-    situacao_reprodutiva: Optional[str] = None   # "vazia" | "inseminada" | "prenha"
+    # "vazia" | "vazia_atrasada" | "inseminada" | "prenha" — "vazia" também
+    # casa com a atrasada (ver recria.situacao_reprodutiva_casa).
+    situacao_reprodutiva: Optional[str] = None
     situacao_produtiva: Optional[str] = None     # "lactacao" | "seca"
     dias_gestacao_min: Optional[int] = None
     dias_gestacao_max: Optional[int] = None

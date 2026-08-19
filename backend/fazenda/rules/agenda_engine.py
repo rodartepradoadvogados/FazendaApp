@@ -31,6 +31,7 @@ from fazenda.rules.parametros import (
     get_param,
     gestacao_dias_referencia,
     idade_apta_min_meses as _idade_apta_min_meses,
+    idade_max_1a_cobertura_meses as _idade_max_1a_cobertura_meses,
     intervalo_bst as _intervalo_bst_padrao,
     intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
     periodo_seco_dias,
@@ -260,6 +261,7 @@ class AgendaEngine:
             del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
             peso_por_animal=peso_por_animal or {},
             idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
+            idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
             peso_apta_kg=_peso_apta_min(),
         )
 

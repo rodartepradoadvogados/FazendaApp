@@ -9,6 +9,13 @@ Parâmetros de análise (todos editáveis em Configurações > Parâmetros — v
     300 kg): só entram na lista "novilhas aptas vazias" (protocolos de
     novilha apta) — NÃO é mais um filtro geral que esconde a novilha das
     demais listas (toque, reconfirmação, pré-parto etc.); ver #364.
+  - Idade máxima para a 1ª cobertura (idade_max_1a_cobertura_meses, padrão 16
+    meses): dentro de "novilhas aptas vazias", separa a novilha que ACABOU de
+    ficar apta da que já passou do teto e continua vazia. Não filtra ninguém
+    (as duas seguem na mesma lista, que é a lista de quem precisa de serviço)
+    — marca `atrasada` e ordena as atrasadas primeiro, para o veterinário
+    atacá-las na visita antes das demais. Mesmo teto que faz o motor devolver
+    ATRASADA para novilha nulípara (ver `fazenda.rules.estado_reprodutivo`).
   - Verificar aptidão (idade_verificar_aptidao_meses/peso_verificar_aptidao_min,
     padrão 14 meses e 280 kg — limiar mais baixo, de "olho nela em breve"):
     novilha que nunca tenha sido inseminada nem coberta (nenhum registro de
@@ -42,6 +49,7 @@ from fazenda.rules.parametros import (
     dias_adesivo_cio_min,
     gestacao_dias_referencia,
     idade_apta_min_meses,
+    idade_max_1a_cobertura_meses,
     idade_verificar_aptidao_meses,
     peso_apta_min,
     peso_verificar_aptidao_min,
@@ -108,6 +116,7 @@ def classificar_rebanho(
     gestacao_dias = gestacao_dias_referencia()
     peso_apta = peso_apta_min()
     idade_apta = idade_apta_min_meses()
+    idade_atraso = idade_max_1a_cobertura_meses()
     peso_verificar = peso_verificar_aptidao_min()
     idade_verificar = idade_verificar_aptidao_meses()
     pre_parto_de = pre_parto_min()
@@ -250,7 +259,15 @@ def classificar_rebanho(
             # mínimos NÃO afetam nenhuma outra lista acima/abaixo.
             apta = idade is not None and idade >= idade_apta and peso is not None and peso >= peso_apta
             if vazia and apta:
-                listas["novilhas_aptas_vazias"].append(base)
+                # Atrasada x recém-apta: sem esta marca a lista juntava num
+                # balde só a novilha que ficou apta ontem e a que está há um
+                # ano esperando serviço — o veterinário não via diferença
+                # entre as duas. Mesmo teto de idade que o motor usa para
+                # devolver ATRASADA (estado_reprodutivo.classificar_animal);
+                # aqui o gate é reimplementado à mão (idade_apta/peso_apta
+                # locais), então a marca também precisa ser calculada aqui.
+                atrasada_1a_cobertura = idade is not None and idade > idade_atraso
+                listas["novilhas_aptas_vazias"].append({**base, "atrasada": atrasada_1a_cobertura})
                 classificado = True
             if gestante_confirmada:
                 listas["novilhas_gestantes"].append({**base, "dias_para_parto": dpp})
@@ -298,5 +315,10 @@ def classificar_rebanho(
             else:
                 motivo = "Dados insuficientes para classificar."
                 listas["pendentes_classificacao"].append({**base, "motivo": motivo})
+
+    # Atrasadas primeiro dentro da lista de novilhas aptas vazias — é a ordem
+    # de trabalho da visita (quem está esperando há mais tempo vem antes).
+    # `sort` é estável: dentro de cada bloco a ordem de entrada é preservada.
+    listas["novilhas_aptas_vazias"].sort(key=lambda item: not item["atrasada"])
 
     return listas

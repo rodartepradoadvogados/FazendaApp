@@ -25,6 +25,7 @@ from fazenda.rules.parametros import (
     dias_reinseminacao_min,
     get_param,
     idade_apta_min_meses as _idade_apta_min_meses,
+    idade_max_1a_cobertura_meses as _idade_max_1a_cobertura_meses,
     meta_taxa_servico,
     peso_apta_min as _peso_apta_min,
 )
@@ -173,6 +174,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         del_max_1o_servico=meta_1a,
         peso_por_animal=peso_por_animal or {},
         idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
+        idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
         peso_apta_kg=_peso_apta_min(),
     )
 
@@ -241,7 +243,16 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                 if vazia and dpp > meta_1a:
                     cor = "vermelho"
             else:
-                cor = "verde"
+                # Novilha (e qualquer animal sem DPP): a cor sai do ESTADO AO
+                # VIVO, não de um "verde" fixo. Antes, toda novilha era verde
+                # por construção — e como o relatório de não conformidades
+                # conta exatamente os "vermelho" desta lista
+                # (api/routers/nao_conformidades.py), o indicador era
+                # estruturalmente cego para a categoria majoritária desta
+                # fazenda (74 novilhas contra 37 vacas). ATRASADA é o análogo
+                # exato do "passou do DEL máximo" da vaca: passou da idade
+                # máxima para a 1ª cobertura e segue vazia.
+                cor = "vermelho" if estado_vivo == ATRASADA else "verde"
             l_inseminar.append({"numero": num, "grupo": grupo, "dias_pos_parto": dpp,
                                  "eh_vaca": eh_vaca, "situacao": ROTULOS.get(estado_vivo, "—"), "cor": cor})
 
