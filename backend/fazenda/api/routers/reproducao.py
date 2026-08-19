@@ -32,6 +32,11 @@ from fazenda.rules.perda_prenhez import (
     fechar_servicos_abertos_por_reinseminacao,
     servico_esta_em_aberto,
 )
+from fazenda.rules.programa_reprodutivo import (
+    calcular_series,
+    ciclos_21_dias,
+    montar_perfil,
+)
 from fazenda.rules.protocolo_iatf import (
     PASSOS_PROTOCOLO_IATF_PADRAO as PASSOS_PROTOCOLO_IATF,
     DIA_INSEMINACAO_PADRAO,
@@ -40,6 +45,155 @@ from fazenda.rules.protocolo_iatf import (
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
+
+
+def carregar_perfis_reprodutivos(
+    session: Session, fazenda_id: int | None, *, categoria: str = "todas",
+) -> list:
+    """Monta os `PerfilAnimal` de todas as fêmeas do rebanho, com os registros
+    já indexados por número.
+
+    Mesmo padrão de carregamento de `api/routers/indicadores.py` (indexa uma
+    vez por número em vez de varrer as listas por animal — o rebanho tem
+    milhares de serviços/partos).
+
+    `categoria`: "todas" | "vaca" | "novilha". Vaca = já pariu alguma vez.
+    """
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    query_iatf = select(ProtocoloIatfAplicacao)
+    query_pesagem = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+
+    femeas = [a for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
+
+    servicos_por: dict[str, list] = {}
+    for s in session.exec(query_servicos).all():
+        servicos_por.setdefault(s.numero_matriz, []).append(s)
+    partos_por: dict[str, list] = {}
+    for p in session.exec(query_partos).all():
+        partos_por.setdefault(p.numero_matriz, []).append(p)
+    iatf_por: dict[str, list] = {}
+    for ap in session.exec(query_iatf).all():
+        iatf_por.setdefault(ap.numero_matriz, []).append(ap)
+
+    # Peso mais recente de cada animal — entra na aptidão da novilha nulípara.
+    peso_por: dict[str, float] = {}
+    ultima: dict[str, date] = {}
+    for pes in session.exec(query_pesagem).all():
+        if pes.numero_matriz not in ultima or pes.data_pesagem > ultima[pes.numero_matriz]:
+            ultima[pes.numero_matriz] = pes.data_pesagem
+            peso_por[pes.numero_matriz] = pes.peso_kg
+
+    perfis = []
+    for a in femeas:
+        dados = a.model_dump()
+        dados["peso_kg"] = peso_por.get(a.numero)
+        perfil = montar_perfil(
+            dados,
+            partos=partos_por.get(a.numero, []),
+            servicos=servicos_por.get(a.numero, []),
+            aplicacoes_iatf=iatf_por.get(a.numero, []),
+        )
+        if categoria != "todas" and perfil.categoria != categoria:
+            continue
+        perfis.append(perfil)
+    return perfis
+
+
+@router.get("/ciclos-21-dias")
+def ciclos_de_21_dias(
+    ancora: date = Query(..., description="Data de referência do ciclo"),
+    modo: str = Query("fim", description='"inicio" (conta para frente) ou "fim" (conta para trás)'),
+    n_ciclos: int = Query(6, ge=1, le=26, description="Quantos ciclos de 21 dias"),
+    categoria: str = Query("todas", description='"todas" | "vaca" | "novilha"'),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Risco de prenhez em ciclos de 21 dias — o BREDSUM\\E do DairyComp.
+
+    Devolve, por ciclo: BR ELIG (elegíveis para inseminação) → BRED (servidas)
+    → PG ELIG (elegíveis para prenhez) → PREG (prenhes), com as três taxas e a
+    lista nominal de animais em cada balde, para o usuário conferir na tela
+    exatamente quem entrou e quem saiu de cada denominador.
+
+    A âncora é livre: `modo="inicio"` conta 21 dias para frente a partir dela;
+    `modo="fim"` conta para trás. Substitui a ancoragem fechada anterior, presa
+    ao D11 do protocolo IATF ou à data da inseminação.
+
+    Ver `fazenda.rules.programa_reprodutivo` para o modelo lógico completo
+    (regras R1–R9) que define cada um desses conjuntos.
+    """
+    from fazenda.rules.parametros import (
+        dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
+        idade_apta_min_meses, meta_taxa_concepcao, meta_taxa_prenhez,
+        meta_taxa_servico, pev_dias, peso_apta_min,
+    )
+
+    if modo not in ("inicio", "fim"):
+        raise HTTPException(status_code=400, detail='modo deve ser "inicio" ou "fim"')
+    if categoria not in ("todas", "vaca", "novilha"):
+        raise HTTPException(status_code=400, detail='categoria deve ser "todas", "vaca" ou "novilha"')
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    perfis = carregar_perfis_reprodutivos(session, fazenda_id, categoria=categoria)
+    ciclos = ciclos_21_dias(ancora, modo=modo, n_ciclos=n_ciclos)
+
+    resultados = calcular_series(
+        perfis, ciclos, date.today(),
+        pev_dias=pev_dias(),
+        dias_minimos=dias_minimos_no_ciclo(),
+        dias_resultado=dias_resultado_conhecido(),
+        del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
+        idade_apta_dias=int(idade_apta_min_meses() * 30.44),
+        peso_apta_kg=peso_apta_min(),
+    )
+
+    linhas = [r.para_dict() for r in resultados]
+    # Média ponderada pelo denominador de cada ciclo — a média simples das
+    # porcentagens daria peso igual a um ciclo de 3 vacas e a um de 300.
+    def _ponderada(campo: str, denominador: str) -> float | None:
+        total_den = sum(l[denominador] for l in linhas)
+        if not total_den:
+            return None
+        soma = sum((l[campo] or 0) * l[denominador] for l in linhas)
+        return round(soma / total_den, 1)
+
+    return {
+        "ancora": ancora.isoformat(),
+        "modo": modo,
+        "categoria": categoria,
+        "periodo": {"inicio": ciclos[0].inicio.isoformat(), "fim": ciclos[-1].fim.isoformat()},
+        "ciclos": linhas,
+        "resumo": {
+            "taxa_servico": _ponderada("taxa_servico", "br_elig"),
+            "taxa_prenhez": _ponderada("taxa_prenhez", "pg_elig"),
+            "taxa_concepcao": _ponderada("taxa_concepcao", "servicos_com_resultado"),
+            "animais_avaliados": len(perfis),
+        },
+        "metas": {
+            "taxa_servico": meta_taxa_servico(),
+            "taxa_prenhez": meta_taxa_prenhez(),
+            "taxa_concepcao": meta_taxa_concepcao(),
+        },
+        "parametros": {
+            "pev_dias": pev_dias(),
+            "dias_minimos_no_ciclo": dias_minimos_no_ciclo(),
+            "dias_resultado_conhecido": dias_resultado_conhecido(),
+        },
+        # A tela mostra este aviso no rodapé: `Animal.a_descartar` é booleano
+        # sem data, então a marcação atual vale para todo o período avaliado.
+        "ressalva_historica": (
+            "A marcação \"a descartar\" não guarda data — o estado atual do animal "
+            "vale para todo o período. Baixas são datadas e reconstruídas corretamente."
+        ),
+    }
 
 
 def deduplicar_partos(session: Session) -> None:

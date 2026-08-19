@@ -34,8 +34,9 @@ from fazenda.rules.coorte import (
 )
 from fazenda.rules.visibilidade import visivel
 from fazenda.rules.reproducao_dossie import (
-    DIAS_MES, custo_recria_excedente, distribuicao_idade_parto, estatisticas_idade_parto, taxa_prenhez_ciclos,
+    DIAS_MES, custo_recria_excedente, distribuicao_idade_parto, estatisticas_idade_parto,
 )
+from fazenda.rules.programa_reprodutivo import calcular_series, ciclos_21_dias
 
 router = APIRouter(prefix="/recria", tags=["recria"])
 
@@ -247,31 +248,67 @@ def reproducao_taxa_prenhez(
     ini: date, fim: date, vwp_dias: int = 0, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Taxa de Prenhez em ciclos de 21 dias (Taxa de Serviço × Concepção)."""
+    """Risco de prenhez das NOVILHAS em ciclos de 21 dias (BREDSUM\\E).
+
+    Passou a usar `fazenda.rules.programa_reprodutivo` — o mesmo motor da tela
+    de Reprodução, aqui filtrado em novilhas. O cálculo anterior
+    (`reproducao_dossie.taxa_prenhez_ciclos`, removido) usava "os próprios
+    serviços como universo de animais avaliáveis": a novilha elegível que
+    atravessou o ciclo sem ser inseminada não tinha linha de `Servico` e sumia
+    do denominador, inflando a taxa de serviço. Também derivava a taxa de
+    prenhez de serviço × concepção, atalho que o DairyComp não faz.
+
+    Os números desta tela mudam em relação ao que era exibido antes — é a
+    correção, não um efeito colateral.
+    """
+    from fazenda.api.routers.reproducao import carregar_perfis_reprodutivos
+    from fazenda.rules.parametros import (
+        dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
+        idade_apta_min_meses, pev_dias, peso_apta_min,
+    )
+
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    servicos_query = select(Servico)
-    if fazenda_id is not None:
-        servicos_query = servicos_query.where(Servico.fazenda_id == fazenda_id)
-    servicos = []
-    for s in session.exec(servicos_query).all():
-        if not s.data_servico:
-            continue
-        servicos.append({
-            "numero": s.numero_matriz,
-            "data_servico": s.data_servico,
-            "prenhe": (s.diagnostico or "").strip().upper() == "POSITIVO",
-            "elegivel_desde": s.data_ult_parto,
+    perfis = carregar_perfis_reprodutivos(session, fazenda_id, categoria="novilha")
+
+    # A janela pedida vira uma série de ciclos de 21 dias a partir de `ini`.
+    dias_periodo = max((fim - ini).days + 1, 1)
+    n_ciclos = max((dias_periodo + 20) // 21, 1)
+    ciclos = ciclos_21_dias(ini, modo="inicio", n_ciclos=n_ciclos)
+
+    resultados = calcular_series(
+        perfis, ciclos, date.today(),
+        # `vwp_dias` continua sendo o override de PEV desta tela (novilha
+        # nulípara não tem parto, então o PEV do rebanho não se aplica a ela).
+        pev_dias=vwp_dias or pev_dias(),
+        dias_minimos=dias_minimos_no_ciclo(),
+        dias_resultado=dias_resultado_conhecido(),
+        del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
+        idade_apta_dias=int(idade_apta_min_meses() * 30.44),
+        peso_apta_kg=peso_apta_min(),
+    )
+
+    linhas = []
+    for r in resultados:
+        d = r.para_dict()
+        linhas.append({
+            **d,
+            # Nomes que a tela de Recria já consome (RecriaCiclo no front) —
+            # mantidos para não quebrar o contrato, agora com o valor correto.
+            "elegiveis": d["br_elig"],
+            "servidos": d["bred"],
+            "prenhes": d["preg"],
         })
-    ciclos = taxa_prenhez_ciclos(servicos, ini, fim, vwp_dias)
-    # Resumo do período: PR média ponderada pelos elegíveis.
-    tot_el = sum(c["elegiveis"] for c in ciclos)
-    tot_pr = sum((c["taxa_prenhez"] or 0) * c["elegiveis"] for c in ciclos)
+
+    # Resumo do período: prenhez média ponderada pelo denominador de cada ciclo.
+    tot_pg = sum(l["pg_elig"] for l in linhas)
+    tot_pr = sum((l["taxa_prenhez"] or 0) * l["pg_elig"] for l in linhas)
     meta = _meta_recria(session, fazenda_id)
     return {
-        "ciclos": ciclos,
-        "taxa_prenhez_media": round(tot_pr / tot_el, 1) if tot_el else None,
-        "total_servicos": len(servicos),
+        "ciclos": linhas,
+        "taxa_prenhez_media": round(tot_pr / tot_pg, 1) if tot_pg else None,
+        "total_servicos": sum(l["bred"] for l in linhas),
         "meta_taxa_prenhez": meta.taxa_prenhez_meta,
+        "animais_avaliados": len(perfis),
     }
 
 

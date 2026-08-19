@@ -227,17 +227,29 @@ class TestReproducao:
         assert r2.json()["criados"] == 0
 
     def test_taxa_prenhez_ciclos(self, client):
+        """Passou a usar `programa_reprodutivo` (BREDSUM\\E). A diferença que
+        importa: o denominador é o REBANHO elegível, não os animais que por
+        acaso têm serviço lançado — por isso a novilha 303, elegível e nunca
+        inseminada, entra em `elegiveis` e derruba a taxa de serviço de 100%
+        (o que o cálculo antigo devolvia) para 66,7%."""
         from fazenda.models import Servico
         c, engine = client
         with Session(engine) as s:
-            # 2 serviços no 1º ciclo: um prenhe, um vazio.
+            for numero in ("301", "302", "303"):
+                s.add(Animal(numero=numero, sexo="F", ativo=True, eh_semen=False,
+                             categoria_abrev="Novilha", data_nasc=date(2024, 1, 1)))
+                # Novilha nulípara só é apta com idade E peso (mesma regra das
+                # listas de Rebanho) — sem pesagem ela nem entra no programa.
+                s.add(PesagemCorporal(numero_matriz=numero, data_pesagem=date(2026, 1, 15), peso_kg=380.0))
             s.add(Servico(numero_matriz="301", data_servico=date(2026, 3, 1), diagnostico="POSITIVO"))
             s.add(Servico(numero_matriz="302", data_servico=date(2026, 3, 5), diagnostico="NEGATIVO"))
             s.commit()
         j = c.get("/recria/reproducao/taxa-prenhez", params={"ini": "2026-03-01", "fim": "2026-03-21"}).json()
         assert len(j["ciclos"]) >= 1
         c1 = j["ciclos"][0]
+        assert c1["elegiveis"] == 3, "a novilha nunca inseminada continua no denominador"
         assert c1["servidos"] == 2 and c1["prenhes"] == 1
+        assert c1["taxa_servico"] == round(100 * 2 / 3, 1)
         assert c1["taxa_concepcao"] == 50.0
         assert j["meta_taxa_prenhez"] == 42.5  # padrão de MetaRecria, agora exposto
 

@@ -108,6 +108,16 @@ DEFINICOES: list[dict] = [
     {"chave": "meta_concepcao_novilha", "grupo": "metas_reproducao", "label": "Taxa de concepção da novilha", "valor": 60, "unidade": "%"},
     {"chave": "meta_iep_meses", "grupo": "metas_reproducao", "label": "Intervalo entre partos (IEP)", "valor": 14, "unidade": "meses"},
     {"chave": "meta_taxa_perda_prenhez", "grupo": "metas_reproducao", "label": "Taxa de perda de prenhez", "valor": 15, "unidade": "%"},
+    # Regra dos 28 dias (ver fazenda.rules.programa_reprodutivo, R7): uma
+    # inseminação dos últimos 27 dias ainda não deu tempo de virar prenhez
+    # confirmada. Deixá-la no denominador da concepção faz a taxa despencar
+    # artificialmente nos dias recentes. Só entra antes disso quando o desfecho
+    # já é conhecido (DG negativo, perda, ou nova IA em cio de repasse).
+    {"chave": "dias_resultado_conhecido", "grupo": "metas_reproducao", "label": "Dias até o resultado da inseminação ser considerado conhecido", "valor": 28, "unidade": "dias"},
+    # Regra dos 11 de 21 (R5): o animal não precisa estar apto o ciclo inteiro
+    # para entrar no denominador — precisa ter participado de pelo menos
+    # metade dele. Mesmo critério do BREDSUM\E do DairyComp.
+    {"chave": "dias_minimos_no_ciclo", "grupo": "metas_reproducao", "label": "Dias mínimos de participação no ciclo de 21 dias", "valor": 11, "unidade": "dias"},
 
     # ---- Produção e descarte -----------------------------------------------
     {"chave": "taxa_reposicao", "grupo": "producao_descarte", "label": "Taxa de reposição", "valor": 25, "unidade": "%"},
@@ -474,6 +484,20 @@ def meta_taxa_concepcao() -> float:
     """Meta de taxa de concepção em vacas — usada no benchmark reprodutivo da
     Capa (`indicadores._metas_benchmark`, categorias "todas"/"vaca")."""
     return float(get_param("meta_taxa_concepcao", 35) or 35)
+
+
+def dias_resultado_conhecido() -> int:
+    """Janela após a qual o desfecho de uma inseminação é dado como conhecido
+    (padrão 28 dias) — ver `fazenda.rules.programa_reprodutivo`, regra R7.
+    Serviço mais recente que isso só entra numa taxa se já tiver DG, perda ou
+    reinseminação em cio de repasse."""
+    return int(get_param("dias_resultado_conhecido", 28) or 28)
+
+
+def dias_minimos_no_ciclo() -> int:
+    """Dias mínimos de participação num ciclo de 21 dias para o animal entrar
+    no denominador (padrão 11) — regra R5, mesmo critério do BREDSUM\\E."""
+    return int(get_param("dias_minimos_no_ciclo", 11) or 11)
 
 
 def meta_concepcao_novilha() -> float:

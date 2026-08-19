@@ -89,6 +89,7 @@ const links = [
   // ── Manejo do rebanho ──
   { href: "/rebanho",     label: "Rebanho",      icon: CowIcon,       title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
   { href: "/historico",   label: "Histórico",    icon: Heart,         title: "Histórico — Reprodução (serviços, diagnósticos, partos) e Produção (controle leiteiro, secagem, BST)", grupo: "Manejo do rebanho" },
+  { href: "/ciclos-21-dias", label: "Ciclos de 21 dias", icon: Calendar, title: "Risco de prenhez em ciclos de 21 dias (padrão BREDSUM\\E): elegíveis para inseminação → servidas → elegíveis para prenhez → prenhes", grupo: "Manejo do rebanho" },
   // ── Insumos e sanidade ──
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },

@@ -98,6 +98,11 @@ def _no_periodo(s: dict, desde: date) -> bool:
     return isinstance(ds, date) and ds >= desde
 
 
+def _data_servico(s: dict) -> Optional[date]:
+    ds = s.get("data_servico")
+    return ds if isinstance(ds, date) else None
+
+
 def _del_serv(s: dict) -> Optional[float]:
     d = s.get("del_servico")
     if isinstance(d, (int, float)) and d >= 0:
@@ -185,33 +190,84 @@ def _metas_benchmark(categoria: str) -> dict[str, dict]:
 
 def _repro_benchmark(
     animais: list[dict], servicos: list[dict], partos: list[dict], desde: date, categoria: str = "todas",
+    estados: dict[str, str] | None = None, hoje: date | None = None,
 ) -> list[dict]:
-    """Painel de benchmark reprodutivo (Prenhez = Serviço × Concepção) para um
-    subconjunto do rebanho — usado para 'todas', 'vaca' e 'novilha'."""
-    prenhes = vazias = inseminadas = 0
-    for a in animais:
-        sit = (a.get("sit_rep") or "").strip()
-        if sit == "Ges.":
-            prenhes += 1
-        elif sit.startswith("Vaz."):
-            vazias += 1
-        elif sit == "Ins.":
-            inseminadas += 1
-    aptas = prenhes + vazias + inseminadas
+    """Painel de benchmark reprodutivo de um subconjunto do rebanho — usado
+    para 'todas', 'vaca' e 'novilha'.
+
+    Três correções em relação ao que este painel fazia antes (ver o modelo
+    lógico em `fazenda.rules.programa_reprodutivo`):
+
+    1. **Gestante saiu do denominador.** O denominador era
+       `prenhes + vazias + inseminadas`, ou seja, incluía as prenhes. Vaca
+       prenhe não pode ser inseminada — não pode entrar no denominador de uma
+       taxa de serviço. Agora o denominador são as APTAS (regra R4).
+    2. **Estado ao vivo em vez de `sit_rep`.** O corte era feito pelo texto
+       congelado do GERAL.csv do Ideagri, que só muda no próximo upload. Agora
+       usa o estado recalculado dos registros (`_estados_ao_vivo`), o mesmo que
+       as listas de Rebanho — os dois lados passam a bater. Sem estados (ex.:
+       chamador legado que passa só a lista de animais), cai no `sit_rep` de
+       antes, preservando o comportamento desses consumidores.
+    3. **Taxa de prenhez deixou de ser serviço × concepção** (regra R9). Passa
+       a ser prenhes do período ÷ aptas, com os mesmos serviços avaliáveis.
+
+    E aplica a regra dos 28 dias (R7): serviço dos últimos 27 dias não entra em
+    taxa nenhuma enquanto o desfecho não for conhecido.
+    """
+    from fazenda.rules.programa_reprodutivo import ESTADOS_APTOS, conta_em_taxa
+    from fazenda.rules.estado_reprodutivo import GESTANTE as _GESTANTE
+
+    hoje = hoje or date.today()
+    estados = estados or {}
+
+    if estados:
+        aptas = sum(1 for a in animais if estados.get(a.get("numero")) in ESTADOS_APTOS)
+        prenhes = sum(1 for a in animais if estados.get(a.get("numero")) == _GESTANTE)
+    else:
+        # Fallback legado: sem registros carregados não há o que recalcular.
+        prenhes = vazias = inseminadas = 0
+        for a in animais:
+            sit = (a.get("sit_rep") or "").strip()
+            if sit == "Ges.":
+                prenhes += 1
+            elif sit.startswith("Vaz."):
+                vazias += 1
+            elif sit == "Ins.":
+                inseminadas += 1
+        aptas = vazias + inseminadas  # sem as prenhes, ao contrário de antes
     total = len(animais)
 
     serv_periodo = [s for s in servicos if _no_periodo(s, desde)]
-    pos = sum(1 for s in serv_periodo if _diag_upper(s.get("diagnostico")) == "POSITIVO")
-    neg = sum(1 for s in serv_periodo if _diag_upper(s.get("diagnostico")) == "NEGATIVO")
+    # R7 — o serviço só entra na conta quando dá para saber se pegou. Sem isto,
+    # as IAs dos últimos dias entram no denominador da concepção sem nenhuma
+    # chance de já terem virado prenhez, e a taxa despenca artificialmente.
+    ultimas_datas: dict[str, date] = {}
+    for s in servicos:
+        n, d = s.get("numero_matriz"), _data_servico(s)
+        if n and d and (n not in ultimas_datas or d > ultimas_datas[n]):
+            ultimas_datas[n] = d
+    avaliaveis = []
+    for s in serv_periodo:
+        d = _data_servico(s)
+        posterior = bool(
+            d and (ultima := ultimas_datas.get(s.get("numero_matriz"))) and ultima > d
+        )
+        if conta_em_taxa(s, hoje, servico_posterior=posterior):
+            avaliaveis.append(s)
+
+    pos = sum(1 for s in avaliaveis if _diag_upper(s.get("diagnostico")) == "POSITIVO")
+    neg = sum(1 for s in avaliaveis if _diag_upper(s.get("diagnostico")) == "NEGATIVO")
     diag = pos + neg
     taxa_concepcao = round(100 * pos / diag, 1) if diag else None
-    servidas = {s.get("numero_matriz") for s in serv_periodo if s.get("numero_matriz")}
+    servidas = {s.get("numero_matriz") for s in avaliaveis if s.get("numero_matriz")}
     taxa_servico = round(100 * len(servidas) / aptas, 1) if aptas else None
-    taxa_prenhez_ciclo = (
-        round(taxa_servico * taxa_concepcao / 100, 1)
-        if taxa_servico is not None and taxa_concepcao is not None else None
-    )
-    servicos_por_prenhez = round(len(serv_periodo) / pos, 1) if pos else None
+    # R9 — prenhes ÷ aptas, NÃO serviço × concepção.
+    concebidas = {
+        s.get("numero_matriz") for s in avaliaveis
+        if _diag_upper(s.get("diagnostico")) == "POSITIVO" and s.get("numero_matriz")
+    }
+    taxa_prenhez_ciclo = round(100 * len(concebidas) / aptas, 1) if aptas else None
+    servicos_por_prenhez = round(len(avaliaveis) / pos, 1) if pos else None
     perdas = sum(1 for s in serv_periodo if s.get("data_perda_prenhez"))
     taxa_perda = round(100 * perdas / pos, 1) if pos else None
     perc_prenhas = round(100 * prenhes / total, 1) if total else None
@@ -251,16 +307,22 @@ def _repro_benchmark(
 
 def _benchmark_categorias(
     animais: list[dict], servicos: list[dict], partos: list[dict], vacas_nums: set, desde: date,
+    estados: dict[str, str] | None = None, hoje: date | None = None,
 ) -> dict:
-    """Benchmark separado por categoria: todas / vaca (já pariu) / novilha."""
+    """Benchmark separado por categoria: todas / vaca (já pariu) / novilha.
+
+    `estados` são os estados reprodutivos AO VIVO (ver `_estados_ao_vivo`) —
+    é o que faz o denominador deixar de sair do `sit_rep` congelado do CSV.
+    """
     animais_vaca = [a for a in animais if a.get("numero") in vacas_nums]
     animais_novilha = [a for a in animais if a.get("numero") not in vacas_nums]
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
     serv_novilha = [s for s in servicos if (s.get("ordem_parto") or 0) < 1]
+    comum = {"estados": estados, "hoje": hoje}
     return {
-        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas"),
-        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca"),
-        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha"),
+        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas", **comum),
+        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca", **comum),
+        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha", **comum),
     }
 
 
@@ -692,7 +754,10 @@ def calcular_indicadores(
     # Modelo dos "medidores": Prenhez = Serviço × Concepção.
     # Calculado para todas / vaca (já pariu) / novilha.
     # ---------------------------------------------------------------
-    benchmark_categorias = _benchmark_categorias(animais, servicos, partos, vacas_nums, concepcao_desde)
+    benchmark_categorias = _benchmark_categorias(
+        animais, servicos, partos, vacas_nums, concepcao_desde,
+        estados=estados_por_animal, hoje=hoje,
+    )
     benchmark = benchmark_categorias["todas"]
     _bt = {b["chave"]: b["valor"] for b in benchmark}
 
