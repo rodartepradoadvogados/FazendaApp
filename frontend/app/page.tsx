@@ -14,6 +14,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
+  "Em protocolo": "var(--vinho-light, #416180)",
   PEV: "var(--amber)", "A inseminar": "var(--blue)", Vazias: "var(--red)",
 };
 
@@ -71,6 +72,15 @@ export default function Home() {
   useEffect(() => { carregar(); }, []);
 
   const abrir = (title: string, filtro: (a: AnimalRow) => boolean) => { if (animais.length) setModal({ title, list: animais.filter(filtro) }); };
+  // Drill-down pela lista de números que o BACKEND contou — o número do card e
+  // a lista que ele abre saem da mesma conta (mesmo padrão de `aptas_nums`).
+  // Com isso o recorte vaca/novilha também é o do backend (registro de Parto),
+  // e não `data_ult_parto` do CSV.
+  const abrirNums = (title: string, nums?: string[] | null) => {
+    if (!animais.length) return;
+    const set = new Set(nums || []);
+    setModal({ title, list: animais.filter((a) => set.has(a.numero)) });
+  };
 
   if (!d) return <div className="p-6"><p style={{ color: "var(--text-muted)" }}>Carregando painel…</p></div>;
 
@@ -103,10 +113,16 @@ export default function Home() {
   const kgMax = kgs.length ? Math.ceil(Math.max(...kgs) + 1) : 30;
   const repCats: any = d.ind?.reproducao_categorias || { todas: rep };
   const repSel: any = repCats[catRep] || rep;
+  // As 6 fatias são uma partição do rebanho da categoria (por isso somam o
+  // total): "Em protocolo" entrou justamente porque não cabia em nenhuma das
+  // outras — sem ela o donut ficava faltando animais.
   const donutRep = repSel ? [
-    { nome: "Prenhes", v: repSel.prenhes }, { nome: "Inseminadas", v: repSel.inseminadas },
-    { nome: "PEV", v: repSel.pev }, { nome: "A inseminar", v: repSel.a_inseminar },
-    { nome: "Vazias", v: repSel.nao_classificadas },
+    { nome: "Prenhes", v: repSel.prenhes, nums: repSel.prenhes_nums },
+    { nome: "Inseminadas", v: repSel.inseminadas, nums: repSel.inseminadas_nums },
+    { nome: "Em protocolo", v: repSel.em_protocolo, nums: repSel.em_protocolo_nums },
+    { nome: "PEV", v: repSel.pev, nums: repSel.pev_nums },
+    { nome: "A inseminar", v: repSel.a_inseminar, nums: repSel.a_inseminar_nums },
+    { nome: "Vazias", v: repSel.nao_classificadas, nums: repSel.nao_classificadas_nums },
   ].filter((x) => x.v > 0) : [];
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" };
@@ -284,11 +300,11 @@ export default function Home() {
           {repSel ? (
             <div className="grid grid-cols-3 gap-2 mb-2">
               {([
-                ["Aptas", repSel.aptas, (a: AnimalRow) => (repSel.aptas_nums || []).includes(a.numero)],
-                ["Inseminadas", repSel.inseminadas, (a: AnimalRow) => a.sit_rep === "Ins." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
-                ["Gestantes", repSel.prenhes, (a: AnimalRow) => a.sit_rep === "Ges." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
-              ] as const).map(([l, v, f]) => (
-                <KPI key={l} l={l} v={v} cat="reprodutivo" onClick={() => abrir(l, f)} />
+                ["Aptas", repSel.aptas, repSel.aptas_nums],
+                ["Inseminadas", repSel.inseminadas, repSel.inseminadas_nums],
+                ["Gestantes", repSel.prenhes, repSel.prenhes_nums],
+              ] as const).map(([l, v, nums]) => (
+                <KPI key={l} l={l} v={v} cat="reprodutivo" onClick={() => abrirNums(l, nums)} />
               ))}
             </div>
           ) : null}
@@ -318,17 +334,7 @@ export default function Home() {
                   style={{ cursor: animais.length ? "pointer" : undefined }}
                   onClick={(e: any) => {
                     const nome = e?.name; if (!nome) return;
-                    const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
-                    const f = nome === "Prenhes"
-                      ? (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a)
-                      : nome === "Inseminadas"
-                      ? (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a)
-                      : nome === "PEV"
-                      ? (a: AnimalRow) => a.sit_rep === "Vaz. pev" && porCategoria(a)
-                      : nome === "A inseminar"
-                      ? (a: AnimalRow) => (a.sit_rep === "Vaz. apt." || a.sit_rep === "Vaz. atr.") && porCategoria(a)
-                      : (a: AnimalRow) => !["Ges.", "Ins.", "Vaz. pev", "Vaz. apt.", "Vaz. atr."].includes((a.sit_rep || "")) && porCategoria(a);
-                    abrir(nome, f);
+                    abrirNums(nome, donutRep.find((s: any) => s.nome === nome)?.nums);
                   }}>
                   {donutRep.map((s: any, i: number) => <Cell key={i} fill={SIT_CORES[s.nome]} />)}
                 </Pie>

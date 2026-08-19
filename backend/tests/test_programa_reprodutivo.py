@@ -858,3 +858,103 @@ class TestTaxasDaCapaSaemDoMotorDeCiclos:
 
         assert val("novilha", "taxa_servico") == 0.0, "a '50' não é novilha — ela pariu"
         assert val("vaca", "taxa_servico") > 0, "as IAs dela contam no painel de vacas"
+
+
+class TestTodasEDerivadaDeVacaMaisNovilha:
+    """A Capa precisa das mesmas taxas para "todas", "vaca" e "novilha", e cada
+    passada do motor percorre 21 dias por ciclo por animal — três passadas
+    custavam ~1,0 s com 127 animais na tela inicial.
+
+    Como a partição por `perfil.eh_vaca` é DISJUNTA e cobre o rebanho, e todos
+    os contadores são aditivos (`bred`/`br_elig`/`preg`/`pg_elig` contam
+    animais; `com_resultado` conta serviços de animais da partição), "todas" é
+    a soma das outras duas e não precisa de uma terceira passada.
+
+    Este teste é a CONDIÇÃO da otimização: se o derivado deixar de ser idêntico
+    ao calculado direto, a otimização é inválida e tem de sair.
+    """
+
+    HOJE = date(2026, 8, 19)
+    DESDE = date(2026, 1, 1)
+
+    def _perfis(self):
+        from fazenda.rules.indicadores import _montar_perfis
+        animais, servicos, partos = [], [], []
+        # Rebanho misto: vacas em vários pontos do ciclo, novilhas nulíparas
+        # servidas, e uma novilha que PARIU no meio do período — o caso que
+        # antes era contado nas duas categorias.
+        for i in range(12):
+            n = f"V{i}"
+            animais.append({"numero": n, "data_nasc": self.HOJE - timedelta(days=1500 + i),
+                            "categoria_abrev": "Vaca"})
+            partos.append({"numero_matriz": n, "data_parto": self.HOJE - timedelta(days=90 + i * 15)})
+            servicos.append({"numero_matriz": n, "data_servico": self.HOJE - timedelta(days=40 + i * 12),
+                             "diagnostico": "POSITIVO" if i % 3 == 0 else "NEGATIVO"})
+        for i in range(8):
+            n = f"N{i}"
+            animais.append({"numero": n, "data_nasc": self.HOJE - timedelta(days=600 + i),
+                            "categoria_abrev": "Novilha"})
+            servicos.append({"numero_matriz": n, "data_servico": self.HOJE - timedelta(days=50 + i * 20),
+                             "diagnostico": "POSITIVO" if i % 2 else None})
+        animais.append({"numero": "M1", "data_nasc": self.HOJE - timedelta(days=900), "categoria_abrev": "Novilha"})
+        servicos.append({"numero_matriz": "M1", "data_servico": self.HOJE - timedelta(days=300), "diagnostico": "POSITIVO"})
+        partos.append({"numero_matriz": "M1", "data_parto": self.HOJE - timedelta(days=20)})
+        peso = {a["numero"]: 400.0 for a in animais}
+        return _montar_perfis(animais, servicos, partos, [], peso)
+
+    def test_contadores_derivados_sao_identicos_aos_calculados_direto(self):
+        from fazenda.rules.indicadores import (
+            _parametros_ciclos, contadores_ciclos, somar_contadores,
+        )
+        perfis = self._perfis()
+        params = _parametros_ciclos()
+        direto = contadores_ciclos(perfis, self.DESDE, self.HOJE, params)
+        derivado = somar_contadores(
+            contadores_ciclos([p for p in perfis if p.eh_vaca], self.DESDE, self.HOJE, params),
+            contadores_ciclos([p for p in perfis if not p.eh_vaca], self.DESDE, self.HOJE, params),
+        )
+        assert derivado == direto, (
+            "a soma vaca+novilha divergiu do cálculo direto sobre o rebanho — "
+            "a partição deixou de ser disjunta ou algum contador deixou de ser aditivo"
+        )
+        assert direto["br_elig"] > 0, "cenário vazio não prova nada"
+
+    def test_categoria_vazia_nao_quebra_a_soma(self):
+        """Fazenda só de vacas: o lado das novilhas vem zerado e a soma
+        continua igual ao cálculo direto (o caso que faria a otimização
+        estourar se ela assumisse as duas categorias sempre povoadas)."""
+        from fazenda.rules.indicadores import (
+            _parametros_ciclos, contadores_ciclos, somar_contadores,
+        )
+        perfis = [p for p in self._perfis() if p.eh_vaca]
+        params = _parametros_ciclos()
+        derivado = somar_contadores(
+            contadores_ciclos(perfis, self.DESDE, self.HOJE, params),
+            contadores_ciclos([], self.DESDE, self.HOJE, params),
+        )
+        assert derivado == contadores_ciclos(perfis, self.DESDE, self.HOJE, params)
+
+    def test_as_taxas_da_capa_nao_mudam_com_a_otimizacao(self):
+        """Sentinela de ponta a ponta: o que a tela exibe tem de ser o mesmo
+        antes e depois de derivar "todas" em vez de recalculá-la."""
+        from fazenda.rules.indicadores import (
+            _benchmark_categorias, _parametros_ciclos, contadores_ciclos, taxas_de_contadores,
+        )
+        perfis = self._perfis()
+        animais = [{"numero": p.numero, "data_nasc": p.data_nasc,
+                    "categoria_abrev": "Vaca" if p.eh_vaca else "Novilha"} for p in perfis]
+        servicos = [s for p in perfis for s in p.servicos]
+        partos = [x for p in perfis for x in p.partos]
+        vacas_nums = {p.numero for p in perfis if p.eh_vaca}
+        cats = _benchmark_categorias(
+            animais, servicos, partos, vacas_nums, self.DESDE, hoje=self.HOJE,
+            peso_por_animal={p.numero: 400.0 for p in perfis},
+        )
+        esperado = taxas_de_contadores(
+            contadores_ciclos(perfis, self.DESDE, self.HOJE, _parametros_ciclos())
+        )
+        obtido = tuple(
+            next(b["valor"] for b in cats["todas"] if b["chave"] == chave)
+            for chave in ("taxa_servico", "taxa_prenhez_ciclo", "taxa_concepcao")
+        )
+        assert obtido == esperado

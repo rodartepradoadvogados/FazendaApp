@@ -118,6 +118,17 @@ export default function AlertasIndicador() {
         Escolha um indicador, uma condição e um valor-limite — quando a condição for atendida, você recebe um aviso na central de notificações (sino) e via push, até resolver.
       </p>
 
+      {/* A taxa de concepção mudou de base de cálculo (virou a do motor de
+          ciclos de 21 dias). O limiar salvo é o mesmo número de antes, mas
+          agora é comparado com outra conta — quem já tinha alerta precisa
+          reconferir o valor. */}
+      <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.8rem", borderLeft: "2px solid var(--amber)", paddingLeft: "0.6rem" }}>
+        <strong>Mudou o cálculo da taxa de concepção:</strong> ela passou a ser apurada por ciclos de 21 dias
+        (com a regra dos 28 dias para o diagnóstico), a mesma conta da tela de Ciclos de 21 Dias. O valor-limite
+        que você salvou continua o mesmo número — mas o indicador comparado com ele é outro. Se você já tinha um
+        alerta de taxa de concepção, vale reconferir o limite.
+      </p>
+
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!alertas && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
