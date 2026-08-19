@@ -254,3 +254,47 @@ class TestDelAoVivo:
         vazio = calcular_indicadores(animais, [], partos, data_ref=hoje, secagens=[])
         assert omitido["producao"]["del_medio"] == vazio["producao"]["del_medio"] == 30.0
         assert omitido["producao"]["del_medio_animais"] == vazio["producao"]["del_medio_animais"] == 1
+
+
+class TestOsDoisDelMedioNaoPodemDivergir:
+    """O payload tem DOIS campos chamados `del_medio`, e ambos são rotulados
+    "DEL médio" na tela: `producao.del_medio` e o do benchmark reprodutivo
+    (`_repro_benchmark`, que aparece em `benchmark` e `benchmark_categorias`).
+
+    Antes desta etapa os dois eram o `del_dias` CONGELADO do CSV e, sendo
+    igualmente errados, concordavam. Ao levar só `producao.del_medio` para o
+    ao vivo, o mesmo painel passaria a mostrar dois números diferentes com o
+    mesmo nome — trocando um defeito por outro, e justamente pelo defeito que
+    esta etapa veio remover. Por isso o benchmark recebe o MESMO mapa de DEL
+    ao vivo (`del_por_matriz`).
+
+    Esta sentinela existe para que a próxima pessoa que mexer em um dos dois
+    lados descubra pelo teste, e não pelo painel do dono."""
+
+    def _bench_del(self, ind: dict) -> float | None:
+        return {b["chave"]: b["valor"] for b in ind["benchmark"]}.get("del_medio")
+
+    def test_benchmark_usa_o_mesmo_del_ao_vivo_do_card(self):
+        hoje = date(2026, 8, 19)
+        # `del_dias` congelado absurdo de propósito: se algum dos dois lados
+        # ainda o estiver lendo, o teste denuncia com 999 contra 30.
+        animais = [_animal("100", del_dias=999), _animal("200", del_dias=999)]
+        partos = [
+            {"numero_matriz": "100", "data_parto": hoje - timedelta(days=30)},
+            {"numero_matriz": "200", "data_parto": hoje - timedelta(days=50)},
+        ]
+        ind = calcular_indicadores(animais, [], partos, data_ref=hoje)
+        assert ind["producao"]["del_medio"] == 40.0  # (30 + 50) / 2
+        assert self._bench_del(ind) == ind["producao"]["del_medio"]
+
+    def test_secagem_tira_o_animal_dos_dois_lados(self):
+        hoje = date(2026, 8, 19)
+        animais = [_animal("100", del_dias=999), _animal("200", del_dias=999)]
+        partos = [
+            {"numero_matriz": "100", "data_parto": hoje - timedelta(days=30)},
+            {"numero_matriz": "200", "data_parto": hoje - timedelta(days=50)},
+        ]
+        secagens = [{"numero_matriz": "200", "data_secagem": hoje - timedelta(days=5)}]
+        ind = calcular_indicadores(animais, [], partos, data_ref=hoje, secagens=secagens)
+        assert ind["producao"]["del_medio"] == 30.0
+        assert self._bench_del(ind) == 30.0
