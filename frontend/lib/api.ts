@@ -1268,6 +1268,10 @@ export type CicloReprodutivo = {
   br_elig: number; bred: number; taxa_servico: number | null;
   pg_elig: number; preg: number; taxa_prenhez: number | null;
   taxa_concepcao: number | null; servicos_com_resultado: number;
+  // False enquanto não passaram os dias de "resultado conhecido" desde o fim do
+  // ciclo: PG ELIG já está cheio e PREG ainda não, então a prenhez e a concepção
+  // estão subestimadas por construção. Quem exibe não pode comparar com a meta.
+  janela_dg_completa: boolean;
   animais: { br_elig: string[]; bred: string[]; pg_elig: string[]; preg: string[] };
 };
 export type CiclosResposta = {
@@ -5929,9 +5933,21 @@ export const excluirRecriaBenchmark = (id: number) => _rSend(`/recria/benchmark/
 
 export type WisconsinStats = { n: number; media: number; minimo: number; maximo: number; desvio_padrao: number; assimetria: number; curtose: number; idade_tipica_min: number; idade_tipica_max: number; amplitude_tipica: number };
 export type RecriaIdadeParto = { meta_idade_parto: number; meta_desvio_padrao: number; estatisticas: WisconsinStats | null; distribuicao: { mes: number; n: number; pct: number }[]; custo_excedente: { n: number; dias_excedentes_total: number; custo_total: number; dias_por_novilha: number; custo_por_novilha: number } };
-export type RecriaCiclo = { ciclo: number; inicio: string; fim: string; elegiveis: number; servidos: number; prenhes: number; taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null };
+// Vem do mesmo motor que `CicloReprodutivo` (programa_reprodutivo.py), só
+// filtrado em novilhas. `elegiveis`/`servidos`/`prenhes` são aliases legados de
+// `br_elig`/`bred`/`preg`, mantidos por compatibilidade da tela de Recria.
+// ATENÇÃO: a taxa de prenhez usa `pg_elig` como denominador, não `elegiveis` —
+// os dois diferem quando há baixa durante a janela de diagnóstico.
+export type RecriaCiclo = {
+  ciclo: number; inicio: string; fim: string;
+  elegiveis: number; servidos: number; prenhes: number;
+  br_elig: number; bred: number; pg_elig: number; preg: number;
+  servicos_com_resultado: number; janela_dg_completa: boolean;
+  animais: { br_elig: string[]; bred: string[]; pg_elig: string[]; preg: string[] };
+  taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null;
+};
 export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/recria/reproducao/idade-parto`);
-export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; meta_taxa_prenhez: number }> =>
+export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; animais_avaliados: number; meta_taxa_prenhez: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
 export type RecriaDossie = {

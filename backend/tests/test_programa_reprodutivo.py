@@ -20,7 +20,7 @@ from fazenda.rules.programa_reprodutivo import (
     MOTIVO_BAIXADA,
     MOTIVO_DENTRO_PEV,
     MOTIVO_GESTANTE,
-    MOTIVO_SEM_APTIDAO,
+    MOTIVO_IMPUBERE,
     SUSPENSA,
     Ciclo,
     calcular_ciclo,
@@ -102,7 +102,7 @@ class TestR1EntradaNoPrograma:
             p, date(2026, 1, 15), pev_dias=PEV, idade_apta_dias=450, peso_apta_kg=300.0,
         )
         assert e.situacao == INATIVA
-        assert e.motivo == MOTIVO_SEM_APTIDAO
+        assert e.motivo == MOTIVO_IMPUBERE
 
 
 # ═══════════════════ R2 — suspensão temporária ══════════════════════════════
@@ -443,3 +443,69 @@ class TestRetrofitBenchmarkDaCapa:
         servicos = [{"numero_matriz": "1", "data_servico": date(2026, 1, 5), "diagnostico": "POSITIVO"}]
         v = self._valores(animais, servicos, estados=None)
         assert v["taxa_servico"] == 50.0, "denominador = vazia + inseminada, sem a gestante"
+
+
+# ═══════════════ Janela de DG incompleta — o ciclo que ainda não fechou ══════
+class TestJanelaDgIncompleta:
+    """O denominador da prenhez (PG ELIG) não tem a porta dos 28 dias; o
+    numerador (PREG) tem. Enquanto a janela não fecha, a taxa sai subestimada
+    por construção — e a tela não pode comparar esse ciclo com a meta."""
+
+    def _vaca(self, hoje: date, data_servico: date, diagnostico=None):
+        return _perfil(
+            partos=[_parto(hoje - timedelta(days=200))],
+            servicos=[_servico(data_servico, diagnostico)],
+        )
+
+    def test_ciclo_recem_encerrado_marca_janela_aberta(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=21), fim=hoje - timedelta(days=1))
+        r = calcular_ciclo([self._vaca(hoje, ciclo.inicio)], ciclo, hoje, pev_dias=PEV)
+        assert r.janela_dg_completa is False
+        assert r.para_dict()["janela_dg_completa"] is False
+
+    def test_ciclo_antigo_marca_janela_fechada(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=date(2026, 1, 1), fim=date(2026, 1, 21))
+        r = calcular_ciclo([self._vaca(hoje, date(2026, 1, 5))], ciclo, hoje, pev_dias=PEV)
+        assert r.janela_dg_completa is True
+
+    def test_a_fronteira_e_exatamente_dias_resultado(self):
+        hoje = date(2026, 3, 1)
+        fecha = Ciclo(indice=1, inicio=hoje - timedelta(days=48), fim=hoje - timedelta(days=28))
+        abre = Ciclo(indice=1, inicio=hoje - timedelta(days=47), fim=hoje - timedelta(days=27))
+        assert calcular_ciclo([], fecha, hoje, pev_dias=PEV).janela_dg_completa is True
+        assert calcular_ciclo([], abre, hoje, pev_dias=PEV).janela_dg_completa is False
+
+    def test_a_flag_acompanha_dias_resultado_configurado(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=30), fim=hoje - timedelta(days=10))
+        assert calcular_ciclo([], ciclo, hoje, pev_dias=PEV,
+                              dias_resultado=28).janela_dg_completa is False
+        assert calcular_ciclo([], ciclo, hoje, pev_dias=PEV,
+                              dias_resultado=5).janela_dg_completa is True
+
+    def test_a_prenhez_do_ciclo_aberto_e_subestimada_de_proposito(self):
+        """A prova do problema. Duas vacas inseminadas no mesmo ciclo recém
+        encerrado: a 100 já teve o DG lançado, a 200 ainda não — e nem poderia,
+        porque não passaram 28 dias da IA. As duas estão no PG ELIG; só a 100
+        está no PREG. A tela mostraria 50% de prenhez, quando o que se sabe até
+        aqui é "1 de 1 diagnosticada". Não houve piora de manejo nenhuma: falta
+        tempo. É para isso que serve `janela_dg_completa`."""
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=21), fim=hoje - timedelta(days=1))
+        diagnosticada = _perfil(
+            _animal("100"),
+            partos=[_parto(hoje - timedelta(days=200), "100")],
+            servicos=[_servico(ciclo.inicio, "POSITIVO", "100")],
+        )
+        aguardando = _perfil(
+            _animal("200"),
+            partos=[_parto(hoje - timedelta(days=200), "200")],
+            servicos=[_servico(ciclo.fim, None, "200")],
+        )
+        r = calcular_ciclo([diagnosticada, aguardando], ciclo, hoje, pev_dias=PEV)
+        assert sorted(r.pg_elig) == ["100", "200"], "as duas no denominador"
+        assert r.preg == ["100"], "só a diagnosticada no numerador"
+        assert r.taxa_prenhez == 50.0
+        assert r.janela_dg_completa is False, "o aviso que impede ler isso como fracasso"

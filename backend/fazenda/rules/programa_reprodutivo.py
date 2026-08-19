@@ -23,7 +23,7 @@ este módulo corrige de uma vez, num lugar só:
 
 Predicados de base, todos avaliados NUMA DATA `d` — nada aqui olha o "agora":
 
-    ATINGIU_APTIDAO(a,d)   novilha: idade/peso >= parâmetros; vaca: após o 1º parto
+    ATINGIU_PUBERDADE(a,d) novilha: idade/peso >= parâmetros; vaca: após o 1º parto
     A_DESCARTAR(a,d)       Animal.a_descartar
     BAIXADA(a,d)           Animal.ativo = False, ou data_baixa <= d
     DENTRO_PEV(a,d)        d < último_parto + pev_dias
@@ -31,10 +31,15 @@ Predicados de base, todos avaliados NUMA DATA `d` — nada aqui olha o "agora":
     VAZIA(a,d)             sem serviço vigente, ou vigente NEGATIVO, ou com perda
     INSEMINADA_SEM_DG(a,d) serviço vigente sem diagnóstico até d
 
+CUIDADO com "aptidão": ATINGIU_PUBERDADE é um marco permanente da vida do
+animal (bateu idade e peso), enquanto APTA (R4) é a disponibilidade DAQUELE
+dia e muda todo dia. São conceitos sem relação; o nome antigo do primeiro era
+`ATINGIU_APTIDAO` e confundia os dois.
+
 Regras:
 
-    R1  ATIVA_PROGRAMA(a,d) <-> ATINGIU_APTIDAO(a,d) & ~A_DESCARTAR(a,d)
-                                                     & ~BAIXADA(a,d)
+    R1  ATIVA_PROGRAMA(a,d) <-> ATINGIU_PUBERDADE(a,d) & ~A_DESCARTAR(a,d)
+                                                       & ~BAIXADA(a,d)
 
         De novilha apta em diante todos estão ativos. `a_descartar` e baixa são
         as ÚNICAS portas de saída do programa.
@@ -55,19 +60,59 @@ Regras:
         mutuamente excludentes. Gestante nunca é apta; inseminada NÃO é
         automaticamente apta — depende de ainda não ter DG.
 
-    R5  ELEGIVEL_IA(a,C) <-> | { d em C : APTA(a,d) } | >= 11        (BR ELIG)
+    R5  ELEGIVEL_IA(a,C) <-> | { d em C : APTA*(a,d) } | >= 11       (BR ELIG)
 
         Não precisa estar apta os 21 dias do ciclo: precisa ter participado de
-        pelo menos metade dele.
+        pelo menos metade dele. 11 = ceil(21/2) — é aritmética, não um limiar
+        biológico; se `dias` do ciclo mudar, `dias_minimos` NÃO acompanha
+        sozinho e precisa ser passado junto.
+
+    R5a APTA*(a,d) = APTA(a,d) avaliado sobre o animal SEM os serviços lançados
+        dentro do próprio ciclo C.
+
+        Esta é a regra que o código executa, e ela NÃO é a R4 pura — por isso
+        está escrita. A pergunta que a elegibilidade responde é "este animal
+        estava disponível para ser inseminado durante este ciclo?", não "como
+        ele terminou o ciclo?". Sem o recorte, a vaca inseminada no dia 5 que
+        CONCEBEU vira gestante do dia 5 em diante, acumula 4 dias aptos e cai
+        fora do BR ELIG — excluída por ter dado certo, sumindo ao mesmo tempo
+        do numerador e do denominador. Implementado em
+        `_perfil_sem_servicos_do_ciclo`.
+
+        Efeito colateral, para não assustar quem for depurar: sem o serviço, o
+        animal deixa de ser INSEMINADA e passa a VAZIA nos dias seguintes. Os
+        dois estão em ESTADOS_APTOS, então a contagem não muda.
 
     R6  ELEGIVEL_PRENHEZ(a,C) <-> ELEGIVEL_IA(a,C)
                                   & ~BAIXADA(a, fim da janela de DG)   (PG ELIG)
 
-        É aqui que PG ELIG fica MENOR que BR ELIG: a vaca descartada durante a
-        janela de avaliação estava no BR ELIG e cai fora do PG ELIG.
+        É aqui que PG ELIG fica MENOR que BR ELIG: a vaca BAIXADA (morta ou
+        vendida) durante a janela de avaliação estava no BR ELIG e cai fora do
+        PG ELIG.
 
-    R7  RESULTADO_CONHECIDO(s,hoje) <-> TEM_DG(s) | DG_NEGATIVO(s)
+        CUIDADO com a palavra "descartada": no português de fazenda ela
+        significa `a_descartar`, e é justamente o caso onde esta regra NÃO
+        opera. `a_descartar` não tem data, então R1 já derrubou o animal em
+        TODOS os dias e ele nunca chegou ao BR ELIG. Só `data_baixa`, que é
+        datada, produz o efeito descrito aqui.
+
+    R-BRED  BRED(C) = { a em BR ELIG(C) : existe serviço de `a` com
+                        data_servico dentro de C }
+
+        BRED é subconjunto de BR ELIG por construção: um animal inseminado no
+        ciclo mas que não acumulou 11 dias aptos não entra em nenhum dos dois.
+
+    R-PREG  PREG(C) = { a em PG ELIG(C) : existe serviço de `a` dentro de C com
+                        diagnóstico POSITIVO, sem perda registrada, e com
+                        CONTA_EM_TAXA verdadeiro }
+
+        Exige PG ELIG, não só BR ELIG — a vaca que concebeu e foi vendida antes
+        do fim da janela sai do numerador e do denominador ao mesmo tempo.
+
+    R7  RESULTADO_CONHECIDO(s,hoje) <-> TEM_DG(s) | PERDA_REGISTRADA(s)
                                         | REINSEMINADA_CIO_REPASSE(s)
+
+        DG negativo é um caso de TEM_DG, não um termo separado.
 
         CONTA_EM_TAXA(s,hoje) <-> ( data_servico(s) <= hoje - 28 )
                                   | RESULTADO_CONHECIDO(s,hoje)
@@ -76,6 +121,17 @@ Regras:
         desfecho JÁ é conhecido (DG negativo, ou nova IA em cio de repasse, que
         prova que a anterior falhou; nesse caso o animal não é "inseminado
         aguardando DG").
+
+        A recíproca NÃO vale: serviço com 28 dias ou mais entra em taxa mesmo
+        SEM nenhum DG lançado, e entra como fracasso. É deliberado — a fazenda
+        que não lança diagnóstico tem que ver a concepção cair — mas contradiz
+        o nome do campo `servicos_com_resultado`, que conta esses também.
+
+        R7 vale para o NUMERADOR de prenhez (PREG). O denominador (PG ELIG) não
+        tem essa porta: enquanto a janela de DG do ciclo não fechar, PG ELIG já
+        está cheio e PREG ainda não. Por isso `ResultadoCiclo` carrega
+        `janela_dg_completa` — sem respeitar essa flag, o ciclo mais recente
+        aparece sempre como fracasso.
 
     R8  Taxa de serviço(C)   = |BRED(C)| / |BR ELIG(C)|
         Taxa de prenhez(C)   = |PREG(C)| / |PG ELIG(C)|
@@ -93,6 +149,14 @@ quando a marcação foi feita. Este módulo trata o estado ATUAL como válido pa
 todo o período avaliado, e a tela informa isso ao usuário. `data_baixa` é
 datada, então a baixa é reconstruída corretamente. Precisão histórica plena
 exigiria uma coluna `a_descartar_em` + backfill.
+
+A consequência incômoda, que precisa estar escrita: como a marcação retroage,
+a vaca marcada hoje some de TODOS os ciclos passados — inclusive dos
+denominadores. Isso encolhe o BR ELIG histórico justamente nas vacas problema
+e INFLA a taxa de serviço histórica, que é uma versão atenuada do defeito nº 2
+que este módulo existe para corrigir. Quanto mais antigo o ciclo, menos
+confiável a série. Enquanto não houver `a_descartar_em`, leia as séries longas
+com essa ressalva.
 """
 from __future__ import annotations
 
@@ -121,7 +185,7 @@ INATIVA = "inativa"
 # Motivos de não estar apta — o que a tela mostra no drill-down.
 MOTIVO_A_DESCARTAR = "a_descartar"
 MOTIVO_BAIXADA = "baixada"
-MOTIVO_SEM_APTIDAO = "sem_aptidao"
+MOTIVO_IMPUBERE = "impubere"
 MOTIVO_DENTRO_PEV = "dentro_pev"
 MOTIVO_GESTANTE = "gestante"
 
@@ -336,7 +400,7 @@ def estado_no_dia(
 
     # R1 — novilha que ainda não atingiu idade/peso não entrou no programa.
     if estado == _E_NAO_APTA:
-        return EstadoDia(d, INATIVA, False, MOTIVO_SEM_APTIDAO, estado)
+        return EstadoDia(d, INATIVA, False, MOTIVO_IMPUBERE, estado)
 
     # R2 — suspensões temporárias: continua no programa, não conta como apta.
     if estado == _E_PEV:
@@ -428,7 +492,7 @@ def elegivel_prenhez(
 # ---------------------------------------------------------------------------
 # Resultado conhecido (R7) — a regra dos 28 dias
 # ---------------------------------------------------------------------------
-def tem_servico_posterior(perfil: PerfilAnimal, servico: Any) -> bool:
+def tem_reinseminacao_posterior(perfil: PerfilAnimal, servico: Any) -> bool:
     """Houve nova inseminação depois desta, na mesma lactação? É a
     "reinseminada em cio de repasse": a nova IA prova que a anterior não pegou,
     então o desfecho da anterior É conhecido mesmo sem DG lançado."""
@@ -492,7 +556,13 @@ class ResultadoCiclo:
     bred: list[str]
     pg_elig: list[str]
     preg: list[str]
+    # Nome herdado, e ele mente um pouco: conta também o serviço com 28+ dias
+    # que NINGUÉM diagnosticou — que entra como fracasso na concepção. Ver R7.
     servicos_com_resultado: int
+    # False enquanto não passaram `dias_resultado` dias do fim do ciclo. Quem
+    # exibe a taxa de prenhez tem que respeitar: com a janela aberta, o
+    # denominador já está cheio e o numerador não. Ver R7 e `taxa_prenhez`.
+    janela_dg_completa: bool = True
 
     def _pct(self, num: int, den: int) -> float | None:
         return round(100 * num / den, 1) if den else None
@@ -504,7 +574,14 @@ class ResultadoCiclo:
 
     @property
     def taxa_prenhez(self) -> float | None:
-        """R8 — PREG / PG ELIG. NÃO é serviço × concepção (ver R9)."""
+        """R8 — PREG / PG ELIG. NÃO é serviço × concepção (ver R9).
+
+        ATENÇÃO ao ler esta taxa quando `janela_dg_completa` é False: o
+        denominador (PG ELIG) já está cheio, mas o numerador (PREG) exige
+        `conta_em_taxa`, ou seja, 28 dias ou desfecho conhecido. Enquanto a
+        janela não fecha, a taxa está estruturalmente subestimada — não é
+        piora de manejo. Quem exibe esta taxa tem que respeitar a flag.
+        """
         return self._pct(len(self.preg), len(self.pg_elig))
 
     @property
@@ -525,6 +602,7 @@ class ResultadoCiclo:
             "taxa_prenhez": self.taxa_prenhez,
             "taxa_concepcao": self.taxa_concepcao,
             "servicos_com_resultado": self.servicos_com_resultado,
+            "janela_dg_completa": self.janela_dg_completa,
             "animais": {
                 "br_elig": sorted(self.br_elig),
                 "bred": sorted(self.bred),
@@ -544,7 +622,15 @@ def calcular_ciclo(
 
     O denominador é o REBANHO elegível, não os animais que por acaso têm um
     serviço lançado — é a correção central em relação ao cálculo anterior.
+
+    Devolve também `janela_dg_completa`: se ainda não passaram `dias_resultado`
+    dias desde o fim do ciclo, a última IA do ciclo ainda não teve tempo de
+    virar prenhez, o PREG está incompleto e a taxa de prenhez sai subestimada.
+    A flag existe para a tela não comparar esse ciclo com a meta. Ver a nota em
+    `ResultadoCiclo.taxa_prenhez`.
     """
+    janela_dg_completa = ciclo.fim + timedelta(days=dias_resultado) <= hoje
+
     br_elig: list[str] = []
     bred: list[str] = []
     pg_elig: list[str] = []
@@ -572,7 +658,7 @@ def calcular_ciclo(
         bred.append(perfil.numero)
 
         for s in no_ciclo:
-            posterior = tem_servico_posterior(perfil, s)
+            posterior = tem_reinseminacao_posterior(perfil, s)
             if conta_em_taxa(s, hoje, servico_posterior=posterior, dias=dias_resultado):
                 servicos_com_resultado += 1
 
@@ -580,14 +666,16 @@ def calcular_ciclo(
         # conhecido, e continua elegível para prenhez.
         concebeu = any(
             _diag(s) == _POSITIVO and _d(_get(s, "data_perda_prenhez")) is None
-            and conta_em_taxa(s, hoje, servico_posterior=tem_servico_posterior(perfil, s),
+            and conta_em_taxa(s, hoje, servico_posterior=tem_reinseminacao_posterior(perfil, s),
                               dias=dias_resultado)
             for s in no_ciclo
         )
         if concebeu and elegivel_pg:
             preg.append(perfil.numero)
 
-    return ResultadoCiclo(ciclo, br_elig, bred, pg_elig, preg, servicos_com_resultado)
+    return ResultadoCiclo(
+        ciclo, br_elig, bred, pg_elig, preg, servicos_com_resultado, janela_dg_completa
+    )
 
 
 def calcular_series(

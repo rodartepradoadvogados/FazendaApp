@@ -751,7 +751,7 @@ def calcular_indicadores(
 
     # ---------------------------------------------------------------
     # Benchmark reprodutivo (eficiência) — desde a data de corte (_concepcao_desde()).
-    # Modelo dos "medidores": Prenhez = Serviço × Concepção.
+    # Prenhez = prenhes ÷ aptas (R9) — NÃO é serviço × concepção.
     # Calculado para todas / vaca (já pariu) / novilha.
     # ---------------------------------------------------------------
     benchmark_categorias = _benchmark_categorias(
