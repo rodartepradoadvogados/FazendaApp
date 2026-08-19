@@ -5,13 +5,14 @@ fazenda/api/routers/alertas_indicador.py e fazenda/models/alerta_indicador.py.
 from __future__ import annotations
 
 import tempfile
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Usuario
+from fazenda.models import Animal, ControleLeiteiro, Parto, Usuario
 
 
 class _FakeUser:
@@ -116,6 +117,35 @@ class TestCrudAlertas:
     def test_condicao_nao_atendida_disparado_false(self, client):
         r = client.post("/alertas-indicador", json={"indicador_chave": "vacas_lactacao", "operador": ">", "valor_limite": 5})
         assert r.json()["disparado"] is False
+
+
+class TestIndicadoresDeProducaoContinuamResolvendo:
+    """`producao.producao_media_kg` e `producao.del_medio` MUDARAM DE
+    SEMÂNTICA (ver rules/indicadores.py::calcular_indicadores — média do dia
+    e DEL ao vivo, não mais o acumulado antigo e o DEL congelado do CSV) —
+    mas os dois caminhos de alerta que resolvem esses campos por
+    `("producao","producao_media_kg")`/`("producao","del_medio")` não podem
+    quebrar, e o valor resolvido tem que ser o NOVO significado."""
+
+    def _seed(self, engine):
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(numero="500", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - ALTA",
+                          ativo=True, del_dias=9999))  # congelado, tem que ser ignorado
+            s.add(Parto(numero_matriz="500", data_parto=hoje - timedelta(days=30)))
+            s.add(ControleLeiteiro(numero_matriz="500", data_controle=hoje, producao_kg=27.0))
+            s.commit()
+
+    def test_producao_media_kg_e_del_medio_resolvem_com_o_novo_significado(self, client):
+        self._seed(database.engine)
+
+        r1 = client.post("/alertas-indicador", json={"indicador_chave": "producao_media_kg", "operador": ">", "valor_limite": 0})
+        assert r1.status_code == 201, r1.text
+        assert r1.json()["valor_atual"] == 27.0  # média do CONTROLE DO DIA
+
+        r2 = client.post("/alertas-indicador", json={"indicador_chave": "del_medio", "operador": ">", "valor_limite": 0})
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["valor_atual"] == 30.0  # DEL AO VIVO (30 dias do parto) — não os 9999 congelados
 
 
 class TestNotificacoes:

@@ -19,6 +19,28 @@ from sqlmodel import Session, select
 from fazenda.models import Animal, ControleLeiteiro
 
 
+def del_dias_ao_vivo(del_dias_congelado: int | None, ult_parto: date | None, ult_secagem: date | None, hoje: date) -> int | None:
+    """DEL (dias em lactação) AO VIVO a partir do parto mais recente lançado no
+    app — `Animal.del_dias` é zerado no instante do parto (ver registrar_parto)
+    mas fica congelado dali em diante, só voltando a bater com a realidade no
+    próximo upload do GERAL.csv (Ideagri). Sem isso, uma vaca que pariu há dias
+    aparece com DEL 0 até o próximo import. Mesmo racional AO VIVO já usado em
+    `fazenda.api.routers.producao.info_secagem` — aqui também considera a
+    Secagem mais recente: vaca já seca não conta dias de lactação.
+
+    Função PURA (sem Session) — dona única desta regra. `routers/animais.py`
+    e `rules/indicadores.py::calcular_indicadores` (card "DEL médio" da
+    Produção) chamam esta mesma função em vez de cada um recalcular por
+    conta própria; antes o card usava o campo congelado direto e divergia da
+    lista de animais, que já era ao vivo — ver o histórico documentado no
+    item (c) da correção do painel de produção."""
+    if ult_parto is None:
+        return del_dias_congelado
+    if ult_secagem and ult_secagem >= ult_parto:
+        return None
+    return (hoje - ult_parto).days
+
+
 def ultimo_controle_por_animal(
     session: Session, numeros: set[str] | list[str], fazenda_id: int | None = None,
 ) -> dict[str, tuple[float, date]]:

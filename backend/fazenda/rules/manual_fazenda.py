@@ -244,7 +244,20 @@ def montar_manual(session: Session, fazenda_id: int | None) -> dict:
     animais = [a.model_dump() for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
     servicos = [s.model_dump() for s in session.exec(query_servicos).all()]
     partos = [p.model_dump() for p in session.exec(query_partos).all()]
-    indicadores = calcular_indicadores(animais, servicos, partos, data_ref=hoje)
+    # Controles/secagens — sem eles, o texto do Manual sobre produção saía
+    # só de `Animal.ult_cl_kg` (campo congelado do CSV do Ideagri aposentado)
+    # e o "DEL médio" citado usava o DEL congelado em vez do ao vivo. Mesmo
+    # filtro de fazenda_id que o resto desta função já usa.
+    query_controles = select(ControleLeiteiro)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    controles = [c.model_dump() for c in session.exec(query_controles).all()]
+    secagens = [s.model_dump() for s in session.exec(query_secagens).all()]
+    indicadores = calcular_indicadores(
+        animais, servicos, partos, data_ref=hoje, controles=controles, secagens=secagens,
+    )
 
     rotina = {
         "bst": _rotina_bst(session, fazenda_id, hoje),

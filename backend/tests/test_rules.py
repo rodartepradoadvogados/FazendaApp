@@ -358,12 +358,28 @@ class TestIndicadores:
         assert r["reproducao"]["servicos_negativos"] == 1
 
     def test_iep_e_producao(self):
+        """`producao.producao_total_dia_kg`/`vacas_com_producao` MUDARAM DE
+        PREMISSA (decisão do dono do produto, ver rules/indicadores.py::
+        calcular_indicadores): o card "Produção do dia" passa a ser O
+        CONTROLE DO DIA — a soma das linhas de `ControleLeiteiro` do dia mais
+        recente —, não mais o último `ult_cl_kg` congelado de cada animal em
+        qualquer data. Esta fixture não passa `controles`, então não há "dia"
+        nenhum para o card somar (0.0/0 vacas) — o valor antigo (55.0/2,
+        vindo de `ult_cl_kg`) agora mora em `producao.ultimo_por_animal`,
+        que continua exatamente igual a antes. `del_medio` não muda aqui: os
+        animais desta fixture não têm `numero`, então a DEL AO VIVO (que
+        depende de casar `numero` com `numero_matriz` de `partos`) não acha
+        nenhum parto e cai no `del_dias` congelado — o mesmo (120+80)/2 de
+        sempre. Ver test_indicador_producao_le_controle_leiteiro.py para a
+        cobertura completa do novo contrato."""
         animais, servicos, partos = self._dados()
         r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5))
         assert r["reproducao"]["iep_dias"] == 366
-        assert r["producao"]["vacas_com_producao"] == 2
-        assert r["producao"]["producao_total_dia_kg"] == 55.0
-        assert r["producao"]["del_medio"] == 100.0  # (120 + 80) / 2
+        assert r["producao"]["vacas_com_producao"] == 0
+        assert r["producao"]["producao_total_dia_kg"] == 0.0
+        assert r["producao"]["ultimo_por_animal"]["vacas_com_producao"] == 2
+        assert r["producao"]["ultimo_por_animal"]["producao_total_kg"] == 55.0
+        assert r["producao"]["del_medio"] == 100.0  # (120 + 80) / 2 — sem `numero`, cai no congelado
 
     def test_rebanho_vazio_nao_quebra(self):
         r = calcular_indicadores([], [], [], data_ref=date(2026, 7, 5))
