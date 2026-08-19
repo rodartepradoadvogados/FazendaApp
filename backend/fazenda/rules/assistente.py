@@ -23,8 +23,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import tem_modulo
 from fazenda.models import (
-    Animal, AssistenteEnsinamento, ContaGerencial, Estoque, EventoSanitario, ExameResultado, Fornecedor, Lote, Parto,
-    PesagemCorporal, Servico, Usuario,
+    Animal, AssistenteEnsinamento, ContaGerencial, ControleLeiteiro, Estoque, EventoSanitario, ExameResultado,
+    Fornecedor, Lote, Parto, PesagemCorporal, Secagem, Servico, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
@@ -230,7 +230,20 @@ def _tool_consultar_indicadores(session: Session, fazenda_id: int | None = None)
             peso_por_animal[p.numero_matriz] = p.peso_kg
     # Lote (Animais) também ainda não tem fazenda_id — mesma nota acima.
     lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
-    return calcular_indicadores(animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal, lotes=lotes)
+    # Controles/secagens — sem eles, a resposta da Claude sobre produção
+    # saía só de `Animal.ult_cl_kg` (campo congelado do CSV do Ideagri
+    # aposentado) e o DEL citado usava o congelado em vez do ao vivo.
+    query_controles = select(ControleLeiteiro)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    controles = [c.model_dump() for c in session.exec(query_controles).all()]
+    secagens = [s.model_dump() for s in session.exec(query_secagens).all()]
+    return calcular_indicadores(
+        animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal, lotes=lotes,
+        controles=controles, secagens=secagens,
+    )
 
 
 def _tool_buscar_animal(session: Session, numero: str, fazenda_id: int | None = None) -> dict:

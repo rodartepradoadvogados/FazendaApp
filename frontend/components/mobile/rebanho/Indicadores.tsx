@@ -8,10 +8,11 @@ import { useState } from "react";
 import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { CowIcon } from "@/components/CowIcon";
-import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 import { exportarPDF, type ColunaExport } from "@/lib/export";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 type IndicadoresResp = {
   rebanho?: { total?: number | null };
@@ -25,13 +26,17 @@ type IndicadoresResp = {
     iep_por_matriz?: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
   };
   reproducao_categorias?: { todas?: { pev?: number | null; vazias?: number | null } };
-  producao?: { del_medio?: number | null; producao_media_kg?: number | null };
+  producao?: IndicadoresProducao;
 };
 
+// `ult_cl_kg` é o campo congelado do CSV do Ideagri (parser aposentado);
+// `producao_kg`/`producao_origem` vêm ao vivo de fetchAnimais(). Partial
+// porque o backend desta etapa pode ainda não mandar os campos novos.
 type Animal = {
   numero: string; grupo_primario?: string | null; sit_rep?: string | null;
   del_dias?: number | null; ult_cl_kg?: number | null; categoria_abrev?: string | null;
-};
+} & Partial<AnimalProducaoAoVivo>;
+
 
 type ItemSecagem = { numero: string; grupo?: string | null; dias_para_secagem?: number | null; previsao_secagem?: string | null };
 
@@ -148,6 +153,9 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
     // ordenadas por número do endpoint).
     let colunasExport: ColunaExport[] = [];
     let linhasExport: Record<string, unknown>[] = [];
+    // Só usado pelo drill "producao" — avisa quando a lista mistura dado ao
+    // vivo com dado congelado, para não deixar isso só implícito no asterisco.
+    let temProducaoCongelada = false;
 
     if (drill === "gestantes") {
       // Estado AO VIVO (não Animal.sit_rep, congelado do CSV) — ver
@@ -347,24 +355,37 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         previsao: s.previsao_secagem ? formatDate(s.previsao_secagem) : "—",
       }));
     } else if (drill === "producao") {
-      const lista = animais.filter((a) => (a.del_dias != null && a.del_dias >= 0) || (a.ult_cl_kg != null && a.ult_cl_kg > 0)).sort(ordenarNumero);
+      const lista = animais.filter((a) => (a.del_dias != null && a.del_dias >= 0) || (producaoDe(a) ?? 0) > 0).sort(ordenarNumero);
       total = lista.length;
-      linhas = lista.map((a) => (
-        <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
-          <Campo label="Nº" valor={a.numero} />
-          <Campo label="DEL" valor={a.del_dias != null ? `${a.del_dias} dias` : "—"} />
-          <Campo label="Última produção" valor={a.ult_cl_kg != null ? `${val(a.ult_cl_kg)} L` : "—"} />
-        </>} />
-      ));
+      temProducaoCongelada = lista.some((a) => producaoDe(a) != null && origemDe(a) === "congelado");
+      linhas = lista.map((a) => {
+        const producao = producaoDe(a);
+        const congelado = origemDe(a) === "congelado";
+        return (
+          <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
+            <Pilula>{categoriaDe(a.numero)}</Pilula>
+            <Campo label="Nº" valor={a.numero} />
+            <Campo label="DEL" valor={a.del_dias != null ? `${a.del_dias} dias` : "—"} />
+            <Campo label="Última produção" valor={producao != null ? <>{val(producao)} L{congelado && <span style={{ color: "var(--mob-muted)" }}> *</span>}</> : "—"} />
+          </>} />
+        );
+      });
       colunasExport = [
         { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
-        { header: "DEL", key: "del" }, { header: "Última produção", key: "producao" },
+        { header: "DEL", key: "del" }, { header: "Última produção", key: "producao" }, { header: "Origem", key: "origem" },
       ];
-      linhasExport = lista.map((a) => ({
-        numero: a.numero, categoria: categoriaDe(a.numero),
-        del: a.del_dias != null ? `${a.del_dias} dias` : "—", producao: a.ult_cl_kg != null ? `${val(a.ult_cl_kg)} L` : "—",
-      }));
+      linhasExport = lista.map((a) => {
+        const producao = producaoDe(a);
+        const congelado = origemDe(a) === "congelado";
+        return {
+          numero: a.numero, categoria: categoriaDe(a.numero),
+          del: a.del_dias != null ? `${a.del_dias} dias` : "—",
+          producao: producao != null ? `${val(producao)} L` : "—",
+          // Exportado à parte (não só no asterisco) — o PDF sai do celular e
+          // precisa contar a mesma história sozinho.
+          origem: producao == null ? "—" : congelado ? "Congelado (sem controle no app)" : "Controle",
+        };
+      });
     }
 
     const carregandoLista =
@@ -404,6 +425,11 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
               </button>
             </div>
             {linhas}
+            {drill === "producao" && temProducaoCongelada && (
+              <p style={{ fontSize: "0.7rem", color: "var(--mob-muted)", marginTop: "0.4rem" }}>
+                * sem controle leiteiro lançado no app ainda — valor parado da última importação.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -413,7 +439,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   // ── Painel de cards ──────────────────────────────────────────────────────
   const rep = dados?.reproducao || {};
   const pev = dados?.reproducao_categorias?.todas?.pev;
-  const prod = dados?.producao || {};
+  const prod: Partial<IndicadoresProducao> = dados?.producao || {};
   // Mesma chave de agrupamento usada em Lotes.tsx (grupo_primario, "(sem lote)"
   // quando vazio) — sem endpoint dedicado de contagem de lotes no backend.
   const totalLotes = new Set(animais.map((a) => a.grupo_primario || "(sem lote)")).size;
@@ -421,6 +447,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   type Cartao = {
     chave: string; titulo: string; valor: string; onClick: () => void; icone: React.ReactNode;
     combo?: { valor: string; rotulo: string }[];
+    legenda?: string;
     // "Atrasadas" é o único card do painel que sinaliza um problema, não uma
     // contagem neutra — ganha destaque em âmbar pra não se confundir com os
     // demais (ex.: "Lotes", "IEP médio"), que são só números de consulta.
@@ -455,6 +482,9 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         { valor: prod.del_medio != null ? `${val(prod.del_medio)} d` : "—", rotulo: "DEL médio" },
         { valor: prod.producao_media_kg != null ? `${val(prod.producao_media_kg)} L` : "—", rotulo: "Produção média" },
       ],
+      // DEL médio agora é ao vivo (último parto, zera na secagem) — a base de
+      // cálculo muda de dia pra dia, então mostra sobre quantas vacas ele saiu.
+      legenda: prod.del_medio_animais != null ? `base: ${prod.del_medio_animais} vaca(s)` : undefined,
     },
   ];
 
@@ -491,6 +521,9 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
                   <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: c.atencao ? "var(--mob-ambar)" : "var(--mob-text)" }}>{c.valor}</div>
                   <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.35rem", fontWeight: 600 }}>{c.titulo}</div>
                 </>
+              )}
+              {c.legenda && (
+                <div style={{ fontSize: "0.62rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{c.legenda}</div>
               )}
               <div style={{ fontSize: "0.68rem", color: c.atencao ? "var(--mob-ambar)" : "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
                 ver lista <ChevronRight size={12} />

@@ -14,8 +14,10 @@ from datetime import date, timedelta
 from math import ceil
 from typing import Optional
 
+from fazenda.ordenacao import chave_numero
 from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_raca
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
+from fazenda.rules.producao_leiteira import del_dias_ao_vivo
 from fazenda.rules.parametros import (
     BENCHMARK_METAS,
     data_corte_taxa_concepcao,
@@ -863,6 +865,7 @@ def calcular_indicadores(
     lotes: list[dict] | None = None,
     aplicacoes_iatf: list[dict] | None = None,
     controles: list[dict] | None = None,
+    secagens: list[dict] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
 
@@ -877,7 +880,16 @@ def calcular_indicadores(
     não por um número fixo — o cadastro pode renomear/renumerar os lotes a
     qualquer momento (ex.: o usuário já trocou qual código é Secas ×
     Pré-parto). Sem `lotes` (chamada isolada, ex. testes), cai no número
-    histórico 04/05 só para não quebrar quem não passa o cadastro."""
+    histórico 04/05 só para não quebrar quem não passa o cadastro.
+
+    `secagens` (dicts de `Secagem` — `numero_matriz`, `data_secagem`)
+    alimenta o DEL ao vivo de `producao.del_medio` (ver `del_dias_ao_vivo`,
+    em `rules.producao_leiteira`): sem ele, o DEL ao vivo de cada lactante
+    ainda é recalculado a partir do último PARTO (sempre disponível, via
+    `partos`), só sem o corte de quem já secou — equivalente a chamar com
+    `secagens=[]`. É o parâmetro que os dois caminhos puros que não carregam
+    Secagem (`rules.manual_fazenda`/`rules.assistente`, antes desta correção)
+    seguem podendo omitir sem quebrar."""
     hoje = data_ref or date.today()
     peso_por_animal = peso_por_animal or {}
     concepcao_desde = _concepcao_desde()
@@ -1042,29 +1054,120 @@ def calcular_indicadores(
     neg = sum(1 for s in servicos if _no_periodo(s, concepcao_desde) and _diag_upper(s.get("diagnostico")) == "NEGATIVO")
 
     # ---------------------------------------------------------------
-    # DEL e produção das lactantes
+    # DEL AO VIVO das lactantes — card "DEL médio" da Produção.
+    #
+    # Era `a.get("del_dias")` direto: o campo congelado do CSV do Ideagri,
+    # que só volta a bater com a realidade no próximo upload. A lista de
+    # animais (GET /animais/) já mostra DEL AO VIVO (parto mais recente
+    # lançado no app, zerado por uma Secagem posterior) — usar o congelado
+    # aqui fazia o card discordar da lista logo ao lado dele, e DEL alimenta
+    # tanto a dieta quanto a decisão de secagem. `del_dias_ao_vivo` é a MESMA
+    # função usada por `routers/animais.py::listar_animais` (extraída para
+    # `rules.producao_leiteira` para não duplicar a regra em dois lugares).
+    # MUDANÇA DE SEMÂNTICA (deliberada — ver decisão do dono do produto):
+    # `producao.del_medio` deixa de ser a média do DEL CONGELADO e passa a
+    # ser a média do DEL AO VIVO. `alertas_indicador.py` resolve este mesmo
+    # campo por `("producao", "del_medio")` — um alerta configurado sobre ele
+    # passa a comparar contra o número ao vivo, não mais o do último CSV.
     # ---------------------------------------------------------------
-    del_lactacao = [
-        a.get("del_dias")
-        for a in animais
-        if _codigo_grupo(a.get("grupo_primario")) in GRUPOS_LACTACAO and a.get("del_dias")
-    ]
-    del_medio = _media([float(d) for d in del_lactacao])
+    ultimo_parto_por_matriz: dict[str, date] = {}
+    for p in partos:
+        d, m = p.get("data_parto"), p.get("numero_matriz")
+        if d and m and (m not in ultimo_parto_por_matriz or d > ultimo_parto_por_matriz[m]):
+            ultimo_parto_por_matriz[m] = d
+    ultima_secagem_por_matriz: dict[str, date] = {}
+    for s in secagens or []:
+        d, m = s.get("data_secagem"), s.get("numero_matriz")
+        if d and m and (m not in ultima_secagem_por_matriz or d > ultima_secagem_por_matriz[m]):
+            ultima_secagem_por_matriz[m] = d
 
-    # Produção do ÚLTIMO CONTROLE de cada animal, lida dos controles leiteiros
-    # de verdade. `Animal.ult_cl_kg` (o campo que isto usava sozinho) só era
-    # escrito pelo parser do GERAL.csv do Ideagri — quem lança pelo app via
-    # este número congelado na data do último CSV importado, enquanto o
-    # gráfico de produção ao lado já mostrava os valores novos. Com a
-    # importação do Ideagri aposentada, `ult_cl_kg` nunca mais seria escrito.
-    # Ele segue como fallback por animal, para as fazendas cujo histórico só
-    # existe no campo importado.
+    del_vivo_lactacao: list[float] = []
+    for a in animais:
+        if _codigo_grupo(a.get("grupo_primario")) not in GRUPOS_LACTACAO:
+            continue
+        numero = a.get("numero")
+        del_vivo = del_dias_ao_vivo(
+            a.get("del_dias"),
+            ultimo_parto_por_matriz.get(numero),
+            ultima_secagem_por_matriz.get(numero),
+            hoje,
+        )
+        if del_vivo is not None:
+            del_vivo_lactacao.append(float(del_vivo))
+    del_medio = _media(del_vivo_lactacao)
+    del_medio_animais = len(del_vivo_lactacao)
+
+    # ---------------------------------------------------------------
+    # O CONTROLE DO DIA — card "Produção do dia". Decisão do dono do produto:
+    # antes o card somava o ÚLTIMO controle de CADA animal, em QUALQUER data
+    # (uma vaca controlada em março entrava no mesmo total de uma controlada
+    # ontem), enquanto o drill-down ao lado listava só as linhas do dia mais
+    # recente — card e lista eram dois números diferentes com o mesmo nome,
+    # por construção. Agora os dois são a mesma coisa: o card É a soma exata
+    # de `controle_nums`, o dia do controle leiteiro mais recente com
+    # produção > 0.
+    #
+    # Duas passadas de propósito (não uma só): a primeira só descobre QUAL é
+    # o dia mais recente; a segunda soma as linhas DAQUELE dia. Assim
+    # `producao_total_dia_kg` é, por construção, a soma de `controle_do_dia`
+    # nos números de `controle_nums` — não uma segunda conta que possa
+    # divergir da lista.
+    # ---------------------------------------------------------------
+    data_controle: date | None = None
+    for c in controles or []:
+        producao = c.get("producao_kg")
+        data_c = c.get("data_controle") or c.get("data")  # "data" = alias legado, ver histórico abaixo
+        if not producao or producao <= 0 or not isinstance(data_c, date):
+            continue
+        if data_controle is None or data_c > data_controle:
+            data_controle = data_c
+
+    controle_do_dia: dict[str, float] = {}  # numero_matriz -> produção somada no dia
+    if data_controle is not None:
+        for c in controles or []:
+            numero = c.get("numero_matriz") or c.get("numero")
+            producao = c.get("producao_kg")
+            data_c = c.get("data_controle") or c.get("data")
+            if not numero or not producao or producao <= 0 or data_c != data_controle:
+                continue
+            controle_do_dia[numero] = controle_do_dia.get(numero, 0.0) + float(producao)
+
+    # Ordem crescente do número do brinco — mesma convenção usada nas listas
+    # de rebanho (chave_numero já resolve string numérica x alfanumérica).
+    controle_nums = sorted(controle_do_dia.keys(), key=chave_numero)
+    vacas_no_controle = len(controle_nums)
+    # A GARANTIA estrutural desta etapa: o total É a soma das linhas dos
+    # números que estão em `controle_nums`, não uma segunda passagem por
+    # `controles` que poderia, por um bug futuro, divergir da lista.
+    producao_total_dia = round(sum(controle_do_dia[n] for n in controle_nums), 1) if controle_nums else 0.0
+    producao_media_dia = round(producao_total_dia / vacas_no_controle, 1) if vacas_no_controle else None
+    cobertura_controle_pct = (
+        round(100 * vacas_no_controle / vacas_lactacao, 1) if vacas_lactacao else None
+    )
+
+    # ---------------------------------------------------------------
+    # ULTIMO POR ANIMAL — o acumulado antigo (último controle de CADA animal,
+    # em qualquer data, com fallback para o campo congelado do CSV do
+    # Ideagri). Não é mais o card, mas continua disponível com um nome que
+    # diz o que ele é — outras telas (ex. a ficha do animal) ainda fazem
+    # sentido com "a última produção conhecida desta vaca", mesmo que não
+    # seja hoje.
+    #
+    # `Animal.ult_cl_kg` tinha um único ponto de escrita em todo o backend: o
+    # parser do GERAL.csv do Ideagri (aposentado). Quem lançava controle pelo
+    # app via esse número congelado na data do último CSV importado, ao lado
+    # de um gráfico que já mostrava os valores novos. Segue como fallback por
+    # animal — para o histórico de quem só tem o valor importado — mas agora
+    # contado à parte (`congelado`/`congelado_nums`) para a origem do dado
+    # ficar visível, não misturada ao que já vem de ControleLeiteiro
+    # (`de_controle`).
+    # ---------------------------------------------------------------
     ultimo_controle_kg: dict[str, float] = {}
     data_do_ultimo: dict[str, date] = {}
     for c in controles or []:
         numero = c.get("numero_matriz") or c.get("numero")
         producao = c.get("producao_kg")
-        data_c = c.get("data")
+        data_c = c.get("data_controle") or c.get("data")
         if not numero or not producao or producao <= 0:
             continue
         anterior = data_do_ultimo.get(numero)
@@ -1073,16 +1176,26 @@ def calcular_indicadores(
             if isinstance(data_c, date):
                 data_do_ultimo[numero] = data_c
 
-    producoes = []
+    producoes: list[float] = []
+    de_controle = 0
+    congelado = 0
+    congelado_nums: list[str] = []
     for a in animais:
         numero = a.get("numero")
         valor = ultimo_controle_kg.get(numero) if numero else None
-        if valor is None:
-            valor = a.get("ult_cl_kg")
+        if valor is not None:
+            producoes.append(valor)
+            de_controle += 1
+            continue
+        valor = a.get("ult_cl_kg")
         if valor and valor > 0:
             producoes.append(valor)
+            congelado += 1
+            if numero:
+                congelado_nums.append(numero)
     producao_media = _media([float(p) for p in producoes])
-    producao_total_dia = round(sum(float(p) for p in producoes), 1) if producoes else 0.0
+    producao_total_antiga = round(sum(float(p) for p in producoes), 1) if producoes else 0.0
+    congelado_nums.sort(key=chave_numero)
 
     # ---------------------------------------------------------------
     # IEP — intervalo entre partos (média, em dias e meses)
@@ -1226,9 +1339,36 @@ def calcular_indicadores(
         "benchmark_categorias": benchmark_categorias,
         "reproducao_categorias": reproducao_categorias,
         "producao": {
-            "vacas_com_producao": len(producoes),
-            "producao_media_kg": producao_media,
+            # O CONTROLE DO DIA — o card é a soma exata desta lista (ver bloco
+            # acima). `producao_media_kg`/`del_medio` MUDARAM DE SEMÂNTICA
+            # (média do dia / DEL ao vivo) — `alertas_indicador.py` resolve os
+            # dois por `("producao","producao_media_kg")` e
+            # `("producao","del_medio")`, e passam a comparar contra os novos
+            # números; é deliberado, ver decisão do dono do produto.
+            "data_controle": data_controle.isoformat() if data_controle else None,
             "producao_total_dia_kg": producao_total_dia,
+            "producao_media_kg": producao_media_dia,
+            "vacas_no_controle": vacas_no_controle,
+            "controle_nums": controle_nums,
+            "vacas_lactacao": vacas_lactacao,
+            "cobertura_controle_pct": cobertura_controle_pct,
             "del_medio": del_medio,
+            "del_medio_animais": del_medio_animais,
+            # O acumulado antigo (último controle de CADA animal, em qualquer
+            # data) — deixou de ser o card, mas segue disponível com um nome
+            # honesto sobre o que é.
+            "ultimo_por_animal": {
+                "producao_total_kg": producao_total_antiga,
+                "producao_media_kg": producao_media,
+                "vacas_com_producao": len(producoes),
+                "de_controle": de_controle,
+                "congelado": congelado,
+                "congelado_nums": congelado_nums,
+            },
+            # Compat: mesmas telas que hoje leem "vacas_com_producao" no nível
+            # de cima esperando "quantas entraram no card" — agora o card É o
+            # controle do dia, então este alias passa a valer o mesmo que
+            # `vacas_no_controle`.
+            "vacas_com_producao": vacas_no_controle,
         },
     }

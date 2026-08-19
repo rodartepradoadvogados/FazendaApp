@@ -5,12 +5,16 @@
 // existe endpoint dedicado no backend para isso).
 import { useEffect, useMemo, useState } from "react";
 import { PieChart, Gauge } from "lucide-react";
-import { fetchAnimais } from "@/lib/api";
+import { fetchAnimais, type AnimalProducaoAoVivo } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { MobCard, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
+// `ult_cl_kg` é o campo congelado do CSV do Ideagri (parser aposentado);
+// `producao_kg`/`producao_origem` vêm ao vivo de fetchAnimais(). Partial
+// porque o backend desta etapa pode ainda não mandar os campos novos.
 type AnimalLote = {
   numero: string;
   nome?: string | null;
@@ -21,7 +25,8 @@ type AnimalLote = {
   sit_rep?: string | null;
   del_dias?: number | null;
   ult_cl_kg?: number | null;
-};
+} & Partial<AnimalProducaoAoVivo>;
+
 
 // Cor por situação reprodutiva ao vivo (rótulos de ROTULO_ESTADO).
 const SIT_COR: Record<string, string> = {
@@ -73,6 +78,7 @@ function Composicao() {
   const { rotuloDe } = useEstadosReprodutivos();
   if (carregando) return <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>;
   if (!total) return <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>;
+  const algumCongelado = porLote.some(([, lista]) => lista.some((a) => producaoDe(a) != null && origemDe(a) === "congelado"));
 
   return (
     <div>
@@ -93,13 +99,21 @@ function Composicao() {
                   <span>Raça: {a.raca || "—"}</span>
                   <span style={{ color: SIT_COR[rotuloDe(a.numero)] || "var(--mob-muted)", fontWeight: 600 }}>{rotuloDe(a.numero) !== "—" ? rotuloDe(a.numero) : "Sit. Rep. —"}</span>
                   <span>DEL: {a.del_dias ?? "—"}</span>
-                  <span>Últ. CL: {a.ult_cl_kg != null ? `${a.ult_cl_kg.toFixed(1)} kg` : "—"}</span>
+                  <span>
+                    Últ. CL: {producaoDe(a) != null ? `${producaoDe(a)!.toFixed(1)} kg` : "—"}
+                    {origemDe(a) === "congelado" && <span> *</span>}
+                  </span>
                 </div>
               </MobCard>
             ))}
           </div>
         </details>
       ))}
+      {algumCongelado && (
+        <p style={{ fontSize: "0.72rem", color: "var(--mob-muted)", marginTop: "0.3rem" }}>
+          * sem controle leiteiro lançado no app ainda — valor parado da última importação.
+        </p>
+      )}
     </div>
   );
 }
@@ -115,8 +129,12 @@ function Indicadores() {
       {porLote.map(([lote, lista]) => {
         const comDel = lista.filter((a) => a.del_dias != null);
         const delMedio = comDel.length ? Math.round(comDel.reduce((s, a) => s + (a.del_dias || 0), 0) / comDel.length) : null;
-        const comCl = lista.filter((a) => a.ult_cl_kg != null);
-        const clMedio = comCl.length ? comCl.reduce((s, a) => s + (a.ult_cl_kg || 0), 0) / comCl.length : null;
+        const comCl = lista.filter((a) => producaoDe(a) != null);
+        const clMedio = comCl.length ? comCl.reduce((s, a) => s + (producaoDe(a) || 0), 0) / comCl.length : null;
+        // Se algum animal do lote entrou com valor congelado, a média mistura
+        // dado ao vivo com dado parado — o lote precisa avisar isso, senão dá
+        // pra comparar dois lotes achando que os números são igualmente recentes.
+        const clTemCongelado = comCl.some((a) => origemDe(a) === "congelado");
         const porSit = new Map<string, number>();
         lista.forEach((a) => {
           const sit = rotuloDe(a.numero) !== "—" ? rotuloDe(a.numero) : "Sem situação";
@@ -136,7 +154,10 @@ function Indicadores() {
               </div>
               <div>
                 <span style={{ fontSize: "0.7rem", color: "var(--mob-muted)", fontWeight: 600 }}>Últ. CL médio</span>
-                <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{clMedio != null ? `${clMedio.toFixed(1)} kg` : "—"}</div>
+                <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>
+                  {clMedio != null ? `${clMedio.toFixed(1)} kg` : "—"}
+                  {clTemCongelado && <span style={{ fontSize: "0.7rem", color: "var(--mob-muted)", fontWeight: 600 }}> * mistura dado parado</span>}
+                </div>
               </div>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>

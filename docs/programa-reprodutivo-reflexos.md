@@ -343,3 +343,92 @@ exatamente vaca + novilha fatia a fatia.
 **Continua sem abstração que amarre valor e predicado.** Cada tela ainda
 reimplementa a ligação; nada impede estruturalmente uma recaída. É o que a
 seção 12 item 3 registra para produção.
+
+---
+
+## 15. As três divergências de produção — CORRIGIDO
+
+A seção 12 registrava produção como o item seguinte da migração. Eram três
+defeitos, e um quarto apareceu durante a correção.
+
+### 15.1 Um bug de chave, silencioso em produção
+
+`rules/indicadores.py::calcular_indicadores` lia a data do controle leiteiro
+por `c.get("data")`. Quem chama em produção é `calcular_indicadores_fazenda`,
+que passa `ControleLeiteiro.model_dump()` — cujo campo é **`data_controle`**.
+
+`data_c` era sempre `None`, a comparação "qual o controle mais recente deste
+animal" **nunca disparava**, e o valor que sobrava por animal era o que a
+ordem de iteração do SELECT deixasse por último. Um controle de março podia
+estar vencendo um de ontem.
+
+Os testes não pegavam porque montavam os dicts à mão com a chave errada — a
+mesma do código. É a forma mais barata de um teste concordar com o defeito:
+quando o teste constrói a entrada, ele pode construí-la no formato que o bug
+espera. Os testes agora usam o nome do modelo, e um caso isolado cobre o
+apelido antigo.
+
+### 15.2 "Produção do dia" não era a produção de dia nenhum
+
+O card somava o último controle de **cada animal, em qualquer data**; o
+drill-down do mesmo card listava **só as linhas do dia mais recente**. Dois
+números diferentes com o mesmo nome — a seção 14 de novo, agora em produção.
+
+A correção não é "fazer as duas contas baterem", é **remover a segunda
+conta**. `producao_total_dia_kg` passa a ser somado sobre a própria lista
+`controle_nums`; e a reconstrução que o navegador fazia (`abrirUltimoControle`
+com seu `fetchControles` e seu Modal) saiu inteira do frontend. Enquanto ela
+existisse, card e lista continuariam livres para divergir.
+
+Entrou junto a **cobertura** (`vacas_no_controle` / `vacas_lactacao`): sem
+ela, ordenha que faltou lançar se parece com queda de produção, que é a
+leitura errada mais cara que este painel permite.
+
+O acumulado antigo não sumiu — virou `ultimo_por_animal`, com `de_controle` e
+`congelado` contados à parte.
+
+### 15.3 DEL do card congelado contra DEL da lista ao vivo
+
+O card usava `Animal.del_dias`, congelado no CSV; a lista de animais já era ao
+vivo, via `_del_dias_ao_vivo` em `routers/animais.py`. E DEL alimenta dieta e
+secagem.
+
+A regra virou função **pura** em `rules/producao_leiteira.py`, com um dono só,
+chamada pelos dois. `calcular_indicadores` ganhou `secagens` — sem esse dado
+não dá para reproduzir a regra (vaca já seca não conta dias de lactação), e
+sua ausência era o motivo real de o card nunca ter ido ao vivo. Sem
+`secagens`, o comportamento é o de antes.
+
+### 15.4 `ult_cl_kg`: campo morto, lido em 15 lugares
+
+Ponto de escrita único: `parsers/geral.py`, o parser do Ideagri, aposentado.
+Decisão do dono: manter o fallback, **mas mostrar a origem**. `GET /animais/`
+passa a emitir `producao_kg`/`producao_data`/`producao_origem` (uma consulta
+para o rebanho inteiro), e as sete telas leem de lá.
+
+### 15.5 O que a paralelização ensinou
+
+As três frentes foram particionadas por **dono de arquivo**, não por item —
+as três divergências tocam todas o mesmo `rules/indicadores.py`. O contrato
+de tipos foi escrito **antes**, em `lib/api.ts`, e ficou somente-leitura para
+as três.
+
+Ainda assim, as cinco telas nasceram cada uma com sua cópia do par
+`producaoDe`/`origemDe`, e as cópias **divergiram no mesmo dia**: quatro
+deduziam a origem do caminho do fallback, uma devolvia `null` sempre que o
+backend não a afirmasse — apagando a marca de "dado parado" exatamente de
+quem mais precisa dela. Viraram `lib/producaoAnimal.ts`.
+
+É a seção 14 mais uma vez, uma camada acima: **a mesma pergunta respondida em
+dois lugares diverge por construção, não por descuido.** A ausência da
+abstração que amarra valor e predicado continua sendo a dívida estrutural
+aberta — e agora há evidência de que ela reaparece mesmo com o contrato
+fixado de antemão.
+
+### 15.6 Mudança de significado com alerta configurável
+
+`producao.producao_media_kg` (média do dia, não do último-por-animal) e
+`producao.del_medio` (ao vivo, não congelado) mantêm nome e caminho —
+`alertas_indicador.py` depende literalmente deles — mas mudam de significado.
+Quem tiver limite configurado nesses dois verá o número mudar sem ter mexido
+em nada. Mesmo tratamento dado às taxas reprodutivas: manter e avisar.

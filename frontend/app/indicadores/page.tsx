@@ -2,15 +2,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby } from "lucide-react";
-import { fetchIndicadores, fetchAnimais, fetchControles, podeModulo } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, podeModulo, type IndicadoresResposta } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
-import { Modal } from "@/components/Modal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
 import NaoConformidades from "@/components/NaoConformidades";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
@@ -18,33 +16,12 @@ const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0,
 const LACTACAO = ["01", "02", "03"];
 
 export function IndicadoresGerais() {
-  const [ind, setInd] = useState<any>(null);
+  const [ind, setInd] = useState<IndicadoresResposta | null>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [recarregando, setRecarregando] = useState(false);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
-  const [ultimoControle, setUltimoControle] = useState<{ data: string; linhas: any[] } | null | undefined>(undefined);
-  const [controleAberto, setControleAberto] = useState(false);
-  const ordControle = useOrdenacao(ultimoControle?.linhas ?? []);
-
-  // Último controle leiteiro do rebanho — busca só quando o card é clicado
-  // pela 1ª vez (undefined = ainda não buscado, null = buscado e sem dados).
-  const abrirUltimoControle = async () => {
-    if (ultimoControle === undefined) {
-      try {
-        const { controles } = await fetchControles();
-        const dataMax = controles.reduce((m: string | null, c: any) => (!m || (c.data && c.data > m) ? c.data : m), null as string | null);
-        const linhas = dataMax
-          ? controles.filter((c: any) => c.data === dataMax).sort((a: any, b: any) => a.numero.localeCompare(b.numero, undefined, { numeric: true }))
-          : [];
-        setUltimoControle(dataMax ? { data: dataMax, linhas } : null);
-      } catch {
-        setUltimoControle(null);
-      }
-    }
-    setControleAberto(true);
-  };
 
   const carregar = () => {
     setRecarregando(true);
@@ -79,6 +56,16 @@ export function IndicadoresGerais() {
   const desdeLabel = rep?.concepcao_desde
     ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "01/01/2026";
+
+  // O rótulo do card leva a data do controle junto: sem ela, "produção do dia"
+  // é uma frase que não diz de qual dia — e é a falta dessa data que escondia
+  // a vaca controlada em março entrando na mesma soma de quem foi ordenhada
+  // ontem.
+  const dataControleLabel = prod?.data_controle
+    ? new Date(prod.data_controle + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })
+    : null;
+  const rotuloProducaoDia = dataControleLabel ? `Produção do dia · ${dataControleLabel}` : "Produção do dia · sem controle lançado";
+  const tituloModalControleDia = dataControleLabel ? `Controle leiteiro — ${dataControleLabel}` : "Controle leiteiro do dia";
 
   // Cada linha abre a lista que o próprio backend contou (`*_nums`), e não um
   // refiltro do `sit_rep` congelado do CSV: o número do card e a lista que ele
@@ -122,30 +109,57 @@ export function IndicadoresGerais() {
 
         {/* Produção do dia é o número que o dono olha primeiro todo dia — vira a
             âncora da tela em vez de disputar o mesmo tamanho dos outros 3 dados
-            de produção, que continuam do lado, só menores. */}
-        <div className="card mb-6" style={{ padding: "1.1rem 1.4rem", display: "flex", alignItems: "center", gap: "2.2rem", flexWrap: "wrap" }}>
-          <div style={{ cursor: "pointer" }} onClick={abrirUltimoControle}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-              <Milk size={13} /> Produção do dia · último controle
+            de produção, que continuam do lado, só menores. O card abre a
+            própria lista que ele soma (`controle_nums`, via abrirNums — o
+            mesmo mecanismo dos cards reprodutivos), então os dois números
+            nunca mais divergem por construção. */}
+        <div className="card mb-6" style={{ padding: "1.1rem 1.4rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "2.2rem", flexWrap: "wrap" }}>
+            <div style={{ cursor: "pointer" }} onClick={() => abrirNums(tituloModalControleDia, prod?.controle_nums)}>
+              <div style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                <Milk size={13} /> {rotuloProducaoDia}
+              </div>
+              <div style={{ fontFamily: "var(--font-heading)", fontSize: "3rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
+                {dataControleLabel ? num(prod?.producao_total_dia_kg, " kg") : "—"}
+              </div>
+              {/* Cobertura: o número sozinho esconde se faltou ordenhar alguém
+                  antes de o dono concluir que a produção caiu. */}
+              {dataControleLabel && (
+                <div style={legenda}>{num(prod?.vacas_no_controle)} de {num(prod?.vacas_lactacao)} lactantes</div>
+              )}
             </div>
-            <div style={{ fontFamily: "var(--font-heading)", fontSize: "3rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: "0.25rem", fontVariantNumeric: "tabular-nums" }}>
-              {num(prod?.producao_total_dia_kg, " kg")}
+            <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: "2rem", flexWrap: "wrap" }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.producao_media_kg, " kg")}</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Média/vaca</div>
+              </div>
+              <div style={{ textAlign: "right", ...clickable }} onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )}>
+                <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: animais.length ? "var(--dourado-light)" : undefined }}>{num(reb?.vacas_lactacao)}</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Em lactação</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.del_medio)}</div>
+                <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>DEL médio{prod?.del_medio != null ? ` · de ${prod.del_medio_animais}` : ""}</div>
+              </div>
             </div>
           </div>
-          <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", gap: "2rem", flexWrap: "wrap" }}>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.producao_media_kg, " kg")}</div>
-              <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Média/vaca</div>
+          {/* Acumulado antigo (último controle de CADA vaca, qualquer data) —
+              não pode simplesmente sumir da tela quando o significado do card
+              muda, senão quem olhava esse número perde a referência sem aviso. */}
+          {!!prod?.ultimo_por_animal && prod.ultimo_por_animal.producao_total_kg > 0 && (
+            <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+              Acumulado do último controle de cada vaca: {num(prod.ultimo_por_animal.producao_total_kg, " kg")}
+              {prod.ultimo_por_animal.congelado > 0 && (
+                <>
+                  {" — "}
+                  <span style={{ cursor: "pointer", textDecoration: "underline" }}
+                    onClick={() => abrirNums("Ainda no valor congelado do CSV importado", prod.ultimo_por_animal.congelado_nums)}>
+                    {prod.ultimo_por_animal.congelado} ainda do CSV importado
+                  </span>
+                </>
+              )}
             </div>
-            <div style={{ textAlign: "right", ...clickable }} onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )}>
-              <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: animais.length ? "var(--dourado-light)" : undefined }}>{num(reb?.vacas_lactacao)}</div>
-              <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Em lactação</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "1.15rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{num(prod?.del_medio)}</div>
-              <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>DEL médio</div>
-            </div>
-          </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -209,40 +223,6 @@ export function IndicadoresGerais() {
       </>}
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
-
-      {controleAberto && (
-        <Modal title="Último controle leiteiro" onClose={() => setControleAberto(false)} width="640px">
-          {ultimoControle === undefined && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-          {ultimoControle === null && <p style={{ color: "var(--text-muted)" }}>Nenhum controle leiteiro lançado ainda.</p>}
-          {ultimoControle && (
-            <>
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                {new Date(ultimoControle.data + "T00:00:00").toLocaleDateString("pt-BR")} — {ultimoControle.linhas.length} {ultimoControle.linhas.length !== 1 ? "animais" : "animal"}
-              </p>
-              <table className="fazenda-table">
-                <thead>
-                  <tr>
-                    <ThOrdenavel label="Nº" campo="numero" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} />
-                    <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} />
-                    <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} alinhar="right" />
-                    <ThOrdenavel label="DEL" campo="del" coluna={ordControle.coluna} dir={ordControle.dir} ordenar={ordControle.ordenar} alinhar="right" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {ordControle.linhasOrdenadas.map((c: any) => (
-                    <tr key={c.numero}>
-                      <td style={{ fontWeight: 700 }}>{c.numero}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{c.grupo_primario || "—"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.producao_kg != null ? c.producao_kg.toFixed(1) : "—"}</td>
-                      <td style={{ textAlign: "right" }}>{c.del ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </Modal>
-      )}
     </div>
   );
 }

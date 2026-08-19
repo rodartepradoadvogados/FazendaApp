@@ -14,7 +14,7 @@ from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ControleLeiteiro, Doenca, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao,
-    Sanidade, Servico,
+    Sanidade, Secagem, Servico,
 )
 from fazenda.rules.estado_reprodutivo import classificar_animal
 from fazenda.rules.indicadores import calcular_indicadores
@@ -338,9 +338,16 @@ def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data:
     if fazenda_id is not None:
         query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
     controles = [c.model_dump() for c in session.exec(query_controles).all()]
+    # Secagens — alimentam o DEL AO VIVO do card "DEL médio" (ver
+    # `del_dias_ao_vivo` em rules.producao_leiteira): sem elas, uma vaca já
+    # seca continuaria contando dias de lactação a partir do parto.
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    secagens = [s.model_dump() for s in session.exec(query_secagens).all()]
     return calcular_indicadores(
         animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal,
-        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf, controles=controles,
+        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf, controles=controles, secagens=secagens,
     )
 
 

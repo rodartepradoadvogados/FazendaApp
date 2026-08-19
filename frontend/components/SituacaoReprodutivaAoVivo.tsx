@@ -7,6 +7,7 @@ import {
 import { fetchEstadosReprodutivos, fetchIndicadores, fetchAnimais, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { BarraExport, TabelaManejo, fmtData, estiloNum, estiloMudo, type Col } from "@/components/RelatoriosManejo";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 /**
  * SituacaoReprodutivaAoVivo — segunda aba de "Listas" (ver app/relatorios/page.tsx).
@@ -57,9 +58,17 @@ function ordenarNumero(a: { numero: string }, b: { numero: string }): number {
 
 type Animal = {
   numero: string; grupo_primario?: string | null; categoria_abrev?: string | null;
-  del_dias?: number | null; ult_cl_kg?: number | null;
+  del_dias?: number | null;
+  /** @deprecated Campo congelado do CSV do Ideagri — prefira `producao_kg`. */
+  ult_cl_kg?: number | null;
+  // Produção AO VIVO (AnimalProducaoAoVivo, lib/api.ts) — cai para `ult_cl_kg`
+  // enquanto o backend novo não estiver publicado.
+  producao_kg?: number | null;
+  producao_data?: string | null;
+  producao_origem?: "controle" | "congelado" | null;
 };
 type MatrizIep = { numero: string; iep_dias: number; data_ultimo_parto: string };
+
 
 // Contagem em badge, no lugar do BadgeCores de semáforo (não se aplica aqui).
 function BadgeContagem({ n }: { n: number }) {
@@ -128,9 +137,12 @@ export default function SituacaoReprodutivaAoVivo() {
     .map((m) => ({ ...m, categoria: categoriaDe(m.numero) })), [iepPorMatriz, categoriaDe]);
 
   const delProducao = useMemo(() => animais
-    .filter((a) => (a.del_dias != null && a.del_dias >= 0) || (a.ult_cl_kg != null && a.ult_cl_kg > 0))
+    .filter((a) => (a.del_dias != null && a.del_dias >= 0) || (producaoDe(a) != null && (producaoDe(a) as number) > 0))
     .sort(ordenarNumero)
-    .map((a) => ({ ...a, categoria: categoriaDe(a.numero) })), [animais, categoriaDe]);
+    // `producao_valor`/`producao_origem_efetiva` viram campos próprios da linha
+    // para a ordenação por coluna (useOrdenacao lê `row[campo]`) e a exportação
+    // enxergarem o mesmo valor com fallback já resolvido.
+    .map((a) => ({ ...a, categoria: categoriaDe(a.numero), producao_valor: producaoDe(a), producao_origem_efetiva: origemDe(a) })), [animais, categoriaDe]);
 
   const carregando = loading && !estados;
 
@@ -281,14 +293,30 @@ export default function SituacaoReprodutivaAoVivo() {
           <SecaoRecolhivel titulo="DEL e produção" icon={Milk} descricao="Dias em lactação e última produção conhecida de cada animal." badge={<BadgeContagem n={delProducao.length} />}>
             <BarraExport
               titulo="DEL e produção" nomeArquivoBase="reprodutivo_del_producao"
-              colunas={[{ header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" }, { header: "DEL", key: "del" }, { header: "Última produção (L)", key: "producao" }]}
-              linhas={delProducao.map((a) => ({ numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "", producao: a.ult_cl_kg ?? "" }))}
+              colunas={[{ header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" }, { header: "DEL", key: "del" }, { header: "Última produção (L)", key: "producao" }, { header: "Origem da produção", key: "origem_producao" }]}
+              linhas={delProducao.map((a) => ({
+                numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "", producao: a.producao_valor ?? "",
+                // Rótulo honesto para quem abre a planilha: sem isso, a coluna
+                // some a distinção entre um controle lançado no app e o valor
+                // congelado do CSV que ela representa dentro do produto.
+                origem_producao: a.producao_origem_efetiva === "congelado" ? "CSV importado (congelado)" : a.producao_origem_efetiva === "controle" ? "Controle leiteiro" : "",
+              }))}
             />
             <TabelaManejo semaforo={false} linhas={delProducao} colunas={[
               { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
               { header: "Categoria", campo: "categoria", render: (r) => r.categoria, style: estiloMudo },
               { header: "DEL", campo: "del_dias", render: (r) => (r.del_dias != null ? `${r.del_dias} dias` : "—") },
-              { header: "Última produção (L)", campo: "ult_cl_kg", render: (r) => (r.ult_cl_kg != null ? r.ult_cl_kg.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—") },
+              {
+                header: "Última produção (L)", campo: "producao_valor", render: (r) => {
+                  if (r.producao_valor == null) return "—";
+                  const texto = r.producao_valor.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+                  // Rodapé, não alarme: só um asterisco mudo indicando que este
+                  // valor não anda mais — quem quiser o porquê passa o mouse.
+                  return r.producao_origem_efetiva === "congelado"
+                    ? <span style={estiloMudo} title="Valor do último CSV importado — nenhum controle leiteiro lançado no app para este animal">{texto} *</span>
+                    : texto;
+                },
+              },
             ] as Col[]} />
           </SecaoRecolhivel>
         </>

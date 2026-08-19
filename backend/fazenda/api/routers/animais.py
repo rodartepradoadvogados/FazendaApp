@@ -23,24 +23,16 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
+from fazenda.rules.producao_leiteira import com_fallback_animal, del_dias_ao_vivo, ultimo_controle_por_animal
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
 
-
-def _del_dias_ao_vivo(del_dias_congelado: int | None, ult_parto: date | None, ult_secagem: date | None, hoje: date) -> int | None:
-    """DEL (dias em lactação) AO VIVO a partir do parto mais recente lançado no
-    app — `Animal.del_dias` é zerado no instante do parto (ver registrar_parto)
-    mas fica congelado dali em diante, só voltando a bater com a realidade no
-    próximo upload do GERAL.csv (Ideagri). Sem isso, uma vaca que pariu há dias
-    aparece com DEL 0 até o próximo import. Mesmo racional AO VIVO já usado em
-    `fazenda.api.routers.producao.info_secagem` — aqui também considera a
-    Secagem mais recente: vaca já seca não conta dias de lactação."""
-    if ult_parto is None:
-        return del_dias_congelado
-    if ult_secagem and ult_secagem >= ult_parto:
-        return None
-    return (hoje - ult_parto).days
+# Alias local: a regra em si mora em `rules.producao_leiteira.del_dias_ao_vivo`
+# (função pura, sem Session, reaproveitada também por
+# `rules.indicadores.calcular_indicadores` para o card "DEL médio" da
+# Produção) — mantido para não mexer nas chamadas já existentes neste arquivo.
+_del_dias_ao_vivo = del_dias_ao_vivo
 
 
 def _categoria_ao_vivo(categoria_completa: str | None, categoria_abrev: str | None, ult_parto: date | None, ult_secagem: date | None) -> tuple[str | None, str | None]:
@@ -121,6 +113,15 @@ def listar_animais(
         if d and (s.numero_matriz not in ult_secagem or d > ult_secagem[s.numero_matriz]):
             ult_secagem[s.numero_matriz] = d
 
+    # Produção AO VIVO de cada animal — mesma dupla de funções que o contexto
+    # de dieta já usa (ver docstring de `rules.producao_leiteira`): o
+    # ControleLeiteiro lançado pelo app quando existe, senão o campo
+    # congelado `ult_cl_kg` do CSV do Ideagri (aposentado). UMA consulta para
+    # o rebanho inteiro — não uma por animal, que a listagem completa tornaria
+    # proibitivo.
+    numeros = {a.numero for a in animais}
+    producao_ao_vivo = ultimo_controle_por_animal(session, numeros, fazenda_id)
+
     hoje = date.today()
     saida = []
     for a in animais:
@@ -132,6 +133,20 @@ def listar_animais(
         d["data_ult_parto"] = pp.isoformat() if pp else None
         d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp, sec, hoje)
         d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp, sec)
+        producao_kg, producao_data = com_fallback_animal(a.numero, producao_ao_vivo, a)
+        d["producao_kg"] = producao_kg
+        d["producao_data"] = producao_data.isoformat() if producao_data else None
+        if a.numero in producao_ao_vivo:
+            d["producao_origem"] = "controle"
+        elif producao_kg is not None:
+            # `is not None` e não truthiness: uma vaca com `ult_cl_kg` 0,0
+            # (registro do CSV de quem já estava seca) tem origem conhecida —
+            # é o campo congelado. Dizer `None` ali seria afirmar que não se
+            # sabe de onde veio o número, que é justamente o silêncio que
+            # esta etapa remove.
+            d["producao_origem"] = "congelado"
+        else:
+            d["producao_origem"] = None
         saida.append(d)
     saida.sort(key=lambda d: chave_numero(d["numero"]))
     return saida
