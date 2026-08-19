@@ -6,9 +6,10 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
-import { fetchIndicadores, fetchAnimais, formatDate, type IndicadoresProducao, type AnimalProducaoAoVivo, type ProducaoOrigem } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, formatDate, type IndicadoresProducao, type AnimalProducaoAoVivo } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 type Resposta = {
   reproducao?: { prenhes?: number | null; taxa_concepcao_pct?: number | null; iep_meses?: number | null; vazias?: number | null };
@@ -25,18 +26,6 @@ type Animal = {
   sit_rep?: string | null; del_dias?: number | null; ult_cl_kg?: number | null; categoria_abrev?: string | null;
 } & Partial<AnimalProducaoAoVivo>;
 
-// Produção do animal com fallback para o campo congelado, e a origem
-// coerente com esse fallback (para telas rodando contra um backend antigo,
-// que ainda não manda `producao_origem`).
-function producaoDe(a: Animal): number | null {
-  return a.producao_kg ?? a.ult_cl_kg ?? null;
-}
-function origemDe(a: Animal): ProducaoOrigem | null {
-  if (a.producao_origem) return a.producao_origem;
-  if (a.producao_kg != null) return "controle";
-  if (a.ult_cl_kg != null) return "congelado";
-  return null;
-}
 // "2026-08-18" → "18/08" — o card não precisa do ano, só do dia do controle.
 function dataCurta(iso: string): string {
   return formatDate(iso).slice(0, 5);

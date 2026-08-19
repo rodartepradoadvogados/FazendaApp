@@ -8,10 +8,11 @@ import { useState } from "react";
 import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { CowIcon } from "@/components/CowIcon";
-import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo, type ProducaoOrigem } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 import { exportarPDF, type ColunaExport } from "@/lib/export";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 type IndicadoresResp = {
   rebanho?: { total?: number | null };
@@ -36,15 +37,6 @@ type Animal = {
   del_dias?: number | null; ult_cl_kg?: number | null; categoria_abrev?: string | null;
 } & Partial<AnimalProducaoAoVivo>;
 
-function producaoDe(a: Animal): number | null {
-  return a.producao_kg ?? a.ult_cl_kg ?? null;
-}
-function origemDe(a: Animal): ProducaoOrigem | null {
-  if (a.producao_origem) return a.producao_origem;
-  if (a.producao_kg != null) return "controle";
-  if (a.ult_cl_kg != null) return "congelado";
-  return null;
-}
 
 type ItemSecagem = { numero: string; grupo?: string | null; dias_para_secagem?: number | null; previsao_secagem?: string | null };
 

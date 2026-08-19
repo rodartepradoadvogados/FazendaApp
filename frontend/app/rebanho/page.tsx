@@ -19,6 +19,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { casaBusca } from "@/lib/busca";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -40,10 +41,6 @@ type Animal = {
   a_descartar?: boolean; sexo?: string | null; observacoes?: string | null;
 };
 
-// Produção ao vivo com fallback pro campo congelado — ver AnimalProducaoAoVivo em lib/api.ts.
-function producaoDe(a: Animal): number | null {
-  return a.producao_kg ?? a.ult_cl_kg ?? null;
-}
 
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",

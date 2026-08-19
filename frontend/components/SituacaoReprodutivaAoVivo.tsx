@@ -7,6 +7,7 @@ import {
 import { fetchEstadosReprodutivos, fetchIndicadores, fetchAnimais, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { BarraExport, TabelaManejo, fmtData, estiloNum, estiloMudo, type Col } from "@/components/RelatoriosManejo";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 /**
  * SituacaoReprodutivaAoVivo — segunda aba de "Listas" (ver app/relatorios/page.tsx).
@@ -68,17 +69,6 @@ type Animal = {
 };
 type MatrizIep = { numero: string; iep_dias: number; data_ultimo_parto: string };
 
-// Produção ao vivo de um animal, com fallback pro campo congelado enquanto o
-// backend novo não estiver publicado — ver AnimalProducaoAoVivo em lib/api.ts.
-function producaoDe(a: Animal): number | null {
-  return a.producao_kg ?? a.ult_cl_kg ?? null;
-}
-// Só marca "congelado" quando o backend disser isso explicitamente — no
-// fallback pro `ult_cl_kg` cru (backend velho) não dá pra saber a origem, e
-// não é para inventar um badge sem essa certeza.
-function origemDe(a: Animal): "controle" | "congelado" | null {
-  return a.producao_origem ?? null;
-}
 
 // Contagem em badge, no lugar do BadgeCores de semáforo (não se aplica aqui).
 function BadgeContagem({ n }: { n: number }) {

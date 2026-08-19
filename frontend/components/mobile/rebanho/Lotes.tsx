@@ -5,11 +5,12 @@
 // existe endpoint dedicado no backend para isso).
 import { useEffect, useMemo, useState } from "react";
 import { PieChart, Gauge } from "lucide-react";
-import { fetchAnimais, type AnimalProducaoAoVivo, type ProducaoOrigem } from "@/lib/api";
+import { fetchAnimais, type AnimalProducaoAoVivo } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { MobCard, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 // `ult_cl_kg` é o campo congelado do CSV do Ideagri (parser aposentado);
 // `producao_kg`/`producao_origem` vêm ao vivo de fetchAnimais(). Partial
@@ -26,15 +27,6 @@ type AnimalLote = {
   ult_cl_kg?: number | null;
 } & Partial<AnimalProducaoAoVivo>;
 
-function producaoDe(a: AnimalLote): number | null {
-  return a.producao_kg ?? a.ult_cl_kg ?? null;
-}
-function origemDe(a: AnimalLote): ProducaoOrigem | null {
-  if (a.producao_origem) return a.producao_origem;
-  if (a.producao_kg != null) return "controle";
-  if (a.ult_cl_kg != null) return "congelado";
-  return null;
-}
 
 // Cor por situação reprodutiva ao vivo (rótulos de ROTULO_ESTADO).
 const SIT_COR: Record<string, string> = {
