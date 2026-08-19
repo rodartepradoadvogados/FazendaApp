@@ -80,12 +80,15 @@ export function IndicadoresGerais() {
     ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "01/01/2026";
 
-  const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
+  // Cada linha abre a lista que o próprio backend contou (`*_nums`), e não um
+  // refiltro do `sit_rep` congelado do CSV: o número do card e a lista que ele
+  // abre passam a vir da mesma conta, inclusive no recorte vaca/novilha (que
+  // no backend sai do registro de Parto, não de `data_ult_parto`).
   const linhasRep = useMemo(() => [
     { label: "Fêmeas aptas", v: repSel?.aptas, cor: undefined, nums: repSel?.aptas_nums },
-    { label: "Prenhes", v: repSel?.prenhes, cor: "var(--green-light)", f: (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a) },
-    { label: "Vazias", v: repSel?.vazias, cor: "var(--amber)", f: (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") && porCategoria(a) },
-    { label: "Inseminadas (aguard. diagnóstico)", v: repSel?.inseminadas, cor: "var(--blue)", f: (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a) },
+    { label: "Prenhes", v: repSel?.prenhes, cor: "var(--green-light)", nums: repSel?.prenhes_nums },
+    { label: "Vazias", v: repSel?.vazias, cor: "var(--amber)", nums: repSel?.vazias_nums },
+    { label: "Inseminadas (aguard. diagnóstico)", v: repSel?.inseminadas, cor: "var(--blue)", nums: repSel?.inseminadas_nums },
   ], [repSel, catRep]);
 
   return (
@@ -106,15 +109,15 @@ export function IndicadoresGerais() {
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={pct(rep?.taxa_prenhez_pct)}
-            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% das fêmeas aptas, hoje</span></>}
-            onClick={() => abrir("Fêmeas prenhas", (a) => a.sit_rep === "Ges.")} />
+            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% do rebanho no programa reprodutivo, hoje</span></>}
+            onClick={() => abrirNums("Fêmeas prenhas", rep?.prenhes_programa_nums)} />
           <Indicador categoria="reprodutivo" cor="var(--blue)" valor={pct(rep?.taxa_concepcao_pct)}
             rotulo={<>Concepção / serviço<span style={{ ...legenda, display: "block" }}>serviços desde {desdeLabel}</span></>} />
           <Indicador categoria="reprodutivo" cor="var(--amber)" valor={num(rep?.iep_meses, " m")}
             rotulo={<>IEP médio<span style={{ ...legenda, display: "block" }}>todo o histórico</span></>} />
           <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={pct(rep?.perc_vazias_pct)}
             rotulo={<>Vazias<span style={{ ...legenda, display: "block" }}>situação atual</span></>}
-            onClick={() => abrir("Vazias", (a) => (a.sit_rep || "").startsWith("Vaz."))} />
+            onClick={() => abrirNums("Vazias", rep?.vazias_programa_nums)} />
         </div>
 
         {/* Produção do dia é o número que o dono olha primeiro todo dia — vira a
@@ -163,7 +166,7 @@ export function IndicadoresGerais() {
             <table className="fazenda-table">
               <tbody>
                 {linhasRep.map((r: any) => (
-                  <tr key={r.label} onClick={() => r.nums !== undefined ? abrirNums(r.label, r.nums) : abrir(r.label, r.f)} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                  <tr key={r.label} onClick={() => abrirNums(r.label, r.nums)} style={clickable} className={animais.length ? "row-clickable" : ""}>
                     <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
                     <td style={{ fontWeight: 700, textAlign: "right", color: r.cor }}>{num(r.v)}</td>
                   </tr>

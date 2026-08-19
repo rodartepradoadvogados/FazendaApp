@@ -7,7 +7,7 @@ Este documento é o inventário que a migração do resto do sistema vai consumi
 Levantado por três varreduras independentes do código, com cada achado
 conferido contra o arquivo antes de entrar aqui.
 
-**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores de `taxa_prenhez_pct`/`perc_vazias_pct`/`perc_vacas_prenhas`, a série mensal de concepção e a unificação de "apta").
+**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores da Capa, a série mensal de concepção, a unificação de "apta", as taxas do painel de Eficiência Reprodutiva e a ligação card→lista).
 
 ---
 
@@ -216,6 +216,7 @@ conflito**: eram perguntas diferentes que por acaso usam a mesma palavra.
 | Menu mobile sem a rota `/ciclos-21-dias` | `app/app/menu/page.tsx` |
 | Ficha mobile sem o card de curva de lactação (o dado já chega no payload) | `components/mobile/rebanho/Ficha.tsx:44` |
 | `/ciclos-21-dias` fora do `SectionBackground` | `components/SectionBackground.tsx:8-14` |
+| ~~Legenda "% das fêmeas aptas, hoje" no card `taxa_prenhez_pct`~~ | **CORRIGIDA** — o denominador é o rebanho no programa reprodutivo, e a legenda passou a dizer isso (`app/indicadores/page.tsx`) |
 
 ---
 
@@ -261,16 +262,84 @@ contexto:
 
 Do que mais dói para o que menos dói:
 
-1. **`taxa_concepcao_pct` de `indicadores.py`** — é a última definição
-   concorrente de concepção: DG bruto (`pos/(pos+neg)`) **no mesmo JSON** que a
-   versão correta do benchmark. A série mensal já migrou; este campo não.
-2. **Paridade mobile** — menu sem `/ciclos-21-dias`, ficha sem a curva de
+1. **Paridade mobile** — menu sem `/ciclos-21-dias`, ficha sem a curva de
    lactação.
-3. **`a_descartar_em` + backfill** — o único que resolve a armadilha 11.3, e a
+2. **`a_descartar_em` + backfill** — o único que resolve a armadilha 11.3, e a
    única migração de schema da fila.
+3. **Divergências de PRODUÇÃO entre card e lista** (a mesma doença da seção 13,
+   fora do escopo reprodutivo): "Produção do dia" em Indicadores mistura datas
+   e `ult_cl_kg` congelado enquanto a lista é de uma data só; "IEP médio" no
+   mobile é média de todos os intervalos e a lista traz o último por matriz;
+   "DEL médio / produção média" no mobile ignora o recorte de lote.
 
 Já feito: candidatas a IATF, "PEV encerra", **todo** o
 `relatorios_gerenciais.py` (as 8 listas de trabalho, a projeção de partos e
 secagens, a curva de prenhas por faixa de DEL — seção 6), os denominadores da
-seção 4, a série mensal de concepção (seção 5) e a unificação de "apta" da
-seção 8.
+seção 4, a série mensal de concepção (seção 5), a unificação de "apta" da
+seção 8, as três taxas do painel de Eficiência Reprodutiva (seção 13) e a
+ligação card→lista (seção 14).
+
+
+---
+
+## 13. Painel de Eficiência Reprodutiva — CORRIGIDO
+
+Exibia em produção taxa de serviço de **241,9%** e prenhez de **161,3%** no
+geral, e **687,5%** e **487,5%** nas novilhas. Dividia conjuntos ACUMULADOS
+desde a data de corte (~7,6 meses) pela contagem INSTANTÂNEA das aptas de hoje:
+toda fêmea que emprenha sai do denominador e permanece no numerador, então o
+estouro de 100% era garantido por construção. Formalmente BRED ⊆ BR ELIG e
+PREG ⊆ PG ELIG, logo o teto é 100%.
+
+Agravante da própria migração: o denominador anterior era
+`prenhes + vazias + inseminadas` = 127, e 75÷127 = 59% parecia plausível. Ao
+corrigi-lo para as aptas (vaca prenhe não pode ser inseminada), o defeito
+antigo saltou para a tela.
+
+As três taxas passaram a sair de `programa_reprodutivo` (R1–R9), o mesmo motor
+de `/reproducao/ciclos-21-dias`. Agregação por soma de numeradores e
+denominadores; só ciclos com janela de DG fechada entram em prenhez e
+concepção. Isso também alinha com as metas, que são **por ciclo de 21 dias**.
+
+Medido com 127 animais: 20,4% de serviço, 40,2% de concepção, 9,6% de prenhez —
+**abaixo** das metas, onde antes se lia desempenho excepcional.
+
+`taxa_concepcao_pct` era o ÚNICO campo de `reproducao` que não era alias do
+benchmark; passou a ser. O card "Concepção / serviço" e o medidor "Taxa de
+Concepção" mostram o mesmo número.
+
+**Custo e pagamento:** `calcular_indicadores` foi de milissegundos a ~1,0 s com
+127 animais. Como a partição vaca/novilha é disjunta e os contadores são
+aditivos, "todas" passou a ser derivada da soma — o motor roda 2× em vez de 3×.
+Resultado: **0,31 s**. `TestTodasEDerivadaDeVacaMaisNovilha` é a condição da
+otimização: se o derivado divergir do calculado direto, ela tem de sair.
+
+---
+
+## 14. Card e lista: a mesma conta — CORRIGIDO
+
+Doze predicados de drill-down na web filtravam pelo `sit_rep` congelado do
+GERAL.csv enquanto o número do card vinha do estado ao vivo — 7 na Capa, 5 em
+Indicadores. O `AnimalModal` já exibia o rótulo ao vivo, então a lista aberta
+pelo card "Prenhes" mostrava linhas rotuladas "PEV" ou "Apta". O mobile já
+estava migrado.
+
+A correção segue o padrão que **nunca** divergiu no repositório
+(`aptas`/`aptas_nums`, `partos_previstos`/`partos_previstos_nums`): o backend
+manda a lista de números junto do contador, de forma aditiva.
+`_reproducao_categorias` passou a emitir `prenhes_nums`, `vazias_nums`,
+`inseminadas_nums`, `pev_nums`, `a_inseminar_nums`, `nao_classificadas_nums` e
+o balde novo `em_protocolo`/`em_protocolo_nums` — sem ele as fatias do donut
+não somavam o rebanho. `taxa_prenhez_pct` e `perc_vazias_pct` ganharam
+`prenhes_programa_nums` e `vazias_programa_nums`.
+
+Efeito colateral bom: o recorte vaca/novilha passou a ser o do backend
+(registro de `Parto`), e não `data_ult_parto` do CSV, que o front usava.
+
+Verificado com rebanho do tamanho da fazenda (127 fêmeas): as 6 fatias somam
+127 sem sobreposição, contador == len(lista) nos 3 recortes, e "todas" é
+exatamente vaca + novilha fatia a fatia.
+
+**Continua sem abstração que amarre valor e predicado.** Cada tela ainda
+reimplementa a ligação; nada impede estruturalmente uma recaída. É o que a
+seção 12 item 3 registra para produção.

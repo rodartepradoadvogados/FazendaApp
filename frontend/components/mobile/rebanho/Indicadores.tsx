@@ -24,7 +24,7 @@ type IndicadoresResp = {
     gestantes_detalhe?: { numero: string; dias_gestacao: number; parto_previsto: string }[];
     iep_por_matriz?: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
   };
-  reproducao_categorias?: { todas?: { pev?: number | null } };
+  reproducao_categorias?: { todas?: { pev?: number | null; vazias?: number | null } };
   producao?: { del_medio?: number | null; producao_media_kg?: number | null };
 };
 
@@ -432,7 +432,11 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
     { chave: "gestantes", titulo: "Gestantes", valor: val(rep.prenhes), onClick: () => setDrill("gestantes"), icone: <Baby size={20} /> },
     { chave: "inseminadas", titulo: "Inseminadas", valor: val(rep.inseminadas), onClick: () => setDrill("inseminadas"), icone: <Syringe size={20} /> },
     { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev"), icone: <CalendarClock size={20} /> },
-    { chave: "vazias", titulo: "Vazias", valor: val(rep.vazias), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
+    // `reproducao.vazias` é o catch-all do backend (tudo que não é gestante
+    // nem inseminada — inclusive quem está em protocolo); este card abre a
+    // lista dos 5 estados vazia/apta/atrasada/pev/nao_apta, e é
+    // `reproducao_categorias.todas.vazias` que conta exatamente esses 5.
+    { chave: "vazias", titulo: "Vazias", valor: val(dados?.reproducao_categorias?.todas?.vazias ?? null), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
     { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas"), icone: <CheckCircle2 size={20} /> },
     // Contagem AO VIVO (estado), não mais Animal.sit_rep — mesma fonte da lista de drill-down.
     { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} />, atencao: true },

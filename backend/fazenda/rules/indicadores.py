@@ -268,6 +268,9 @@ def _montar_perfis(
     return perfis
 
 
+CONTADORES_ZERO = {"bred": 0, "br_elig": 0, "preg": 0, "pg_elig": 0, "com_resultado": 0}
+
+
 def _taxas_por_ciclos(
     perfis: list, categoria: str, desde: date, hoje: date, params: dict,
 ) -> tuple[Optional[float], Optional[float], Optional[float]]:
@@ -310,24 +313,58 @@ def _taxas_por_ciclos(
     else:
         selecionados = list(perfis)
 
-    if not selecionados:
-        return None, None, None
+    return taxas_de_contadores(contadores_ciclos(selecionados, desde, hoje, params))
+
+
+def contadores_ciclos(perfis: list, desde: date, hoje: date, params: dict) -> dict:
+    """Numeradores e denominadores BRUTOS do motor de ciclos, somados sobre a
+    série — antes de virarem porcentagem.
+
+    Existem separados das taxas por uma razão de custo: `_benchmark_categorias`
+    precisa dos mesmos números para "todas", "vaca" e "novilha", e a partição
+    por `perfil.eh_vaca` é DISJUNTA e cobre o rebanho. Como todos estes campos
+    são aditivos — `bred`/`br_elig`/`preg`/`pg_elig` contam animais, e
+    `com_resultado` conta serviços de animais da partição —, "todas" é a soma
+    de "vaca" e "novilha", e não precisa de uma terceira passada pelo motor.
+    Cada passada percorre 21 dias por ciclo por animal, então derivar em vez de
+    recalcular corta um terço do custo da Capa. `test_todas_e_a_soma_das_duas
+    _categorias` prova que o derivado é idêntico ao calculado direto.
+    """
+    from fazenda.rules.programa_reprodutivo import calcular_series, ciclos_21_dias
+
+    if not perfis:
+        return dict(CONTADORES_ZERO)
 
     n_ciclos = max(1, min(26, ceil(((hoje - desde).days + 1) / 21)))
     ciclos = ciclos_21_dias(hoje, modo="fim", n_ciclos=n_ciclos)
-    serie = calcular_series(selecionados, ciclos, hoje, **params)
+    serie = calcular_series(perfis, ciclos, hoje, **params)
 
+    # Só ciclos com a janela de DG fechada entram em prenhez e concepção — ver
+    # a nota em `_taxas_por_ciclos`. A taxa de serviço usa a série inteira: o
+    # serviço é fato consumado no ciclo em que aconteceu (R7 trava o
+    # RESULTADO, não o serviço).
     fechados = [r for r in serie if r.janela_dg_completa]
-    bred = sum(len(r.bred) for r in serie)
-    br_elig = sum(len(r.br_elig) for r in serie)
-    preg = sum(len(r.preg) for r in fechados)
-    pg_elig = sum(len(r.pg_elig) for r in fechados)
-    com_resultado = sum(r.servicos_com_resultado for r in fechados)
+    return {
+        "bred": sum(len(r.bred) for r in serie),
+        "br_elig": sum(len(r.br_elig) for r in serie),
+        "preg": sum(len(r.preg) for r in fechados),
+        "pg_elig": sum(len(r.pg_elig) for r in fechados),
+        "com_resultado": sum(r.servicos_com_resultado for r in fechados),
+    }
 
+
+def somar_contadores(a: dict, b: dict) -> dict:
+    """Soma campo a campo — válido porque a partição vaca/novilha é disjunta."""
+    return {chave: a[chave] + b[chave] for chave in CONTADORES_ZERO}
+
+
+def taxas_de_contadores(c: dict) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """(serviço, prenhez, concepção) a partir dos contadores brutos. Denominador
+    zero devolve None — não 0%, que afirmaria um fato que não se mediu."""
     return (
-        round(100 * bred / br_elig, 1) if br_elig else None,
-        round(100 * preg / pg_elig, 1) if pg_elig else None,
-        round(100 * preg / com_resultado, 1) if com_resultado else None,
+        round(100 * c["bred"] / c["br_elig"], 1) if c["br_elig"] else None,
+        round(100 * c["preg"] / c["pg_elig"], 1) if c["pg_elig"] else None,
+        round(100 * c["preg"] / c["com_resultado"], 1) if c["com_resultado"] else None,
     )
 
 
@@ -339,6 +376,7 @@ def _repro_benchmark(
     peso_por_animal: dict[str, float] | None = None,
     perfis: list | None = None,
     params_ciclos: dict | None = None,
+    contadores_prontos: dict | None = None,
 ) -> list[dict]:
     """Painel de benchmark reprodutivo de um subconjunto do rebanho — usado
     para 'todas', 'vaca' e 'novilha'.
@@ -461,9 +499,14 @@ def _repro_benchmark(
         perfis = _montar_perfis(
             animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal or {},
         )
-    taxa_servico, taxa_prenhez_ciclo, taxa_concepcao = _taxas_por_ciclos(
-        perfis, categoria, desde, hoje, params_ciclos or _parametros_ciclos(),
-    )
+    if contadores_prontos is not None:
+        # Vindos de `_benchmark_categorias`, que já rodou o motor uma vez por
+        # categoria e derivou "todas" da soma — ver `contadores_ciclos`.
+        taxa_servico, taxa_prenhez_ciclo, taxa_concepcao = taxas_de_contadores(contadores_prontos)
+    else:
+        taxa_servico, taxa_prenhez_ciclo, taxa_concepcao = _taxas_por_ciclos(
+            perfis, categoria, desde, hoje, params_ciclos or _parametros_ciclos(),
+        )
     servicos_por_prenhez = round(len(avaliaveis) / pos, 1) if pos else None
     perdas = sum(1 for s in serv_periodo if s.get("data_perda_prenhez"))
     taxa_perda = round(100 * perdas / pos, 1) if pos else None
@@ -535,14 +578,33 @@ def _benchmark_categorias(
     perfis = _montar_perfis(
         animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal or {},
     )
+    params_ciclos = _parametros_ciclos()
     comum = {
         "estados": estados, "hoje": hoje, "descartar_nums": descartar_nums,
-        "perfis": perfis, "params_ciclos": _parametros_ciclos(),
+        "perfis": perfis, "params_ciclos": params_ciclos,
     }
+    # O motor de ciclos roda DUAS vezes, não três: a partição por
+    # `perfil.eh_vaca` é disjunta e cobre o rebanho, e todos os contadores são
+    # aditivos, então "todas" é a soma das outras duas. Cada passada percorre
+    # 21 dias por ciclo por animal — derivar corta um terço do custo da Capa.
+    # Sem NENHUM registro carregado não há ciclo a calcular e cada
+    # `_repro_benchmark` cai sozinho no fallback legado (taxas None).
+    contadores: dict[str, dict | None] = {"todas": None, "vaca": None, "novilha": None}
+    if any(p.partos or p.servicos for p in perfis):
+        hoje_ = hoje or date.today()
+        c_vaca = contadores_ciclos([p for p in perfis if p.eh_vaca], desde, hoje_, params_ciclos)
+        c_novilha = contadores_ciclos([p for p in perfis if not p.eh_vaca], desde, hoje_, params_ciclos)
+        contadores = {
+            "vaca": c_vaca, "novilha": c_novilha,
+            "todas": somar_contadores(c_vaca, c_novilha),
+        }
     return {
-        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas", **comum),
-        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca", **comum),
-        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha", **comum),
+        "todas": _repro_benchmark(animais, servicos, partos, desde, categoria="todas",
+                                  contadores_prontos=contadores["todas"], **comum),
+        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde, categoria="vaca",
+                                 contadores_prontos=contadores["vaca"], **comum),
+        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde, categoria="novilha",
+                                    contadores_prontos=contadores["novilha"], **comum),
     }
 
 
@@ -661,15 +723,33 @@ def _reproducao_categorias(
     ):
         subset = [a for a in animais if filtro(a)]
         prenhes = vazias = inseminadas = 0
+        # Números por trás de CADA contador — o drill-down da Capa/Indicadores
+        # abre exatamente a lista que gerou o número, em vez de refiltrar o
+        # `sit_rep` congelado do CSV no cliente (o mesmo padrão já provado por
+        # `aptas_nums`/`partos_previstos_nums`, os dois que nunca divergiram).
+        prenhes_nums: list[str] = []
+        vazias_nums: list[str] = []
+        inseminadas_nums: list[str] = []
+        pev_nums: list[str] = []
+        a_inseminar_nums: list[str] = []
+        nao_classificadas_nums: list[str] = []
+        em_protocolo_nums: list[str] = []
         # Detalhamento usado pelo gráfico de Situação Reprodutiva da Capa —
         # Prenhas/Inseminadas/PEV/A inseminar são o padrão; qualquer sit_rep
         # fora desse padrão (em branco ou não reconhecido) cai em
         # "nao_classificadas". Contadores independentes de `vazias` acima
         # (que soma TODO "Vaz.*") para não alterar o que já é consumido em
         # Indicadores > Gerais e no Menu do app.
-        pev = a_inseminar = nao_classificadas = 0
+        # `em_protocolo` é balde próprio (estado ao vivo homônimo): antes ele
+        # não entrava em fatia nenhuma do donut da Capa — nem em `vazias` (que
+        # o exclui de propósito), nem em pev/a_inseminar/nao_classificadas — e
+        # por isso as fatias não fechavam o rebanho da categoria. Com ele,
+        # prenhes+inseminadas+em_protocolo+pev+a_inseminar+nao_classificadas
+        # é uma partição exata do subset.
+        pev = a_inseminar = nao_classificadas = em_protocolo = 0
         for a in subset:
-            estado = (estados or {}).get(a.get("numero"))
+            numero = a.get("numero")
+            estado = (estados or {}).get(numero)
             if estado is not None:
                 # Caminho ao vivo: "vazias" agrega tudo que não está prenhe
                 # nem inseminada nem em protocolo — mesmo conjunto que o
@@ -677,31 +757,51 @@ def _reproducao_categorias(
                 # mudar de significado.
                 if estado == "gestante":
                     prenhes += 1
+                    prenhes_nums.append(numero)
                 elif estado == "inseminada":
                     inseminadas += 1
+                    inseminadas_nums.append(numero)
                 elif estado in ("vazia", "apta", "atrasada", "pev", "nao_apta"):
                     vazias += 1
+                    vazias_nums.append(numero)
                 if estado == "pev":
                     pev += 1
+                    pev_nums.append(numero)
                 elif estado in ("apta", "atrasada"):
                     a_inseminar += 1
+                    a_inseminar_nums.append(numero)
                 elif estado in ("vazia", "nao_apta"):
                     nao_classificadas += 1
+                    nao_classificadas_nums.append(numero)
+                elif estado == "em_protocolo":
+                    em_protocolo += 1
+                    em_protocolo_nums.append(numero)
                 continue
             sit = (a.get("sit_rep") or "").strip()
             if sit == "Ges.":
                 prenhes += 1
+                prenhes_nums.append(numero)
             elif sit.startswith("Vaz."):
                 vazias += 1
+                vazias_nums.append(numero)
             elif sit == "Ins.":
                 inseminadas += 1
+                inseminadas_nums.append(numero)
             categoria = _classificar_situacao_reprodutiva(sit)
             if categoria == "pev":
                 pev += 1
+                pev_nums.append(numero)
             elif categoria == "a_inseminar":
                 a_inseminar += 1
+                a_inseminar_nums.append(numero)
             elif categoria == "vazias":
                 nao_classificadas += 1
+                nao_classificadas_nums.append(numero)
+            # Sem estado ao vivo não há como saber que o animal está em
+            # protocolo (o `sit_rep` do CSV não tem esse valor): `em_protocolo`
+            # fica em 0 neste caminho, e a partição das 6 fatias continua
+            # exata porque `_classificar_situacao_reprodutiva` já cobre
+            # prenhes/inseminadas/pev/a_inseminar e joga o resto em vazias.
 
         aptas_nums: list[str] = []
         for a in subset:
@@ -740,6 +840,12 @@ def _reproducao_categorias(
             "aptas": len(aptas_nums), "prenhes": prenhes, "vazias": vazias, "inseminadas": inseminadas,
             "aptas_nums": aptas_nums,
             "pev": pev, "a_inseminar": a_inseminar, "nao_classificadas": nao_classificadas,
+            "em_protocolo": em_protocolo,
+            "prenhes_nums": prenhes_nums, "vazias_nums": vazias_nums,
+            "inseminadas_nums": inseminadas_nums, "pev_nums": pev_nums,
+            "a_inseminar_nums": a_inseminar_nums,
+            "nao_classificadas_nums": nao_classificadas_nums,
+            "em_protocolo_nums": em_protocolo_nums,
         }
     return resultado
 
@@ -831,6 +937,12 @@ def calcular_indicadores(
     # o que poderia passar de 100%. `prenhes_programa` é sempre <=
     # `rebanho_programa` por construção (é contado dentro do mesmo `if`).
     rebanho_programa = vazias_programa = prenhes_programa = 0
+    # Números por trás de `prenhes_programa`/`vazias_programa` — o drill-down
+    # dos cards "Fêmeas prenhas"/"Vazias" de Indicadores abre exatamente a
+    # lista que gerou o percentual, em vez de refiltrar o sit_rep congelado
+    # do CSV no cliente (mesmo padrão de `aptas_nums`/`partos_previstos_nums`).
+    prenhes_programa_nums: list[str] = []
+    vazias_programa_nums: list[str] = []
     for a in animais:
         numero = a.get("numero")
         estado = estados_por_animal.get(numero)
@@ -859,6 +971,7 @@ def calcular_indicadores(
                 rebanho_programa += 1
                 if estado == "gestante":
                     prenhes_programa += 1
+                    prenhes_programa_nums.append(numero)
                 elif estado != "inseminada":
                     # `perc_vazias_pct` alimenta o card rotulado "Vazias", cujo
                     # drill-down abre a lista filtrada por sit_rep "Vaz." — sem
@@ -868,6 +981,7 @@ def calcular_indicadores(
                     # Por isso os três baldes não somam `rebanho_programa`: a
                     # diferença são justamente as inseminadas.
                     vazias_programa += 1
+                    vazias_programa_nums.append(numero)
             continue
         sit = (a.get("sit_rep") or "").strip()
         eh_gestante = sit == "Ges."
@@ -887,8 +1001,10 @@ def calcular_indicadores(
             rebanho_programa += 1
             if eh_gestante:
                 prenhes_programa += 1
+                prenhes_programa_nums.append(numero)
             elif sit.startswith("Vaz."):
                 vazias_programa += 1
+                vazias_programa_nums.append(numero)
 
     taxa_prenhez = round(100 * prenhes_programa / rebanho_programa, 1) if rebanho_programa else None
     perc_vazias = round(100 * vazias_programa / rebanho_programa, 1) if rebanho_programa else None
@@ -904,12 +1020,22 @@ def calcular_indicadores(
     aptas = reproducao_categorias["todas"]["aptas"]
 
     # ---------------------------------------------------------------
-    # Concepção — serviços diagnosticados (POSITIVO / NEGATIVO) desde 01/01/2026
+    # Serviços diagnosticados (POSITIVO / NEGATIVO) desde a data de corte —
+    # contagens BRUTAS do período, informativas.
+    #
+    # ATENÇÃO: `pos`/`neg` NÃO são mais os termos da taxa de concepção. A
+    # taxa passou a ser a única do sistema, a do motor de ciclos de 21 dias
+    # (`_bt["taxa_concepcao"]`, ver `_taxas_por_ciclos`): média ponderada dos
+    # ciclos fechados, com a regra dos 28 dias para a janela de diagnóstico.
+    # A conta antiga (pos ÷ (pos+neg)) somava serviços de ciclos diferentes
+    # num acumulado só, e por isso a Capa mostrava dois números distintos
+    # com o mesmo nome ("Concepção / serviço" e o medidor "Taxa de
+    # Concepção"). Estes dois contadores ficam porque respondem a outra
+    # pergunta, honesta e sem ponderação: quantos diagnósticos deram
+    # positivo e quantos deram negativo no período.
     # ---------------------------------------------------------------
     pos = sum(1 for s in servicos if _no_periodo(s, concepcao_desde) and _diag_upper(s.get("diagnostico")) == "POSITIVO")
     neg = sum(1 for s in servicos if _no_periodo(s, concepcao_desde) and _diag_upper(s.get("diagnostico")) == "NEGATIVO")
-    diagnosticados = pos + neg
-    taxa_concepcao = round(100 * pos / diagnosticados, 1) if diagnosticados else None
 
     # ---------------------------------------------------------------
     # DEL e produção das lactantes
@@ -1066,8 +1192,9 @@ def calcular_indicadores(
             "vazias": vazias,
             "inseminadas": inseminadas,
             "taxa_prenhez_pct": taxa_prenhez,
+            "prenhes_programa_nums": prenhes_programa_nums,
             "perc_vazias_pct": perc_vazias,
-            "taxa_concepcao_pct": taxa_concepcao,
+            "vazias_programa_nums": vazias_programa_nums,
             "servicos_positivos": pos,
             "servicos_negativos": neg,
             "iep_dias": iep_dias,
@@ -1079,6 +1206,11 @@ def calcular_indicadores(
             "iep_por_matriz": _iep_por_matriz(partos),
             "concepcao_desde": concepcao_desde.isoformat(),
             "taxa_servico_pct": _bt.get("taxa_servico"),
+            # Alias do benchmark, como os demais desta lista: UMA definição de
+            # taxa de concepção no sistema inteiro — a do motor de ciclos de
+            # 21 dias, a mesma da tela Ciclos de 21 Dias e do medidor "Taxa de
+            # Concepção" da Capa.
+            "taxa_concepcao_pct": _bt.get("taxa_concepcao"),
             "taxa_prenhez_ciclo_pct": _bt.get("taxa_prenhez_ciclo"),
             "servicos_por_prenhez": _bt.get("servicos_por_prenhez"),
             "taxa_perda_prenhez_pct": _bt.get("taxa_perda_prenhez"),

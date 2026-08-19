@@ -322,6 +322,23 @@ class TestIndicadores:
         return animais, servicos, partos
 
     def test_composicao_e_reproducao(self):
+        """`taxa_concepcao_pct` passou a ser a conta do MOTOR DE CICLOS de 21
+        dias (alias de `benchmark["taxa_concepcao"]`), e não mais o acumulado
+        legado "positivos ÷ diagnosticados do período".
+
+        Era esse acumulado que fazia a Capa mostrar dois números diferentes
+        com o mesmo nome: o card "Concepção / serviço" (conta legada) e o
+        medidor "Taxa de Concepção" (motor de ciclos). Agora existe UMA
+        definição só — a do motor, que pondera os ciclos de 21 dias e aplica a
+        regra dos 28 dias para a janela de diagnóstico.
+
+        Nesta fixture os serviços não têm matriz (nem, portanto, ciclo
+        atribuível), então o motor não fecha janela nenhuma e a taxa é `None`.
+        A conta antiga devolvia 50,0% aqui — número que não correspondia a
+        nada que o resto do sistema mostrasse. `servicos_positivos`/
+        `servicos_negativos` continuam de pé: são contagens brutas do período,
+        só não são mais os termos da taxa.
+        """
         animais, servicos, partos = self._dados()
         r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5))
         assert r["rebanho"]["total"] == 4
@@ -331,7 +348,14 @@ class TestIndicadores:
         assert r["reproducao"]["vazias"] == 1
         assert r["reproducao"]["inseminadas"] == 1
         assert r["reproducao"]["taxa_prenhez_pct"] == 50.0  # 2/4
-        assert r["reproducao"]["taxa_concepcao_pct"] == 50.0  # 1 pos / (1+1)
+        # Sem ciclo fechado, o motor não tem o que ponderar.
+        assert r["reproducao"]["taxa_concepcao_pct"] is None
+        # E o campo é literalmente o valor do benchmark — mesma fonte, sempre.
+        do_benchmark = next(b["valor"] for b in r["benchmark"] if b["chave"] == "taxa_concepcao")
+        assert r["reproducao"]["taxa_concepcao_pct"] == do_benchmark
+        # Contagens brutas do período seguem existindo (1 POSITIVO, 1 NEGATIVO).
+        assert r["reproducao"]["servicos_positivos"] == 1
+        assert r["reproducao"]["servicos_negativos"] == 1
 
     def test_iep_e_producao(self):
         animais, servicos, partos = self._dados()
@@ -574,6 +598,122 @@ class TestIndicadores:
         assert rep["inseminadas"] == 1
         assert rep["taxa_prenhez_pct"] == 25.0   # 1 gestante / 4 no programa
         assert rep["perc_vazias_pct"] == 50.0    # 2 vazias / 4 — NÃO 75.0
+
+
+class TestBaldesDrillDown:
+    """Cada contador de `reproducao_categorias` (e os dois do programa
+    reprodutivo) passa a devolver TAMBÉM a lista de números que o gerou, para
+    o card e a lista que ele abre nunca divergirem — o padrão que
+    `aptas_nums`/`partos_previstos_nums` já provavam e que os outros doze
+    drill-downs da web não seguiam (filtravam o `sit_rep` congelado do CSV
+    enquanto o número vinha do estado ao vivo).
+
+    Inclui o balde novo `em_protocolo`, que antes não entrava em fatia nenhuma
+    do donut da Capa — nem em `vazias`, que o exclui de propósito — e por isso
+    as fatias não fechavam o rebanho.
+    """
+
+    HOJE = date(2026, 7, 5)
+    BALDES = ("prenhes", "vazias", "inseminadas", "pev", "a_inseminar", "nao_classificadas", "em_protocolo")
+    # As 6 que particionam a categoria (vazias é catch-all e se sobrepõe às demais).
+    FATIAS = ("prenhes", "inseminadas", "em_protocolo", "pev", "a_inseminar", "nao_classificadas")
+
+    def _dados(self):
+        hoje = self.HOJE
+        animais = [
+            # vacas (têm parto)
+            {"numero": "10", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},    # gestante
+            {"numero": "20", "grupo_primario": "02 - VACAS", "sit_rep": "Ins."},    # inseminada
+            {"numero": "30", "grupo_primario": "02 - VACAS", "sit_rep": ""},        # PEV (parto recente)
+            {"numero": "40", "grupo_primario": "02 - VACAS", "sit_rep": ""},        # atrasada -> a_inseminar
+            {"numero": "60", "grupo_primario": "02 - VACAS", "sit_rep": ""},        # em protocolo (D0-D11)
+            # novilhas nulíparas
+            {"numero": "50", "grupo_primario": "12 - NOVILHAS", "data_nasc": hoje - timedelta(days=200)},   # não apta
+            {"numero": "70", "grupo_primario": "12 - NOVILHAS", "data_nasc": hoje - timedelta(days=600)},   # apta
+        ]
+        servicos = [
+            {"numero_matriz": "10", "data_servico": hoje - timedelta(days=100), "diagnostico": "POSITIVO", "raca_matriz": "Girolando"},
+            {"numero_matriz": "20", "data_servico": hoje - timedelta(days=10)},  # aguardando diagnóstico
+        ]
+        partos = [
+            {"numero_matriz": "10", "data_parto": hoje - timedelta(days=400)},
+            {"numero_matriz": "20", "data_parto": hoje - timedelta(days=200)},
+            {"numero_matriz": "30", "data_parto": hoje - timedelta(days=10)},   # DEL 10 < pev_dias (45)
+            {"numero_matriz": "40", "data_parto": hoje - timedelta(days=300)},  # DEL 300 > DEL máx 1º serviço
+            {"numero_matriz": "60", "data_parto": hoje - timedelta(days=200)},
+        ]
+        aplicacoes_iatf = [
+            {"numero_matriz": "60", "lancamento_id": 1, "dia": 0, "data_prevista": hoje - timedelta(days=3)},
+            {"numero_matriz": "60", "lancamento_id": 1, "dia": 11, "data_prevista": hoje + timedelta(days=8)},
+        ]
+        return animais, servicos, partos, aplicacoes_iatf
+
+    def _calcular(self):
+        animais, servicos, partos, aplicacoes_iatf = self._dados()
+        return calcular_indicadores(
+            animais, servicos, partos, data_ref=self.HOJE,
+            peso_por_animal={"70": 420.0, "50": 150.0},
+            aplicacoes_iatf=aplicacoes_iatf,
+        )
+
+    def test_estados_esperados_por_balde(self):
+        cats = self._calcular()["reproducao_categorias"]
+        todas = cats["todas"]
+        assert set(todas["prenhes_nums"]) == {"10"}
+        assert set(todas["inseminadas_nums"]) == {"20"}
+        assert set(todas["pev_nums"]) == {"30"}
+        assert set(todas["a_inseminar_nums"]) == {"40", "70"}   # atrasada + novilha apta
+        assert set(todas["nao_classificadas_nums"]) == {"50"}   # novilha impúbere
+        assert set(todas["em_protocolo_nums"]) == {"60"}
+        # `vazias` é o guarda-chuva de 5 estados e NÃO inclui "em protocolo".
+        assert set(todas["vazias_nums"]) == {"30", "40", "50", "70"}
+        # Recorte vaca/novilha vem do registro de Parto, não de `data_ult_parto`.
+        assert set(cats["vaca"]["em_protocolo_nums"]) == {"60"}
+        assert cats["novilha"]["em_protocolo_nums"] == []
+        assert set(cats["novilha"]["a_inseminar_nums"]) == {"70"}
+
+    def test_contagem_bate_com_a_lista_em_toda_categoria(self):
+        # É o defeito que o drill-down tinha: número do card e lista aberta
+        # saíam de contas diferentes.
+        cats = self._calcular()["reproducao_categorias"]
+        for categoria in ("todas", "vaca", "novilha"):
+            dados = cats[categoria]
+            for balde in self.BALDES:
+                assert dados[balde] == len(dados[f"{balde}_nums"]), f"{categoria}.{balde}"
+            assert dados["aptas"] == len(dados["aptas_nums"]), f"{categoria}.aptas"
+
+    def test_fatias_do_donut_cobrem_o_rebanho_sem_sobreposicao(self):
+        # É o que faz o donut da Capa somar o rebanho da categoria.
+        r = self._calcular()
+        cats = r["reproducao_categorias"]
+        esperado = {"todas": 7, "vaca": 5, "novilha": 2}
+        for categoria, total in esperado.items():
+            dados = cats[categoria]
+            assert sum(dados[b] for b in self.FATIAS) == total, categoria
+            numeros = [n for b in self.FATIAS for n in dados[f"{b}_nums"]]
+            assert len(numeros) == total, categoria          # nenhum animal em duas fatias
+            assert len(set(numeros)) == total, categoria     # e nenhum repetido
+        # todas = vaca + novilha, fatia a fatia.
+        for balde in self.FATIAS:
+            assert cats["todas"][balde] == cats["vaca"][balde] + cats["novilha"][balde], balde
+
+    def test_nums_do_programa_batem_com_os_numeradores_das_taxas(self):
+        """`prenhes_programa_nums`/`vazias_programa_nums` são exatamente os
+        numeradores de `taxa_prenhez_pct`/`perc_vazias_pct` — os dois cards de
+        Indicadores abrem a lista que gerou o próprio percentual.
+
+        Denominador (rebanho no programa reprodutivo, R1) = 6: os 7 animais
+        menos a novilha impúbere (50). Note que é ele, e não "fêmeas aptas",
+        o denominador dos dois percentuais.
+        """
+        rep = self._calcular()["reproducao"]
+        assert set(rep["prenhes_programa_nums"]) == {"10"}
+        # Em protocolo (60) entra em "vazias" do programa: não está gestante
+        # nem inseminada. Impúbere (50) fica fora do programa inteiro.
+        assert set(rep["vazias_programa_nums"]) == {"30", "40", "60", "70"}
+        rebanho_programa = 6
+        assert rep["taxa_prenhez_pct"] == round(100 * len(rep["prenhes_programa_nums"]) / rebanho_programa, 1)
+        assert rep["perc_vazias_pct"] == round(100 * len(rep["vazias_programa_nums"]) / rebanho_programa, 1)
 
 
 class TestReproducaoCategoriasFallback:
@@ -824,6 +964,29 @@ class TestBenchmarkCategorias:
         assert val(cats["novilha"], "taxa_concepcao") == 100.0
         # Novilhas não têm parto → IEP fica indefinido.
         assert val(cats["novilha"], "iep_meses") is None
+
+    def test_taxa_concepcao_pct_e_alias_do_motor_de_ciclos(self):
+        """`reproducao.taxa_concepcao_pct` é o MESMO número de
+        `benchmark["taxa_concepcao"]` (categoria "todas") — uma definição só
+        de taxa de concepção no sistema inteiro.
+
+        Aqui o motor de ciclos devolve valor (há serviços com matriz e ciclo
+        fechado) — ao contrário de `TestIndicadores::test_composicao_e_reproducao`,
+        onde ele não fecha janela nenhuma e o acumulado legado devolveria 50,0%.
+        """
+        animais, servicos, partos = self._dados()
+        r = calcular_indicadores(
+            animais, servicos, partos, data_ref=date(2026, 7, 7), peso_por_animal=self._peso,
+        )
+        do_benchmark = next(
+            b["valor"] for b in r["benchmark_categorias"]["todas"] if b["chave"] == "taxa_concepcao"
+        )
+        assert do_benchmark is not None
+        assert r["reproducao"]["taxa_concepcao_pct"] == do_benchmark
+        # Contagens brutas do período continuam existindo lado a lado, sem
+        # serem os termos da taxa (3 POSITIVO / 1 NEGATIVO nesta fixture).
+        rep = r["reproducao"]
+        assert (rep["servicos_positivos"], rep["servicos_negativos"]) == (3, 1)
 
     def test_metas_vem_dos_parametros_e_novilha_tem_meta_propria(self):
         """taxa_servico/taxa_prenhez_ciclo/taxa_concepcao passam a ler
