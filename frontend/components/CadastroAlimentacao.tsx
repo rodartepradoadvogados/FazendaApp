@@ -59,6 +59,18 @@ function formatDate(iso?: string | null): string {
   return `${d}/${m}/${a}`;
 }
 
+// Dado o id gravado em `Alimento.categoria_alimento_id` (FK única — decisão
+// de modelagem da spec), devolve os dois valores que os selects encadeados
+// do formulário precisam: se o id aponta para uma subcategoria, a raiz vai
+// para o select de Categoria e o próprio id para o de Subcategoria; se aponta
+// para uma raiz, só o select de Categoria é preenchido.
+function idsCategoriaSubcategoria(id: number | null, categorias: CategoriaAlimento[]): { categoriaId: string; subcategoriaId: string } {
+  const cat = id != null ? categorias.find((c) => c.id === id) : undefined;
+  if (!cat) return { categoriaId: "", subcategoriaId: "" };
+  if (cat.categoria_pai_id != null) return { categoriaId: String(cat.categoria_pai_id), subcategoriaId: String(cat.id) };
+  return { categoriaId: String(cat.id), subcategoriaId: "" };
+}
+
 const input: React.CSSProperties = {
   width: "100%", padding: "0.4rem 0.55rem", borderRadius: 6, fontSize: "0.82rem",
   background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)",
@@ -78,9 +90,12 @@ export default function CadastroAlimentacao() {
           {([["ver", "Visualizar dietas", ClipboardList], ["ms", "% Matéria seca", Percent], ["tabela-nutricional", "Cadastro de tabela nutricional", Table2], ["bromatologica", "Análise bromatológica", FlaskConical], ["categorias", "Categorias", Tag], ["alimentos", "Alimentos", Wheat]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setAba(id)}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.35rem 0.85rem", borderRadius: 999, cursor: "pointer",
-                border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-                background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
-                color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
+                // Tokens de pílula ativa (globals.css) em vez de literal fixo: no
+                // claro/misto o fundo vira vinho SÓLIDO (não o vinho translúcido do
+                // escuro), senão o texto dourado fica ilegível sobre fundo branco.
+                border: "1px solid " + (aba === id ? "var(--pill-active-border)" : "var(--border)"),
+                background: aba === id ? "var(--pill-active-bg)" : "transparent",
+                color: aba === id ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
               <Icon size={14} /> {label}
             </button>
           ))}
@@ -105,9 +120,16 @@ export default function CadastroAlimentacao() {
 }
 
 // ─────────────────────────── Categorias de alimento ───────────────────────────
+// Dois níveis (raiz e subcategoria — B1): o mesmo formulário de nome serve
+// para os dois, só muda o `paiId` alvo quando é criação. Guardamos a
+// categoria inteira (não só o id) ao entrar em edição porque o PUT precisa
+// reenviar o `categoria_pai_id` atual — omitir o campo arriscaria o backend
+// entender "virou raiz" e mover a subcategoria sem o usuário ter pedido isso.
+type ModoEdicaoCategoria = { tipo: "novo"; paiId: number | null } | { tipo: "editar"; cat: CategoriaAlimento };
+
 function CategoriasAlimentoTab() {
   const [itens, setItens] = useState<CategoriaAlimento[] | null>(null);
-  const [editando, setEditando] = useState<number | "novo" | null>(null);
+  const [modo, setModo] = useState<ModoEdicaoCategoria | null>(null);
   const [nome, setNome] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -115,18 +137,24 @@ function CategoriasAlimentoTab() {
   const carregar = () => fetchCategoriasAlimento().then(setItens).catch((e: any) => setErro(e.message));
   useEffect(() => { carregar(); }, []);
 
-  const abrirNovo = () => { setNome(""); setEditando("novo"); setErro(null); };
-  const abrirEdicao = (c: CategoriaAlimento) => { setNome(c.nome); setEditando(c.id); setErro(null); };
+  const abrirNovo = (paiId: number | null) => { setNome(""); setModo({ tipo: "novo", paiId }); setErro(null); };
+  const abrirEdicao = (c: CategoriaAlimento) => { setNome(c.nome); setModo({ tipo: "editar", cat: c }); setErro(null); };
+  const cancelar = () => setModo(null);
 
   const salvar = async () => {
+    if (!modo) return;
     if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
     setSalvando(true); setErro(null);
     try {
-      if (editando === "novo") await criarCategoriaAlimento({ nome: nome.trim() });
-      else if (typeof editando === "number") await atualizarCategoriaAlimento(editando, { nome: nome.trim() });
-      setEditando(null);
+      if (modo.tipo === "novo") await criarCategoriaAlimento({ nome: nome.trim(), categoria_pai_id: modo.paiId });
+      else await atualizarCategoriaAlimento(modo.cat.id, { nome: nome.trim(), categoria_pai_id: modo.cat.categoria_pai_id });
+      setModo(null);
       await carregar();
-    } catch (e: any) { setErro(e.message); }
+    } catch (e: any) {
+      // Mensagem do backend direto na tela (terceiro nível, nome duplicado
+      // sob o mesmo pai, exclusão com filhas — B4): nada de traduzir/engolir.
+      setErro(e.message);
+    }
     finally { setSalvando(false); }
   };
 
@@ -136,51 +164,104 @@ function CategoriasAlimentoTab() {
     catch (e: any) { setErro(e.message); }
   };
 
+  // Raízes por nome e, sob cada uma, as filhas por nome — mesmo agrupamento
+  // que o backend já devolve (A6), recalculado aqui só por segurança.
+  const raizes = useMemo(() => (itens ?? []).filter((c) => c.categoria_pai_id == null).sort((a, b) => a.nome.localeCompare(b.nome)), [itens]);
+  const filhasDe = (paiId: number) => (itens ?? []).filter((c) => c.categoria_pai_id === paiId).sort((a, b) => a.nome.localeCompare(b.nome));
+
   return (
     <div className="card">
       <div className="card-header mb-2 flex items-center justify-between">
         <span className="flex items-center gap-2"><Tag size={16} /> Categorias de alimento</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={() => abrirNovo(null)}>
           <Plus size={14} /> Nova categoria
         </button>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Agrupa os alimentos cadastrados na aba "Alimentos" (ex.: Volumoso, Concentrado, Mineral) — livremente editável.
+        Agrupa os alimentos cadastrados na aba "Alimentos" em dois níveis — ex.: "Concentrado" com as subcategorias
+        "Proteico" e "Energético" — tudo livremente editável.
       </p>
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
 
-      {editando === "novo" && (
+      {modo?.tipo === "novo" && modo.paiId === null && (
         <div className="flex items-center gap-2 mb-3">
           <input autoFocus style={input} placeholder="Nome da categoria" value={nome} onChange={(e) => setNome(e.target.value)} />
           <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={salvar} disabled={salvando}><Check size={14} /></button>
-          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditando(null)}><X size={14} /></button>
+          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={cancelar}><X size={14} /></button>
         </div>
       )}
 
       {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
       {itens && (
         <div className="space-y-2">
-          {itens.map((c) => (
-            <div key={c.id} className="flex items-center justify-between gap-2" style={{ padding: "0.5rem 0.7rem", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-              {editando === c.id ? (
-                <>
-                  <input autoFocus style={{ ...input, flex: 1 }} value={nome} onChange={(e) => setNome(e.target.value)} />
-                  <button className="btn-primary" style={{ fontSize: "0.72rem" }} onClick={salvar} disabled={salvando}><Check size={13} /></button>
-                  <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEditando(null)}><X size={13} /></button>
-                </>
-              ) : (
-                <>
-                  <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{c.nome}</span>
-                  <div className="flex items-center gap-1">
-                    <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /></button>
-                    <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluir(c)}><Trash2 size={13} /></button>
-                  </div>
-                </>
+          {raizes.map((raiz) => (
+            <Fragment key={raiz.id}>
+              <LinhaCategoriaAlimento
+                c={raiz} subordinada={false}
+                emEdicao={modo?.tipo === "editar" && modo.cat.id === raiz.id}
+                nome={nome} setNome={setNome} salvando={salvando}
+                onEditar={() => abrirEdicao(raiz)} onSalvar={salvar} onCancelar={cancelar}
+                onExcluir={() => excluir(raiz)} onNovaSub={() => abrirNovo(raiz.id)}
+              />
+              {modo?.tipo === "novo" && modo.paiId === raiz.id && (
+                <div className="flex items-center gap-2" style={{ marginLeft: "1.8rem" }}>
+                  <input autoFocus style={input} placeholder="Nome da subcategoria" value={nome} onChange={(e) => setNome(e.target.value)} />
+                  <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={salvar} disabled={salvando}><Check size={14} /></button>
+                  <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={cancelar}><X size={14} /></button>
+                </div>
               )}
-            </div>
+              {filhasDe(raiz.id).map((filha) => (
+                <LinhaCategoriaAlimento
+                  key={filha.id} c={filha} subordinada
+                  emEdicao={modo?.tipo === "editar" && modo.cat.id === filha.id}
+                  nome={nome} setNome={setNome} salvando={salvando}
+                  onEditar={() => abrirEdicao(filha)} onSalvar={salvar} onCancelar={cancelar}
+                  onExcluir={() => excluir(filha)}
+                />
+              ))}
+            </Fragment>
           ))}
-          {!itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma categoria cadastrada ainda.</p>}
+          {!raizes.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma categoria cadastrada ainda.</p>}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Uma linha da árvore (raiz ou subcategoria — indentada e com borda à
+// esquerda em vez de fundo próprio, para não competir com os tokens de
+// destaque `--pill-active-*` das abas). "Nova subcategoria" só existe na
+// raiz: dois níveis é o máximo que o backend aceita (A3) — B2/B3.
+function LinhaCategoriaAlimento({ c, subordinada, emEdicao, nome, setNome, salvando, onEditar, onSalvar, onCancelar, onExcluir, onNovaSub }: {
+  c: CategoriaAlimento; subordinada: boolean; emEdicao: boolean;
+  nome: string; setNome: (v: string) => void; salvando: boolean;
+  onEditar: () => void; onSalvar: () => void; onCancelar: () => void; onExcluir: () => void; onNovaSub?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2" style={{
+      padding: "0.5rem 0.7rem", borderRadius: 8, background: "var(--surface-2)",
+      border: "1px solid var(--border)", marginLeft: subordinada ? "1.8rem" : 0,
+      borderLeft: subordinada ? "3px solid var(--border)" : "1px solid var(--border)",
+    }}>
+      {emEdicao ? (
+        <>
+          <input autoFocus style={{ ...input, flex: 1 }} value={nome} onChange={(e) => setNome(e.target.value)} />
+          <button className="btn-primary" style={{ fontSize: "0.72rem" }} onClick={onSalvar} disabled={salvando}><Check size={13} /></button>
+          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={onCancelar}><X size={13} /></button>
+        </>
+      ) : (
+        <>
+          <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{c.nome}</span>
+          <div className="flex items-center gap-1">
+            {onNovaSub && (
+              <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.25rem" }} onClick={onNovaSub}>
+                <Plus size={13} /> Nova subcategoria
+              </button>
+            )}
+            <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={onEditar}><Pencil size={13} /></button>
+            <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={onExcluir}><Trash2 size={13} /></button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -197,6 +278,10 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [nome, setNome] = useState("");
   const [categoriaId, setCategoriaId] = useState("");
+  // Categoria (raiz) e subcategoria são dois selects encadeados no formulário
+  // (B8) mesmo a FK sendo uma só (`categoria_alimento_id`) — subcategoriaId
+  // vazio é estado legítimo, grava a raiz.
+  const [subcategoriaId, setSubcategoriaId] = useState("");
   const [observacao, setObservacao] = useState("");
   const [estoqueIds, setEstoqueIds] = useState<number[]>([]);
   const [buscaEstoque, setBuscaEstoque] = useState("");
@@ -211,14 +296,16 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
   }, []);
 
   const abrirNovo = () => {
-    setNome(prefill?.nome || ""); setCategoriaId(""); setObservacao("");
+    setNome(prefill?.nome || ""); setCategoriaId(""); setSubcategoriaId(""); setObservacao("");
     setEstoqueIds(prefill?.estoqueId ? [prefill.estoqueId] : []);
     setEditando("novo"); setErro(null);
   };
   useEffect(() => { if (prefill) abrirNovo(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [prefill]);
 
   const abrirEdicao = (a: Alimento) => {
-    setNome(a.nome); setCategoriaId(a.categoria_alimento_id ? String(a.categoria_alimento_id) : "");
+    setNome(a.nome);
+    const { categoriaId: cId, subcategoriaId: sId } = idsCategoriaSubcategoria(a.categoria_alimento_id, categorias);
+    setCategoriaId(cId); setSubcategoriaId(sId);
     setObservacao(a.observacao || ""); setEstoqueIds((a.estoque_vinculado || []).map((e: any) => e.id));
     setEditando(a.id); setErro(null);
   };
@@ -228,8 +315,10 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
     if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
     setSalvando(true); setErro(null);
     try {
+      // A FK grava a subcategoria quando escolhida, senão a raiz — a subcategoria
+      // vazia é estado legítimo (B8), nunca bloqueia o salvamento.
       const dados = {
-        nome: nome.trim(), categoria_alimento_id: categoriaId ? Number(categoriaId) : null,
+        nome: nome.trim(), categoria_alimento_id: subcategoriaId ? Number(subcategoriaId) : (categoriaId ? Number(categoriaId) : null),
         observacao: observacao.trim() || null, estoque_ids: estoqueIds,
       };
       const salvo = editando === "novo" ? await criarAlimento(dados) : await atualizarAlimento(editando as number, dados);
@@ -255,7 +344,25 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
     catch (e: any) { setErro(e.message); }
   };
 
-  const nomeCategoria = (id: number | null) => categorias.find((c) => c.id === id)?.nome || "—";
+  // Categoria e Subcategoria são derivadas da mesma FK única, pela regra da
+  // decisão de modelagem da spec: se o alimento aponta para uma subcategoria,
+  // Categoria mostra o PAI e Subcategoria mostra ela mesma; se aponta para
+  // uma raiz, Categoria mostra ela mesma e Subcategoria fica vazia (não é
+  // erro/pendência, então nunca cai no "—" alarmante) — B6.
+  const categoriaEfetiva = (id: number | null): { categoria: string; subcategoria: string } => {
+    const cat = id != null ? categorias.find((c) => c.id === id) : undefined;
+    if (!cat) return { categoria: "—", subcategoria: "" };
+    if (cat.categoria_pai_id != null) {
+      const pai = categorias.find((c) => c.id === cat.categoria_pai_id);
+      return { categoria: pai?.nome ?? "—", subcategoria: cat.nome };
+    }
+    return { categoria: cat.nome, subcategoria: "" };
+  };
+  // Só categorias raiz entram no primeiro select do formulário; o segundo é
+  // preenchido com as filhas da raiz escolhida (B8).
+  const categoriasRaiz = categorias.filter((c) => c.categoria_pai_id == null);
+  const subcategoriasDaCategoria = categoriaId ? categorias.filter((c) => c.categoria_pai_id === Number(categoriaId)) : [];
+
   // Só alimentos de verdade (rações, silagens...) — finalidade "Ração/Alimento",
   // nunca medicamento/material/equipamento. Item sem finalidade definida (legado)
   // ainda aparece, mesma regra tolerante do EstoquePicker.
@@ -263,11 +370,16 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
     (e.finalidade == null || e.finalidade === "Ração/Alimento") && casaBusca(e.nome, buscaEstoque)
   );
 
-  // Colunas derivadas (nome da categoria/estoque vinculado) só para permitir
-  // ordenar por clique no cabeçalho — mesmo padrão de CadastroPessoas.tsx.
-  const linhasOrdenaveis = useMemo(() => (itens ?? []).map((a) => ({
-    ...a, categoriaOrdenacao: nomeCategoria(a.categoria_alimento_id), estoqueOrdenacao: a.estoque_vinculado?.length ? a.estoque_vinculado.map((e: any) => e.nome).join(", ") : "",
-  })), [itens, categorias]);
+  // Colunas derivadas (categoria/subcategoria/estoque vinculado) só para
+  // permitir ordenar por clique no cabeçalho — mesmo padrão de
+  // CadastroPessoas.tsx, agora cobrindo as duas colunas derivadas (B7).
+  const linhasOrdenaveis = useMemo(() => (itens ?? []).map((a) => {
+    const { categoria, subcategoria } = categoriaEfetiva(a.categoria_alimento_id);
+    return {
+      ...a, categoriaOrdenacao: categoria, subcategoriaOrdenacao: subcategoria,
+      estoqueOrdenacao: a.estoque_vinculado?.length ? a.estoque_vinculado.map((e: any) => e.nome).join(", ") : "",
+    };
+  }), [itens, categorias]);
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(linhasOrdenaveis);
 
   return (
@@ -290,9 +402,19 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
             <div><label style={lbl}>Nome do alimento</label><input style={input} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
             <div><label style={lbl}>Categoria</label>
-              <select style={input} value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}>
+              <select style={input} value={categoriaId} onChange={(e) => { setCategoriaId(e.target.value); setSubcategoriaId(""); }}>
                 <option value="">—</option>
-                {categorias.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                {categoriasRaiz.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+            </div>
+            <div><label style={lbl}>Subcategoria</label>
+              {/* Encadeado com Categoria: só lista as filhas da raiz escolhida
+                  e fica vazio/desabilitado quando ela não tem filhas — trocar
+                  a categoria já limpa a subcategoria acima, para nunca gravar
+                  filha de outro pai (B8/B9). */}
+              <select style={input} value={subcategoriaId} onChange={(e) => setSubcategoriaId(e.target.value)} disabled={!subcategoriasDaCategoria.length}>
+                <option value="">—</option>
+                {subcategoriasDaCategoria.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
               </select>
             </div>
             <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Observação</label>
@@ -339,29 +461,34 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
           <table className="fazenda-table">
             <thead>
               <tr>
-                <ThOrdenavel label="Alimento" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Produto do estoque" campo="estoqueOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <ThOrdenavel label="Categoria" campo="categoriaOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
-                <ThOrdenavel label="Estoque vinculado" campo="estoqueOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Subcategoria" campo="subcategoriaOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Alimento" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {linhasOrdenadas.map((a) => (
                 <tr key={a.id}>
-                  <td style={{ fontWeight: 700 }}>{a.nome}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{nomeCategoria(a.categoria_alimento_id)}</td>
                   <td style={{ fontSize: "0.78rem" }}>
                     {a.estoque_vinculado?.length
                       ? a.estoque_vinculado.map((e: any) => e.nome).join(", ")
                       : <span style={{ color: "var(--amber)", display: "flex", alignItems: "center", gap: "0.3rem" }}><AlertTriangle size={12} /> Sem produto de estoque vinculado</span>}
                   </td>
+                  {/* Categoria/Subcategoria derivadas da FK única — B6: alimento
+                      ligado direto à raiz mostra Subcategoria vazia (sem "—"
+                      alarmante, sem aviso de pendência: é estado legítimo). */}
+                  <td style={{ fontSize: "0.78rem" }}>{categoriaEfetiva(a.categoria_alimento_id).categoria}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{categoriaEfetiva(a.categoria_alimento_id).subcategoria}</td>
+                  <td style={{ fontWeight: 700 }}>{a.nome}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     <button className="btn-ghost" style={{ fontSize: "0.72rem", marginRight: "0.3rem" }} onClick={() => abrirEdicao(a)}><Pencil size={13} /> Editar</button>
                     <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluir(a)}><Trash2 size={13} /></button>
                   </td>
                 </tr>
               ))}
-              {!itens.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum alimento cadastrado ainda.</td></tr>}
+              {!itens.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum alimento cadastrado ainda.</td></tr>}
             </tbody>
           </table>
         </div>

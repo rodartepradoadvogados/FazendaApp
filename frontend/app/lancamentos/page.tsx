@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
@@ -193,6 +193,39 @@ export default function LancamentosPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [sujo]);
+
+  // "Sujo" genérico (fallback para os formulários que não sabem se avisar
+  // sozinhos, como FormFinanceiro faz via `onSujo`): em vez de marcar sujo em
+  // QUALQUER evento de mudança — o que nunca desmarcava, mesmo apagando tudo
+  // de volta —, compara os campos do formulário atual contra o instantâneo
+  // ("baseline") tirado assim que a sub-aba abriu. Valor padrão de nascença
+  // (ex.: "Data do controle" já vem com hoje, "Modalidade" já vem com uma
+  // opção marcada) não conta como trabalho do usuário — mesmo raciocínio do
+  // caso do centro de custo em FormFinanceiro, só que aqui genérico, porque
+  // a maioria dos formulários de Lançamentos não expõe seu próprio `sujo`.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const baselineRef = useRef<string[]>([]);
+  const valorDoCampo = (el: Element): string => {
+    if (el instanceof HTMLInputElement) return el.type === "checkbox" || el.type === "radio" ? String(el.checked) : el.value;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el.value;
+    return "";
+  };
+  const capturarBaseline = useCallback(() => {
+    const el = cardRef.current;
+    baselineRef.current = el ? Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo) : [];
+  }, []);
+  // Recaptura a baseline sempre que a sub-aba muda — é o formulário NOVO que
+  // acabou de nascer que serve de referência, nunca o antigo.
+  useEffect(() => { capturarBaseline(); }, [sel, capturarBaseline]);
+  const verificarSujo = useCallback(() => {
+    if (sel === "exclusao") return;
+    const el = cardRef.current;
+    if (!el) return;
+    const atuais = Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo);
+    const mudou = atuais.length !== baselineRef.current.length || atuais.some((v, i) => v !== baselineRef.current[i]);
+    setSujo(mudou);
+  }, [sel]);
+
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
@@ -261,9 +294,9 @@ export default function LancamentosPage() {
           ) : sel === "diagnostico" ? (
             <><strong style={{ color: "var(--text)" }}>Diagnóstico já grava de verdade.</strong> Um resultado marcado para retoque entra na agenda automaticamente.</>
           ) : sel === "estoque_entradas_saidas" ? (
-            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
+            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora. Aqui é lugar de ajuste, cortesia ou lançamento que faltou — não de aplicação em animais nem de outros lançamentos, que têm sub-aba própria.</>
           ) : sel === "estoque_ajuste_saldo" ? (
-            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença.</>
+            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença. Aqui é lugar de ajuste, cortesia ou lançamento que faltou — não de aplicação nem de outros lançamentos, que têm sub-aba própria.</>
           ) : sel === "alimentacao_dieta" ? (
             <><strong style={{ color: "var(--text)" }}>Dieta já grava de verdade.</strong> Só uma dieta fica ativa por lote; ao encerrar, você pode lançar a próxima na hora. A data prevista de encerramento entra na Agenda para análise.</>
           ) : sel === "sanidade_aplicacao" ? (
@@ -296,7 +329,7 @@ export default function LancamentosPage() {
         </p>
       </div>
 
-      <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
+      <div className="card" ref={cardRef} onChange={verificarSujo}>
         <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
         <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
         {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
