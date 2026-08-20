@@ -311,6 +311,20 @@ def reproducao_taxa_prenhez(
             "prenhes": d["preg"],
         })
 
+    # Mesma correção já feita no resumo de GET /reproducao/ciclos-21-dias:
+    # `animais_avaliados` contava quantos perfis foram CARREGADOS do banco, não
+    # quantos passaram por algum crivo do BREDSUM\E — uma novilha gestante o
+    # período todo, ou baixada antes do primeiro ciclo, entrava na conta igual
+    # a uma avaliada de verdade. A união de br_elig/bred/pg_elig/preg de todos
+    # os ciclos responde a pergunta certa, e o dado já está aqui.
+    #
+    # Consertar só um dos dois endpoints seria pior que não consertar nenhum:
+    # duas telas do mesmo sistema mostrariam "animais avaliados" com critérios
+    # diferentes, e não haveria como o usuário saber qual das duas ler.
+    avaliados: set[str] = set()
+    for r in resultados:
+        avaliados.update(r.br_elig, r.bred, r.pg_elig, r.preg)
+
     # Resumo do período: prenhez média ponderada pelo denominador de cada ciclo.
     tot_pg = sum(l["pg_elig"] for l in linhas)
     tot_pr = sum((l["taxa_prenhez"] or 0) * l["pg_elig"] for l in linhas)
@@ -320,7 +334,8 @@ def reproducao_taxa_prenhez(
         "taxa_prenhez_media": round(tot_pr / tot_pg, 1) if tot_pg else None,
         "total_servicos": sum(l["bred"] for l in linhas),
         "meta_taxa_prenhez": meta.taxa_prenhez_meta,
-        "animais_avaliados": len(perfis),
+        "animais_avaliados": len(avaliados),
+        "animais_carregados": len(perfis),
     }
 
 

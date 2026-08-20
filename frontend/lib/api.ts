@@ -6069,7 +6069,7 @@ export type RecriaCiclo = {
   taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null;
 };
 export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/recria/reproducao/idade-parto`);
-export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; animais_avaliados: number; meta_taxa_prenhez: number }> =>
+export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; /** Quantos entraram em pelo menos um balde do BREDSUM\E — não o tamanho do rebanho carregado (ver `animais_carregados`). */ animais_avaliados: number; animais_carregados: number; meta_taxa_prenhez: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
 export type RecriaDossie = {
