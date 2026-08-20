@@ -2216,7 +2216,13 @@ export default function AgendaPage() {
                   <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>{e.descricao}</p>
                   {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
                 </div>
-                {e.categoria === "alimentacao" && (
+                {/* Só o comunicado de NOVA DIETA leva à tela de dieta. A
+                    condição era por categoria, e o alerta de sobra também sai
+                    como "alimentacao" — então herdava este botão, que é
+                    exatamente o atalho de lançamento que o alerta de sobra não
+                    pode ter: ele é comunicado, resolve-se com o Check e nada
+                    mais. */}
+                {e.categoria === "alimentacao" && (e as any).tipo === "nova_dieta" && (
                   <a href={`/alimentacao?lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
                     <Wheat size={12} /> Ir para Dieta
                   </a>

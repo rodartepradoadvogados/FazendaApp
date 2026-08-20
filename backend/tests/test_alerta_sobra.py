@@ -5,14 +5,6 @@ comunicado, geração na central de alertas como PortalMensagem, texto curto
 com kg por alimento, exclusão dos itens sem conversão para kg, um alerta por
 lote/dia (atualiza em vez de duplicar) e silêncio quando a sobra está dentro
 da faixa.
-
-⚠ NOTA IMPORTANTE PARA QUEM REVISAR ESTE ARQUIVO: no momento em que esta
-frente foi escrita, `fazenda/rules/unidades.py` (Frente A, fora do escopo
-desta frente) estava com um bug que quebra o import de toda a aplicação —
-ver o comentário logo abaixo, antes dos imports de `fazenda`/`main`. Se este
-arquivo falhar já na COLETA (ImportError em cadeia a partir de
-`fazenda.api.routers.reproducao`), é esse bug, não este teste — confirme
-rodando `python -c "import fazenda.rules.estoque_baixa"` fora do pytest.
 """
 from __future__ import annotations
 
@@ -21,37 +13,6 @@ import tempfile
 from datetime import date
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
-
-# ---------------------------------------------------------------------------
-# Ver a nota no docstring do módulo: `rules/estoque_baixa.py` importa
-# `pode_dar_baixa_direta` de `rules/unidades.py`, mas o commit da Frente A
-# (d7b1936) sobrescreveu esse arquivo por inteiro e apagou a função (junto
-# com `leite_para_kg`/`unidades_compativeis`, usadas por
-# routers/sanidade.py e routers/producao.py) — sem isto, `import main`
-# derruba a coleta inteira do arquivo com ImportError, mesmo sem relação
-# nenhuma com sobra de cocho. `rules/` é proibido para esta frente (outro
-# dono), então em vez de editar o arquivo no disco, este bloco só repõe os
-# nomes que faltam no módulo já carregado, IN-MEMORY, antes de qualquer
-# outro módulo de `fazenda.*` importar `rules/unidades`. Remover este bloco
-# assim que o arquivo real for corrigido — ele vira um no-op nesse dia
-# (o `if not hasattr` não sobrescreve nada que já exista).
-import fazenda.rules.unidades as _unidades_bug_frente_a  # noqa: E402
-
-if not hasattr(_unidades_bug_frente_a, "pode_dar_baixa_direta"):
-    _unidades_bug_frente_a.pode_dar_baixa_direta = (
-        lambda unidade_aplicacao, unidade_estoque: bool(unidade_estoque) and unidade_aplicacao == unidade_estoque
-    )
-if not hasattr(_unidades_bug_frente_a, "leite_para_kg"):
-    _unidades_bug_frente_a.leite_para_kg = (
-        lambda quantidade, unidade: quantidade * 1.029 if (unidade or "kg").strip().upper() == "L" else quantidade
-    )
-if not hasattr(_unidades_bug_frente_a, "unidades_compativeis"):
-    _unidades_bug_frente_a.unidades_compativeis = lambda unidade_estoque=None: (
-        [unidade_estoque] if unidade_estoque else ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"]
-    )
-if not hasattr(_unidades_bug_frente_a, "UNIDADES_ENTREGA_LEITE"):
-    _unidades_bug_frente_a.UNIDADES_ENTREGA_LEITE = ("kg", "L")
-# ---------------------------------------------------------------------------
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

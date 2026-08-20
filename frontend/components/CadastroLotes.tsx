@@ -25,6 +25,7 @@ type Lote = {
   em_tratamento: boolean | null; idade_dias_min: number | null; idade_dias_max: number | null;
   novilhas_inseminadas: boolean | null; novilhas_gestantes: boolean | null;
   categoria_manejo_ids: string | null; excluir_da_sugestao: boolean; ativo: boolean;
+  permitir_fora_da_dieta: boolean; permitir_sem_estoque: boolean;
 };
 
 type Form = {
@@ -38,6 +39,8 @@ type Form = {
   novilhas_inseminadas: boolean; novilhas_gestantes: boolean;
   categoria_manejo_ids: number[];
   excluir_da_sugestao: boolean;
+  permitir_fora_da_dieta: boolean;
+  permitir_sem_estoque: boolean;
 };
 
 const formVazio: Form = {
@@ -48,6 +51,7 @@ const formVazio: Form = {
   em_tratamento: false, idade_dias_min: "", idade_dias_max: "",
   novilhas_inseminadas: false, novilhas_gestantes: false, categoria_manejo_ids: [],
   excluir_da_sugestao: false,
+  permitir_fora_da_dieta: false, permitir_sem_estoque: false,
 };
 
 const inputStyle: React.CSSProperties = {
@@ -82,6 +86,8 @@ function paraPayload(form: Form, ativo: boolean = true) {
     novilhas_gestantes: form.novilhas_gestantes || null,
     categoria_manejo_ids: form.categoria_manejo_ids.length ? form.categoria_manejo_ids.join(",") : null,
     excluir_da_sugestao: form.excluir_da_sugestao,
+    permitir_fora_da_dieta: form.permitir_fora_da_dieta,
+    permitir_sem_estoque: form.permitir_sem_estoque,
     ativo,
   };
 }
@@ -105,6 +111,8 @@ function payloadDoLote(l: Lote, overrides: Partial<ReturnType<typeof paraPayload
     novilhas_inseminadas: l.novilhas_inseminadas, novilhas_gestantes: l.novilhas_gestantes,
     categoria_manejo_ids: l.categoria_manejo_ids,
     excluir_da_sugestao: l.excluir_da_sugestao,
+    permitir_fora_da_dieta: l.permitir_fora_da_dieta,
+    permitir_sem_estoque: l.permitir_sem_estoque,
     ativo: l.ativo,
     ...overrides,
   };
@@ -159,6 +167,8 @@ export default function CadastroLotes() {
       novilhas_inseminadas: !!l.novilhas_inseminadas, novilhas_gestantes: !!l.novilhas_gestantes,
       categoria_manejo_ids: l.categoria_manejo_ids ? l.categoria_manejo_ids.split(",").map(Number).filter((n) => !Number.isNaN(n)) : [],
       excluir_da_sugestao: !!l.excluir_da_sugestao,
+      permitir_fora_da_dieta: !!l.permitir_fora_da_dieta,
+      permitir_sem_estoque: !!l.permitir_sem_estoque,
     });
     setEditando(l.id);
     setMsg(null);
@@ -490,6 +500,24 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
           title="Mesmo que os critérios acima batam com algum animal, este lote nunca aparece nas sugestões automáticas de movimentação — útil para enfermaria, quarentena, venda etc., onde a troca de lote deve continuar sempre manual.">
           <input type="checkbox" checked={form.excluir_da_sugestao} onChange={(e) => setForm({ ...form, excluir_da_sugestao: e.target.checked })} />
           Não considerar este lote nas sugestões automáticas de movimentação
+        </label>
+      </div>
+
+      {/* Permissões do lançamento de consumo de alimento. Ficam aqui, no
+          cadastro do lote, porque é por lote que a exceção acontece — o lote
+          de transição que recebe um alimento fora da dieta, o silo que acabou
+          e será reposto hoje. Ambas desligam uma checagem que existe para
+          pegar erro de digitação no curral, e por isso nascem desmarcadas. */}
+      <div className="mb-3">
+        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}
+          title="Permite lançar, no consumo diário, um alimento que não está na dieta ativa deste lote. Desmarcado, o lançamento é recusado.">
+          <input type="checkbox" checked={form.permitir_fora_da_dieta} onChange={(e) => setForm({ ...form, permitir_fora_da_dieta: e.target.checked })} />
+          Permitir alimento fora da dieta no consumo diário
+        </label>
+        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer", marginTop: "0.35rem" }}
+          title="Permite lançar consumo de um alimento sem saldo em estoque. Desmarcado, o lançamento é recusado — o que costuma indicar entrada de nota que faltou lançar.">
+          <input type="checkbox" checked={form.permitir_sem_estoque} onChange={(e) => setForm({ ...form, permitir_sem_estoque: e.target.checked })} />
+          Permitir alimento sem estoque no consumo diário
         </label>
       </div>
 

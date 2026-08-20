@@ -86,6 +86,12 @@ class LoteIn(BaseModel):
     categoria_manejo_ids: str | None = None
     excluir_da_sugestao: bool = False
     ativo: bool = True
+    # Permissões do lançamento de consumo de alimento. Nascem False (o padrão
+    # restritivo é o seguro), mas PRECISAM ser editáveis por aqui: sem isto o
+    # lote fica preso no padrão para sempre, porque não há outro caminho na
+    # aplicação para ligá-las — só editando o banco à mão.
+    permitir_fora_da_dieta: bool = False
+    permitir_sem_estoque: bool = False
 
 
 def _validar_faixas(dados: LoteIn) -> None:
@@ -164,6 +170,8 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.categoria_manejo_ids = dados.categoria_manejo_ids
     lote.excluir_da_sugestao = dados.excluir_da_sugestao
     lote.ativo = dados.ativo
+    lote.permitir_fora_da_dieta = dados.permitir_fora_da_dieta
+    lote.permitir_sem_estoque = dados.permitir_sem_estoque
 
 
 @router.get("/")
