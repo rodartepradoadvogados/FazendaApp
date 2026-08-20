@@ -1273,10 +1273,56 @@ export type IndicadoresProducao = {
   vacas_com_producao: number;
 };
 
+// Bloco "reproducao_categorias.<todas|vaca|novilha>" de GET /indicadores/
+// (fazenda/rules/indicadores.py::_reproducao_categorias). Cada contador vem
+// pareado com o `_nums` do MESMO objeto — é o que `lib/cartaoDrillDown.ts`
+// exige ao ler os dois campos: não dá para escrever `conta: "prenhes"` e
+// `nums: "aptas_nums"` sem que o par exista de verdade neste tipo.
+export type ReproducaoCategoria = {
+  aptas: number; aptas_nums: string[];
+  prenhes: number; prenhes_nums: string[];
+  vazias: number; vazias_nums: string[];
+  inseminadas: number; inseminadas_nums: string[];
+  pev: number; pev_nums: string[];
+  a_inseminar: number; a_inseminar_nums: string[];
+  nao_classificadas: number; nao_classificadas_nums: string[];
+  em_protocolo: number; em_protocolo_nums: string[];
+};
+
+// Bloco "reproducao" de GET /indicadores/ (mesmo módulo). `prenhes_programa_nums`
+// e `vazias_programa_nums` são os denominadores do PROGRAMA reprodutivo (R1) —
+// pareiam com `taxa_prenhez_pct`/`perc_vazias_pct`, não com `prenhes`/`vazias`
+// (que são o INVENTÁRIO cru do rebanho inteiro, sem os cortes de R1). Ver o
+// comentário longo em indicadores.py sobre por que os dois existem.
+export type IndicadoresReproducao = {
+  aptas: number; aptas_nums: string[];
+  prenhes: number; vazias: number; inseminadas: number;
+  taxa_prenhez_pct: number | null; prenhes_programa_nums: string[];
+  perc_vazias_pct: number | null; vazias_programa_nums: string[];
+  servicos_positivos: number; servicos_negativos: number;
+  iep_dias: number | null; iep_meses: number | null;
+  partos_previstos: { em_30_dias: number; em_60_dias: number; em_90_dias: number };
+  partos_previstos_nums: { em_30_dias: string[]; em_60_dias: string[]; em_90_dias: string[] };
+  partos_previstos_datas: Record<string, string>;
+  gestantes_detalhe: { numero: string; dias_gestacao: number; parto_previsto: string }[];
+  iep_por_matriz: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
+  concepcao_desde: string;
+  taxa_servico_pct: number | null;
+  taxa_concepcao_pct: number | null;
+  taxa_prenhez_ciclo_pct: number | null;
+  servicos_por_prenhez: number | null;
+  taxa_perda_prenhez_pct: number | null;
+  perc_vacas_prenhas_pct: number | null;
+  dias_abertos: number | null;
+  del_1a_ia: number | null;
+};
+
 // O resto do payload segue destipado (cada tela declara o recorte que usa);
 // a assinatura de índice existe para isso não quebrar enquanto migramos.
 export type IndicadoresResposta = {
   producao?: IndicadoresProducao;
+  reproducao?: IndicadoresReproducao;
+  reproducao_categorias?: { todas: ReproducaoCategoria; vaca: ReproducaoCategoria; novilha: ReproducaoCategoria };
   [chave: string]: any;
 };
 
