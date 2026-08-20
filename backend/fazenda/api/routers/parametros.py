@@ -87,6 +87,15 @@ def obter_parametros(
                 valor = float(linha.valor)
             except (TypeError, ValueError):
                 valor = None
+        elif linha.tipo == "texto":
+            # Sem este ramo o texto caía no `else` abaixo, que tenta
+            # `int(float(...))` e devolve None em silêncio. Não é hipótese: o
+            # único parâmetro de texto que existia (`laticinio_nome`, que
+            # decide qual receita o RMCA reconhece como leite) chegava nulo na
+            # tela desde que foi criado — o campo aparecia vazio e, salvo por
+            # cima, apagava a configuração. Texto é texto; não há o que
+            # converter.
+            valor = linha.valor or ""
         else:
             try:
                 valor = int(float(linha.valor))
