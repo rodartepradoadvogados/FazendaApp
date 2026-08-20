@@ -53,69 +53,93 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
-    op.create_table(
-        'consumo_alimento',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('fazenda_id', sa.Integer(), nullable=True),
-        sa.Column('data', sa.Date(), nullable=False),
-        sa.Column('lote', sa.Integer(), nullable=False),
-        sa.Column('alimento', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('alimento_id', sa.Integer(), nullable=True),
-        sa.Column('quantidade', sa.Float(), nullable=False),
-        sa.Column('unidade', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('num_animais', sa.Integer(), nullable=True),
-        sa.Column('origem', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('fora_da_dieta', sa.Boolean(), nullable=False),
-        sa.Column('usuario_id', sa.Integer(), nullable=True),
-        sa.Column('criado_em', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['alimento_id'], ['alimento.id'], ),
-        sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id'], ),
-        sa.ForeignKeyConstraint(['usuario_id'], ['usuario.id'], ),
-        sa.PrimaryKeyConstraint('id'),
-    )
-    op.create_index(op.f('ix_consumo_alimento_fazenda_id'), 'consumo_alimento', ['fazenda_id'], unique=False)
-    op.create_index(op.f('ix_consumo_alimento_data'), 'consumo_alimento', ['data'], unique=False)
-    op.create_index(op.f('ix_consumo_alimento_lote'), 'consumo_alimento', ['lote'], unique=False)
+    """Upgrade schema.
 
-    op.create_table(
-        'consumo_sobra',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('fazenda_id', sa.Integer(), nullable=True),
-        sa.Column('data', sa.Date(), nullable=False),
-        sa.Column('lote', sa.Integer(), nullable=False),
-        sa.Column('kg_sobra', sa.Float(), nullable=False),
-        sa.Column('usuario_id', sa.Integer(), nullable=True),
-        sa.Column('criado_em', sa.DateTime(), nullable=False),
-        sa.Column('atualizado_em', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id'], ),
-        sa.ForeignKeyConstraint(['usuario_id'], ['usuario.id'], ),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('fazenda_id', 'lote', 'data', name='uq_consumo_sobra_fazenda_lote_data'),
-    )
-    op.create_index(op.f('ix_consumo_sobra_fazenda_id'), 'consumo_sobra', ['fazenda_id'], unique=False)
-    op.create_index(op.f('ix_consumo_sobra_data'), 'consumo_sobra', ['data'], unique=False)
-    op.create_index(op.f('ix_consumo_sobra_lote'), 'consumo_sobra', ['lote'], unique=False)
+    Idempotente por tabela e por coluna (`insp.has_table` / `has_column`),
+    como as demais migrações que criam tabela neste repositório. Não é
+    preciosismo: a subida da aplicação chama `create_all` como rede de
+    segurança, então um banco de dev ou de teste pode já ter as tabelas
+    quando o Alembic chega — e sem a guarda a migração estoura com "table
+    already exists". Há teste travando exatamente isso.
+    """
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+
+    if not insp.has_table('consumo_alimento'):
+        op.create_table(
+            'consumo_alimento',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('fazenda_id', sa.Integer(), nullable=True),
+            sa.Column('data', sa.Date(), nullable=False),
+            sa.Column('lote', sa.Integer(), nullable=False),
+            sa.Column('alimento', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+            sa.Column('alimento_id', sa.Integer(), nullable=True),
+            sa.Column('quantidade', sa.Float(), nullable=False),
+            sa.Column('unidade', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+            sa.Column('num_animais', sa.Integer(), nullable=True),
+            sa.Column('origem', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+            sa.Column('fora_da_dieta', sa.Boolean(), nullable=False),
+            sa.Column('usuario_id', sa.Integer(), nullable=True),
+            sa.Column('criado_em', sa.DateTime(), nullable=False),
+            sa.ForeignKeyConstraint(['alimento_id'], ['alimento.id'], ),
+            sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id'], ),
+            sa.ForeignKeyConstraint(['usuario_id'], ['usuario.id'], ),
+            sa.PrimaryKeyConstraint('id'),
+        )
+        op.create_index(op.f('ix_consumo_alimento_fazenda_id'), 'consumo_alimento', ['fazenda_id'], unique=False)
+        op.create_index(op.f('ix_consumo_alimento_data'), 'consumo_alimento', ['data'], unique=False)
+        op.create_index(op.f('ix_consumo_alimento_lote'), 'consumo_alimento', ['lote'], unique=False)
+
+    if not insp.has_table('consumo_sobra'):
+        op.create_table(
+            'consumo_sobra',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('fazenda_id', sa.Integer(), nullable=True),
+            sa.Column('data', sa.Date(), nullable=False),
+            sa.Column('lote', sa.Integer(), nullable=False),
+            sa.Column('kg_sobra', sa.Float(), nullable=False),
+            sa.Column('usuario_id', sa.Integer(), nullable=True),
+            sa.Column('criado_em', sa.DateTime(), nullable=False),
+            sa.Column('atualizado_em', sa.DateTime(), nullable=False),
+            sa.ForeignKeyConstraint(['fazenda_id'], ['fazenda.id'], ),
+            sa.ForeignKeyConstraint(['usuario_id'], ['usuario.id'], ),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('fazenda_id', 'lote', 'data', name='uq_consumo_sobra_fazenda_lote_data'),
+        )
+        op.create_index(op.f('ix_consumo_sobra_fazenda_id'), 'consumo_sobra', ['fazenda_id'], unique=False)
+        op.create_index(op.f('ix_consumo_sobra_data'), 'consumo_sobra', ['data'], unique=False)
+        op.create_index(op.f('ix_consumo_sobra_lote'), 'consumo_sobra', ['lote'], unique=False)
 
     # server_default garante que as linhas JÁ EXISTENTES de `lote` recebam o
-    # valor restritivo; sem ele o NOT NULL falharia no banco com dados.
-    with op.batch_alter_table('lote', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('permitir_fora_da_dieta', sa.Boolean(), nullable=False, server_default=sa.false()))
-        batch_op.add_column(sa.Column('permitir_sem_estoque', sa.Boolean(), nullable=False, server_default=sa.false()))
+    # valor restritivo; sem ele o NOT NULL falharia num banco com dados.
+    colunas_lote = {c['name'] for c in insp.get_columns('lote')} if insp.has_table('lote') else set()
+    novas = [c for c in ('permitir_fora_da_dieta', 'permitir_sem_estoque') if c not in colunas_lote]
+    if novas:
+        with op.batch_alter_table('lote', schema=None) as batch_op:
+            for nome in novas:
+                batch_op.add_column(sa.Column(nome, sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    with op.batch_alter_table('lote', schema=None) as batch_op:
-        batch_op.drop_column('permitir_sem_estoque')
-        batch_op.drop_column('permitir_fora_da_dieta')
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
 
-    op.drop_index(op.f('ix_consumo_sobra_lote'), table_name='consumo_sobra')
-    op.drop_index(op.f('ix_consumo_sobra_data'), table_name='consumo_sobra')
-    op.drop_index(op.f('ix_consumo_sobra_fazenda_id'), table_name='consumo_sobra')
-    op.drop_table('consumo_sobra')
+    colunas_lote = {c['name'] for c in insp.get_columns('lote')} if insp.has_table('lote') else set()
+    remover = [c for c in ('permitir_sem_estoque', 'permitir_fora_da_dieta') if c in colunas_lote]
+    if remover:
+        with op.batch_alter_table('lote', schema=None) as batch_op:
+            for nome in remover:
+                batch_op.drop_column(nome)
 
-    op.drop_index(op.f('ix_consumo_alimento_lote'), table_name='consumo_alimento')
-    op.drop_index(op.f('ix_consumo_alimento_data'), table_name='consumo_alimento')
-    op.drop_index(op.f('ix_consumo_alimento_fazenda_id'), table_name='consumo_alimento')
-    op.drop_table('consumo_alimento')
+    if insp.has_table('consumo_sobra'):
+        op.drop_index(op.f('ix_consumo_sobra_lote'), table_name='consumo_sobra')
+        op.drop_index(op.f('ix_consumo_sobra_data'), table_name='consumo_sobra')
+        op.drop_index(op.f('ix_consumo_sobra_fazenda_id'), table_name='consumo_sobra')
+        op.drop_table('consumo_sobra')
+
+    if insp.has_table('consumo_alimento'):
+        op.drop_index(op.f('ix_consumo_alimento_lote'), table_name='consumo_alimento')
+        op.drop_index(op.f('ix_consumo_alimento_data'), table_name='consumo_alimento')
+        op.drop_index(op.f('ix_consumo_alimento_fazenda_id'), table_name='consumo_alimento')
+        op.drop_table('consumo_alimento')
