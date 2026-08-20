@@ -6839,7 +6839,10 @@ export async function lancarSobra(dados: { lote: number; data: string; kg_sobra:
 }
 export type RelatorioSobra = {
   total_kg_sobra: number; total_kg_fornecido: number; pct_medio: number | null;
-  por_alimento: { alimento: string; kg_sobra: number; pct_da_dieta: number }[];
+  // `pct_do_total` é a fatia do TOTAL DE SOBRA do período que este alimento
+  // respondeu — não a proporção dele na dieta. Nomear errado aqui faria a
+  // tela exibir "% da dieta" com um número que não é isso.
+  por_alimento: { alimento: string; kg_sobra: number; pct_do_total: number }[];
   // Itens da dieta cuja unidade não converte para kg (litro, dose, unidade):
   // ficam FORA do rateio, e o relatório diz quais em vez de silenciar.
   itens_sem_conversao: string[];

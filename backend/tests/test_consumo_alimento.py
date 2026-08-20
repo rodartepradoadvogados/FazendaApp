@@ -396,8 +396,8 @@ class TestRelatorioSobra:
         # Proporção na dieta: Silagem 30/40=75%, Concentrado 10/40=25% —
         # aplicada aos 4kg de sobra.
         assert corpo["por_alimento"] == [
-            {"alimento": "Concentrado", "kg_sobra": 1.0, "pct_da_dieta": 25.0},
-            {"alimento": "Silagem", "kg_sobra": 3.0, "pct_da_dieta": 75.0},
+            {"alimento": "Concentrado", "kg_sobra": 1.0, "pct_do_total": 25.0},
+            {"alimento": "Silagem", "kg_sobra": 3.0, "pct_do_total": 75.0},
         ]
         assert corpo["itens_sem_conversao"] == ["Aditivo"]
 

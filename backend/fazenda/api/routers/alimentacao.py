@@ -1690,8 +1690,10 @@ def relatorio_sobra(
             # ela agregada exigiria normalizar dietas diferentes ao longo do
             # período, o que essa única métrica não consegue carregar sem
             # enganar). É a pergunta que o relatório existe pra responder:
-            # de onde veio a sobra.
-            "pct_da_dieta": round(kg / kg_sobra_rateado * 100, 2) if kg_sobra_rateado > 0 else 0.0,
+            # de onde veio a sobra. O campo se chamava `pct_da_dieta`, nome
+            # que prometia outra coisa — quem fosse montar a tela leria
+            # "% da dieta" e exibiria o número errado com toda a confiança.
+            "pct_do_total": round(kg / kg_sobra_rateado * 100, 2) if kg_sobra_rateado > 0 else 0.0,
         }
         for alimento, kg in sorted(acumulado.items())
     ]
