@@ -1,6 +1,8 @@
 """Testes de baixa de animal (Rebanho > Baixar animal) — óbito/descarte."""
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -153,6 +155,52 @@ class TestRegistrarBaixa:
         historico = client.get("/baixas/").json()
         assert historico[0]["numero_animal"] == "901"
         assert historico[1]["numero_animal"] == "900"
+
+
+class TestADescartarEm:
+    """`a_descartar_em` acompanha `a_descartar`: grava a data ao marcar,
+    limpa ao desmarcar. Ver Animal.a_descartar_em e marcar_a_descartar
+    (fazenda/api/routers/baixas.py) — o backfill dos animais marcados ANTES
+    desta coluna existir é NULL de propósito (ver migração
+    c576e514aa3e_animal_a_descartar_em), não é o caso testado aqui."""
+
+    def test_marcar_grava_data_de_hoje(self, client):
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"]})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"afetados": 1, "descartar": True, "nao_encontrados": []}
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar is True
+            assert animal.a_descartar_em == date.today()
+
+    def test_desmarcar_limpa_a_data(self, client):
+        client.post("/baixas/a-descartar", json={"animais": ["900"], "descartar": True})
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"], "descartar": False})
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar is False
+            assert animal.a_descartar_em is None
+
+    def test_lote_varios_animais_grava_data_em_todos(self, client):
+        r = client.post("/baixas/a-descartar", json={"animais": ["900", "901"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["afetados"] == 2
+        with Session(client.engine) as s:
+            for numero in ("900", "901"):
+                animal = s.exec(select(Animal).where(Animal.numero == numero)).first()
+                assert animal.a_descartar_em == date.today()
+
+    def test_animal_ja_marcado_antes_da_coluna_existir_fica_null(self, client):
+        """Simula o registro pré-existente: `a_descartar=True` gravado antes
+        desta coluna nascer (o cadastro direto no banco pula a rota — é
+        exatamente a foto que o backfill NÃO reescreve)."""
+        with Session(client.engine) as s:
+            s.add(Animal(numero="950", grupo_primario="01 - Alta", ativo=True, a_descartar=True))
+            s.commit()
+        animal = client.get("/animais/950").json()
+        assert animal["a_descartar"] is True
+        assert animal["a_descartar_em"] is None
 
 
 class TestVendaGeraFinanceiro:

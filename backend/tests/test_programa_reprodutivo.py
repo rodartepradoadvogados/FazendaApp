@@ -15,10 +15,12 @@ import pytest
 
 from fazenda.rules.programa_reprodutivo import (
     ATIVA,
+    DIAS_MINIMOS_REPASSE_PADRAO,
     INATIVA,
     MOTIVO_A_DESCARTAR,
     MOTIVO_BAIXADA,
     MOTIVO_DENTRO_PEV,
+    MOTIVO_ESTADO_NAO_MAPEADO,
     MOTIVO_GESTANTE,
     MOTIVO_IMPUBERE,
     SUSPENSA,
@@ -29,9 +31,11 @@ from fazenda.rules.programa_reprodutivo import (
     dias_aptos,
     elegivel_ia,
     elegivel_prenhez,
+    descartada_em,
     estado_no_dia,
     montar_perfil,
     resultado_conhecido,
+    tem_reinseminacao_posterior,
 )
 
 PEV = 45
@@ -168,6 +172,75 @@ class TestR4Aptidao:
         assert _estado(p, date(2026, 1, 15)).apta is False
 
 
+# ═══════ Dívida: `motivo` sempre None no ramo final de `estado_no_dia` ══════
+class TestDividaMotivoDeNaoAptidao:
+    """Dívida registrada: a última linha de `estado_no_dia` devolvia
+    `EstadoDia(..., apta=estado in ESTADOS_APTOS, motivo=None, ...)` — ou
+    seja, sempre que o estado ficava fora de ESTADOS_APTOS SEM ter passado
+    por um dos branches explícitos acima (a_descartar/baixada/impúbere/PEV/
+    gestante), o drill-down da tela ficava sem explicação nenhuma.
+
+    Investigação: dos 8 estados que `estado_reprodutivo.classificar_animal`
+    pode devolver, 3 (NAO_APTA/PEV/GESTANTE) já têm branch explícito ANTES
+    da linha final, e os outros 5 (APTA/ATRASADA/EM_PROTOCOLO/INSEMINADA/
+    VAZIA) estão todos dentro de ESTADOS_APTOS. Ou seja: com o par de
+    módulos como está HOJE, o ramo `apta=False, motivo=None` é
+    inalcançável — a lacuna nunca se manifesta nos dados reais.
+
+    O problema é o acoplamento IMPLÍCITO: essa exaustão depende de alguém
+    manter ESTADOS_APTOS e os branches explícitos sincronizados manualmente
+    toda vez que `estado_reprodutivo.py` ganhar um estado novo. Nada no
+    código força isso. O primeiro teste prova que hoje não há vítima; o
+    segundo prova que, se a sincronização falhar amanhã, a lacuna não volta
+    a ficar muda."""
+
+    def test_todo_estado_real_de_hoje_ja_vem_com_motivo_quando_nao_apta(self):
+        """"Antes" — na leitura literal do código antigo, isto já não
+        quebrava (prova que a dívida, apesar de real na forma como o código
+        estava escrito, não tinha vítima nos estados atuais)."""
+        cenarios = {
+            "a_descartar": _perfil(_animal(a_descartar=True), partos=[_parto(date(2025, 11, 1))]),
+            "baixada": _perfil(_animal(data_baixa=date(2026, 1, 10)), partos=[_parto(date(2025, 11, 1))]),
+            "dentro_pev": _perfil(partos=[_parto(date(2026, 1, 1))]),
+            "gestante": _perfil(
+                partos=[_parto(date(2025, 9, 1))],
+                servicos=[_servico(date(2025, 11, 1), diagnostico="POSITIVO")],
+            ),
+        }
+        d = date(2026, 1, 20)
+        for nome, p in cenarios.items():
+            e = _estado(p, d)
+            assert e.apta is False, nome
+            assert e.motivo is not None, f"{nome}: apta=False mas motivo=None"
+
+        nova = _animal(categoria_abrev="Novilha", data_nasc=date(2025, 6, 1), peso_kg=200.0)
+        e_impubere = estado_no_dia(
+            _perfil(nova), date(2026, 1, 15), pev_dias=PEV, idade_apta_dias=450, peso_apta_kg=300.0,
+        )
+        assert e_impubere.apta is False
+        assert e_impubere.motivo is not None
+
+    def test_estado_desconhecido_nao_fica_mais_com_motivo_none(self, monkeypatch):
+        """"Depois" — simula exatamente o cenário perigoso: um estado que
+        `classificar_animal` viesse a devolver no futuro sem que ninguém o
+        somasse a ESTADOS_APTOS nem lhe desse um branch explícito. Antes da
+        correção, isto devolvia `apta=False, motivo=None`. Agora cai na
+        salvaguarda `MOTIVO_ESTADO_NAO_MAPEADO`."""
+        import fazenda.rules.programa_reprodutivo as pr
+
+        def classificar_falso(*args, **kwargs):
+            return {"estado": "estado_futuro_que_ninguem_mapeou"}
+
+        monkeypatch.setattr(pr, "classificar_animal", classificar_falso)
+        p = _perfil(partos=[_parto(date(2025, 11, 1))])
+        e = pr.estado_no_dia(p, date(2026, 1, 20), pev_dias=PEV)
+        assert e.apta is False
+        assert e.motivo == MOTIVO_ESTADO_NAO_MAPEADO, (
+            "estado fora de ESTADOS_APTOS e sem branch explícito não pode "
+            "mais devolver motivo=None"
+        )
+
+
 # ═══════════════════ R5 — BR ELIG, os 11 de 21 dias ═════════════════════════
 class TestR5ElegivelParaInseminacao:
     """Não precisa estar apta os 21 dias — precisa de pelo menos 11."""
@@ -208,6 +281,55 @@ class TestR6ElegivelParaPrenhez:
         assert elegivel_prenhez(p, CICLO, pev_dias=PEV) is False, "saiu antes de dar para avaliar"
 
 
+# ══════ Dívida: `dias_janela_dg` inalcançável via `calcular_ciclo` ══════════
+class TestDividaParametroDiasJanelaDg:
+    """Dívida registrada: `dias_janela_dg` (o parâmetro de `elegivel_prenhez`
+    que define o fim da janela de avaliação de PG ELIG) seria inalcançável
+    na prática e/ou provocaria TypeError.
+
+    Investigação: chamado DIRETO, `elegivel_prenhez(..., dias_janela_dg=X)`
+    sempre funcionou — é parâmetro nomeado explícito, primeiro na assinatura.
+    O problema estava um nível acima: NENHUM caller de produção passa esse
+    parâmetro (nem `reproducao.py`, nem `recria.py`, nem
+    `indicadores._parametros_ciclos`), e quem tentasse fazê-lo através de
+    `calcular_ciclo`/`calcular_series` — o caminho normal, já que são eles
+    que chamam `elegivel_prenhez` internamente — batia num TypeError: os dois
+    declaravam só `**kwargs` genérico, repassado IGUAL para `elegivel_ia`
+    (BR ELIG), que não conhece `dias_janela_dg` e o empurra adiante até
+    `estado_no_dia`, que não tem `**kwargs` nenhum."""
+
+    def test_chamada_direta_a_elegivel_prenhez_sempre_funcionou(self):
+        p = _perfil(partos=[_parto(date(2025, 10, 1))])
+        assert elegivel_prenhez(p, CICLO, pev_dias=PEV, dias_janela_dg=30) is True
+
+    def test_calcular_ciclo_aceita_dias_janela_dg_sem_explodir(self):
+        """"Antes" da correção, esta chamada levantava
+        `TypeError: estado_no_dia() got an unexpected keyword argument
+        'dias_janela_dg'` — confirmado por inspeção antes de qualquer
+        mudança. "Depois", `calcular_ciclo` declara o parâmetro
+        explicitamente (não deixa mais vazar por `**kwargs`) e ele muda o
+        PG ELIG exatamente como deveria."""
+        # baixa em 05/02: dentro da janela padrão (fim do ciclo 21/01 + 21 =
+        # 11/02) e fora de uma janela mais curta (21/01 + 10 = 31/01).
+        p = _perfil(
+            _animal("4", data_baixa=date(2026, 2, 5)), partos=[_parto(date(2025, 10, 1), "4")],
+        )
+        r_padrao = calcular_ciclo([p], CICLO, HOJE, pev_dias=PEV)
+        assert "4" not in r_padrao.pg_elig, "janela padrão de 21 dias: a baixa cai dentro dela"
+
+        r_janela_curta = calcular_ciclo([p], CICLO, HOJE, pev_dias=PEV, dias_janela_dg=10)
+        assert "4" in r_janela_curta.pg_elig, "janela de 10 dias: a baixa cai fora dela"
+
+    def test_dias_janela_dg_continua_sem_sentido_passado_direto_a_elegivel_ia(self):
+        """Fronteira deliberada da correção: BR ELIG não usa janela de DG
+        nenhuma, então `elegivel_ia(..., dias_janela_dg=X)` continua sem
+        sentido e continua estourando — só `calcular_ciclo` precisava parar
+        de deixar o parâmetro vazar por engano para dentro de `elegivel_ia`."""
+        p = _perfil(partos=[_parto(date(2025, 10, 1))])
+        with pytest.raises(TypeError):
+            elegivel_ia(p, CICLO, pev_dias=PEV, dias_janela_dg=30)
+
+
 # ═══════════════════ R7 — a regra dos 28 dias ═══════════════════════════════
 class TestR7ResultadoConhecido:
     def test_servico_antigo_sem_dg_conta(self):
@@ -236,6 +358,104 @@ class TestR7ResultadoConhecido:
         s = _servico(HOJE - timedelta(days=20))
         assert conta_em_taxa(s, HOJE) is False
         assert conta_em_taxa(s, HOJE, servico_posterior=True) is True
+
+
+# ══════ Dívida: `tem_reinseminacao_posterior` sem janela mínima de repasse ═══
+class TestDividaJanelaMinimaDeRepasse:
+    """Dívida registrada: `tem_reinseminacao_posterior` aceitava QUALQUER
+    serviço posterior como prova de cio de repasse, por mais próximo que
+    estivesse do serviço original. Biologicamente uma segunda IA lançada 1-2
+    dias depois não é um novo cio — é a mesma cobertura relançada ou um erro
+    de data; o ciclo estral bovino gira em torno de 21 dias.
+
+    A correção reaproveita `dias_reinseminacao_min` (18 dias), o parâmetro
+    editável que já existe em `fazenda.rules.parametros` (grupo
+    "reinseminacao_cio") para o mesmo conceito de "cio curto legítimo" — não
+    foi criada nenhuma constante nova de configuração, só
+    `DIAS_MINIMOS_REPASSE_PADRAO` espelhando o mesmo valor-padrão para este
+    módulo, que é regra pura e não lê parâmetro de banco."""
+
+    def test_reinseminacao_2_dias_depois_nao_prova_mais_repasse(self):
+        """"Antes" (`dias_minimos_repasse=0` reproduz o comportamento antigo,
+        sem nenhuma janela): qualquer posterior contava. "Depois" (padrão):
+        2 dias de distância não prova nada."""
+        p = _perfil(
+            partos=[_parto(date(2025, 10, 1))],
+            servicos=[_servico(date(2026, 1, 5)), _servico(date(2026, 1, 7))],
+        )
+        primeiro = p.servicos[0]
+        assert tem_reinseminacao_posterior(p, primeiro, dias_minimos_repasse=0) is True
+        assert tem_reinseminacao_posterior(p, primeiro) is False
+
+    def test_reinseminacao_no_proximo_cio_continua_provando_repasse(self):
+        """O caso de verdade que a regra existe para capturar: repasse
+        ~21 dias depois, no cio seguinte."""
+        p = _perfil(
+            partos=[_parto(date(2025, 10, 1))],
+            servicos=[_servico(date(2026, 1, 5)), _servico(date(2026, 1, 26))],
+        )
+        assert tem_reinseminacao_posterior(p, p.servicos[0]) is True
+
+    def test_a_fronteira_e_exatamente_dias_minimos_repasse(self):
+        assert DIAS_MINIMOS_REPASSE_PADRAO == 18, (
+            "mesmo piso do parâmetro editável dias_reinseminacao_min "
+            "(fazenda.rules.parametros) — documentar se algum dia divergir"
+        )
+        dentro = _perfil(
+            partos=[_parto(date(2025, 10, 1))],
+            servicos=[_servico(date(2026, 1, 5)), _servico(date(2026, 1, 23))],  # 18 dias
+        )
+        fora = _perfil(
+            partos=[_parto(date(2025, 10, 1))],
+            servicos=[_servico(date(2026, 1, 5)), _servico(date(2026, 1, 22))],  # 17 dias
+        )
+        assert tem_reinseminacao_posterior(dentro, dentro.servicos[0]) is True
+        assert tem_reinseminacao_posterior(fora, fora.servicos[0]) is False
+
+
+class TestSentinelaEfeitoDaJanelaMinimaDeRepasseNasTaxas:
+    """Sentinela com números explícitos: a dívida 3 MOVE a taxa de
+    concepção do painel neste cenário — não é uma correção silenciosa."""
+
+    def test_taxa_de_concepcao_deixa_de_tratar_ia_recente_como_fracasso_provado(self):
+        hoje = date(2026, 3, 1)
+        ciclo = Ciclo(indice=1, inicio=hoje - timedelta(days=21), fim=hoje - timedelta(days=1))
+        # IA em 10/02 (dentro do ciclo), e uma segunda IA só 2 dias depois,
+        # em 12/02 — sem DG lançado em nenhuma das duas, e sem que tenham se
+        # passado os 28 dias da regra R7 desde a primeira.
+        p = _perfil(
+            partos=[_parto(hoje - timedelta(days=200))],
+            servicos=[
+                _servico(ciclo.inicio + timedelta(days=2)),
+                _servico(ciclo.inicio + timedelta(days=4)),
+            ],
+        )
+
+        # ANTES (`dias_minimos_repasse=0` reproduz o motor sem a correção):
+        r_antigo = calcular_ciclo([p], ciclo, hoje, pev_dias=PEV, dias_minimos_repasse=0)
+        assert r_antigo.servicos_com_resultado == 1, (
+            "a IA de 10/02 contava como 'resultado conhecido' só por existir "
+            "uma segunda IA 2 dias depois"
+        )
+        assert r_antigo.taxa_concepcao == 0.0, (
+            "o painel ANTIGO mostrava 0% de concepção neste ciclo — tratava "
+            "uma IA de 19 dias, sem DG, como fracasso PROVADO"
+        )
+
+        # DEPOIS (padrão, dias_minimos_repasse=18 via DIAS_MINIMOS_REPASSE_PADRAO):
+        r_novo = calcular_ciclo([p], ciclo, hoje, pev_dias=PEV)
+        assert r_novo.servicos_com_resultado == 0, (
+            "nem a IA de 10/02 (ainda dentro dos 28 dias, sem repasse de "
+            "verdade) nem a de 12/02 (recente demais, e nada depois dela) "
+            "têm resultado conhecido"
+        )
+        assert r_novo.taxa_concepcao is None, (
+            "o painel CORRIGIDO não afirma desfecho nenhum — 0% virou None: "
+            "de 'fracasso provado' para 'ainda não se sabe', que é a verdade"
+        )
+        # A taxa de prenhez não se mexe neste cenário: nenhuma das duas IAs
+        # teve diagnóstico positivo, então PREG já era 0 dos dois lados.
+        assert r_antigo.taxa_prenhez == r_novo.taxa_prenhez == 0.0
 
 
 # ═══════════════════ Ciclos com âncora configurável ═════════════════════════
@@ -1094,3 +1314,51 @@ class TestAtrasoDeNovilhaNaoMoveTaxa:
                     "vazou para o denominador"
                 )
         assert com["novilha"]["taxa_servico"] is not None, "cenário sem novilha medida não prova nada"
+
+
+class TestDescarteDatado:
+    """`a_descartar` era booleano sem data: a marcação feita hoje retroagia
+    para TODOS os ciclos passados, e a vaca sumia até dos denominadores em que
+    estava legitimamente ativa — encolhendo o BR ELIG histórico justamente nas
+    vacas problema e inflando a taxa de serviço do passado.
+
+    `Animal.a_descartar_em` (migração c576e514aa3e) fechou isso. Estes testes
+    travam as três situações: com data, sem data, e não marcada."""
+
+    def test_antes_da_marcacao_a_vaca_ainda_contava(self):
+        marcada_em = date(2026, 2, 1)
+        perfil = _perfil(_animal(a_descartar=True, a_descartar_em=marcada_em))
+        assert descartada_em(perfil, marcada_em - timedelta(days=1)) is False
+        assert descartada_em(perfil, marcada_em) is True
+        assert descartada_em(perfil, marcada_em + timedelta(days=30)) is True
+
+    def test_o_estado_do_dia_acompanha_a_data(self):
+        """É o que faz a vaca voltar aos ciclos passados: no dia anterior à
+        marcação ela está ATIVA, não INATIVA por descarte."""
+        marcada_em = date(2026, 2, 1)
+        perfil = _perfil(
+            _animal(a_descartar=True, a_descartar_em=marcada_em),
+            partos=[_parto(date(2025, 10, 1))],
+        )
+        antes = estado_no_dia(perfil, marcada_em - timedelta(days=1), pev_dias=PEV)
+        depois = estado_no_dia(perfil, marcada_em, pev_dias=PEV)
+        assert antes.situacao == ATIVA
+        assert antes.motivo != MOTIVO_A_DESCARTAR
+        assert depois.situacao == INATIVA
+        assert depois.motivo == MOTIVO_A_DESCARTAR
+
+    def test_marcada_sem_data_continua_valendo_desde_sempre(self):
+        """Registros anteriores à coluna ficaram com `a_descartar_em = NULL`,
+        sem backfill de propósito — inventar data produziria histórico
+        plausível e falso. Sem data, o comportamento é o antigo: marcação
+        já vigente. É o que garante que NENHUM número muda no dia do deploy."""
+        perfil = _perfil(_animal(a_descartar=True, a_descartar_em=None))
+        assert descartada_em(perfil, date(2020, 1, 1)) is True
+        assert descartada_em(perfil, date(2026, 12, 31)) is True
+
+    def test_nao_marcada_nunca_esta_descartada(self):
+        perfil = _perfil(_animal(a_descartar=False, a_descartar_em=None))
+        assert descartada_em(perfil, date(2026, 2, 1)) is False
+        # data sobrando sem a marcação ativa não pode ressuscitar o descarte
+        perfil2 = _perfil(_animal(a_descartar=False, a_descartar_em=date(2026, 1, 1)))
+        assert descartada_em(perfil2, date(2026, 2, 1)) is False

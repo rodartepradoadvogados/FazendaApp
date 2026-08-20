@@ -19,6 +19,7 @@ from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_ra
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.producao_leiteira import del_dias_ao_vivo
 from fazenda.rules.parametros import (
+    dias_reinseminacao_min,
     BENCHMARK_METAS,
     data_corte_taxa_concepcao,
     dias_minimos_no_ciclo,
@@ -224,6 +225,9 @@ def _parametros_ciclos() -> dict:
         "pev_dias": pev_dias(),
         "dias_minimos": dias_minimos_no_ciclo(),
         "dias_resultado": dias_resultado_conhecido(),
+        # Janela mínima de cio de repasse: sem passar, o motor usa o piso
+        # embutido e o parâmetro editável da fazenda não faria efeito nenhum.
+        "dias_minimos_repasse": dias_reinseminacao_min(),
         "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
         "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
         "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),

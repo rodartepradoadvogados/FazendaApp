@@ -81,6 +81,16 @@ class Animal(SQLModel, table=True):
     # de todas as ações reprodutivas (IATF, inseminação, candidatas) — marcada
     # para descarte futuro sem dar baixa definitiva.
     a_descartar: bool = False
+    # Data em que a marcação acima passou a valer — ausente em `a_descartar`
+    # (que é só o booleano "sim/não", sem quando). Sem esta data o motor do
+    # programa reprodutivo (fazenda/rules/programa_reprodutivo.py) não
+    # conseguia reconstruir o passado: um animal marcado hoje sumia de TODOS
+    # os ciclos históricos, inclusive dos em que estava ativo. NULL cobre dois
+    # casos que não dá pra distinguir: nunca foi marcado, OU foi marcado antes
+    # de esta coluna existir (ver migração c576e514aa3e — a coluna nasceu sem
+    # backfill retroativo de propósito). Sempre gravada/limpa junto com
+    # `a_descartar` (ver marcar_a_descartar em api/routers/baixas.py).
+    a_descartar_em: Optional[date] = None
     # Marca manual: nunca entra nas listas de candidatas/excluídos do BST
     # (ex.: vaca com contraindicação), independente dos critérios automáticos.
     excluir_bst: bool = False

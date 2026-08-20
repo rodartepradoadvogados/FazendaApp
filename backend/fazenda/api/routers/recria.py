@@ -287,6 +287,12 @@ def reproducao_taxa_prenhez(
         pev_dias=vwp_dias or pev_dias(),
         dias_minimos=dias_minimos_no_ciclo(),
         dias_resultado=dias_resultado_conhecido(),
+        # Janela mínima de cio de repasse — a mesma que a tela de Reprodução
+        # já usa. Sem passar aqui, o motor cairia no piso embutido e o campo
+        # editável em Configurações não faria efeito nenhum (foi por ser um
+        # campo assim, editável e inerte, que `idade_maturidade_novilha` foi
+        # aposentado).
+        dias_minimos_repasse=dias_reinseminacao_min(),
         del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
         idade_apta_dias=int(idade_apta_min_meses() * 30.44),
         idade_atraso_dias=int(idade_max_1a_cobertura_meses() * 30.44),

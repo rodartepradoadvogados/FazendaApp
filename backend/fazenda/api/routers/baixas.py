@@ -86,6 +86,10 @@ def marcar_a_descartar(
             nao_encontrados.append(chave)
             continue
         animal.a_descartar = dados.descartar
+        # Data da marcação — só existe enquanto a marcação vale; ao desmarcar,
+        # limpa junto (ver Animal.a_descartar_em: sobrar data de uma marcação
+        # já revertida seria pior que não ter data nenhuma).
+        animal.a_descartar_em = date.today() if dados.descartar else None
         if dados.observacao:
             animal.observacoes = dados.observacao
         animal.atualizado_em = datetime.utcnow()
