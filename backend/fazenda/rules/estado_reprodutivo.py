@@ -45,7 +45,20 @@ por isso a ordem abaixo importa mais que qualquer condição individual:
                   nascimento, porque para ela o evento habilitador é atingir
                   idade/peso, e DEL não existe).
   7. NAO_APTA     novilha que ainda não atingiu idade/peso.
-  8. VAZIA        fallback (sem dados suficientes para classificar).
+  8. VAZIA        DECLARADO, MAS NUNCA PRODUZIDO hoje. O docstring dizia que
+                  era o fallback de "sem dados suficientes para classificar";
+                  o fallback real de `classificar_animal` é NAO_APTA, e não há
+                  nenhum `return` de VAZIA na função. Para a vaca, "vazia" é
+                  descrita por APTA ou ATRASADA conforme o DEL; para a
+                  nulípara, por APTA/ATRASADA/NAO_APTA conforme idade e peso —
+                  ou seja, o conceito está coberto, o rótulo é que sobrou.
+                  A constante fica porque é lida em três lugares (ROTULOS
+                  aqui, o mapa de rótulos do frontend e ESTADOS_APTOS do motor
+                  de ciclos); removê-la é mudança de vocabulário em três
+                  arquivos sem nenhum ganho de comportamento. Mas quem for
+                  acrescentar um estado novo precisa saber: ESTADOS_APTOS tem
+                  um membro morto, e devolver VAZIA daqui hoje seria devolver
+                  um estado que nenhuma tela jamais exercitou.
 
 "Serviço vigente" = último serviço com data POSTERIOR ao último parto. É esse
 recorte que faz o parto zerar o ciclo — a correção central do bug da novilha
