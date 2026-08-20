@@ -620,3 +620,31 @@ conectado?", que continua sendo de todo mundo e de ninguém ao mesmo tempo.
 `ruff --select F821` (16.4) é a única das três correções que vira uma trava
 estrutural contra a recaída; as outras duas dependem de alguém lembrar de
 verificar de novo.
+
+### 16.7 O que ficou aberto no app de campo, e a armadilha de fechá-lo depressa
+
+Dois cards do app ("Fêmeas prenhas" e "Vazias") passaram a ler valor e lista do
+mesmo objeto. **Cinco irmãos ainda não**: Inseminadas, PEV, Aptas, Atrasadas e
+"IA atual" continuam com o valor vindo de `fetchIndicadores()` e a lista de um
+filtro sobre `fetchEstadosReprodutivos()` — dois fetches, dois caches offline.
+
+Nenhum deles é, hoje, um defeito medido: em "Vazias" a divergência era de
+REGRA (catch-all contra filtro de 5 estados), e essa é específica dela. Nos
+cinco restantes o que existe é risco de TEMPO — dois fetches podendo pegar o
+rebanho em instantes diferentes.
+
+**A armadilha, para quem for fechar isso:** o padrão parece mecânico — trocar
+o filtro pelo `*_nums` correspondente — e não é. `aptas_nums` **não** é a
+lista de quem está no estado `apta`: neste código "aptas" designa a novilha
+nulípara que atingiu idade e peso de 1ª cobertura, um conceito de aptidão, não
+o estado reprodutivo homônimo. E `a_inseminar_nums` junta apta + atrasada,
+enquanto a tela mostra os dois separados.
+
+Ou seja: os nomes coincidem e os conjuntos não. Uma varredura "igual ao que já
+foi feito" trocaria um risco de tempo por um erro de conteúdo — e num card que
+hoje está certo. Cada um dos cinco precisa ser medido individualmente, como
+`test_indicadores_menu_prenhes_vazias.py` faz, antes de mudar qualquer coisa.
+
+Fica registrado como item aberto, com a razão de não ter sido feito junto: não
+foi esquecimento nem falta de tempo, foi a constatação de que o atalho
+disponível estava errado.
