@@ -252,3 +252,79 @@ class AlimentacaoEstado(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     ultima_data_deducao: Optional[date] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+# ---------------------------------------------------------------------------
+# Consumo diário e sobra (Lançamentos > Alimentação)
+# ---------------------------------------------------------------------------
+class ConsumoAlimento(SQLModel, table=True):
+    """O que foi REALMENTE FORNECIDO de um alimento a um lote, num dia.
+
+    Distinto de `DietaItemProgramado` (o plano) e de `DietaRegistroReal` (que
+    registra o real por dieta mas NÃO dá baixa em estoque). Este é o único
+    lançamento de alimentação que debita estoque pelo motor
+    `rules/estoque_baixa.movimentar()`, com `origem_tipo="consumo_alimento"`,
+    para a baixa ser rastreável e reversível.
+
+    `lote` é `int`, a MESMA representação de `DietaLancamento.lote` — e essa
+    escolha é deliberada: o lançamento de consumo só existe ancorado numa dieta
+    ativa, então tem de falar a língua dela. O sistema tem quatro
+    representações de lote convivendo (`Lote.codigo` str de 2 dígitos,
+    `Animal.grupo_primario` "01 - Nome", este `int`, e str livre em
+    Recria/Sanidade); a ponte para o cadastro é `f"{lote:02d}"`, como já faz
+    `apresentacao_dieta`.
+
+    Lançamentos do mesmo dia SOMAM (decisão do produto): o trato é fracionado
+    ao longo do dia e cada passada do vagão é um lançamento.
+    """
+
+    __tablename__ = "consumo_alimento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    data: date = Field(index=True)
+    lote: int = Field(index=True)
+    alimento: str
+    alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
+    quantidade: float
+    unidade: str
+    # Quantos animais o lançamento considerou, quando veio pelo modo "por
+    # cabeça". Guardado mesmo no modo kg direto porque é o que permite auditar
+    # depois por que o número era aquele — o lote muda de tamanho todo dia.
+    num_animais: Optional[int] = None
+    # "animais" = derivado do nº de cabeças × quantidade por cabeça da dieta;
+    # "kg" = digitado direto pelo funcionário.
+    origem: str = "kg"
+    # Alimento que não está na dieta ativa do lote, aceito porque o lote tem a
+    # flag `permitir_fora_da_dieta`. Marcado para o relatório poder separar o
+    # que foi exceção do que foi plano.
+    fora_da_dieta: bool = False
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConsumoSobra(SQLModel, table=True):
+    """A sobra do cocho de um lote num dia, em QUILOS TOTAIS.
+
+    Não é por alimento, e isso é decisão do produto: ninguém separa o que
+    sobrou no cocho por ingrediente. O rateio por alimento é CALCULADO a partir
+    da proporção da dieta (ver `rules/unidades.kg_equivalente`) e nunca
+    gravado — gravar um rateio o congelaria, e ele muda se a dieta mudar.
+
+    Ao contrário do consumo, relançar a sobra no mesmo dia SUBSTITUI em vez de
+    somar: sobra é uma medição única do dia, não um acúmulo de eventos. A
+    unicidade por (fazenda, lote, data) trava isso no banco, para não depender
+    de a aplicação lembrar.
+    """
+
+    __tablename__ = "consumo_sobra"
+    __table_args__ = (UniqueConstraint("fazenda_id", "lote", "data", name="uq_consumo_sobra_fazenda_lote_data"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    data: date = Field(index=True)
+    lote: int = Field(index=True)
+    kg_sobra: float = 0.0
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)

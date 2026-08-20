@@ -6771,3 +6771,83 @@ export async function fetchLidasAtivas(): Promise<LidaAtiva[]> {
   if (!res.ok) throw new Error(`Lida ativos error: ${res.status}`);
   return res.json();
 }
+
+// ── Consumo diário de alimento e sobra de cocho (Lançamentos > Alimentação) ──
+// `lote` é o INT da dieta (DietaLancamento.lote), não o código de 2 dígitos do
+// cadastro nem o "01 - Nome" de Animal.grupo_primario — o lançamento de consumo
+// só existe ancorado numa dieta ativa e fala a língua dela. A ponte para o
+// cadastro é `String(lote).padStart(2, "0")`.
+export type ItemDietaDoLote = {
+  alimento: string; alimento_id: number | null;
+  quantidade: number; unidade: string;          // quantidade programada
+  por_cabeca: number | null;                    // já resolvido pelo backend
+  converte_para_kg: boolean;                    // false = fica fora do rateio da sobra
+};
+export type ConsumoDoDia = {
+  lote: number; data: string; num_animais: number | null;
+  itens: { alimento: string; quantidade: number; unidade: string; kg_equivalente: number | null }[];
+  kg_fornecido_total: number;
+  sobra_kg: number | null;
+  sobra_pct: number | null;
+  dentro_da_faixa: boolean | null;              // null = sem sobra lançada ainda
+};
+export type ConsumoItemIn = {
+  alimento: string; alimento_id?: number | null; quantidade: number; unidade: string;
+};
+export type RespostaConsumo = {
+  ok: boolean;
+  // Avisos vindos do motor de estoque (saldo negativo etc.). Hoje os avisos da
+  // baixa de alimentação são descartados pelo chamador; com lançamento manual
+  // eles passam a ter destinatário — mostre na tela.
+  avisos: string[];
+};
+
+export async function fetchDietaDoLote(lote: number): Promise<{ itens: ItemDietaDoLote[]; base_quantidade: string } | null> {
+  const res = await authFetch(`${API}/alimentacao/consumo/dieta-do-lote?lote=${lote}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Dieta do lote error: ${res.status}`);
+  return res.json();
+}
+export async function fetchConsumoDoDia(lote: number, data: string): Promise<ConsumoDoDia> {
+  const res = await authFetch(`${API}/alimentacao/consumo?lote=${lote}&data=${data}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Consumo do dia error: ${res.status}`);
+  return res.json();
+}
+export async function lancarConsumo(dados: {
+  lote: number; data: string; num_animais?: number | null;
+  origem: "animais" | "kg"; itens: ConsumoItemIn[];
+}): Promise<RespostaConsumo> {
+  const res = await authFetch(`${API}/alimentacao/consumo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar consumo"); }
+  return res.json();
+}
+export async function excluirConsumo(id: number) {
+  const res = await authFetch(`${API}/alimentacao/consumo/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir consumo"); }
+  return res.json();
+}
+// Relançar a sobra no mesmo dia SUBSTITUI (é medição do dia), ao contrário do
+// consumo, que soma (é o vagão passando várias vezes).
+export async function lancarSobra(dados: { lote: number; data: string; kg_sobra: number }) {
+  const res = await authFetch(`${API}/alimentacao/sobra`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar sobra"); }
+  return res.json();
+}
+export type RelatorioSobra = {
+  total_kg_sobra: number; total_kg_fornecido: number; pct_medio: number | null;
+  por_alimento: { alimento: string; kg_sobra: number; pct_da_dieta: number }[];
+  // Itens da dieta cuja unidade não converte para kg (litro, dose, unidade):
+  // ficam FORA do rateio, e o relatório diz quais em vez de silenciar.
+  itens_sem_conversao: string[];
+};
+export async function fetchRelatorioSobra(p: { de: string; ate: string; lote?: number | null }): Promise<RelatorioSobra> {
+  const qs = new URLSearchParams({ de: p.de, ate: p.ate });
+  if (p.lote != null) qs.set("lote", String(p.lote));
+  const res = await authFetch(`${API}/alimentacao/sobra/relatorio?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de sobra error: ${res.status}`);
+  return res.json();
+}
