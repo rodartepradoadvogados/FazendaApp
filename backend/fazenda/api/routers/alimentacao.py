@@ -19,8 +19,8 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, Dieta, DietaItemProgramado, DietaLancamento,
-    DietaRegistroReal, Estoque, IngredienteMS, Lote, Usuario,
+    AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, ConsumoAlimento, ConsumoSobra, Dieta,
+    DietaItemProgramado, DietaLancamento, DietaRegistroReal, Estoque, IngredienteMS, Lote, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, resolver_kg_por_unidade, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -28,6 +28,8 @@ from fazenda.rules.dieta_lancamento import criar_lancamento_programado
 from fazenda.rules.producao_leiteira import ultimo_controle_por_animal, com_fallback_animal
 from fazenda.rules import estoque_baixa
 from fazenda.rules.farmacia import pode_baixar_estoque
+from fazenda.rules.parametros import get_param
+from fazenda.rules.unidades import converte_para_kg, kg_equivalente
 
 # Nº de tratos por dia (fornecimentos). Hoje são 2.
 NUM_TRATOS = 2
@@ -1246,3 +1248,455 @@ def comparativo_dieta(
         por_alimento[alimento]["real_media_dia"] = round(por_alimento[alimento]["real_total"] / len(dias), 2) if dias else None
 
     return {"dieta": _serializar_dieta(session, dieta, fazenda_id), "itens": sorted(por_alimento.values(), key=lambda x: x["alimento"])}
+
+
+# ---------------------------------------------------------------------------
+# Consumo diário e sobra de cocho (Lançamentos > Alimentação) — o funcionário
+# lança o que foi de fato FORNECIDO a cada lote (dá baixa em estoque, ver
+# `rules/estoque_baixa.movimentar`) e, num card separado, a sobra do cocho em
+# kg totais (só medição — nunca baixa nada). Distinto do bloco de
+# "Lançamento de dieta" acima: aquele é o PLANO (nutricionista), este é o
+# REALIZADO físico que efetivamente sai do silo/depósito.
+# ---------------------------------------------------------------------------
+def _dieta_ativa_do_lote(session: Session, lote: int, fazenda_id: int | None) -> DietaLancamento | None:
+    """A dieta em vigor de um lote agora — mesma resolução (`data_efetivo_
+    encerramento IS NULL`) já usada por `contexto_dieta`/`apresentacao_dieta`.
+    Só uma pode estar ativa por lote, então não há ambiguidade de qual usar."""
+    query = select(DietaLancamento).where(
+        DietaLancamento.lote == lote, DietaLancamento.data_efetivo_encerramento == None,  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query = query.where(DietaLancamento.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
+def _itens_dieta_lancamento(session: Session, dieta_lancamento_id: int, fazenda_id: int | None) -> list[DietaItemProgramado]:
+    query = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_lancamento_id)
+    if fazenda_id is not None:
+        query = query.where(DietaItemProgramado.fazenda_id == fazenda_id)
+    return session.exec(query).all()
+
+
+def _item_da_dieta(itens: list[DietaItemProgramado], alimento: str, alimento_id: int | None) -> DietaItemProgramado | None:
+    """Casa um alimento lançado com o item programado da dieta ativa — por
+    `alimento_id` (vínculo de cadastro, preferido, sem ambiguidade de nome) e,
+    na falta dele, por nome (trim + minúsculas, mesmo padrão usado em todo o
+    módulo para casar Alimento×Estoque). None = fora da dieta (ver B5)."""
+    if alimento_id is not None:
+        for it in itens:
+            if it.alimento_id == alimento_id:
+                return it
+    alvo = (alimento or "").strip().lower()
+    for it in itens:
+        if (it.alimento or "").strip().lower() == alvo:
+            return it
+    return None
+
+
+def _por_cabeca(qtd_fisica: float, base_quantidade: str | None, n_animais: int) -> float | None:
+    """Quantidade por cabeça de um item programado, respeitando
+    `DietaLancamento.base_quantidade` — a causa mais provável de dobrar a
+    conta (ver spec da sessão): quando a dieta já foi lançada "por animal", o
+    `quantidade` do item JÁ É por cabeça (não dividir de novo); quando foi
+    lançada "total" (padrão), é o total do lote e só vira por-cabeça dividindo
+    pelo efetivo atual. `None` quando não há efetivo para dividir — melhor não
+    responder do que inventar um valor com denominador zero."""
+    if base_quantidade == "animal":
+        return qtd_fisica
+    return qtd_fisica / n_animais if n_animais else None
+
+
+def _resolver_estoque_item(
+    session: Session, fazenda_id: int | None, alimento: str, estoque_por_alimento: dict[str, list[dict]],
+) -> Estoque | None:
+    """Mesma resolução de `_dar_baixa_automatica`: nome do alimento bate
+    direto com `Estoque.nome` primeiro; na falta, cai no vínculo por Alimento
+    (`Estoque.alimento_id`). Reaproveitada aqui em vez de duplicada porque o
+    consumo manual precisa resolver o MESMO item que a baixa automática
+    resolveria para o mesmo alimento."""
+    query = select(Estoque).where(Estoque.nome == alimento)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    item = session.exec(query).first()
+    if item:
+        return item
+    candidatos = estoque_por_alimento.get((alimento or "").strip().lower())
+    if candidatos:
+        return session.get(Estoque, candidatos[0]["id"])
+    return None
+
+
+def _kg_fornecido_do_dia(session: Session, lote: int, data: date, fazenda_id: int | None) -> float:
+    """Soma em kg (via `kg_equivalente`) de tudo que foi lançado como consumo
+    de um lote num dia — o denominador do percentual de sobra (B14). Itens
+    cuja unidade não converte (litro, dose...) ficam fora da soma: um `None`
+    tratado como zero inflaria a sobra artificialmente (ver docstring de
+    `rules/unidades`)."""
+    query = select(ConsumoAlimento).where(ConsumoAlimento.lote == lote, ConsumoAlimento.data == data)
+    if fazenda_id is not None:
+        query = query.where(ConsumoAlimento.fazenda_id == fazenda_id)
+    total = 0.0
+    for r in session.exec(query).all():
+        kg = kg_equivalente(r.quantidade, r.unidade)
+        if kg is not None:
+            total += kg
+    return round(total, 4)
+
+
+def _faixa_sobra(sobra_pct: float | None) -> bool | None:
+    """Se o percentual de sobra está dentro da faixa aceitável configurada em
+    Parâmetros (`sobra_min_pct`..`sobra_max_pct`). `None` (sem sobra lançada
+    ainda) se propaga — não há faixa a avaliar sem medição."""
+    if sobra_pct is None:
+        return None
+    minimo = get_param("sobra_min_pct", 3) or 3
+    maximo = get_param("sobra_max_pct", 7) or 7
+    return minimo <= sobra_pct <= maximo
+
+
+@router.get("/consumo/dieta-do-lote")
+def dieta_do_lote_consumo(
+    lote: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Alimentos disponíveis para o lançamento de consumo (B3): só os da
+    dieta ATIVA do lote — quantidade por cabeça já resolvida (considerando
+    `base_quantidade`) para a tela não precisar refazer essa conta (e correr
+    o risco de dobrá-la)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    dieta = _dieta_ativa_do_lote(session, lote, fazenda_id)
+    if not dieta:
+        raise HTTPException(status_code=404, detail=f"Lote {lote:02d} não tem dieta ativa")
+    n = len(_animais_do_lote(session, lote, fazenda_id))
+    itens = _itens_dieta_lancamento(session, dieta.id, fazenda_id)
+    linhas = []
+    for it in itens:
+        qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+        por_cabeca = _por_cabeca(qtd_fisica, dieta.base_quantidade, n)
+        linhas.append({
+            "alimento": it.alimento, "alimento_id": it.alimento_id,
+            "quantidade": it.quantidade, "unidade": it.unidade,
+            "por_cabeca": round(por_cabeca, 4) if por_cabeca is not None else None,
+            "converte_para_kg": converte_para_kg(it.unidade),
+        })
+    return {"itens": linhas, "base_quantidade": dieta.base_quantidade or "total"}
+
+
+@router.get("/consumo")
+def obter_consumo(
+    lote: int, data: date,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """O que já foi lançado num lote num dia, somado por alimento (B2) —
+    lançamentos do mesmo dia SOMAM (o vagão passa mais de uma vez), então a
+    tela precisa ver o acumulado, não a lista de eventos crus."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ConsumoAlimento).where(ConsumoAlimento.lote == lote, ConsumoAlimento.data == data)
+    if fazenda_id is not None:
+        query = query.where(ConsumoAlimento.fazenda_id == fazenda_id)
+    registros = session.exec(query.order_by(ConsumoAlimento.criado_em)).all()
+
+    por_alimento: dict[str, dict] = {}
+    for r in registros:
+        # Agrupado só por nome do alimento — na prática todo lançamento do
+        # mesmo alimento no mesmo lote/dia vem do mesmo item de dieta (mesma
+        # unidade); se dois lançamentos discordarem de unidade num caso raro,
+        # a soma bruta ainda reflete "quanto foi lançado", só o `kg_equivalente`
+        # fica impreciso — aceitável porque o valor em kg de cada linha
+        # individual nunca é descartado (ver GET /consumo/dieta-do-lote).
+        acc = por_alimento.setdefault(r.alimento, {"alimento": r.alimento, "quantidade": 0.0, "unidade": r.unidade})
+        acc["quantidade"] = round(acc["quantidade"] + r.quantidade, 4)
+
+    itens = []
+    kg_total = 0.0
+    for acc in por_alimento.values():
+        kg = kg_equivalente(acc["quantidade"], acc["unidade"])
+        if kg is not None:
+            kg_total += kg
+        itens.append({**acc, "kg_equivalente": round(kg, 4) if kg is not None else None})
+    kg_total = round(kg_total, 4)
+
+    # Nº de animais do lançamento mais recente do dia — guardado por
+    # auditoria em todo registro (mesmo em modo kg direto, ver docstring de
+    # `ConsumoAlimento.num_animais`), então o mais recente é o retrato mais
+    # atual do efetivo que passou no cocho hoje.
+    num_animais = registros[-1].num_animais if registros else None
+
+    query_sobra = select(ConsumoSobra).where(ConsumoSobra.lote == lote, ConsumoSobra.data == data)
+    if fazenda_id is not None:
+        query_sobra = query_sobra.where(ConsumoSobra.fazenda_id == fazenda_id)
+    sobra = session.exec(query_sobra).first()
+    sobra_kg = sobra.kg_sobra if sobra else None
+    sobra_pct = round(sobra_kg / kg_total * 100, 2) if sobra_kg is not None and kg_total > 0 else None
+
+    return {
+        "lote": lote, "data": data.isoformat(), "num_animais": num_animais,
+        "itens": sorted(itens, key=lambda x: x["alimento"]),
+        "kg_fornecido_total": kg_total,
+        "sobra_kg": sobra_kg, "sobra_pct": sobra_pct, "dentro_da_faixa": _faixa_sobra(sobra_pct),
+    }
+
+
+class ConsumoItemIn(BaseModel):
+    alimento: str
+    alimento_id: int | None = None
+    quantidade: float
+    unidade: str
+
+
+class ConsumoIn(BaseModel):
+    lote: int
+    data: date
+    num_animais: int | None = None
+    origem: str  # "animais" (por cabeça × dieta) | "kg" (digitado direto)
+    itens: list[ConsumoItemIn]
+
+
+@router.post("/consumo", status_code=201)
+def lancar_consumo(
+    dados: ConsumoIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    """B1/B4/B5/B6/B7/B8: grava um ou mais ConsumoAlimento de um lote num dia,
+    dá baixa em estoque pelo motor único e propaga os avisos da baixa."""
+    if dados.origem not in ("animais", "kg"):
+        raise HTTPException(status_code=400, detail='"origem" deve ser "animais" ou "kg"')
+    if not dados.itens:
+        raise HTTPException(status_code=400, detail="Informe ao menos um alimento")
+    if dados.origem == "animais" and not dados.num_animais:
+        raise HTTPException(status_code=400, detail='Informe "num_animais" para lançar por cabeça')
+
+    query_lote = select(Lote).where(Lote.codigo == f"{dados.lote:02d}")
+    if fazenda_id is not None:
+        query_lote = query_lote.where(Lote.fazenda_id == fazenda_id)
+    lote_cad = session.exec(query_lote).first()
+    # Lote sem cadastro (não deveria acontecer numa dieta lançada, mas o
+    # sistema convive com dado legado — ver "O que o levantamento achou" da
+    # spec) cai no padrão restritivo das duas flags, igual a um Lote com as
+    # flags nunca marcadas: a ausência de cadastro nunca é motivo pra afrouxar
+    # uma checagem de segurança.
+    permitir_fora_da_dieta = bool(lote_cad.permitir_fora_da_dieta) if lote_cad else False
+    permitir_sem_estoque = bool(lote_cad.permitir_sem_estoque) if lote_cad else False
+
+    dieta = _dieta_ativa_do_lote(session, dados.lote, fazenda_id)
+    itens_dieta = _itens_dieta_lancamento(session, dieta.id, fazenda_id) if dieta else []
+    n_animais = len(_animais_do_lote(session, dados.lote, fazenda_id))
+    estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
+
+    avisos: list[str] = []
+    for item_in in dados.itens:
+        item_dieta = _item_da_dieta(itens_dieta, item_in.alimento, item_in.alimento_id)
+        fora_da_dieta = item_dieta is None
+        if fora_da_dieta and not permitir_fora_da_dieta:
+            raise HTTPException(
+                status_code=409,
+                detail=f'"{item_in.alimento}" não está na dieta ativa do lote {dados.lote:02d} — ligue '
+                       f'"permitir alimentos fora da dieta" no cadastro do lote para lançar mesmo assim.',
+            )
+
+        if dados.origem == "animais" and item_dieta is not None:
+            # Recalculado no servidor — não confia no valor que o front
+            # mandou. É exatamente aqui que a conta dobra se `base_quantidade`
+            # for ignorado (ver docstring de `_por_cabeca`).
+            qtd_fisica = _quantidade_fisica(item_dieta.quantidade, item_dieta.unidade, item_dieta.base, item_dieta.ms_pct)
+            por_cabeca = _por_cabeca(qtd_fisica, dieta.base_quantidade if dieta else None, n_animais)
+            if por_cabeca is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f'Não foi possível calcular a quantidade por cabeça de "{item_in.alimento}" '
+                           f'— lote sem animais ativos.',
+                )
+            quantidade = round(por_cabeca * dados.num_animais, 4)
+            unidade = item_dieta.unidade
+        else:
+            # "kg" direto, ou item fora da dieta (sem quantidade/cabeça
+            # conhecida para multiplicar, mesmo que o modo geral seja "animais").
+            quantidade = item_in.quantidade
+            unidade = item_in.unidade
+
+        estoque_item = _resolver_estoque_item(session, fazenda_id, item_in.alimento, estoque_por_alimento)
+        sem_saldo = estoque_item is None or (estoque_item.quantidade or 0) <= 0
+        if sem_saldo and not permitir_sem_estoque:
+            raise HTTPException(
+                status_code=409,
+                detail=f'"{item_in.alimento}" está sem saldo em estoque — ligue "permitir alimentos sem '
+                       f'estoque" no cadastro do lote para lançar mesmo assim.',
+            )
+
+        registro = ConsumoAlimento(
+            fazenda_id=fazenda_id, data=dados.data, lote=dados.lote,
+            alimento=item_in.alimento, alimento_id=item_in.alimento_id,
+            quantidade=quantidade, unidade=unidade, num_animais=dados.num_animais,
+            origem=dados.origem, fora_da_dieta=fora_da_dieta, usuario_id=user.id,
+        )
+        session.add(registro)
+        session.flush()  # gera o id antes do movimento de estoque (origem_id rastreável — B7)
+        avisos.extend(estoque_baixa.baixar(
+            session, item=estoque_item, quantidade=quantidade, unidade=unidade, data=dados.data,
+            fazenda_id=fazenda_id,
+            observacao=f"Consumo diário — lote {dados.lote:02d}, {item_in.alimento}",
+            usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=item_in.alimento,
+        ))
+
+    session.commit()
+    return {"ok": True, "avisos": avisos}
+
+
+@router.delete("/consumo/{consumo_id}")
+def excluir_consumo(
+    consumo_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    """B9: exclui um lançamento de consumo e devolve o produto ao estoque
+    pelo mesmo motor — o estorno espelha a baixa, não uma baixa negativa
+    inventada na mão."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = session.get(ConsumoAlimento, consumo_id)
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento de consumo não encontrado")
+    estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
+    estoque_item = _resolver_estoque_item(session, fazenda_id, registro.alimento, estoque_por_alimento)
+    avisos = estoque_baixa.devolver(
+        session, item=estoque_item, quantidade=registro.quantidade, unidade=registro.unidade,
+        data=registro.data, fazenda_id=fazenda_id,
+        observacao=f"Exclusão do consumo diário — lote {registro.lote:02d}, {registro.alimento}",
+        usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=registro.alimento,
+    )
+    session.delete(registro)
+    session.commit()
+    return {"ok": True, "avisos": avisos}
+
+
+class SobraIn(BaseModel):
+    lote: int
+    data: date
+    kg_sobra: float
+
+
+@router.post("/sobra", status_code=201)
+def lancar_sobra(
+    dados: SobraIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    """B10: grava a sobra do lote no dia, em kg totais. Relançar no mesmo dia
+    SUBSTITUI (upsert por `fazenda_id, lote, data` — a UniqueConstraint do
+    modelo trava isso no banco), ao contrário do consumo, que soma: a sobra é
+    uma medição única do estado do cocho, não um acúmulo de eventos."""
+    if dados.kg_sobra < 0:
+        raise HTTPException(status_code=400, detail="Sobra não pode ser negativa")
+    query = select(ConsumoSobra).where(ConsumoSobra.lote == dados.lote, ConsumoSobra.data == dados.data)
+    if fazenda_id is not None:
+        query = query.where(ConsumoSobra.fazenda_id == fazenda_id)
+    registro = session.exec(query).first()
+    if registro:
+        registro.kg_sobra = dados.kg_sobra
+        registro.usuario_id = user.id
+        registro.atualizado_em = datetime.utcnow()
+    else:
+        registro = ConsumoSobra(
+            fazenda_id=fazenda_id, data=dados.data, lote=dados.lote, kg_sobra=dados.kg_sobra, usuario_id=user.id,
+        )
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+
+    kg_total = _kg_fornecido_do_dia(session, dados.lote, dados.data, fazenda_id)
+    sobra_pct = round(dados.kg_sobra / kg_total * 100, 2) if kg_total > 0 else None
+    return {
+        "ok": True, "kg_sobra": registro.kg_sobra,
+        "sobra_pct": sobra_pct, "dentro_da_faixa": _faixa_sobra(sobra_pct),
+    }
+
+
+@router.get("/sobra/relatorio")
+def relatorio_sobra(
+    de: date, ate: date, lote: int | None = None,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """B11-B14: sobra por alimento e total no período. O rateio por alimento
+    usa a proporção de cada alimento NA DIETA (não no consumo realmente
+    lançado — B12): o relatório serve também para quem só pesa a sobra e
+    confia na dieta cadastrada pra saber o que ela era feita de. A dieta usada
+    é a ATIVA de cada lote hoje — mesma simplificação que `apresentacao_dieta`/
+    `contexto_dieta` já fazem em todo o arquivo (nenhum dos dois resolve a
+    dieta vigente numa data passada); um lote que trocou de dieta dentro do
+    período aparece com a proporção da dieta atual."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_sobra = select(ConsumoSobra).where(ConsumoSobra.data >= de, ConsumoSobra.data <= ate)
+    if lote is not None:
+        query_sobra = query_sobra.where(ConsumoSobra.lote == lote)
+    if fazenda_id is not None:
+        query_sobra = query_sobra.where(ConsumoSobra.fazenda_id == fazenda_id)
+    sobras = session.exec(query_sobra).all()
+
+    query_consumo = select(ConsumoAlimento).where(ConsumoAlimento.data >= de, ConsumoAlimento.data <= ate)
+    if lote is not None:
+        query_consumo = query_consumo.where(ConsumoAlimento.lote == lote)
+    if fazenda_id is not None:
+        query_consumo = query_consumo.where(ConsumoAlimento.fazenda_id == fazenda_id)
+    consumos = session.exec(query_consumo).all()
+
+    total_kg_sobra = round(sum(s.kg_sobra for s in sobras), 2)
+
+    # Fornecido total do período (B14) — convertido igual ao denominador do
+    # percentual por dia (GET /consumo): itens sem conversão ficam fora da
+    # soma e entram na lista de excluídos, nunca viram zero.
+    itens_sem_conversao: set[str] = set()
+    total_kg_fornecido = 0.0
+    for c in consumos:
+        kg = kg_equivalente(c.quantidade, c.unidade)
+        if kg is None:
+            itens_sem_conversao.add(c.alimento)
+            continue
+        total_kg_fornecido += kg
+    total_kg_fornecido = round(total_kg_fornecido, 2)
+    pct_medio = round(total_kg_sobra / total_kg_fornecido * 100, 2) if total_kg_fornecido > 0 else None
+
+    # Rateio por alimento (B12/B13): para cada dia de sobra lançada, distribui
+    # o kg total daquele dia entre os alimentos da dieta ATIVA do lote,
+    # proporcional ao peso (kg) de cada um. Um lote sem dieta, ou cuja dieta
+    # não tem NENHUM item conversível, não entra no rateio (B13) — o total
+    # continua contado, só não tem "por alimento" pra aquele lote/dia.
+    dieta_itens_cache: dict[int, list[DietaItemProgramado]] = {}
+    acumulado: dict[str, float] = {}
+    kg_sobra_rateado = 0.0
+    for s in sobras:
+        if s.lote not in dieta_itens_cache:
+            dieta = _dieta_ativa_do_lote(session, s.lote, fazenda_id)
+            dieta_itens_cache[s.lote] = _itens_dieta_lancamento(session, dieta.id, fazenda_id) if dieta else []
+        itens = dieta_itens_cache[s.lote]
+
+        pesos: dict[str, float] = {}
+        soma_pesos = 0.0
+        for it in itens:
+            qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+            kg = kg_equivalente(qtd_fisica, it.unidade)
+            if kg is None:
+                itens_sem_conversao.add(it.alimento)
+                continue
+            pesos[it.alimento] = pesos.get(it.alimento, 0.0) + kg
+            soma_pesos += kg
+        if soma_pesos <= 0:
+            continue  # B13 — nada conversível nesta dieta, sem rateio possível pra este dia
+        for alimento, kg in pesos.items():
+            acumulado[alimento] = acumulado.get(alimento, 0.0) + s.kg_sobra * (kg / soma_pesos)
+        kg_sobra_rateado += s.kg_sobra
+
+    por_alimento = [
+        {
+            "alimento": alimento, "kg_sobra": round(kg, 2),
+            # Fatia do total de sobra RATEADA no período que este alimento
+            # respondeu — não a proporção física dele na dieta (essa já foi
+            # usada internamente, dia a dia, pra fazer o rateio acima; expor
+            # ela agregada exigiria normalizar dietas diferentes ao longo do
+            # período, o que essa única métrica não consegue carregar sem
+            # enganar). É a pergunta que o relatório existe pra responder:
+            # de onde veio a sobra.
+            "pct_da_dieta": round(kg / kg_sobra_rateado * 100, 2) if kg_sobra_rateado > 0 else 0.0,
+        }
+        for alimento, kg in sorted(acumulado.items())
+    ]
+
+    return {
+        "total_kg_sobra": total_kg_sobra, "total_kg_fornecido": total_kg_fornecido, "pct_medio": pct_medio,
+        "por_alimento": por_alimento, "itens_sem_conversao": sorted(itens_sem_conversao),
+    }
