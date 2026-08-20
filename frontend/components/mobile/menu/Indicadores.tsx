@@ -6,13 +6,32 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
-import { fetchIndicadores, fetchAnimais, formatDate, type IndicadoresProducao, type AnimalProducaoAoVivo } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, formatDate, type IndicadoresProducao, type AnimalProducaoAoVivo, type ReproducaoCategoria } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
-import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
+// "Fêmeas prenhas"/"Vazias" leem valor E lista de `reproducao_categorias.todas`
+// (mesmo objeto, ver `ReproducaoCategoria` em lib/api.ts — `X`/`X_nums` sempre
+// pareados). ANTES o valor vinha de `reproducao.prenhes`/`.vazias` (outro
+// campo do MESMO payload, mas um campo diferente) e a lista vinha de
+// `useEstadosReprodutivos()` — um fetch e um cache offline à parte, que podia
+// estar desatualizado em relação a `dados` na hora do clique. Medido antes de
+// mexer (backend/tests/test_indicadores_menu_prenhes_vazias.py): "prenhes"
+// batia sempre (mesmo critério, `estado == "gestante"`, nos dois campos),
+// mas "vazias" NÃO — `reproducao.vazias` é um catch-all que inclui quem está
+// `em_protocolo` (IATF D0–D11), e o filtro de 5 estados que este cartão
+// sempre usou no drill-down (pev/apta/atrasada/nao_apta/vazia) exclui
+// `em_protocolo` de propósito. Num rebanho de teste com 1 animal em
+// protocolo, o cartão mostrava 4 e a lista abria com 3 — a mesma divergência
+// já vista duas vezes noutras telas, só que sem depender de dois fetches:
+// bastava um único cálculo do backend para o número e o predicado discordarem.
+// `reproducao_categorias.todas.vazias` é o campo que já soma exatamente os
+// mesmos 5 estados do drill-down (ver `_reproducao_categorias` em
+// rules/indicadores.py) — por isso o valor do cartão "Vazias" muda de
+// significado aqui (deixa de contar quem está em protocolo), não só a fonte.
 type Resposta = {
-  reproducao?: { prenhes?: number | null; taxa_concepcao_pct?: number | null; iep_meses?: number | null; vazias?: number | null };
+  reproducao?: { taxa_concepcao_pct?: number | null; iep_meses?: number | null };
+  reproducao_categorias?: { todas?: ReproducaoCategoria };
   producao?: IndicadoresProducao;
   rebanho?: { vacas_lactacao?: number | null };
 };
@@ -37,10 +56,6 @@ const codigoGrupo = (g?: string | null): string | null => {
   const s = (g || "").trim();
   return s.length >= 2 && /^\d\d/.test(s.slice(0, 2)) ? s.slice(0, 2) : null;
 };
-// Estados "vazia" ao vivo — equivalem ao antigo prefixo textual "Vaz.".
-const ESTADOS_VAZIA = new Set(["pev", "apta", "atrasada", "nao_apta", "vazia"]);
-const ehPrenhe = (estado?: string) => estado === "gestante";
-const ehVazia = (estado?: string) => !!estado && ESTADOS_VAZIA.has(estado);
 const ehLactacao = (a: Animal) => GRUPOS_LACTACAO.has(codigoGrupo(a.grupo_primario) || "");
 
 function val(v?: number | null, sufixo = ""): string {
@@ -62,17 +77,22 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
   const [drill, setDrill] = useState<Drill | null>(null);
 
   const animais = animaisReq.dados || [];
-  const { porNumero } = useEstadosReprodutivos();
+  const cat = dados?.reproducao_categorias?.todas;
 
   const listaDe = (d: Drill): Animal[] => {
-    // Sem o estado ao vivo (ainda carregando ou falhou) cai no texto do CSV, para
-    // o drill-down não abrir vazio.
-    if (d === "prenhes") return porNumero.size
-      ? animais.filter((a) => ehPrenhe(porNumero.get(a.numero)?.estado))
-      : animais.filter((a) => (a.sit_rep || "").trim() === "Ges.");
-    if (d === "vazias") return porNumero.size
-      ? animais.filter((a) => ehVazia(porNumero.get(a.numero)?.estado))
-      : animais.filter((a) => (a.sit_rep || "").trim().startsWith("Vaz."));
+    // Nº por trás do CARTÃO, não um recorte próprio: `prenhes_nums`/`vazias_nums`
+    // vêm do MESMO objeto (`cat`) que fornece o valor mostrado no cartão — ver
+    // o comentário longo no topo do arquivo. Sem `cat` (dados ainda não
+    // carregados), a lista fica vazia — o painel de cartões já mostra "Sem
+    // dados salvos" nesse caso, então este drill nunca abre sozinho.
+    if (d === "prenhes") {
+      const nums = new Set(cat?.prenhes_nums || []);
+      return animais.filter((a) => nums.has(a.numero));
+    }
+    if (d === "vazias") {
+      const nums = new Set(cat?.vazias_nums || []);
+      return animais.filter((a) => nums.has(a.numero));
+    }
     if (d === "lactacao") return animais.filter(ehLactacao);
     // média por vaca → relatório do último controle leiteiro: vacas com produção
     // no último controle, da maior para a menor (ao vivo, com fallback pro
@@ -138,10 +158,10 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
 
   type Quadro = { rotulo: string; valor: string; drill?: Drill; legenda?: string };
   const quadros: Quadro[] = [
-    { rotulo: "Fêmeas prenhas", valor: val(r.prenhes), drill: "prenhes" },
+    { rotulo: "Fêmeas prenhas", valor: val(cat?.prenhes), drill: "prenhes" },
     { rotulo: "Concepção por serviço", valor: val(r.taxa_concepcao_pct, "%") },
     { rotulo: "IEP médio", valor: r.iep_meses != null ? `${val(r.iep_meses)} meses` : "—" },
-    { rotulo: "Vazias", valor: val(r.vazias), drill: "vazias" },
+    { rotulo: "Vazias", valor: val(cat?.vazias), drill: "vazias" },
     {
       rotulo: diaControle ? `Produção do dia · ${diaControle}` : "Produção do dia · sem controle",
       valor: diaControle ? val(p.producao_total_dia_kg, " kg") : "—",
