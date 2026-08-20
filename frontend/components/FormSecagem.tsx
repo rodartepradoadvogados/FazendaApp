@@ -64,9 +64,14 @@ export function FormSecagem({
   }, [animaisLactacao, lotesSelecionados]);
   const [selLote, setSelLote] = useState<Set<string>>(new Set());
   const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  // Troca de lote(s) começa em branco — o usuário decide quem entra, em vez
+  // de secar acidentalmente um animal que ele esqueceu de desmarcar (o
+  // padrão antigo marcava todo mundo do lote de saída).
   useEffect(() => {
-    setSelLote(new Set(animaisDoLoteSel.map((a) => a.numero)));
+    setSelLote(new Set());
   }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const marcarTodosLote = () => setSelLote(new Set(animaisDoLoteSel.map((a) => a.numero)));
+  const desmarcarTodosLote = () => setSelLote(new Set());
   const numerosAlvo = useMemo(() => (vinculo === "lote" ? selLote : selecionados), [vinculo, selLote, selecionados]);
   const matriz = numerosAlvo.size === 1 ? Array.from(numerosAlvo)[0] : "";
 
@@ -285,19 +290,38 @@ export function FormSecagem({
               placeholder="Selecionar lote(s)…"
             />
             {lotesSelecionados.length > 0 && (
+              // Lista nominal visível na hora, não escondida atrás de um
+              // modal — quem escolhe o(s) lote(s) precisa ver de cara quem
+              // entrou e poder desmarcar um a um, sem abrir mais nada.
               <div style={{ marginTop: "0.6rem" }}>
-                <AnimalPickerModal
-                  animais={animaisDoLoteSel} selecionados={selLote} onToggle={toggleLote}
-                  titulo="Ajustar vacas do(s) lote(s) selecionado(s)"
-                  placeholder="Ajustar vacas do(s) lote(s)…"
-                  colunas={[
-                    { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                    { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                  ]}
-                />
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                  {selLote.size} de {animaisDoLoteSel.length} vaca(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
-                </p>
+                <div className="flex items-center justify-between mb-2" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+                    {selLote.size} de {animaisDoLoteSel.length} vaca(s) selecionada(s)
+                  </span>
+                  <div className="flex gap-2">
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={marcarTodosLote} disabled={!animaisDoLoteSel.length}>
+                      Marcar todos
+                    </button>
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={desmarcarTodosLote} disabled={!selLote.size}>
+                      Desmarcar todos
+                    </button>
+                  </div>
+                </div>
+                <div style={{ maxHeight: "260px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
+                  <table className="fazenda-table">
+                    <thead><tr><th></th><th>Nº</th><th>Lote</th></tr></thead>
+                    <tbody>
+                      {animaisDoLoteSel.map((a) => (
+                        <tr key={a.numero} onClick={() => toggleLote(a.numero)} style={{ cursor: "pointer" }} className="row-clickable">
+                          <td><input type="checkbox" checked={selLote.has(a.numero)} onChange={() => toggleLote(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
+                          <td style={{ fontWeight: 700, fontSize: "0.8rem" }}>{a.numero}</td>
+                          <td style={{ fontSize: "0.8rem" }}>{a.grupo_primario || "—"}</td>
+                        </tr>
+                      ))}
+                      {!animaisDoLoteSel.length && <tr><td colSpan={3} style={{ color: "var(--text-muted)", padding: "0.6rem" }}>Nenhum animal no(s) lote(s) selecionado(s).</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

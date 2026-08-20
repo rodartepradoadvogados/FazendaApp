@@ -247,11 +247,63 @@ def _seed_categorias_alimento(session: Session, fazenda_id: int | None = None) -
     query = select(CategoriaAlimento)
     if fazenda_id is not None:
         query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
-    existentes = {c.nome for c in session.exec(query).all()}
-    novas = [CategoriaAlimento(nome=nome, fazenda_id=fazenda_id) for nome in CATEGORIAS_ALIMENTO_PADRAO if nome not in existentes]
-    if novas:
-        session.add_all(novas)
-        session.commit()
+    # (bug pré-existente corrigido) Antes checava só os NOMES padrão que já
+    # existiam e reinseria os que faltassem — rodando a cada GET, isso
+    # ressuscitava Volumoso/Concentrado/Mineral se o usuário apagasse de
+    # propósito. Passa a semear só quando a fazenda não tem NENHUMA
+    # categoria (primeira vez de verdade); depois disso apagar uma padrão é
+    # definitivo, como em qualquer cadastro editável.
+    if session.exec(query).first() is not None:
+        return
+    novas = [CategoriaAlimento(nome=nome, fazenda_id=fazenda_id) for nome in CATEGORIAS_ALIMENTO_PADRAO]
+    session.add_all(novas)
+    session.commit()
+
+
+def _ordenar_categorias_hierarquia(categorias: list[CategoriaAlimento]) -> list[CategoriaAlimento]:
+    """Agrupa cada subcategoria logo abaixo do próprio pai: raízes por nome
+    e, dentro de cada raiz, as filhas por nome — em vez da ordem alfabética
+    simples de antes, que espalharia "Proteico" longe de "Concentrado"."""
+    por_id = {c.id: c for c in categorias}
+
+    def chave(c: CategoriaAlimento) -> tuple[str, int, str]:
+        pai = por_id.get(c.categoria_pai_id) if c.categoria_pai_id is not None else None
+        nome_raiz = pai.nome if pai else c.nome
+        eh_filha = 1 if c.categoria_pai_id is not None else 0
+        return (nome_raiz, eh_filha, c.nome)
+
+    return sorted(categorias, key=chave)
+
+
+def _validar_categoria_pai(
+    session: Session, categoria_pai_id: int | None, fazenda_id: int | None, categoria_id: int | None,
+) -> None:
+    """Garante o invariante de EXATAMENTE dois níveis (raiz -> subcategoria).
+    `categoria_id` é None na criação (nada a comparar ainda) e o id da
+    própria categoria na edição — para recusar ela virar pai de si mesma e
+    para recusar ela virar subcategoria se já tiver filhas (senão a edição
+    criaria um 3º nível por baixo dela, escapando pela porta dos fundos)."""
+    if categoria_pai_id is None:
+        return
+    if categoria_pai_id == categoria_id:
+        raise HTTPException(status_code=409, detail="Uma categoria não pode ser pai de si mesma")
+    pai = session.get(CategoriaAlimento, categoria_pai_id)
+    if not pai or (fazenda_id is not None and pai.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Categoria pai não encontrada")
+    if pai.categoria_pai_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f'"{pai.nome}" já é uma subcategoria — só dois níveis são permitidos (raiz e subcategoria)',
+        )
+    if categoria_id is not None:
+        tem_filha = session.exec(
+            select(CategoriaAlimento).where(CategoriaAlimento.categoria_pai_id == categoria_id)
+        ).first()
+        if tem_filha:
+            raise HTTPException(
+                status_code=409,
+                detail=f'Categoria tem a subcategoria "{tem_filha.nome}" — não pode também virar subcategoria de outra',
+            )
 
 
 # Alimentos padrão + categoria sugerida — preenche o cadastro na primeira
@@ -320,24 +372,40 @@ def listar_categorias_alimento(
     query = select(CategoriaAlimento)
     if fazenda_id is not None:
         query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
-    return [c.model_dump() for c in session.exec(query.order_by(CategoriaAlimento.nome)).all()]
+    # Ordenação em Python (não dá pra expressar "filha logo abaixo do pai"
+    # num único ORDER BY simples sem self-join) — ver _ordenar_categorias_hierarquia.
+    categorias = session.exec(query).all()
+    return [c.model_dump() for c in _ordenar_categorias_hierarquia(categorias)]
 
 
 class CategoriaAlimentoIn(BaseModel):
     nome: str
     ativo: bool = True
+    # None = raiz. Ver decisão de modelagem da sessão: só dois níveis, a
+    # validação fica em `_validar_categoria_pai`.
+    categoria_pai_id: int | None = None
 
 
 @router.post("/categorias", status_code=201)
 def criar_categoria_alimento(
     dados: CategoriaAlimentoIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    query_dup = select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome)
+    _validar_categoria_pai(session, dados.categoria_pai_id, fazenda_id, categoria_id=None)
+    # NULL não colide em UniqueConstraint (nome, categoria_pai_id, fazenda_id)
+    # — duas raízes de mesmo nome passariam batido pela constraint do banco.
+    # A checagem em código é quem garante nome único DENTRO DO MESMO PAI, e
+    # é ela que permite "Proteico" existir tanto sob "Concentrado" quanto
+    # sob "Volumoso" (mesmo nome, pais diferentes).
+    query_dup = select(CategoriaAlimento).where(
+        CategoriaAlimento.nome == dados.nome, CategoriaAlimento.categoria_pai_id == dados.categoria_pai_id,
+    )
     if fazenda_id is not None:
         query_dup = query_dup.where(CategoriaAlimento.fazenda_id == fazenda_id)
     if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f'Já existe uma categoria chamada "{dados.nome}"')
-    cat = CategoriaAlimento(nome=dados.nome, ativo=dados.ativo, fazenda_id=fazenda_id)
+    cat = CategoriaAlimento(
+        nome=dados.nome, ativo=dados.ativo, fazenda_id=fazenda_id, categoria_pai_id=dados.categoria_pai_id,
+    )
     session.add(cat)
     session.commit()
     session.refresh(cat)
@@ -350,9 +418,16 @@ def atualizar_categoria_alimento(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     cat = session.get(CategoriaAlimento, categoria_id)
-    if not cat:
+    # (bug pré-existente corrigido) `session.get` não confere a fazenda do
+    # registro encontrado — sem essa checagem, uma fazenda edita categoria
+    # de outra só sabendo o id. Mesmo padrão já usado em `atualizar_alimento`.
+    if not cat or (fazenda_id is not None and cat.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
-    query_outra = select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome, CategoriaAlimento.id != categoria_id)
+    _validar_categoria_pai(session, dados.categoria_pai_id, fazenda_id, categoria_id=categoria_id)
+    query_outra = select(CategoriaAlimento).where(
+        CategoriaAlimento.nome == dados.nome, CategoriaAlimento.categoria_pai_id == dados.categoria_pai_id,
+        CategoriaAlimento.id != categoria_id,
+    )
     if fazenda_id is not None:
         query_outra = query_outra.where(CategoriaAlimento.fazenda_id == fazenda_id)
     outra = session.exec(query_outra).first()
@@ -360,16 +435,29 @@ def atualizar_categoria_alimento(
         raise HTTPException(status_code=409, detail=f'Já existe uma categoria chamada "{dados.nome}"')
     cat.nome = dados.nome
     cat.ativo = dados.ativo
+    cat.categoria_pai_id = dados.categoria_pai_id
     session.add(cat)
     session.commit()
     return cat.model_dump()
 
 
 @router.delete("/categorias/{categoria_id}")
-def excluir_categoria_alimento(categoria_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_categoria_alimento(
+    categoria_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     cat = session.get(CategoriaAlimento, categoria_id)
-    if not cat:
+    # (bug pré-existente corrigido) Era o único endpoint do bloco sem filtro
+    # de fazenda_id — uma fazenda conseguia apagar categoria de outra só
+    # sabendo o id. Mesmo padrão de checagem pós-`session.get` do PUT acima.
+    if not cat or (fazenda_id is not None and cat.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
+    tem_filha = session.exec(select(CategoriaAlimento).where(CategoriaAlimento.categoria_pai_id == categoria_id)).first()
+    if tem_filha:
+        raise HTTPException(
+            status_code=409,
+            detail=f'Categoria tem a subcategoria "{tem_filha.nome}" — mova ou exclua a(s) subcategoria(s) primeiro',
+        )
     em_uso = session.exec(select(Alimento).where(Alimento.categoria_alimento_id == categoria_id)).first()
     if em_uso:
         raise HTTPException(status_code=409, detail=f'Categoria em uso pelo alimento "{em_uso.nome}" — mova ou exclua o(s) alimento(s) primeiro')

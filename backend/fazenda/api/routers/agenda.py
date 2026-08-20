@@ -96,6 +96,39 @@ COMUNICADO_PREFIXOS = ("nova_dieta_",)
 
 TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
 
+# Rótulos amigáveis por prefixo de evento_id — usados só pelo card "Concluídos
+# no período" da Agenda (GET /agenda/realizados). EventoRealizado guarda
+# apenas um hash (evento_id) + marcado_em, não o texto da pendência original;
+# reconstruir o detalhe completo (qual animal, qual lote, qual data) exigiria
+# juntar de volta com a origem de cada um dos ~15 tipos de pendência que
+# passam por aqui — algumas já podem ter mudado desde então. Mapear o
+# PREFIXO (fixo, definido no código acima) para uma categoria é honesto e
+# estável; prefixo fora do mapa não inventa rótulo — o card mostra o
+# evento_id cru (ver _rotulo_evento_realizado).
+ROTULOS_EVENTO_REALIZADO: dict[str, str] = {
+    "cura_protocolo_": "Confirmação de cura — protocolo sanitário",
+    "diaria_trabalho_": "Diária — dia de trabalho confirmado",
+    "diaria_fim_": "Diária — fim de contrato",
+    "empreitada_penultima_etapa_": "Empreitada — penúltima etapa",
+    "pesagem_": "Pesagem do rebanho",
+    "protocolo_sanitario_": "Protocolo sanitário — aplicação",
+    "semen_minimo_": "Estoque de sêmen abaixo do mínimo",
+    "sugestao_movimentacao_": "Sugestão de movimentação de lote",
+    "vacina_pre_parto_": "Vacina pré-parto",
+    "calendario_sanitario_": "Evento sanitário — calendário",
+    "aplic_agendada_": "Aplicação agendada",
+    "dieta_analise_": "Análise de dieta",
+    "evento_sanitario_": "Evento sanitário",
+    "bst_aplicacao_": "Aplicação de BST",
+}
+
+
+def _rotulo_evento_realizado(evento_id: str) -> str | None:
+    for prefixo, rotulo in ROTULOS_EVENTO_REALIZADO.items():
+        if evento_id.startswith(prefixo):
+            return rotulo
+    return None
+
 
 def _modulos_liberados(usuario: Usuario) -> set[str]:
     if usuario.papel == "admin":
@@ -2141,6 +2174,35 @@ def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session))
         })
     resultado.sort(key=lambda r: r["data_realizacao"] or "", reverse=True)
     return resultado
+
+
+@router.get("/realizados")
+def listar_realizados(
+    de: date | None = None, ate: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Marcações genéricas de conclusão (EventoRealizado) num período —
+    alimenta o card "Concluídos no período" da Agenda. Cobre as pendências
+    que resolvem por aqui (sanidade avulsa, diária, pesagem, sugestão de
+    movimentação etc.); protocolo IATF e indução de lactação NÃO passam por
+    esta tabela — cada um grava a própria conclusão no modelo de origem (ver
+    GET /protocolo-iatf/concluidos e /protocolo-inducao-lactacao/concluidos),
+    que é quem tem o detalhe (animais, dia) que esta tabela não guarda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EventoRealizado)
+    if fazenda_id is not None:
+        query = query.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
+    if de is not None:
+        query = query.where(EventoRealizado.marcado_em >= datetime.combine(de, datetime.min.time()))
+    if ate is not None:
+        query = query.where(EventoRealizado.marcado_em < datetime.combine(ate + timedelta(days=1), datetime.min.time()))
+    registros = session.exec(query.order_by(EventoRealizado.marcado_em.desc())).all()
+    return [{
+        "evento_id": r.evento_id,
+        "marcado_em": r.marcado_em.isoformat(),
+        "rotulo": _rotulo_evento_realizado(r.evento_id),
+    } for r in registros]
 
 
 @router.delete("/realizados/{evento_id}")

@@ -653,6 +653,167 @@ class TestCategoriasAlimento:
         r = c.delete("/alimentacao/categorias/999")
         assert r.status_code == 404
 
+    def test_semeadura_nao_ressuscita_categoria_apagada(self, client):
+        c, engine = client
+        r1 = c.get("/alimentacao/categorias")
+        volumoso_id = next(cat["id"] for cat in r1.json() if cat["nome"] == "Volumoso")
+        r_del = c.delete(f"/alimentacao/categorias/{volumoso_id}")
+        assert r_del.status_code == 200
+        # (bug pré-existente corrigido) Antes desta sessão esse segundo GET
+        # ressuscitava "Volumoso": a semeadura rodava a cada chamada e só
+        # olhava se o NOME padrão já existia. Agora só semeia quando a
+        # fazenda está com ZERO categorias, então apagar uma padrão de
+        # propósito é definitivo — o comportamento antigo era o bug.
+        r2 = c.get("/alimentacao/categorias")
+        nomes = {cat["nome"] for cat in r2.json()}
+        assert "Volumoso" not in nomes
+        assert {"Concentrado", "Mineral"} <= nomes
+
+
+class TestSubcategoriasAlimento:
+    """Frente A — hierarquia em dois níveis (raiz -> subcategoria)."""
+
+    def test_cria_subcategoria(self, client):
+        c, engine = client
+        pai_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        r = c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": pai_id})
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["nome"] == "Proteico"
+        assert corpo["categoria_pai_id"] == pai_id
+
+    def test_recusa_terceiro_nivel(self, client):
+        c, engine = client
+        pai_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        filha_id = c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": pai_id}).json()["id"]
+        r = c.post("/alimentacao/categorias", json={"nome": "Neta", "categoria_pai_id": filha_id})
+        assert r.status_code == 409
+
+    def test_recusa_terceiro_nivel_via_put(self, client):
+        # Mesma recusa, mas tentando o 3º nível editando uma categoria já
+        # existente para apontar a uma subcategoria (não só na criação).
+        c, engine = client
+        pai_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        filha_id = c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": pai_id}).json()["id"]
+        neta_id = c.post("/alimentacao/categorias", json={"nome": "Neta"}).json()["id"]
+        r = c.put(f"/alimentacao/categorias/{neta_id}", json={"nome": "Neta", "categoria_pai_id": filha_id})
+        assert r.status_code == 409
+
+    def test_recusa_ser_pai_de_si_mesma(self, client):
+        c, engine = client
+        cid = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        r = c.put(f"/alimentacao/categorias/{cid}", json={"nome": "Concentrado", "categoria_pai_id": cid})
+        assert r.status_code == 409
+
+    def test_mesmo_nome_sob_pais_diferentes_e_aceito(self, client):
+        c, engine = client
+        concentrado_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        volumoso_id = c.post("/alimentacao/categorias", json={"nome": "Volumoso"}).json()["id"]
+        r1 = c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": concentrado_id})
+        r2 = c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": volumoso_id})
+        assert r1.status_code == 201
+        assert r2.status_code == 201
+
+    def test_mesmo_nome_sob_mesmo_pai_e_recusado(self, client):
+        c, engine = client
+        pai_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": pai_id})
+        r = c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": pai_id})
+        assert r.status_code == 409
+
+    def test_exclui_categoria_com_filha_e_recusado(self, client):
+        c, engine = client
+        pai_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": pai_id})
+        r = c.delete(f"/alimentacao/categorias/{pai_id}")
+        assert r.status_code == 409
+        assert "Proteico" in r.json()["detail"]
+        with Session(engine) as s:
+            assert s.get(CategoriaAlimento, pai_id) is not None
+
+    def test_lista_categorias_agrupa_filha_logo_apos_o_pai(self, client):
+        c, engine = client
+        # Zera as categorias padrão semeadas pra não interferir na ordem esperada.
+        for cat in c.get("/alimentacao/categorias").json():
+            c.delete(f"/alimentacao/categorias/{cat['id']}")
+        volumoso_id = c.post("/alimentacao/categorias", json={"nome": "Volumoso"}).json()["id"]
+        concentrado_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
+        c.post("/alimentacao/categorias", json={"nome": "Energético", "categoria_pai_id": concentrado_id})
+        c.post("/alimentacao/categorias", json={"nome": "Proteico", "categoria_pai_id": concentrado_id})
+        c.post("/alimentacao/categorias", json={"nome": "Silagens", "categoria_pai_id": volumoso_id})
+        nomes = [cat["nome"] for cat in c.get("/alimentacao/categorias").json()]
+        # "Concentrado" vem antes de "Volumoso" (ordem alfabética das raízes),
+        # e cada filha aparece logo abaixo do próprio pai, também alfabética
+        # entre si — não misturada com as filhas de outra raiz.
+        assert nomes == ["Concentrado", "Energético", "Proteico", "Volumoso", "Silagens"]
+
+
+class TestCategoriaAlimentoIsolamentoFazenda:
+    """(A7/A8, bugs pré-existentes corrigidos) `atualizar_categoria_alimento`
+    e `excluir_categoria_alimento` não conferiam a fazenda do registro
+    encontrado — uma fazenda conseguia editar/apagar categoria de outra só
+    sabendo o id. Precisa de duas fazendas de verdade (a suíte principal
+    roda com fazenda_id=None / sem isolamento), por isso tem fixture própria
+    — mesmo padrão de test_agenda_inducao_fazenda_id.py."""
+
+    @pytest.fixture
+    def client_multi_fazenda(self):
+        from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            # O router de Alimentação exige contrato ativo + módulo
+            # "alimentacao" contratado (`exigir_modulo_contratado`, main.py)
+            # — sem isso toda chamada cai em 403 antes mesmo de chegar na
+            # checagem de fazenda_id que este teste quer exercer.
+            for fid in (1, 2):
+                s.add(Fazenda(id=fid, nome=f"Fazenda {fid}"))
+                s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="alimentacao", ativo=True))
+            s.commit()
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+
+        class _FakeUser:
+            id = 1
+            papel = "admin"
+            ativo = True
+            username = "teste"
+
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+        def _client(fazenda_id: int) -> TestClient:
+            main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
+            main.app.dependency_overrides[get_fazenda_id_escrita] = lambda: fazenda_id
+            return TestClient(main.app)
+
+        yield engine, _client
+
+        main.app.dependency_overrides.clear()
+
+    def test_atualiza_categoria_de_outra_fazenda_da_404(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        cid = _client(2).post("/alimentacao/categorias", json={"nome": "Só da Fazenda 2"}).json()["id"]
+        r = _client(1).put(f"/alimentacao/categorias/{cid}", json={"nome": "Roubada"})
+        assert r.status_code == 404
+        with Session(engine) as s:
+            assert s.get(CategoriaAlimento, cid).nome == "Só da Fazenda 2"
+
+    def test_exclui_categoria_de_outra_fazenda_da_404(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        cid = _client(2).post("/alimentacao/categorias", json={"nome": "Também da Fazenda 2"}).json()["id"]
+        r = _client(1).delete(f"/alimentacao/categorias/{cid}")
+        assert r.status_code == 404
+        with Session(engine) as s:
+            assert s.get(CategoriaAlimento, cid) is not None
+
 
 class TestAlimentos:
     def test_lista_alimentos_reflete_cadastro(self, client):

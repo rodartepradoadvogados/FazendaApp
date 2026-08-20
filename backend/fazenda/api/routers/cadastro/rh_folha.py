@@ -12,7 +12,8 @@ import calendar
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -20,9 +21,9 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_
 from fazenda.database import get_session
 from fazenda.models import (
     ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, GuiaFolhaEncargo,
-    Pessoa, RescisaoFuncionario, Usuario, ValeFuncionario, ValeParcela,
+    LancamentoAnexo, Pessoa, RescisaoFuncionario, Usuario, ValeAvulso, ValeFuncionario, ValeParcela,
 )
-from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
+from fazenda.api.routers.financeiro import TAMANHO_MAXIMO_ANEXO, _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.vale_item import limpar_vinculo_de_itens, origens_lancamento_por_vale
 from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
@@ -31,6 +32,8 @@ from fazenda.rules.parametros import (
     percentual_estimado_fgts_mensal,
     percentual_terco_constitucional_ferias,
 )
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
+from fazenda.config import settings
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
@@ -2199,6 +2202,146 @@ def excluir_vale(
     _reconciliar_vale_competencias(session, pessoa_id, competencias)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Comprovante de pagamento do vale (D7-D10 da Frente D, sessão de ajustes de
+# tela) — reaproveita `LancamentoAnexo` (mesmo Storage/categoria "Comprovante"
+# já usado no anexo de lançamento, ver financeiro.py) em vez de uma tabela
+# nova: o mecanismo é idêntico, só o vínculo muda (`vale_funcionario_id`/
+# `vale_avulso_id` em vez de `numero_lancamento` — ver o comentário no model,
+# fazenda/models/financeiro.py). Cobre só `ValeFuncionario` e `ValeAvulso`; o
+# terceiro "vale" do sistema (item de lançamento marcado como vale, ver
+# rules/vale_item.py) já herda o anexo da própria nota financeira, então não
+# precisa de rota nenhuma aqui.
+#
+# `tipo` ("funcionario" | "avulso") escolhe o modelo E a coluna de vínculo em
+# LancamentoAnexo — resolvidos juntos por `_resolver_vale_comprovante` para
+# as 4 rotas abaixo nunca divergirem sobre qual é qual.
+# ---------------------------------------------------------------------------
+_MODELOS_VALE_COMPROVANTE: dict[str, type] = {"funcionario": ValeFuncionario, "avulso": ValeAvulso}
+
+
+def _resolver_vale_comprovante(session: Session, tipo: str, vale_id: int, fazenda_id: int | None):
+    modelo = _MODELOS_VALE_COMPROVANTE.get(tipo)
+    if modelo is None:
+        raise HTTPException(status_code=400, detail="Tipo de vale inválido — use 'funcionario' ou 'avulso'")
+    vale = session.get(modelo, vale_id)
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    coluna = LancamentoAnexo.vale_funcionario_id if tipo == "funcionario" else LancamentoAnexo.vale_avulso_id
+    return vale, coluna
+
+
+def _caminho_comprovante_vale(session: Session, fazenda_id: int | None, tipo: str, vale_id: int, coluna, nome_arquivo: str) -> str:
+    """fazenda-X/vales/{tipo}/{vale_id}/0001_nome.ext — mesmo espírito
+    sequencial de `_caminho_anexo_lancamento` (financeiro.py), sem depender
+    de `numero_lancamento` (que aqui pode nem existir)."""
+    pasta = f"fazenda-{fazenda_id if fazenda_id is not None else 'geral'}/vales/{tipo}/{vale_id}"
+    existentes = session.exec(select(LancamentoAnexo).where(coluna == vale_id)).all()
+    seq = 1 + len(existentes)
+    return f"{pasta}/{seq:04d}_{nome_seguro_storage(nome_arquivo)}"
+
+
+@router.post("/vales/{tipo}/{vale_id}/comprovante", status_code=201)
+async def anexar_comprovante_vale(
+    tipo: str, vale_id: int, file: UploadFile,
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _, coluna = _resolver_vale_comprovante(session, tipo, vale_id, fazenda_id)
+    conteudo = await file.read()
+    if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    nome_arquivo = file.filename or "comprovante"
+    caminho = _caminho_comprovante_vale(session, fazenda_id, tipo, vale_id, coluna, nome_arquivo)
+    try:
+        enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream", bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    anexo = LancamentoAnexo(
+        numero_lancamento=None,
+        vale_funcionario_id=vale_id if tipo == "funcionario" else None,
+        vale_avulso_id=vale_id if tipo == "avulso" else None,
+        nome_arquivo=nome_arquivo,
+        mime_type=file.content_type or "application/octet-stream",
+        tamanho_bytes=len(conteudo),
+        categoria="Comprovante",
+        caminho_storage=caminho,
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+        fazenda_id=fazenda_id,
+    )
+    session.add(anexo)
+    session.commit()
+    session.refresh(anexo)
+    return {"id": anexo.id, "nome_arquivo": anexo.nome_arquivo}
+
+
+@router.get("/vales/{tipo}/{vale_id}/comprovante")
+def listar_comprovantes_vale(
+    tipo: str, vale_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _, coluna = _resolver_vale_comprovante(session, tipo, vale_id, fazenda_id)
+    query = select(LancamentoAnexo).where(coluna == vale_id)
+    if fazenda_id is not None:
+        query = query.where(LancamentoAnexo.fazenda_id == fazenda_id)
+    anexos = session.exec(query).all()
+    return [
+        {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "criado_em": a.criado_em.isoformat()}
+        for a in sorted(anexos, key=lambda a: a.criado_em)
+    ]
+
+
+def _anexo_comprovante_vale(session: Session, anexo_id: int, fazenda_id: int | None) -> LancamentoAnexo:
+    """Acha o anexo pelo id, exigindo que seja mesmo um comprovante DE VALE
+    (um dos dois FKs preenchido) — sem essa checagem, `/vales/comprovante/{id}`
+    poderia baixar/excluir qualquer anexo de lançamento da fazenda, coisa que
+    não é dele: essa rota é só para o que foi anexado pelas duas rotas acima."""
+    anexo = session.get(LancamentoAnexo, anexo_id)
+    if (
+        not anexo
+        or (anexo.vale_funcionario_id is None and anexo.vale_avulso_id is None)
+        or (fazenda_id is not None and anexo.fazenda_id != fazenda_id)
+    ):
+        raise HTTPException(status_code=404, detail="Comprovante não encontrado")
+    return anexo
+
+
+@router.get("/vales/comprovante/{anexo_id}")
+def baixar_comprovante_vale(
+    anexo_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> Response:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    anexo = _anexo_comprovante_vale(session, anexo_id, fazenda_id)
+    try:
+        conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return Response(
+        content=conteudo, media_type=anexo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
+    )
+
+
+@router.delete("/vales/comprovante/{anexo_id}")
+def excluir_comprovante_vale(
+    anexo_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    anexo = _anexo_comprovante_vale(session, anexo_id, fazenda_id)
+    if anexo.caminho_storage:
+        try:
+            excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    session.delete(anexo)
+    session.commit()
+    return {"excluido": True}
 
 
 

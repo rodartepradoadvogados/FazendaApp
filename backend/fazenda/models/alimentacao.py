@@ -18,14 +18,29 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 class CategoriaAlimento(SQLModel, table=True):
     """Categoria de alimento (Volumoso, Concentrado, Mineral...), editável em
     Configurações > Cadastro > Alimentação > Categorias. Agrupa os Alimentos
-    cadastrados — puramente organizacional, sem regra de cálculo própria."""
+    cadastrados — puramente organizacional, sem regra de cálculo própria.
+
+    `categoria_pai_id` permite UM nível de subdivisão (ex.: "Proteico" sob
+    "Concentrado") — NULL é raiz. Só dois níveis são permitidos: o router
+    recusa uma categoria que já tem pai virar pai de outra (ver
+    `criar_categoria_alimento`/`atualizar_categoria_alimento`). A FK aponta
+    para a própria tabela, então não pode ser NOT NULL nem ter default
+    diferente de None (senão a primeira raiz nunca cadastrada travaria)."""
 
     __tablename__ = "categoria_alimento"
-    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_categoria_alimento_nome_fazenda"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "nome", "categoria_pai_id", "fazenda_id", name="uq_categoria_alimento_nome_pai_fazenda"
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Auto-FK opcional — raiz quando None. Indexada porque toda listagem
+    # (GET /alimentacao/categorias) e toda checagem de "tem filha" (exclusão)
+    # filtram por ela.
+    categoria_pai_id: Optional[int] = Field(default=None, foreign_key="categoria_alimento.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
