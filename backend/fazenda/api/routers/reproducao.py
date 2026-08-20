@@ -195,11 +195,17 @@ def ciclos_de_21_dias(
             "dias_minimos_no_ciclo": dias_minimos_no_ciclo(),
             "dias_resultado_conhecido": dias_resultado_conhecido(),
         },
-        # A tela mostra este aviso no rodapé: `Animal.a_descartar` é booleano
-        # sem data, então a marcação atual vale para todo o período avaliado.
+        # Aviso do rodapé da tela. Ficou desatualizado quando `a_descartar_em`
+        # passou a existir (ver `descartada_em` em rules/programa_reprodutivo.py):
+        # dizia ao usuário que a marcação NUNCA tem data, o que virou meia
+        # verdade — passou a valer só para quem foi marcado antes da coluna.
+        # Texto que engana é pior que aviso nenhum, ainda mais um que serve
+        # justamente para o usuário calibrar quanta fé ter na série histórica.
         "ressalva_historica": (
-            "A marcação \"a descartar\" não guarda data — o estado atual do animal "
-            "vale para todo o período. Baixas são datadas e reconstruídas corretamente."
+            "A marcação \"a descartar\" passou a ser datada: quem for marcado de agora "
+            "em diante sai do cálculo só a partir da data da marcação. Quem já estava "
+            "marcado antes disso não tem data registrada e segue valendo para todo o "
+            "período. Baixas sempre foram datadas e são reconstruídas corretamente."
         ),
     }
 
