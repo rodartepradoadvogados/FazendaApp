@@ -2440,6 +2440,59 @@ export async function fecharRescisao(id: number, dados: RescisaoFecharDados): Pr
   return res.json();
 }
 
+// Último valor unitário pago num produto ou serviço, para a mini-observação
+// abaixo do item em Contas a pagar. Devolve `null` quando o item nunca foi
+// comprado — a tela NÃO deve inventar número nesse caso, apenas não mostrar
+// a observação. Independe de quantidade e valor informados no item atual.
+export type UltimoPrecoProduto = {
+  produto: string;
+  valor_unitario: number;
+  data: string | null;
+  numero_lancamento: string | null;
+} | null;
+
+export async function fetchUltimoPrecoProduto(produto: string): Promise<UltimoPrecoProduto> {
+  const nome = (produto || "").trim();
+  if (!nome) return null;
+  const res = await authFetch(`${API}/financeiro/ultimo-preco?produto=${encodeURIComponent(nome)}`, { cache: "no-store" });
+  if (!res.ok) return null;   // sem histórico não é erro — é ausência de observação
+  const d = await res.json().catch(() => null);
+  return d && typeof d.valor_unitario === "number" ? d : null;
+}
+
+// Comprovante de pagamento de vale. Espelha o padrão já usado no anexo de
+// lançamento financeiro (anexarArquivoLancamentoPorId acima): multipart, o
+// arquivo vai para o mesmo Storage, e a categoria default é "Comprovante".
+// `tipo` distingue os dois modelos de vale que existem no sistema — o vale
+// marcado a partir de um item de lançamento já herda o anexo da própria nota.
+export async function anexarComprovanteVale(
+  tipo: "funcionario" | "avulso", valeId: number, file: File,
+): Promise<{ id: number; nome_arquivo: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/cadastro/vales/${tipo}/${valeId}/comprovante`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o comprovante"); }
+  return res.json();
+}
+
+export async function listarComprovantesVale(
+  tipo: "funcionario" | "avulso", valeId: number,
+): Promise<{ id: number; nome_arquivo: string; mime_type: string; criado_em: string }[]> {
+  const res = await authFetch(`${API}/cadastro/vales/${tipo}/${valeId}/comprovante`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function excluirComprovanteVale(anexoId: number) {
+  const res = await authFetch(`${API}/cadastro/vales/comprovante/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir o comprovante"); }
+  return res.json();
+}
+
+export function urlComprovanteVale(anexoId: number): string {
+  return `${API}/cadastro/vales/comprovante/${anexoId}`;
+}
+
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
@@ -3778,20 +3831,29 @@ export async function fetchEstadoBaixaAlimentacao() {
 
 // ── Categorias de alimento e cadastro de Alimento (Configurações > Cadastro
 // > Alimentação > Categorias / Alimentos) ──
-export type CategoriaAlimento = { id: number; nome: string; ativo: boolean };
+// `categoria_pai_id` é a auto-FK que dá o SEGUNDO nível (ex.: "Proteico" e
+// "Energético" abaixo de "Concentrado"). São só dois níveis: uma categoria com
+// pai não pode virar pai de outra — quem barra é o backend.
+// `Alimento.categoria_alimento_id` continua sendo UMA só FK, e pode apontar
+// tanto para uma raiz quanto para uma subcategoria. Quem aponta para uma
+// subcategoria tem a categoria derivada do pai dela — é assim que a tela de
+// Alimentos preenche as colunas Categoria e Subcategoria sem um segundo campo.
+export type CategoriaAlimento = {
+  id: number; nome: string; ativo: boolean; categoria_pai_id: number | null;
+};
 export async function fetchCategoriasAlimento(): Promise<CategoriaAlimento[]> {
   const res = await authFetch(`${API}/alimentacao/categorias`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Categorias de alimento error: ${res.status}`);
   return res.json();
 }
-export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean }) {
+export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean; categoria_pai_id?: number | null }) {
   const res = await authFetch(`${API}/alimentacao/categorias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
   return res.json();
 }
-export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean }) {
+export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean; categoria_pai_id?: number | null }) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

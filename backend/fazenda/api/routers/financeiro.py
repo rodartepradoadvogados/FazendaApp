@@ -841,6 +841,40 @@ def contexto_fornecedor(
     }
 
 
+@router.get("/ultimo-preco")
+def ultimo_preco_produto(
+    produto: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Último valor unitário pago (ou recebido) num produto/serviço — mini-
+    observação abaixo do item selecionado em Contas a pagar/receber (ver
+    FormFinanceiro). Lê LancamentoItem.valor_unitario, gravado ao criar o
+    lançamento (ver criar_lancamento acima, ~:1786), casando pelo NOME do
+    produto/serviço (normalizado: sem espaços nas pontas, sem diferença de
+    maiúscula) e pegando o mais recente por data_competencia. Sem histórico
+    devolve vazio — nunca inventa 0,00; quem decide não mostrar a observação
+    nesse caso é o front (ver fetchUltimoPrecoProduto em lib/api.ts)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    nome = (produto or "").strip()
+    if not nome:
+        return {}
+    nome_norm = nome.lower()
+    query = select(LancamentoItem).where(LancamentoItem.valor_unitario.is_not(None))
+    if fazenda_id is not None:
+        query = query.where(LancamentoItem.fazenda_id == fazenda_id)
+    achados = [it for it in session.exec(query).all() if (it.produto or "").strip().lower() == nome_norm]
+    if not achados:
+        return {}
+    achados.sort(key=lambda it: (it.data_competencia or date.min, it.id or 0))
+    escolhido = achados[-1]
+    return {
+        "produto": escolhido.produto,
+        "valor_unitario": escolhido.valor_unitario,
+        "data": escolhido.data_competencia.isoformat() if escolhido.data_competencia else None,
+        "numero_lancamento": escolhido.numero_lancamento,
+    }
+
+
 @router.get("/plano-contas")
 def plano_contas(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
