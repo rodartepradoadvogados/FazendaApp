@@ -1963,9 +1963,22 @@ export default function AgendaPage() {
           // renderCalendario() reaproveitado da antiga visualização de baixo,
           // só que agora sobrepondo este bloco em vez de trocar de aba.
           <div className="card mb-2">
-            <div className="card-header mb-3 flex items-center justify-between">
+            <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
               <span className="flex items-center gap-2"><Calendar size={15} style={{ color: "var(--dourado)" }} /> Calendário</span>
-              <button className="btn-ghost" onClick={() => setCalendarioAberto(false)} title="Fechar e voltar aos indicadores"><X size={14} /> Fechar</button>
+              <div className="flex items-center gap-2">
+                {/* O botão "Adicionar" saiu do cabeçalho da página (C3), mas o
+                    evento manual não podia sair com ele: o atalho "Agendar" de
+                    cada linha só cria evento de UM animal, com descrição fixa
+                    da linha. Sem este gatilho, evento livre ou vinculado a
+                    lote(s) ficaria sem nenhum caminho na tela — o modal e o
+                    POST /agenda/manual continuariam existindo, inalcançáveis.
+                    O calendário é onde faz sentido: quem está olhando o mês é
+                    quem quer marcar alguma coisa nele. */}
+                <button className="btn-ghost" onClick={() => setShowModal(true)} title="Criar evento manual — livre, por lote ou para vários animais">
+                  <Plus size={14} /> Novo evento
+                </button>
+                <button className="btn-ghost" onClick={() => setCalendarioAberto(false)} title="Fechar e voltar aos indicadores"><X size={14} /> Fechar</button>
+              </div>
             </div>
             {renderCalendario()}
           </div>

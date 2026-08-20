@@ -104,7 +104,7 @@ const CENTRO_CUSTO_PADRAO = "Pecuária Leiteira";
 // ou do valor deste lançamento (vale tanto pra produto do estoque quanto pra
 // serviço). Sem histórico não inventa número: some por completo, nunca
 // mostra "R$ 0,00" nem "sem dados" (ver fetchUltimoPrecoProduto em lib/api.ts).
-function UltimoPrecoObservacao({ produto }: { produto: string }) {
+function UltimoPrecoObservacao({ produto, tipo }: { produto: string; tipo: "despesa" | "receita" }) {
   const [ultimo, setUltimo] = useState<UltimoPrecoProduto>(null);
   useEffect(() => {
     const nome = produto.trim();
@@ -117,7 +117,7 @@ function UltimoPrecoObservacao({ produto }: { produto: string }) {
   const dataFmt = ultimo.data ? new Date(`${ultimo.data}T00:00:00`).toLocaleDateString("pt-BR") : null;
   return (
     <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-      Último valor pago: <strong style={{ color: "var(--text)" }}>{formatBRL(ultimo.valor_unitario)}</strong>
+      {tipo === "receita" ? "Último valor recebido" : "Último valor pago"}: <strong style={{ color: "var(--text)" }}>{formatBRL(ultimo.valor_unitario)}</strong>
       {dataFmt ? ` em ${dataFmt}` : ""}{ultimo.numero_lancamento ? ` (${ultimo.numero_lancamento})` : ""}
     </p>
   );
@@ -1459,7 +1459,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 <Campo label="Serviço">
                   <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
                     value={it.produto} onChange={(v) => atualizarItem(idx, { produto: v })} />
-                  <UltimoPrecoObservacao produto={it.produto} />
+                  <UltimoPrecoObservacao produto={it.produto} tipo={tipo} />
                 </Campo>
               ) : (
                 <div>
@@ -1486,7 +1486,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                         atualizarItem(idx, patch);
                         if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
                       }} />
-                      <UltimoPrecoObservacao produto={it.produto} />
+                      <UltimoPrecoObservacao produto={it.produto} tipo={tipo} />
                     </>
                   ) : (
                     <>
