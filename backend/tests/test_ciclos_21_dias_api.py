@@ -124,7 +124,36 @@ class TestCiclos21DiasAPI:
             "ancora": "2026-01-01", "modo": "inicio", "n_ciclos": 1, "categoria": "vaca",
         }).json()
         assert so_vacas["ciclos"][0]["animais"]["br_elig"] == ["10"]
+        # Só há uma vaca carregada, e ela entrou em BR ELIG — as duas contagens
+        # coincidem aqui. O teste que separa os dois números está abaixo.
         assert so_vacas["resumo"]["animais_avaliados"] == 1
+        assert so_vacas["resumo"]["animais_carregados"] == 1
+
+    def test_animais_avaliados_conta_quem_entrou_em_ciclo_nao_o_rebanho_carregado(self, client):
+        """`animais_avaliados` já se chamou assim sem merecer: media quantos
+        perfis eram CARREGADOS do banco, não quantos de fato passaram por
+        algum balde do BREDSUM\\E. Uma gestante o período todo e uma marcada
+        para descarte antes do ciclo entravam nessa contagem do mesmo jeito
+        que a vaca que de fato foi avaliada.
+
+        Antes desta correção: `animais_avaliados` valia 3 (as três carregadas)
+        para este cenário. Depois: vale 1 (só "10", que entrou em BR ELIG) —
+        e o valor antigo não sumiu, só passou a se chamar `animais_carregados`.
+        """
+        c, engine = client
+        with Session(engine) as s:
+            _vaca(s, "10")
+            _vaca(s, "20", parto=date(2025, 8, 1))   # gestante de ciclo anterior — nunca entra em nenhum balde
+            _vaca(s, "30", a_descartar=True)          # descartada antes do ciclo — idem
+            s.add(Servico(numero_matriz="20", data_servico=date(2025, 10, 1), diagnostico="POSITIVO"))
+            s.commit()
+
+        j = c.get("/reproducao/ciclos-21-dias", params={
+            "ancora": "2026-01-01", "modo": "inicio", "n_ciclos": 1,
+        }).json()
+        assert j["ciclos"][0]["animais"]["br_elig"] == ["10"]
+        assert j["resumo"]["animais_carregados"] == 3, "as três vacas ativas, gestante e descartada inclusive"
+        assert j["resumo"]["animais_avaliados"] == 1, "só '10' passou por algum balde do BREDSUM\\E"
 
     def test_modo_invalido_da_400(self, client):
         c, _ = client

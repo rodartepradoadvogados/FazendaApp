@@ -171,7 +171,7 @@ export default function Ciclos21Dias({ onVoltar }: { onVoltar: () => void }) {
           </div>
 
           <p style={{ fontSize: "0.72rem", color: "var(--mob-muted)", marginBottom: "0.8rem" }}>
-            {dados.resumo?.animais_avaliados ?? 0} animal(is) · {dados.periodo ? `${formatDate(dados.periodo.inicio)} a ${formatDate(dados.periodo.fim)}` : ""}
+            {dados.resumo?.animais_avaliados ?? 0} animal(is) em ciclo de {dados.resumo?.animais_carregados ?? 0} no rebanho · {dados.periodo ? `${formatDate(dados.periodo.inicio)} a ${formatDate(dados.periodo.fim)}` : ""}
           </p>
 
           {dados.ciclos.map((c) => (

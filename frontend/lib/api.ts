@@ -1388,7 +1388,12 @@ export type CiclosResposta = {
   ciclos: CicloReprodutivo[];
   resumo: {
     taxa_servico: number | null; taxa_prenhez: number | null;
-    taxa_concepcao: number | null; animais_avaliados: number;
+    taxa_concepcao: number | null;
+    // `animais_avaliados`: quantos animais passaram por pelo menos um balde
+    // do BREDSUM\E (união de BR ELIG/BRED/PG ELIG/PREG de todos os ciclos) —
+    // NÃO é o tamanho do rebanho carregado. Quem quer o rebanho carregado
+    // (gestantes e baixadas incluídas) usa `animais_carregados`.
+    animais_avaliados: number; animais_carregados: number;
   };
   metas: { taxa_servico: number; taxa_prenhez: number; taxa_concepcao: number };
   parametros: { pev_dias: number; dias_minimos_no_ciclo: number; dias_resultado_conhecido: number };

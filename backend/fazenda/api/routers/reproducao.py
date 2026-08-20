@@ -173,6 +173,23 @@ def ciclos_de_21_dias(
         soma = sum((l[campo] or 0) * l[denominador] for l in linhas)
         return round(soma / total_den, 1)
 
+    # `animais_avaliados` já se chamou assim sem merecer: media quantos perfis
+    # foram CARREGADOS do banco para o cálculo, não quantos de fato passaram
+    # por algum crivo do BREDSUM\E. Uma vaca gestante o período todo, ou uma
+    # baixada antes do primeiro ciclo, entrava nessa contagem do mesmo jeito
+    # que uma que foi de fato avaliada — nome prometendo mais do que a conta
+    # entregava. A união de br_elig/bred/pg_elig/preg de todos os ciclos já
+    # responde "quem passou por pelo menos um balde", sem inventar cálculo
+    # novo: cada `ResultadoCiclo` já carrega essas listas. O valor antigo (o
+    # tamanho do rebanho carregado) não desaparece — seria informação querida
+    # por quem calibra o carregamento em si — só passa a ter nome que não
+    # mente: `animais_carregados`. Mesmo princípio de `ultimo_por_animal` em
+    # rules/indicadores.py, que preservou um acumulado ao ser destronado do
+    # card.
+    animais_avaliados: set[str] = set()
+    for r in resultados:
+        animais_avaliados.update(r.br_elig, r.bred, r.pg_elig, r.preg)
+
     return {
         "ancora": ancora.isoformat(),
         "modo": modo,
@@ -183,7 +200,8 @@ def ciclos_de_21_dias(
             "taxa_servico": _ponderada("taxa_servico", "br_elig"),
             "taxa_prenhez": _ponderada("taxa_prenhez", "pg_elig"),
             "taxa_concepcao": _ponderada("taxa_concepcao", "servicos_com_resultado"),
-            "animais_avaliados": len(perfis),
+            "animais_avaliados": len(animais_avaliados),
+            "animais_carregados": len(perfis),
         },
         "metas": {
             "taxa_servico": meta_taxa_servico(),

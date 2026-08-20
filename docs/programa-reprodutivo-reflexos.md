@@ -7,7 +7,7 @@ Este documento é o inventário que a migração do resto do sistema vai consumi
 Levantado por três varreduras independentes do código, com cada achado
 conferido contra o arquivo antes de entrar aqui.
 
-**Última atualização:** 19/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores da Capa, a série mensal de concepção, a unificação de "apta", as taxas do painel de Eficiência Reprodutiva e a ligação card→lista).
+**Última atualização:** 20/08/2026 (candidatas a IATF, "PEV encerra", as 8 listas de trabalho + `fluxo_lactacao`, os denominadores da Capa, a série mensal de concepção, a unificação de "apta", as taxas do painel de Eficiência Reprodutiva, a ligação card→lista, o descarte datado e as três frentes que não se falaram).
 
 ---
 
@@ -432,3 +432,191 @@ fixado de antemão.
 `alertas_indicador.py` depende literalmente deles — mas mudam de significado.
 Quem tiver limite configurado nesses dois verá o número mudar sem ter mexido
 em nada. Mesmo tratamento dado às taxas reprodutivas: manter e avisar.
+
+---
+
+## 16. Descarte datado, três dívidas do motor, e a costura sem dono — CORRIGIDO
+
+Esta rodada foi feita em paralelo por três frentes — o motor reprodutivo, o
+CI, e o nome de um número na tela de Ciclos — cada uma tocando um arquivo
+diferente. O que amarra a seção não é nenhum defeito isolado: é que as três
+tinham a mesma lacuna, descrita no item 16.6.
+
+### 16.1 Descarte sem data, num motor que reconstrói o passado
+
+`Animal.a_descartar` era booleano puro. Inofensivo enquanto a tela só lia o
+estado de hoje — deixa de ser inofensivo no instante em que o motor passa a
+reconstruir o rebanho em datas passadas (é o que `programa_reprodutivo` faz
+desde que existe): a marcação de hoje retroagia para **todos** os ciclos
+históricos, inclusive os em que o animal ainda estava ativo. Isso encolhia o
+BR ELIG do passado bem nas vacas-problema — as que mais tarde acabam
+descartadas — e inflava a taxa de serviço histórica. Uma versão atenuada do
+próprio defeito que este motor existe para corrigir (seção 13): número puxado
+para cima por quem já devia ter saído da conta.
+
+A correção é a coluna `a_descartar_em` e a função `descartada_em()`,
+espelhando `baixada_em()` — mesmo par pergunta/resposta que já existe para
+baixa, agora existindo também para descarte.
+
+**Sem backfill, de propósito.** Os já marcados antes da coluna existir ficam
+com `a_descartar_em = NULL`. Inventar uma data — hoje, a data de criação do
+registro, qualquer uma — produziria um histórico plausível e **falso**,
+indistinguível de um retroativo real; não dá para saber, então não dá para
+fingir que se sabe. `NULL` é tratado como marcação já vigente desde sempre, o
+mesmo critério que `baixada_em` usa para `ativo=False` sem data (seção 4).
+Consequência: nenhum número muda no dia do deploy — só as marcações feitas
+daqui em diante ganham precisão.
+
+### 16.2 Três dívidas do motor, uma delas mudando uma taxa
+
+Em `rules/programa_reprodutivo.py`, dentro da mesma correção:
+
+- **`motivo` sempre `None` no ramo final** de `estado_no_dia`. O drill-down da
+  tela mostra esse campo e ficava em branco sempre que um estado caía no
+  fallback. Não era defeito vivo — nenhum estado real chega lá hoje —, mas
+  isso valia só porque dois lados (a função e quem a chama) estavam
+  sincronizados à mão, sem nada que travasse essa sincronia. Um estado novo
+  sem branch explícito reabriria o buraco em silêncio, e ninguém saberia até
+  a tela mostrar um campo vazio de novo. Agora há motivo sempre.
+- **`dias_janela_dg` estourando `TypeError`** quando passado pelo caminho real
+  de uso — sintoma de um parâmetro que só tinha sido exercitado por testes
+  que não representavam a chamada de produção.
+- **Cio de repasse sem janela mínima.** Uma segunda IA lançada um ou dois dias
+  depois da primeira contava como prova de que a primeira tinha falhado — mas
+  o ciclo estral gira em torno de 21 dias, e nada biológico se decide entre o
+  dia 1 e o dia 2 de uma gestação em potencial. Este item **muda uma taxa**:
+  antes, essa reinseminação precoce fazia a concepção da primeira IA fechar
+  como fracasso comprovado (0,0%); agora, sem janela mínima cumprida, o
+  serviço fica fora do denominador de `taxa_concepcao` até haver tempo
+  biológico de se saber — a diferença entre "sabemos que falhou" e "ainda não
+  sabemos". A janela reaproveita o parâmetro editável que a fazenda já usa
+  para cio curto, em vez de inventar um segundo critério divergente.
+
+`dias_janela_dg` e a janela de repasse são declarados na assinatura de
+`calcular_ciclo`, não deixados cair no `**kwargs` compartilhado com
+`elegivel_ia` — se vazassem por ali, cairiam numa cadeia de chamadas que não
+os aceita (`elegivel_ia` → `dias_aptos` → `estado_no_dia`) e explodiriam em
+`TypeError` de novo, só que num lugar mais difícil de rastrear.
+
+### 16.3 O parâmetro que ninguém repassava
+
+A janela de repasse do item anterior não é conceito novo: reaproveita um
+parâmetro editável que já existe na tela de Configurações. O problema é que
+**nenhum chamador do motor o repassava** — o parâmetro chegava até
+`calcular_ciclo` só como valor-padrão embutido no código, nunca como o valor
+que o usuário efetivamente configurou. Editar o campo na tela não fazia
+diferença nenhuma no cálculo; a interface prometia um controle que não
+existia.
+
+É o mesmo defeito, não uma recorrência por acaso, pelo qual
+`idade_maturidade_novilha` foi aposentado nesta mesma série (ver
+`rules/parametros.py`): um campo editável cuja edição não tem efeito nenhum é
+pior do que nenhum campo — ele finge dar controle a quem está calibrando o
+manejo. A diferença é que ali a resposta foi apagar o parâmetro órfão; aqui
+foi ligá-lo nos três pontos de entrada que o motor tem hoje
+(`routers/reproducao.py`, `routers/recria.py`, `rules/indicadores.py`) — o
+conceito já era real, só faltava o fio até ele.
+
+### 16.4 `ruff --select F821` entra no CI
+
+`796f501` corrigiu um `NameError`: ao ligar o parâmetro da seção 16.3 em dois
+routers, o import foi levado para apenas um deles. Resultado: 13 testes
+quebrados, todos pela mesma causa raiz, descobertos só ao fim dos ~24 minutos
+da suíte inteira — o pior lugar possível para descobrir um erro deste tamanho,
+porque o retorno demora o máximo possível.
+
+Esta classe de erro — nome usado sem import correspondente — não aparece na
+revisão do diff (o nome existe em algum lugar do arquivo, só não neste
+escopo) nem no typecheck do frontend (é backend Python, sem tipos estáticos
+checados por padrão). Só estoura em runtime, e só na linha exata que
+executa o caminho não coberto. Já tinha acontecido antes nesta série, mesma
+causa: função nova ligada a um chamador sem levar o import junto.
+
+`ruff check --select F821` responde essa pergunta específica sobre o backend
+inteiro em **0,2 segundo**, contra **24 minutos** da suíte. Entrou como job
+próprio no CI, antes da suíte, para falhar rápido — e sem nenhuma outra regra
+de estilo junto, de propósito: o objetivo não é padronizar código, é travar
+uma classe de erro específica que já custou caro duas vezes na mesma semana.
+
+### 16.5 Dois textos que mentiam
+
+- O rodapé da tela de Ciclos dizia que a marcação "a descartar" **nunca**
+  guarda data e vale para todo o período — verdade até `a_descartar_em`
+  (16.1) passar a existir, e meia verdade a partir do mesmo commit que a
+  criou. O texto existe justamente para o usuário calibrar quanta fé ter na
+  série histórica; desatualizado, ele é pior que nenhum aviso, porque faz
+  desconfiar do número certo pelo critério errado. O texto novo diz as duas
+  metades: quem for marcado de agora em diante sai do cálculo a partir da
+  data da marcação; quem já estava marcado antes não tem data e segue
+  valendo para todo o período.
+- O docstring de `classificar_animal` (`rules/estado_reprodutivo.py`)
+  documentava `VAZIA` como o estado de fallback — "sem dados suficientes para
+  classificar". Não é: o fallback real, no código, é `NAO_APTA`; `VAZIA`
+  nunca é devolvida por nenhum `return` da função. Não era defeito vivo —
+  todo caso que "vazia" prometia cobrir já está coberto por outro estado —,
+  mas era documentação afirmando um comportamento que não existe, e é assim
+  que a próxima pessoa devolve `VAZIA` de um caminho novo achando que está
+  reaproveitando um fallback testado, quando nenhuma tela jamais exercitou
+  esse estado. A constante fica — é lida em três lugares, remover é trocar
+  vocabulário em três arquivos por zero ganho de comportamento — mas o
+  docstring agora diz o que o código de fato faz, e registra que
+  `ESTADOS_APTOS` carrega esse membro morto, para quem for acrescentar um
+  estado novo saber contra o que está conferindo.
+
+### 16.6 `animais_avaliados` também prometia mais do que entregava
+
+Mesma família de defeito da seção 13: um número com nome que promete mais do
+que a conta faz. Em `GET /reproducao/ciclos-21-dias`,
+`resumo.animais_avaliados` media quantos perfis foram **carregados** do banco
+para o cálculo — o rebanho ativo inteiro, gestante o período todo ou marcada
+para descarte antes do primeiro ciclo incluída — não quantos de fato
+passaram por algum balde do BREDSUM\\E. Quem lê "animais avaliados: 127" na
+tela conclui que 127 animais participaram da conta; a conta real podia ser
+bem menor.
+
+A correção não inventou cálculo novo: cada `ResultadoCiclo` já carrega as
+listas `br_elig`/`bred`/`pg_elig`/`preg`, e a união delas ao longo de todos os
+ciclos do período responde exatamente "quem entrou em pelo menos um balde".
+`animais_avaliados` passou a ser essa união; o valor antigo (o tamanho do
+rebanho carregado) não desapareceu, só passou a ter nome que não mente —
+`animais_carregados` — mesmo princípio de `ultimo_por_animal` na seção 15.2:
+o número destronado do nome não some, muda de nome.
+
+Cenário de teste com três vacas carregadas — uma sem restrição, uma gestante
+desde ciclo anterior, uma marcada para descarte antes do ciclo —: antes,
+`animais_avaliados` valia **3**; depois, vale **1**, porque só a primeira
+passou por BR ELIG. As duas telas (mesa e mobile) e o tipo em `lib/api.ts`
+foram ajustados a mostrar os dois números lado a lado — "no rebanho" e
+"entraram em algum ciclo" — em vez de um só rótulo ambíguo cobrindo os dois
+sentidos.
+
+### 16.7 A costura sem dono
+
+As três frentes acima foram trabalhadas em paralelo por agentes diferentes, e
+as três erraram do mesmo jeito: **entregaram a peça certa sem ligá-la.**
+
+- A janela de repasse (16.2) foi escrita, testada, e corretamente calculada —
+  e ficou inerte porque nenhum dos três pontos de entrada do motor a
+  repassava (16.3). O parâmetro em Configurações continuava existindo,
+  continuava editável, e continuava sem efeito nenhum no que a tela mostrava.
+- A coluna `a_descartar_em` (16.1) foi criada, migrada e lida corretamente
+  pelo motor — e o rodapé que existe especificamente para explicar ao usuário
+  como o motor trata essa marcação continuou de pé, sem ninguém voltar para
+  atualizá-lo, dizendo o oposto do que o código agora fazia (16.5).
+- O import que faltou (16.4) não foi um erro de lógica — a função nova estava
+  certa, a chamada estava certa; só o fio entre os dois arquivos (import →
+  uso) não foi levado junto quando o segundo router ganhou a mesma chamada.
+
+Em nenhum dos três casos o código escrito estava errado, isoladamente. O
+parâmetro calculava certo. A coluna gravava certo. A função existia e
+funcionava. O que faltou, nas três vezes, foi a mesma coisa: quem escreveu a
+peça não seguiu até o outro lado da costura para conferir se ela de fato
+estava pregada — se o valor configurado chegava ao cálculo, se o texto na
+tela ainda descrevia o comportamento real, se o nome importado no arquivo B
+sobrevivia à mesma limpeza de import que aconteceu no arquivo A. Dividir o
+trabalho por arquivo, como a seção 15.5 já registrou para produção, separa
+quem escreve cada peça — mas não separa a pergunta "isso está de fato
+conectado?", que continua sendo de todo mundo e de ninguém ao mesmo tempo.
+`ruff --select F821` (16.4) é a única das três correções que vira uma trava
+estrutural contra a recaída; as outras duas dependem de alguém lembrar de
+verificar de novo.
