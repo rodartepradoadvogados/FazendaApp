@@ -1,11 +1,11 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, fetchParametros } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
@@ -38,7 +38,10 @@ const FormCalendarioSanitario = dynamic(() => import("@/components/lancamentos/F
 const FormPreventivoAplicacao = dynamic(() => import("@/components/lancamentos/FormPreventivoAplicacao").then((m) => m.FormPreventivoAplicacao), { ssr: false });
 const BstLancamentoView = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.BstLancamentoView), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
-const FormAlimentacaoDieta = dynamic(() => import("@/components/lancamentos/FormAlimentacaoDieta").then((m) => m.FormAlimentacaoDieta), { ssr: false });
+// A dieta em si (CadastrarNovaDieta) mudou de casa para Insumos e sanidade >
+// Alimentação > "Lançar nova dieta" (ver app/alimentacao/page.tsx) — aqui
+// ficou só o lançamento diário de consumo/sobra que consome essa dieta.
+const ConsumoAlimento = dynamic(() => import("@/components/lancamentos/ConsumoAlimento").then((m) => m.ConsumoAlimento), { ssr: false });
 const FormEstoque = dynamic(() => import("@/components/lancamentos/FormEstoque").then((m) => m.FormEstoque), { ssr: false });
 const FormAjusteSaldoEstoque = dynamic(() => import("@/components/lancamentos/FormAjusteSaldoEstoque").then((m) => m.FormAjusteSaldoEstoque), { ssr: false });
 
@@ -59,7 +62,7 @@ const LACT = ["01", "02", "03"];
 // Ordem alfabética pelo label (ignorando acento), com "Excluir lançamento"
 // sempre por último — não é alfabético de propósito (é a ação mais perigosa).
 const TIPOS_GRUPOS = [
-  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
+  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Consumo diário por lote (nº de animais ou kg direto) e sobra de cocho — só os alimentos da dieta ativa do lote.", leaf: "alimentacao_dieta" },
   {
     id: "animais", label: "Animais", icon: ArrowRightLeft,
     desc: "Movimentar animais entre lotes, comprar/vender ou dar baixa (morte/descarte).",
@@ -174,6 +177,25 @@ export default function LancamentosPage() {
     const ir = new URLSearchParams(window.location.search).get("ir");
     if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
   }, []);
+
+  // modo_lancamento_alimentacao (Configurações > Parâmetros > Alimentação):
+  // "nao_lancar" tira a aba de Alimentação do menu por completo (item D10) —
+  // não é só esconder o formulário, é a aba mesma que não deve aparecer.
+  const [modoAlimentacao, setModoAlimentacao] = useState<string | null>(null);
+  useEffect(() => {
+    fetchParametros()
+      .then((d) => {
+        const itens: any[] = d?.grupos?.alimentacao?.itens ?? [];
+        setModoAlimentacao(String(itens.find((i) => i.chave === "modo_lancamento_alimentacao")?.valor ?? "fornecido_sobra"));
+      })
+      .catch(() => setModoAlimentacao("fornecido_sobra"));
+  }, []);
+  // Se a aba estava aberta e o parâmetro virou "nao_lancar" embaixo do
+  // usuário (ou o link "ir=" de outra tela apontava pra cá), sai dela —
+  // nunca deixa a tela de consumo visível com o modo desligado.
+  useEffect(() => {
+    if (sel === "alimentacao_dieta" && modoAlimentacao === "nao_lancar") setSel("protocolo_iatf");
+  }, [sel, modoAlimentacao]);
   const trocarTipo = useCallback((novoId: string) => {
     if (novoId === sel) return;
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
@@ -193,6 +215,39 @@ export default function LancamentosPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [sujo]);
+
+  // "Sujo" genérico (fallback para os formulários que não sabem se avisar
+  // sozinhos, como FormFinanceiro faz via `onSujo`): em vez de marcar sujo em
+  // QUALQUER evento de mudança — o que nunca desmarcava, mesmo apagando tudo
+  // de volta —, compara os campos do formulário atual contra o instantâneo
+  // ("baseline") tirado assim que a sub-aba abriu. Valor padrão de nascença
+  // (ex.: "Data do controle" já vem com hoje, "Modalidade" já vem com uma
+  // opção marcada) não conta como trabalho do usuário — mesmo raciocínio do
+  // caso do centro de custo em FormFinanceiro, só que aqui genérico, porque
+  // a maioria dos formulários de Lançamentos não expõe seu próprio `sujo`.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const baselineRef = useRef<string[]>([]);
+  const valorDoCampo = (el: Element): string => {
+    if (el instanceof HTMLInputElement) return el.type === "checkbox" || el.type === "radio" ? String(el.checked) : el.value;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el.value;
+    return "";
+  };
+  const capturarBaseline = useCallback(() => {
+    const el = cardRef.current;
+    baselineRef.current = el ? Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo) : [];
+  }, []);
+  // Recaptura a baseline sempre que a sub-aba muda — é o formulário NOVO que
+  // acabou de nascer que serve de referência, nunca o antigo.
+  useEffect(() => { capturarBaseline(); }, [sel, capturarBaseline]);
+  const verificarSujo = useCallback(() => {
+    if (sel === "exclusao") return;
+    const el = cardRef.current;
+    if (!el) return;
+    const atuais = Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo);
+    const mudou = atuais.length !== baselineRef.current.length || atuais.some((v, i) => v !== baselineRef.current[i]);
+    setSujo(mudou);
+  }, [sel]);
+
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
@@ -232,12 +287,16 @@ export default function LancamentosPage() {
 
   // Piloto do drill-down: a Sidebar desenha esta árvore (grupo → sub-grupo →
   // folha) no lugar da lista de módulos enquanto Lançamentos estiver aberto.
-  const subNavTree: SubNavNode[] = useMemo(() => TIPOS_GRUPOS.map((g) => ({
-    id: g.leaf ?? g.id, label: g.label, icon: g.icon,
-    children: g.grupos
-      ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map(paraSubNavNode) }))
-      : g.subs?.map(paraSubNavNode),
-  })), []);
+  // Alimentação some da árvore quando o modo de lançamento for "nao_lancar"
+  // (item D10) — filtra aqui, no ponto único que a Sidebar de fato lê.
+  const subNavTree: SubNavNode[] = useMemo(() => TIPOS_GRUPOS
+    .filter((g) => !(g.id === "alimentacao_dieta" && modoAlimentacao === "nao_lancar"))
+    .map((g) => ({
+      id: g.leaf ?? g.id, label: g.label, icon: g.icon,
+      children: g.grupos
+        ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map(paraSubNavNode) }))
+        : g.subs?.map(paraSubNavNode),
+    })), [modoAlimentacao]);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: sel, onSelect: trocarTipo }), [subNavTree, sel, trocarTipo]));
 
   return (
@@ -261,11 +320,11 @@ export default function LancamentosPage() {
           ) : sel === "diagnostico" ? (
             <><strong style={{ color: "var(--text)" }}>Diagnóstico já grava de verdade.</strong> Um resultado marcado para retoque entra na agenda automaticamente.</>
           ) : sel === "estoque_entradas_saidas" ? (
-            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
+            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora. Aqui é lugar de ajuste, cortesia ou lançamento que faltou — não de aplicação em animais nem de outros lançamentos, que têm sub-aba própria.</>
           ) : sel === "estoque_ajuste_saldo" ? (
-            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença.</>
+            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença. Aqui é lugar de ajuste, cortesia ou lançamento que faltou — não de aplicação nem de outros lançamentos, que têm sub-aba própria.</>
           ) : sel === "alimentacao_dieta" ? (
-            <><strong style={{ color: "var(--text)" }}>Dieta já grava de verdade.</strong> Só uma dieta fica ativa por lote; ao encerrar, você pode lançar a próxima na hora. A data prevista de encerramento entra na Agenda para análise.</>
+            <><strong style={{ color: "var(--text)" }}>Consumo já grava de verdade.</strong> Dá baixa em estoque na hora. Só oferece os alimentos da dieta ativa do lote — fora da dieta ou sem saldo só entra se o cadastro do lote permitir.</>
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : sel === "preventivo_aplicacao" ? (
@@ -296,7 +355,7 @@ export default function LancamentosPage() {
         </p>
       </div>
 
-      <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
+      <div className="card" ref={cardRef} onChange={verificarSujo}>
         <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
         <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
         {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
@@ -348,7 +407,7 @@ export default function LancamentosPage() {
         {sel === "comprar_semen" && <CompraSemenForm />}
         {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
         {sel === "baixar_animal" && <BaixarAnimal />}
-        {sel === "alimentacao_dieta" && <FormAlimentacaoDieta />}
+        {sel === "alimentacao_dieta" && <ConsumoAlimento />}
         {sel === "exclusao" && <FormExclusao />}
       </div>
     </div>

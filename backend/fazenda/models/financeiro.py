@@ -133,6 +133,18 @@ class LancamentoItem(SQLModel, table=True):
 # metadados e o caminho. `conteudo` (bytes direto no Postgres) é o formato
 # ANTIGO, mantido só para ler anexos já existentes — todo anexo novo usa
 # `caminho_storage`, nunca os dois ao mesmo tempo.
+#
+# Também é o anexo do COMPROVANTE DE PAGAMENTO de `ValeFuncionario` e
+# `ValeAvulso` (ver fazenda/api/routers/cadastro/rh_folha.py, rotas
+# /vales/{tipo}/{id}/comprovante) — reaproveitado em vez de uma tabela nova
+# porque o mecanismo (Storage + categoria "Comprovante" + metadados) é
+# idêntico; só a chave de vínculo muda. `numero_lancamento` continua sendo
+# o vínculo de todo anexo "de lançamento" de verdade, mas um vale nem
+# sempre tem um `ContaGerencial` por trás (forma_pagamento
+# "desconto_integral_folha"/"desconto_proximo_pagamento" não move caixa —
+# ver `_sincronizar_conta_vale`): por isso `numero_lancamento` virou
+# opcional e ganhou os dois FKs abaixo, mutuamente exclusivos com ele e
+# entre si (exatamente um dos três vínculos preenchido, nunca mais de um).
 # ---------------------------------------------------------------------------
 class LancamentoAnexo(SQLModel, table=True):
     __tablename__ = "lancamento_anexo"
@@ -140,7 +152,12 @@ class LancamentoAnexo(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda — ver ContaGerencial.fazenda_id acima.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    numero_lancamento: str = Field(index=True)
+    numero_lancamento: Optional[str] = Field(default=None, index=True)
+    # Comprovante de vale — exatamente um preenchido quando o anexo é de
+    # vale (o outro fica None), e os dois None quando o anexo é de um
+    # lançamento normal (`numero_lancamento` preenchido nesse caso).
+    vale_funcionario_id: Optional[int] = Field(default=None, foreign_key="vale_funcionario.id", index=True)
+    vale_avulso_id: Optional[int] = Field(default=None, foreign_key="vale_avulso.id", index=True)
     nome_arquivo: str
     mime_type: str
     tamanho_bytes: int

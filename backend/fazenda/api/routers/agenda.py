@@ -16,15 +16,17 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ContaGerencial,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, ConsumoAlimento,
+    ConsumoSobra, ContaGerencial,
     CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
-    PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PortalMensagem, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Secagem, SeedFlag, Servico,
 )
 from fazenda.api.routers.lotes import coletar_dados_criterios
+from fazenda.api.routers.portal import usuarios_da_fazenda
 from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
@@ -50,8 +52,9 @@ from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.parametros import bst_ajuste_ancora_data, get_param, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
+from fazenda.rules.unidades import kg_equivalente
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -92,9 +95,46 @@ MODULO_TECNICO_PARA_COMERCIAL = {
 # contrário de uma atividade (alguém executa e dá baixa), um comunicado só
 # informa: fica fixo enquanto vigora e some sozinho depois, sem poder ser
 # marcado como realizado/excluído pelo usuário (ver marcar_realizado abaixo).
-COMUNICADO_PREFIXOS = ("nova_dieta_",)
+# "alerta_sobra_" — sobra de cocho fora da faixa aceitável (sessão 3, Frente
+# C): mesma imunidade de "nova_dieta_" (não dá para marcar realizado nem
+# excluir — o alerta é recalculado a cada consulta, a partir do ConsumoSobra
+# vigente do dia, e some sozinho quando a sobra volta à faixa ou o dia passa).
+COMUNICADO_PREFIXOS = ("nova_dieta_", "alerta_sobra_")
 
 TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
+
+# Rótulos amigáveis por prefixo de evento_id — usados só pelo card "Concluídos
+# no período" da Agenda (GET /agenda/realizados). EventoRealizado guarda
+# apenas um hash (evento_id) + marcado_em, não o texto da pendência original;
+# reconstruir o detalhe completo (qual animal, qual lote, qual data) exigiria
+# juntar de volta com a origem de cada um dos ~15 tipos de pendência que
+# passam por aqui — algumas já podem ter mudado desde então. Mapear o
+# PREFIXO (fixo, definido no código acima) para uma categoria é honesto e
+# estável; prefixo fora do mapa não inventa rótulo — o card mostra o
+# evento_id cru (ver _rotulo_evento_realizado).
+ROTULOS_EVENTO_REALIZADO: dict[str, str] = {
+    "cura_protocolo_": "Confirmação de cura — protocolo sanitário",
+    "diaria_trabalho_": "Diária — dia de trabalho confirmado",
+    "diaria_fim_": "Diária — fim de contrato",
+    "empreitada_penultima_etapa_": "Empreitada — penúltima etapa",
+    "pesagem_": "Pesagem do rebanho",
+    "protocolo_sanitario_": "Protocolo sanitário — aplicação",
+    "semen_minimo_": "Estoque de sêmen abaixo do mínimo",
+    "sugestao_movimentacao_": "Sugestão de movimentação de lote",
+    "vacina_pre_parto_": "Vacina pré-parto",
+    "calendario_sanitario_": "Evento sanitário — calendário",
+    "aplic_agendada_": "Aplicação agendada",
+    "dieta_analise_": "Análise de dieta",
+    "evento_sanitario_": "Evento sanitário",
+    "bst_aplicacao_": "Aplicação de BST",
+}
+
+
+def _rotulo_evento_realizado(evento_id: str) -> str | None:
+    for prefixo, rotulo in ROTULOS_EVENTO_REALIZADO.items():
+        if evento_id.startswith(prefixo):
+            return rotulo
+    return None
 
 
 def _modulos_liberados(usuario: Usuario) -> set[str]:
@@ -105,6 +145,135 @@ def _modulos_liberados(usuario: Usuario) -> set[str]:
         # à parte, senão admin nunca teria acesso a esse bloco.
         return set(MODULO_POR_CATEGORIA.values()) | {"reproducao", "estoque"}
     return {m.strip() for m in (usuario.permissoes or "").split(",") if m.strip()}
+
+
+# ---------------------------------------------------------------------------
+# Alerta de sobra de cocho fora da faixa (sessão 3, Frente C).
+# ---------------------------------------------------------------------------
+def _fmt_num_br(valor: float, casas: int = 1) -> str:
+    """1234.50 -> "1234,5"; 40.0 -> "40" (sem ",0" ocioso). O alerta pede
+    texto extremamente curto (pedido verbatim do usuário) — nem a vírgula
+    decimal pode sobrar quando o número já é inteiro."""
+    texto = f"{valor:.{casas}f}"
+    if "." in texto:
+        inteiro, frac = texto.split(".")
+        texto = inteiro if set(frac) == {"0"} else f"{inteiro},{frac}"
+    return texto
+
+
+def _texto_alerta_sobra(lote: int, pct: float, delta_total_kg: float, kg_por_alimento: dict[str, float], kg_total: float) -> str:
+    """Monta o texto do alerta — CURTO de propósito. Pedido original,
+    verbatim: "texto extremamente curto, pouquíssimas palavras, apenas o
+    necessário para entender". Por isso: sem saudação, sem explicar o que é
+    sobra de cocho, sem repetir "lote" a cada item — só o lote uma vez, o
+    percentual medido, e a lista de kg por alimento a ajustar (C4/C5).
+
+    O rateio do delta entre os alimentos usa a mesma proporção de cada um no
+    total fornecido (kg_por_alimento/kg_total) — já vem sem os itens que não
+    convertem para kg (C6, filtrados por quem chama, ver kg_equivalente)."""
+    verbo = "Acrescente" if delta_total_kg > 0 else "Reduza"
+    itens = []
+    if kg_total > 0:
+        for alimento, kg in kg_por_alimento.items():
+            delta_item = abs(delta_total_kg) * (kg / kg_total)
+            if round(delta_item, 1) <= 0:
+                continue  # arredondaria para "0 kg" — não ajuda ninguém, omite
+            itens.append(f"{_fmt_num_br(delta_item)} kg {alimento}")
+    pct_txt = _fmt_num_br(pct)
+    if itens:
+        return f"Lote {lote:02d}: sobra {pct_txt}%. {verbo} {', '.join(itens)}."
+    # Nenhum alimento da dieta converte para kg (C6 zerou a lista) — não dá
+    # para inventar quantidade por item, mas o alerta ainda tem de existir.
+    return f"Lote {lote:02d}: sobra {pct_txt}%. {verbo} os alimentos."
+
+
+def _chave_alerta_sobra(lote: int, data_sobra: date) -> str:
+    return f"alerta_sobra_{lote}_{data_sobra.isoformat()}"
+
+
+def _destinatarios_alerta_sobra(session: Session, fazenda_id: int | None) -> list[int]:
+    """Quem recebe o alerta na central de alertas: admin da fazenda ou
+    funcionário com acesso ao módulo Alimentação — mesma régua de
+    MODULO_POR_CATEGORIA["alimentacao"] usada para filtrar a Agenda, aplicada
+    aqui a cada usuário da fazenda (não só a quem está logado)."""
+    usuarios = usuarios_da_fazenda(session, fazenda_id)
+    resultado = []
+    for u in usuarios:
+        if u.id is None:
+            continue
+        permissoes = {p.strip() for p in (u.permissoes or "").split(",") if p.strip()}
+        if u.papel == "admin" or "alimentacao" in permissoes:
+            resultado.append(u.id)
+    return resultado
+
+
+def _limpar_alerta_sobra_portal(session: Session, fazenda_id: int | None, lote: int, data_sobra: date) -> None:
+    """Sobra corrigida para dentro da faixa no mesmo dia (C8: silêncio é a
+    mensagem) — remove o alerta que porventura já tenha sido criado na
+    central de alertas, em vez de deixá-lo pendurado até ser lido."""
+    chave = _chave_alerta_sobra(lote, data_sobra)
+    existentes = session.exec(
+        select(PortalMensagem).where(
+            PortalMensagem.tipo == "alerta_sobra", PortalMensagem.aba == chave,
+            PortalMensagem.fazenda_id == fazenda_id,
+        )
+    ).all()
+    if not existentes:
+        return
+    for m in existentes:
+        session.delete(m)
+    session.commit()
+
+
+def _upsert_alerta_sobra_portal(
+    session: Session, fazenda_id: int | None, lote: int, data_sobra: date, texto: str, usuario_lancou: int | None,
+) -> None:
+    """Cria/atualiza o alerta na central de alertas (PortalMensagem,
+    `pede_retorno=False` — C3), um por lote/dia (C7): relançar a sobra no
+    mesmo dia muda o número calculado, então atualiza o texto de quem ainda
+    não leu (e reabre para quem já tinha lido/marcado check, porque o
+    conteúdo mudou) — nunca duplica a mensagem.
+
+    Repassa a `aba` (campo livre, não usado por este tipo para navegação) só
+    como chave de idempotência lote+dia — é o único jeito de encontrar de
+    novo "o alerta desta sobra" sem um campo de origem dedicado no modelo."""
+    chave = _chave_alerta_sobra(lote, data_sobra)
+    destinatarios = _destinatarios_alerta_sobra(session, fazenda_id)
+    if not destinatarios:
+        return
+    remetente_id = usuario_lancou if usuario_lancou is not None else destinatarios[0]
+    existentes = {
+        m.destinatario_usuario_id: m
+        for m in session.exec(
+            select(PortalMensagem).where(
+                PortalMensagem.tipo == "alerta_sobra", PortalMensagem.aba == chave,
+                PortalMensagem.fazenda_id == fazenda_id,
+            )
+        ).all()
+    }
+    mudou = False
+    for dest_id in destinatarios:
+        atual = existentes.pop(dest_id, None)
+        if atual is None:
+            session.add(PortalMensagem(
+                tipo="alerta_sobra", remetente_usuario_id=remetente_id, destinatario_usuario_id=dest_id,
+                aba=chave, corpo=texto, pede_retorno=False, fazenda_id=fazenda_id,
+            ))
+            mudou = True
+        elif atual.corpo != texto:
+            atual.corpo = texto
+            atual.lida = False
+            atual.resolvida = False
+            session.add(atual)
+            mudou = True
+    # Sobrou em `existentes`: destinatário que não devia mais receber (só
+    # muda se a lista de acesso ao módulo Alimentação mudar no mesmo dia —
+    # raro, mas não deixa lixo pendurado).
+    for m in existentes.values():
+        session.delete(m)
+        mudou = True
+    if mudou:
+        session.commit()
 
 
 def _model_to_dict(obj) -> dict:
@@ -929,6 +1098,68 @@ def calcular_agenda(
                 "comunicado": True,
             })
 
+    # Sobra de cocho fora da faixa aceitável (sessão 3, Frente C). Igual à
+    # "nova dieta" acima: COMPUTADO a cada chamada, nunca lido de uma tabela
+    # de alerta própria — porque ConsumoSobra é substituída (não somada) se
+    # relançada no mesmo dia, e o alerta tem de acompanhar o valor vigente,
+    # não o primeiro lançado (C7). Só olha a sobra DO DIA pedido (`data`),
+    # nunca a janela de `dias` — o alerta é "do mesmo dia" (C1), não uma
+    # cobrança retroativa.
+    eventos_alerta_sobra = []
+    sobras_hoje = session.exec(
+        _da_fazenda(select(ConsumoSobra).where(ConsumoSobra.data == data), ConsumoSobra)
+    ).all()
+    if sobras_hoje:
+        sobra_min = float(get_param("sobra_min_pct", 3) or 3)
+        sobra_max = float(get_param("sobra_max_pct", 7) or 7)
+        sobra_alvo = float(get_param("sobra_alvo_pct", 5) or 5)
+        for s in sobras_hoje:
+            consumo_lote = session.exec(
+                _da_fazenda(
+                    select(ConsumoAlimento).where(ConsumoAlimento.lote == s.lote, ConsumoAlimento.data == s.data),
+                    ConsumoAlimento,
+                )
+            ).all()
+            if not consumo_lote:
+                continue  # sem fornecido lançado — não dá para calcular % nem instrução, sem inventar
+            kg_por_alimento: dict[str, float] = {}
+            for c in consumo_lote:
+                kg = kg_equivalente(c.quantidade, c.unidade)
+                if kg is None:
+                    continue  # C6 — litro/dose/unidade não entram na conta nem na instrução
+                kg_por_alimento[c.alimento] = kg_por_alimento.get(c.alimento, 0.0) + kg
+            kg_total = sum(kg_por_alimento.values())
+            if kg_total <= 0:
+                continue  # só havia alimento sem conversão para kg — sem denominador, sem percentual
+            pct = (s.kg_sobra / kg_total) * 100.0
+            if sobra_min <= pct <= sobra_max:
+                # C8 — dentro da faixa, nenhum alerta (nem "está tudo certo").
+                # Mas se JÁ existia um alerta (sobra corrigida no mesmo dia
+                # para dentro da faixa), ele precisa sumir também da central.
+                _limpar_alerta_sobra_portal(session, fazenda_id, s.lote, s.data)
+                continue
+            # Quanto precisaria ter sido fornecido, mantendo o consumido real
+            # constante, para a sobra ter batido o alvo (sobra_alvo_pct):
+            #   kg_consumido = kg_total - kg_sobra (o que as vacas de fato comeram)
+            #   novo_total * (1 - alvo%) = kg_consumido  =>  novo_total = kg_consumido / (1 - alvo%)
+            # delta > 0 acrescentar, delta < 0 reduzir — mesma conta nos dois sentidos.
+            kg_consumido = kg_total - s.kg_sobra
+            divisor = 1.0 - (sobra_alvo / 100.0)
+            kg_total_alvo = (kg_consumido / divisor) if divisor > 0 else kg_total
+            delta_total_kg = kg_total_alvo - kg_total
+            texto = _texto_alerta_sobra(s.lote, pct, delta_total_kg, kg_por_alimento, kg_total)
+            chave = _chave_alerta_sobra(s.lote, s.data)
+            if chave in realizados:
+                continue
+            eventos_alerta_sobra.append({
+                "id": chave, "data": s.data.isoformat(), "categoria": "alimentacao",
+                "descricao": texto, "numero_animal": None,
+                "observacao": "Sobra fora da faixa aceitável — só um comunicado, sem lançamento a fazer aqui.",
+                "fonte": "auto", "cor": "var(--dourado)", "ref": str(s.id), "tipo": "alerta_sobra", "lote": s.lote,
+                "comunicado": True,
+            })
+            _upsert_alerta_sobra_portal(session, fazenda_id, s.lote, s.data, texto, s.usuario_id)
+
     # Pesagem do rebanho (acompanhamento da evolução de peso): cada agendamento
     # (fase) gera um lembrete na Agenda nos dias configurados (periodicidade +
     # dia da semana), com a contagem de animais da faixa de idade-alvo.
@@ -1264,7 +1495,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_alerta_sobra + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -2141,6 +2372,35 @@ def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session))
         })
     resultado.sort(key=lambda r: r["data_realizacao"] or "", reverse=True)
     return resultado
+
+
+@router.get("/realizados")
+def listar_realizados(
+    de: date | None = None, ate: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Marcações genéricas de conclusão (EventoRealizado) num período —
+    alimenta o card "Concluídos no período" da Agenda. Cobre as pendências
+    que resolvem por aqui (sanidade avulsa, diária, pesagem, sugestão de
+    movimentação etc.); protocolo IATF e indução de lactação NÃO passam por
+    esta tabela — cada um grava a própria conclusão no modelo de origem (ver
+    GET /protocolo-iatf/concluidos e /protocolo-inducao-lactacao/concluidos),
+    que é quem tem o detalhe (animais, dia) que esta tabela não guarda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EventoRealizado)
+    if fazenda_id is not None:
+        query = query.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
+    if de is not None:
+        query = query.where(EventoRealizado.marcado_em >= datetime.combine(de, datetime.min.time()))
+    if ate is not None:
+        query = query.where(EventoRealizado.marcado_em < datetime.combine(ate + timedelta(days=1), datetime.min.time()))
+    registros = session.exec(query.order_by(EventoRealizado.marcado_em.desc())).all()
+    return [{
+        "evento_id": r.evento_id,
+        "marcado_em": r.marcado_em.isoformat(),
+        "rotulo": _rotulo_evento_realizado(r.evento_id),
+    } for r in registros]
 
 
 @router.delete("/realizados/{evento_id}")

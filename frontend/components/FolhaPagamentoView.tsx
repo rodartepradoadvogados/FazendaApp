@@ -10,6 +10,7 @@ import {
   lancarGuiaFolhaEncargo, fetchGuiasFolhaEncargo, type GuiaFolhaEncargo,
   lerDocumentoFinanceiro, anexarArquivoLancamento, formatDate,
   fetchContasCorrentes, type ContaCorrenteCadastro,
+  anexarComprovanteVale, listarComprovantesVale, excluirComprovanteVale, urlComprovanteVale,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import { Modal } from "@/components/Modal";
@@ -1511,6 +1512,7 @@ export default function FolhaPagamentoView() {
                           <button className="btn-ghost" onClick={() => iniciarEdicaoVale(v)}>
                             <Pencil size={12} /> Editar vale
                           </button>
+                          <ComprovanteVale tipo="funcionario" valeId={v.id} />
                         </div>
                       )}
                     </td>
@@ -1614,6 +1616,7 @@ export default function FolhaPagamentoView() {
                           <button className="btn-ghost" onClick={() => iniciarEdicaoValeAvulso(v)}>
                             <Pencil size={12} /> Editar vale
                           </button>
+                          <ComprovanteVale tipo="avulso" valeId={v.id} />
                         </div>
                       )}
                     </td>
@@ -1743,6 +1746,76 @@ const FORMAS_VALE_AVULSO = [
 // movimentam banco nenhum na hora do vale.
 const contaObrigatoriaVale = (forma: string) => forma !== "desconto_integral_folha";
 const contaObrigatoriaValeAvulso = (forma: string) => forma !== "desconto_proximo_pagamento";
+
+/**
+ * Comprovante de pagamento do vale (D7-D10) — mesmo padrão visual de
+ * "Anexos" já usado no lançamento financeiro (Dropzone + lista com link/
+ * excluir, ver app/financeiro/page.tsx), só que ancorado no vale em vez do
+ * lançamento: aqui não há categoria/nº de documento para escolher, porque
+ * o vale já é o documento inteiro — só falta anexar a prova de que o
+ * dinheiro foi entregue (recibo assinado, foto do PIX etc.).
+ */
+function ComprovanteVale({ tipo, valeId }: { tipo: "funcionario" | "avulso"; valeId: number }) {
+  const [comprovantes, setComprovantes] = useState<{ id: number; nome_arquivo: string; mime_type: string; criado_em: string }[] | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    listarComprovantesVale(tipo, valeId).then(setComprovantes).catch(() => setComprovantes([]));
+  }, [tipo, valeId]);
+
+  const enviar = async (file: File) => {
+    setEnviando(true); setErro(null);
+    try {
+      const novo = await anexarComprovanteVale(tipo, valeId, file);
+      setComprovantes((p) => [...(p || []), { id: novo.id, nome_arquivo: novo.nome_arquivo, mime_type: file.type, criado_em: new Date().toISOString() }]);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao anexar o comprovante");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const remover = async (id: number) => {
+    try {
+      await excluirComprovanteVale(id);
+      setComprovantes((p) => (p || []).filter((a) => a.id !== id));
+    } catch (e: any) {
+      setErro(e.message || "Erro ao excluir o comprovante");
+    }
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem", marginTop: "0.6rem" }}>
+      <label style={labelStyleLote}>Comprovante de pagamento</label>
+      <Dropzone
+        compact
+        accept="application/pdf,image/jpeg,image/png"
+        disabled={enviando}
+        label={enviando ? "Enviando…" : "Arraste o comprovante aqui, ou"}
+        onFiles={(files) => enviar(files[0])}
+      />
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0.3rem 0" }}>{erro}</p>}
+      {comprovantes === null ? (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Carregando comprovantes…</p>
+      ) : comprovantes.length === 0 ? (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Nenhum comprovante anexado ainda.</p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0, margin: "0.3rem 0 0" }}>
+          {comprovantes.map((a) => (
+            <li key={a.id} className="flex items-center gap-2" style={{ padding: "0.2rem 0", fontSize: "0.78rem" }}>
+              <a href={urlComprovanteVale(a.id)} target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)", flex: 1 }}
+                title="Abrir este comprovante numa aba nova">
+                {a.nome_arquivo}
+              </a>
+              <button type="button" className="btn-ghost" title="Excluir comprovante" onClick={() => remover(a.id)}><Trash2 size={13} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /**
  * Vale de funcionário — só o formulário de lançamento. A lista de parcelas

@@ -33,6 +33,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "folha_rh": "Folha de pagamento / RH",
     "estrutura_fazenda": "Estrutura da fazenda",
     "financeiro": "Financeiro",
+    "alimentacao": "Alimentação",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -163,6 +164,27 @@ DEFINICOES: list[dict] = [
     # código (rules/producao.py), então qualquer fazenda com outro laticínio
     # nunca tinha a receita reconhecida no RMCA/custo por litro.
     {"chave": "laticinio_nome", "grupo": "financeiro", "label": "Nome do laticínio (reconhece a receita de leite no RMCA)", "valor": "italac", "tipo": "texto"},
+    # ---- Alimentação: sobra de cocho ---------------------------------------
+    # A sobra é o termômetro do trato. Sobra de menos significa cocho vazio
+    # antes da hora — vaca que comeu menos do que a dieta previa, e produção
+    # perdida sem ninguém ver. Sobra de mais é comida virando esterco e custo.
+    # Por isso a faixa, e não um alvo único: perseguir 5% exatos todo dia faria
+    # o sistema reclamar todo dia.
+    {"chave": "sobra_alvo_pct", "grupo": "alimentacao", "label": "Sobra de cocho — alvo", "valor": 5, "unidade": "%"},
+    {"chave": "sobra_min_pct", "grupo": "alimentacao", "label": "Sobra de cocho — mínimo aceitável", "valor": 3, "unidade": "%"},
+    {"chave": "sobra_max_pct", "grupo": "alimentacao", "label": "Sobra de cocho — máximo aceitável", "valor": 7, "unidade": "%"},
+    # Três modos, porque nem toda fazenda pesa sobra: quem pesa lança fornecido
+    # e sobra; quem não pesa deixa o sistema baixar o estoque pela dieta; e quem
+    # controla alimentação por fora desliga tudo.
+    # Fica como texto porque a tela de Parâmetros só sabe renderizar int, bool,
+    # date, float e texto — não há tipo de seleção (ver o router de parâmetros).
+    # Os valores aceitos vão no rótulo, para quem edita não ter de adivinhar, e
+    # a validação é feita no endpoint que consome o parâmetro. Um campo de
+    # seleção de verdade é melhoria posterior, e mexe na tela de Parâmetros.
+    {"chave": "modo_lancamento_alimentacao", "grupo": "alimentacao",
+     "label": "Como lançar a alimentação (fornecido_sobra | baixa_automatica | nao_lancar)",
+     "valor": "fornecido_sobra", "tipo": "texto"},
+
 ]
 
 

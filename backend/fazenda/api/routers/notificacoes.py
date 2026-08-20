@@ -100,6 +100,18 @@ def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int |
         elif m.tipo == "foto":
             descricao = f"Foto de {remetente_nome}: {m.corpo}"
             cor = "var(--verde)"
+        elif m.tipo == "alerta_sobra":
+            # Alerta de sobra de cocho fora da faixa (sessão 3, Frente C) —
+            # `m.corpo` JÁ é o texto extremamente curto pedido pelo usuário
+            # (ver agenda.py::_texto_alerta_sobra); sem "Mensagem/Tarefa/Foto
+            # de Fulano" na frente, senão o texto deixa de ser curto e passa a
+            # atribuir a um remetente humano um aviso que é do sistema.
+            # `m.aba` aqui não é uma aba de verdade — é só a chave de
+            # idempotência lote+dia (agenda.py::_chave_alerta_sobra) — por
+            # isso NÃO entra na descrição, ao contrário do ramo genérico
+            # abaixo.
+            descricao = m.corpo
+            cor = "var(--dourado)"
         else:
             descricao = f"Mensagem de {remetente_nome}" + (f" ({m.aba})" if m.aba else "") + f": {m.corpo}"
             cor = "var(--blue)"

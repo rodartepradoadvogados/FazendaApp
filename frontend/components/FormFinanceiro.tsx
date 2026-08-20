@@ -7,7 +7,7 @@ import {
   type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido, criarClassificacao,
   fetchContextoFornecedor, type ContextoFornecedor as ContextoFornecedorTipo,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
-  type PatrimonioPayload,
+  type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
@@ -91,6 +91,37 @@ type Opcoes = {
 };
 
 const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], produtos: [], contas_bancarias: [], tipos_documento: [], formas_pagamento: [], classificacoes: [] };
+
+// Valor de nascença do centro de custo — perfil típico da fazenda (ver
+// mesmo default no backend, financeiro.py:criar_lancamento). Nasce assim
+// sozinho, sem o usuário tocar em nada: por isso a checagem de "sujo" (ver
+// `sujo` abaixo) compara centroCusto contra ESTE valor, não testa "é
+// não-vazio" — do contrário todo formulário nasceria sujo (bug já corrigido).
+const CENTRO_CUSTO_PADRAO = "Pecuária Leiteira";
+
+// Mini-observação abaixo do produto/serviço escolhido no item — último valor
+// unitário pago (ou recebido) naquele mesmo item, independente da quantidade
+// ou do valor deste lançamento (vale tanto pra produto do estoque quanto pra
+// serviço). Sem histórico não inventa número: some por completo, nunca
+// mostra "R$ 0,00" nem "sem dados" (ver fetchUltimoPrecoProduto em lib/api.ts).
+function UltimoPrecoObservacao({ produto, tipo }: { produto: string; tipo: "despesa" | "receita" }) {
+  const [ultimo, setUltimo] = useState<UltimoPrecoProduto>(null);
+  useEffect(() => {
+    const nome = produto.trim();
+    if (!nome) { setUltimo(null); return; }
+    let cancelado = false;
+    fetchUltimoPrecoProduto(nome).then((r) => { if (!cancelado) setUltimo(r); }).catch(() => { if (!cancelado) setUltimo(null); });
+    return () => { cancelado = true; };
+  }, [produto]);
+  if (!ultimo) return null;
+  const dataFmt = ultimo.data ? new Date(`${ultimo.data}T00:00:00`).toLocaleDateString("pt-BR") : null;
+  return (
+    <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+      {tipo === "receita" ? "Último valor recebido" : "Último valor pago"}: <strong style={{ color: "var(--text)" }}>{formatBRL(ultimo.valor_unitario)}</strong>
+      {dataFmt ? ` em ${dataFmt}` : ""}{ultimo.numero_lancamento ? ` (${ultimo.numero_lancamento})` : ""}
+    </p>
+  );
+}
 
 function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string): Parcela[] {
   if (qtd <= 0) return [];
@@ -270,7 +301,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     }]);
     if (dados.data_emissao) setDataEmissao(dados.data_emissao);
   }), [tipo, planoContas]);
-  const [centroCusto, setCentroCusto] = useState("Pecuária Leiteira");
+  // "Pecuária Leiteira" é o valor padrão do centro de custo, não trabalho do
+  // usuário — a checagem de "sujo" logo abaixo compara contra ESTE valor em
+  // vez de testar "é não-vazio" (ver CENTRO_CUSTO_PADRAO).
+  const [centroCusto, setCentroCusto] = useState(CENTRO_CUSTO_PADRAO);
   const [classificacao, setClassificacao] = useState("");
   const [novaClassificacaoAberta, setNovaClassificacaoAberta] = useState(false);
   const [novaClassificacaoNome, setNovaClassificacaoNome] = useState("");
@@ -533,7 +567,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   function limpar() {
     setItens([itemVazio()]);
-    setCentroCusto("Pecuária Leiteira"); setClassificacao(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
+    setCentroCusto(CENTRO_CUSTO_PADRAO); setClassificacao(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
     setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
     entregueTocadoRef.current = false;
@@ -566,7 +600,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   function aplicarRascunho(d: any) {
     if (!d) return;
     setItens(Array.isArray(d.itens) && d.itens.length ? d.itens : [itemVazio()]);
-    setCentroCusto(d.centroCusto || "Pecuária Leiteira"); setClassificacao(d.classificacao || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
+    setCentroCusto(d.centroCusto || CENTRO_CUSTO_PADRAO); setClassificacao(d.classificacao || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
     setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
     setNumeroOsOrcamento(d.numeroOsOrcamento || ""); setNumeroBoleto(d.numeroBoleto || "");
     setDataEmissao(d.dataEmissao || ""); setDataVencimento(d.dataVencimento || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
@@ -578,10 +612,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     setFormaPagamento(d.formaPagamento || "");
   }
 
-  // Está "sujo" (com trabalho a perder) se já tem item preenchido ou dados da nota.
+  // Está "sujo" (com trabalho a perder) se já tem item preenchido ou dados da
+  // nota. `centroCusto` nasce com um valor padrão (CENTRO_CUSTO_PADRAO) — não
+  // é trabalho do usuário, então entra na conta comparado contra o padrão,
+  // não testado como "é não-vazio" (senão o formulário nasceria sujo).
   const sujo = useMemo(() => {
     const temItem = itens.some((i) => i.produto.trim() || i.nome_conta_gerencial.trim() || i.valor_total.trim() || i.descricao.trim());
-    return Boolean(temItem || fornecedor || numeroDocumento || centroCusto || dataEmissao || Number(desconto) || Number(acrescimo) || jaPago);
+    const centroCustoAlterado = centroCusto !== CENTRO_CUSTO_PADRAO;
+    return Boolean(temItem || fornecedor || numeroDocumento || centroCustoAlterado || dataEmissao || Number(desconto) || Number(acrescimo) || jaPago);
   }, [itens, fornecedor, numeroDocumento, centroCusto, dataEmissao, desconto, acrescimo, jaPago]);
 
   // Salva/limpa o rascunho e avisa o pai enquanto o formulário muda.
@@ -1421,6 +1459,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 <Campo label="Serviço">
                   <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
                     value={it.produto} onChange={(v) => atualizarItem(idx, { produto: v })} />
+                  <UltimoPrecoObservacao produto={it.produto} tipo={tipo} />
                 </Campo>
               ) : (
                 <div>
@@ -1434,18 +1473,21 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                     </select>
                   </div>
                   {it.modoProduto === "estoque" ? (
-                    // incluirNaoEstocaveis: aqui é lançamento financeiro, não
-                    // consumo de estoque — um item cadastrado só para
-                    // organização financeira (sem controle de saldo) tem que
-                    // aparecer igual a um estocável.
-                    <EstoquePicker itens={produtosEstoque} value={it.produto} todasFinalidades incluirNaoEstocaveis onChange={(nomeProduto) => {
-                      const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                      const patch: Partial<Item> = { produto: nomeProduto };
-                      const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
-                      if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                      atualizarItem(idx, patch);
-                      if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
-                    }} />
+                    <>
+                      {/* incluirNaoEstocaveis: aqui é lançamento financeiro, não
+                          consumo de estoque — um item cadastrado só para
+                          organização financeira (sem controle de saldo) tem que
+                          aparecer igual a um estocável. */}
+                      <EstoquePicker itens={produtosEstoque} value={it.produto} todasFinalidades incluirNaoEstocaveis onChange={(nomeProduto) => {
+                        const match = produtosEstoque.find((p) => p.nome === nomeProduto);
+                        const patch: Partial<Item> = { produto: nomeProduto };
+                        const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+                        if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+                        atualizarItem(idx, patch);
+                        if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
+                      }} />
+                      <UltimoPrecoObservacao produto={it.produto} tipo={tipo} />
+                    </>
                   ) : (
                     <>
                       <input list={`produtos-financeiro-${idx}`} style={inputStyle} value={it.produto}

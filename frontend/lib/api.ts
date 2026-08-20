@@ -2440,6 +2440,59 @@ export async function fecharRescisao(id: number, dados: RescisaoFecharDados): Pr
   return res.json();
 }
 
+// Último valor unitário pago num produto ou serviço, para a mini-observação
+// abaixo do item em Contas a pagar. Devolve `null` quando o item nunca foi
+// comprado — a tela NÃO deve inventar número nesse caso, apenas não mostrar
+// a observação. Independe de quantidade e valor informados no item atual.
+export type UltimoPrecoProduto = {
+  produto: string;
+  valor_unitario: number;
+  data: string | null;
+  numero_lancamento: string | null;
+} | null;
+
+export async function fetchUltimoPrecoProduto(produto: string): Promise<UltimoPrecoProduto> {
+  const nome = (produto || "").trim();
+  if (!nome) return null;
+  const res = await authFetch(`${API}/financeiro/ultimo-preco?produto=${encodeURIComponent(nome)}`, { cache: "no-store" });
+  if (!res.ok) return null;   // sem histórico não é erro — é ausência de observação
+  const d = await res.json().catch(() => null);
+  return d && typeof d.valor_unitario === "number" ? d : null;
+}
+
+// Comprovante de pagamento de vale. Espelha o padrão já usado no anexo de
+// lançamento financeiro (anexarArquivoLancamentoPorId acima): multipart, o
+// arquivo vai para o mesmo Storage, e a categoria default é "Comprovante".
+// `tipo` distingue os dois modelos de vale que existem no sistema — o vale
+// marcado a partir de um item de lançamento já herda o anexo da própria nota.
+export async function anexarComprovanteVale(
+  tipo: "funcionario" | "avulso", valeId: number, file: File,
+): Promise<{ id: number; nome_arquivo: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/cadastro/vales/${tipo}/${valeId}/comprovante`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o comprovante"); }
+  return res.json();
+}
+
+export async function listarComprovantesVale(
+  tipo: "funcionario" | "avulso", valeId: number,
+): Promise<{ id: number; nome_arquivo: string; mime_type: string; criado_em: string }[]> {
+  const res = await authFetch(`${API}/cadastro/vales/${tipo}/${valeId}/comprovante`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function excluirComprovanteVale(anexoId: number) {
+  const res = await authFetch(`${API}/cadastro/vales/comprovante/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir o comprovante"); }
+  return res.json();
+}
+
+export function urlComprovanteVale(anexoId: number): string {
+  return `${API}/cadastro/vales/comprovante/${anexoId}`;
+}
+
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
@@ -3778,20 +3831,29 @@ export async function fetchEstadoBaixaAlimentacao() {
 
 // ── Categorias de alimento e cadastro de Alimento (Configurações > Cadastro
 // > Alimentação > Categorias / Alimentos) ──
-export type CategoriaAlimento = { id: number; nome: string; ativo: boolean };
+// `categoria_pai_id` é a auto-FK que dá o SEGUNDO nível (ex.: "Proteico" e
+// "Energético" abaixo de "Concentrado"). São só dois níveis: uma categoria com
+// pai não pode virar pai de outra — quem barra é o backend.
+// `Alimento.categoria_alimento_id` continua sendo UMA só FK, e pode apontar
+// tanto para uma raiz quanto para uma subcategoria. Quem aponta para uma
+// subcategoria tem a categoria derivada do pai dela — é assim que a tela de
+// Alimentos preenche as colunas Categoria e Subcategoria sem um segundo campo.
+export type CategoriaAlimento = {
+  id: number; nome: string; ativo: boolean; categoria_pai_id: number | null;
+};
 export async function fetchCategoriasAlimento(): Promise<CategoriaAlimento[]> {
   const res = await authFetch(`${API}/alimentacao/categorias`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Categorias de alimento error: ${res.status}`);
   return res.json();
 }
-export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean }) {
+export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean; categoria_pai_id?: number | null }) {
   const res = await authFetch(`${API}/alimentacao/categorias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
   return res.json();
 }
-export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean }) {
+export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean; categoria_pai_id?: number | null }) {
   const res = await authFetch(`${API}/alimentacao/categorias/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -6707,5 +6769,88 @@ export type LidaAtiva = {
 export async function fetchLidasAtivas(): Promise<LidaAtiva[]> {
   const res = await authFetch(`${API}/lida/ativos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Lida ativos error: ${res.status}`);
+  return res.json();
+}
+
+// ── Consumo diário de alimento e sobra de cocho (Lançamentos > Alimentação) ──
+// `lote` é o INT da dieta (DietaLancamento.lote), não o código de 2 dígitos do
+// cadastro nem o "01 - Nome" de Animal.grupo_primario — o lançamento de consumo
+// só existe ancorado numa dieta ativa e fala a língua dela. A ponte para o
+// cadastro é `String(lote).padStart(2, "0")`.
+export type ItemDietaDoLote = {
+  alimento: string; alimento_id: number | null;
+  quantidade: number; unidade: string;          // quantidade programada
+  por_cabeca: number | null;                    // já resolvido pelo backend
+  converte_para_kg: boolean;                    // false = fica fora do rateio da sobra
+};
+export type ConsumoDoDia = {
+  lote: number; data: string; num_animais: number | null;
+  itens: { alimento: string; quantidade: number; unidade: string; kg_equivalente: number | null }[];
+  kg_fornecido_total: number;
+  sobra_kg: number | null;
+  sobra_pct: number | null;
+  dentro_da_faixa: boolean | null;              // null = sem sobra lançada ainda
+};
+export type ConsumoItemIn = {
+  alimento: string; alimento_id?: number | null; quantidade: number; unidade: string;
+};
+export type RespostaConsumo = {
+  ok: boolean;
+  // Avisos vindos do motor de estoque (saldo negativo etc.). Hoje os avisos da
+  // baixa de alimentação são descartados pelo chamador; com lançamento manual
+  // eles passam a ter destinatário — mostre na tela.
+  avisos: string[];
+};
+
+export async function fetchDietaDoLote(lote: number): Promise<{ itens: ItemDietaDoLote[]; base_quantidade: string } | null> {
+  const res = await authFetch(`${API}/alimentacao/consumo/dieta-do-lote?lote=${lote}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Dieta do lote error: ${res.status}`);
+  return res.json();
+}
+export async function fetchConsumoDoDia(lote: number, data: string): Promise<ConsumoDoDia> {
+  const res = await authFetch(`${API}/alimentacao/consumo?lote=${lote}&data=${data}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Consumo do dia error: ${res.status}`);
+  return res.json();
+}
+export async function lancarConsumo(dados: {
+  lote: number; data: string; num_animais?: number | null;
+  origem: "animais" | "kg"; itens: ConsumoItemIn[];
+}): Promise<RespostaConsumo> {
+  const res = await authFetch(`${API}/alimentacao/consumo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar consumo"); }
+  return res.json();
+}
+export async function excluirConsumo(id: number) {
+  const res = await authFetch(`${API}/alimentacao/consumo/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir consumo"); }
+  return res.json();
+}
+// Relançar a sobra no mesmo dia SUBSTITUI (é medição do dia), ao contrário do
+// consumo, que soma (é o vagão passando várias vezes).
+export async function lancarSobra(dados: { lote: number; data: string; kg_sobra: number }) {
+  const res = await authFetch(`${API}/alimentacao/sobra`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar sobra"); }
+  return res.json();
+}
+export type RelatorioSobra = {
+  total_kg_sobra: number; total_kg_fornecido: number; pct_medio: number | null;
+  // `pct_do_total` é a fatia do TOTAL DE SOBRA do período que este alimento
+  // respondeu — não a proporção dele na dieta. Nomear errado aqui faria a
+  // tela exibir "% da dieta" com um número que não é isso.
+  por_alimento: { alimento: string; kg_sobra: number; pct_do_total: number }[];
+  // Itens da dieta cuja unidade não converte para kg (litro, dose, unidade):
+  // ficam FORA do rateio, e o relatório diz quais em vez de silenciar.
+  itens_sem_conversao: string[];
+};
+export async function fetchRelatorioSobra(p: { de: string; ate: string; lote?: number | null }): Promise<RelatorioSobra> {
+  const qs = new URLSearchParams({ de: p.de, ate: p.ate });
+  if (p.lote != null) qs.set("lote", String(p.lote));
+  const res = await authFetch(`${API}/alimentacao/sobra/relatorio?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de sobra error: ${res.status}`);
   return res.json();
 }

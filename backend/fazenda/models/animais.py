@@ -142,6 +142,15 @@ class Lote(SQLModel, table=True):
     ativo: bool = True
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # ---- Permissões do lançamento de consumo de alimento (Lançamentos >
+    # Alimentação). Ambas nascem FALSE de propósito: o padrão restritivo é o
+    # seguro, porque cada uma desliga uma checagem que existe para pegar erro
+    # de digitação no curral. Quem precisa da exceção liga por lote, que é onde
+    # a exceção de fato acontece — o lote de transição que recebe um alimento
+    # fora da dieta, o silo que acabou e será reposto hoje.
+    permitir_fora_da_dieta: bool = False
+    permitir_sem_estoque: bool = False
+
     # ---- Critérios de seleção de animais (cumulativos/E lógico) — usados na
     # prévia de "quantos animais atendem" e, na sequência, nas sugestões
     # automáticas de movimentação entre lotes. Cada campo None = não filtra.

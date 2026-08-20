@@ -8,6 +8,7 @@ import {
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
   criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
+  authFetch, API, mensagemErroApi,
 } from "@/lib/api";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -18,7 +19,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { Indicador } from "@/components/ui";
+import { Indicador, SecaoRecolhivel } from "@/components/ui";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 
@@ -96,11 +97,13 @@ export default function AgendaPage() {
   const [fCat, setFCat] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
-  // Segunda visualização da agenda (opção 2 do mockup aprovado): calendário
-  // mensal com painel lateral — alternativa à linha do tempo (opção 1, já
-  // era a única implementada). Mês próprio (não usa "data"/referência) para
-  // navegar livremente sem afetar o resto dos cálculos da agenda.
-  const [visualizacao, setVisualizacao] = useState<"linha_do_tempo" | "calendario">("linha_do_tempo");
+  // Calendário mensal com painel lateral — antes era a 2ª "visualização" da
+  // agenda (pílula Linha do tempo/Calendário, trocava o card de baixo);
+  // agora é um overlay que o botão "Calendário" do cabeçalho abre por cima
+  // dos indicadores (ver C3-C5 da sessão 1 — o card de baixo só mostra a
+  // linha do tempo). Mês próprio (não usa "data"/referência) para navegar
+  // livremente sem afetar o resto dos cálculos da agenda.
+  const [calendarioAberto, setCalendarioAberto] = useState(false);
   const [mesCalendario, setMesCalendario] = useState(() => { const d = new Date(); return { ano: d.getFullYear(), mes: d.getMonth() }; });
   // Começa com hoje já selecionado para que a lista de compromissos apareça
   // ao lado do calendário assim que a visão é aberta, sem precisar clicar
@@ -347,7 +350,7 @@ export default function AgendaPage() {
   // financeiros de um mês futuro não chegariam a tempo de aparecer nele).
   const ultimoDiaDoMesCalendario = new Date(mesCalendario.ano, mesCalendario.mes + 1, 0).getDate();
   const ultimoDiaMesCalendarioIso = isoLocal(mesCalendario.ano, mesCalendario.mes, ultimoDiaDoMesCalendario);
-  const diasParaCalendario = visualizacao === "calendario" ? Math.max(0, diasEntre(data, ultimoDiaMesCalendarioIso)) : 0;
+  const diasParaCalendario = calendarioAberto ? Math.max(0, diasEntre(data, ultimoDiaMesCalendarioIso)) : 0;
   const diasJanela = Math.max(
     ate ? Math.max(DIAS_PADRAO_FUTURO, diasEntre(data, ate)) : DIAS_PADRAO_FUTURO,
     diasParaCalendario,
@@ -376,10 +379,45 @@ export default function AgendaPage() {
     try { setInducaoConcluidos(await fetchProtocoloInducaoConcluidos()); } catch { setInducaoConcluidos([]); }
   }, []);
   useEffect(() => { carregarConcluidosInducao(); }, [carregarConcluidosInducao]);
+
+  // Card "Concluídos no período" (C7-C10) — segunda fonte, genérica: marcações
+  // de EventoRealizado que não pertencem a nenhum fluxo especializado (IATF e
+  // indução de lactação gravam a própria conclusão no modelo de origem e não
+  // passam por aqui — ver GET /agenda/protocolo-*-concluidos acima). Filtro
+  // de/até, padrão últimos 7 dias.
+  const [concDe, setConcDe] = useState(() => addDias(today(), -7));
+  const [concAte, setConcAte] = useState(() => today());
+  const [realizadosGenericos, setRealizadosGenericos] = useState<{ evento_id: string; marcado_em: string; rotulo: string | null }[]>([]);
+  const [carregandoRealizados, setCarregandoRealizados] = useState(false);
+  const carregarRealizadosGenericos = useCallback(async () => {
+    setCarregandoRealizados(true);
+    try {
+      const qs = new URLSearchParams();
+      if (concDe) qs.set("de", concDe);
+      if (concAte) qs.set("ate", concAte);
+      const res = await authFetch(`${API}/agenda/realizados?${qs.toString()}`, { cache: "no-store" });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar concluídos no período"); }
+      setRealizadosGenericos(await res.json());
+    } catch { setRealizadosGenericos([]); }
+    finally { setCarregandoRealizados(false); }
+  }, [concDe, concAte]);
+  useEffect(() => { carregarRealizadosGenericos(); }, [carregarRealizadosGenericos]);
+  // Indução de lactação filtrada pelo mesmo período do card (a fonte acima
+  // devolve todas as já concluídas, sem filtro de data — a conta é feita
+  // aqui, pelo "concluído em" de cada grupo).
+  const inducaoConcluidosPeriodo = useMemo(
+    () => inducaoConcluidos.filter((g: any) => g.data_realizacao && (!concDe || g.data_realizacao >= concDe) && (!concAte || g.data_realizacao <= concAte)),
+    [inducaoConcluidos, concDe, concAte],
+  );
+
   const [desfazendo, setDesfazendo] = useState<Set<string>>(new Set());
   const desfazerIatf = async (id: string) => {
     setDesfazendo((p) => new Set(p).add(id));
-    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarIatfAtivos(), carregarConcluidosInducao()]); mostrarFeedback("Desfeito."); }
+    try {
+      await desmarcarEventoRealizado(id);
+      await Promise.all([carregar(), carregarIatfAtivos(), carregarConcluidosInducao(), carregarRealizadosGenericos()]);
+      mostrarFeedback("Desfeito.");
+    }
     catch (e: any) { mostrarFeedback(e.message, true); }
     finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
   };
@@ -1065,7 +1103,7 @@ export default function AgendaPage() {
                                   <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                                 </div>
                               ) : e.categoria === "alimentacao" ? (
-                                <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                <a href={`/alimentacao?lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                                   <Wheat size={12} /> Ir para Dieta
                                 </a>
                               ) : (e as any).tipo === "evento_sanitario" || (e as any).tipo === "calendario_sanitario" ? (
@@ -1857,6 +1895,27 @@ export default function AgendaPage() {
 
   return (
     <div className="p-6 animate-in">
+      {/* Filtros da agenda cronológica — primeiro elemento da página (C1):
+          "Data de referência" saiu (C2); o estado `data` continua existindo
+          por baixo (ancora `carregar()`), só o controle sumiu — a agenda
+          passa a ancorar sempre em hoje. */}
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar agenda</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
+            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
+              <option value="">Todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar</label>
+            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+        </div>
+        {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
+      </div>
+
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
@@ -1869,22 +1928,11 @@ export default function AgendaPage() {
           </p>
         </div>
         <div className="flex items-end gap-2">
-          <div>
-            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Data de referência</label>
-            <input
-              type="date"
-              value={data}
-              onChange={e => setData(e.target.value)}
-              className="btn-ghost"
-              title="Data de referência: ancora toda a agenda — eventos, contas e visitas são calculados a partir dela."
-              style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "var(--r-sm)" }}
-            />
-          </div>
           <button onClick={carregar} className="btn-ghost" title="Recarregar">
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           </button>
-          <button onClick={() => setShowModal(true)} className="btn-primary">
-            <Plus size={16} /> Adicionar
+          <button onClick={() => setCalendarioAberto((a) => !a)} className="btn-primary" title="Ver o calendário mensal por cima dos indicadores">
+            <Calendar size={16} /> {calendarioAberto ? "Fechar calendário" : "Calendário"}
           </button>
         </div>
       </div>
@@ -1910,6 +1958,31 @@ export default function AgendaPage() {
       {loading && !agenda ? (
         <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
       ) : agenda && (
+        calendarioAberto ? (
+          // Calendário mensal por cima dos indicadores (C3-C4) — mesmo
+          // renderCalendario() reaproveitado da antiga visualização de baixo,
+          // só que agora sobrepondo este bloco em vez de trocar de aba.
+          <div className="card mb-2">
+            <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+              <span className="flex items-center gap-2"><Calendar size={15} style={{ color: "var(--dourado)" }} /> Calendário</span>
+              <div className="flex items-center gap-2">
+                {/* O botão "Adicionar" saiu do cabeçalho da página (C3), mas o
+                    evento manual não podia sair com ele: o atalho "Agendar" de
+                    cada linha só cria evento de UM animal, com descrição fixa
+                    da linha. Sem este gatilho, evento livre ou vinculado a
+                    lote(s) ficaria sem nenhum caminho na tela — o modal e o
+                    POST /agenda/manual continuariam existindo, inalcançáveis.
+                    O calendário é onde faz sentido: quem está olhando o mês é
+                    quem quer marcar alguma coisa nele. */}
+                <button className="btn-ghost" onClick={() => setShowModal(true)} title="Criar evento manual — livre, por lote ou para vários animais">
+                  <Plus size={14} /> Novo evento
+                </button>
+                <button className="btn-ghost" onClick={() => setCalendarioAberto(false)} title="Fechar e voltar aos indicadores"><X size={14} /> Fechar</button>
+              </div>
+            </div>
+            {renderCalendario()}
+          </div>
+        ) : (
         <div ref={bstIndicadoresRef} className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
           <Indicador categoria="reprodutivo" cor="var(--blue)" valor={candidatas.length} rotulo="Candidatas à próxima IATF"
             onClick={() => toggleLista("iatf")} podeClicar={candidatas.length > 0}
@@ -1959,6 +2032,7 @@ export default function AgendaPage() {
             title="Ver o detalhe dos alertas de estoque, no final da página"
             extra={estoqueAlertasTotal > 0 && <PackageSearch size={11} />} />
         </div>
+        )
       )}
       {eventosPendentes.length > 0 && (
         <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: "0.5rem" }}>
@@ -2067,55 +2141,65 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Indução de lactação — concluídas recentemente, com opção de desfazer */}
-      {inducaoConcluidos.length > 0 && (
-        <div className="card mb-4">
-          <button onClick={() => togglePainel("inducaoConcluidos")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left", padding: 0 }}>
-            {paineis.has("inducaoConcluidos") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
-            <span className="card-header" style={{ margin: 0 }}>Indução de lactação — concluídas ({inducaoConcluidos.length})</span>
-          </button>
-          {paineis.has("inducaoConcluidos") && (
-            <div className="overflow-x-auto mt-3">
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Protocolo</th><th>Dia</th><th>Animais</th><th>Concluído em</th><th></th></tr></thead>
-                <tbody>
-                  {inducaoConcluidos.map((g: any) => (
-                    <tr key={g.id}>
-                      <td style={{ fontSize: "0.83rem" }}>{g.nome_protocolo}</td>
-                      <td>D{g.dia}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{g.animais.join(", ")}</td>
-                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.data_realizacao ? new Date(g.data_realizacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                      <td>
-                        <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(g.id)} onClick={() => desfazerIatf(g.id)}>
-                          <RotateCcw size={12} /> Desfazer
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {/* "Concluídos no período" (C7-C10) — card genérico no lugar do antigo
+          card fixo só de indução de lactação: cobre etapas e atividades de
+          qualquer tipo, com filtro de/até (padrão últimos 7 dias). Pequeno e
+          recolhível por padrão (SecaoRecolhivel) para não competir com os
+          indicadores em destaque acima. */}
+      <SecaoRecolhivel
+        titulo="Concluídos no período"
+        icon={CheckCircle2}
+        descricao="Etapas e atividades marcadas como concluídas no período selecionado — inclui desfazer, se marcado por engano"
+        badge={<span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{inducaoConcluidosPeriodo.length + realizadosGenericos.length} no período</span>}
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+          <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>De</label>
+            <input type="date" value={concDe} onChange={e => setConcDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} /></div>
+          <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Até</label>
+            <input type="date" value={concAte} onChange={e => setConcAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} /></div>
         </div>
-      )}
-
-      {/* Filtros da agenda cronológica */}
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar agenda</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
-            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
-            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
-              <option value="">Todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
-            </select></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar</label>
-            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
-        </div>
-        {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
-      </div>
+        {carregandoRealizados ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Carregando…</p>
+        ) : (inducaoConcluidosPeriodo.length + realizadosGenericos.length) === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhuma etapa ou atividade concluída neste período.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr><th>Concluído em</th><th>Tipo</th><th>Detalhe</th><th></th></tr></thead>
+              <tbody>
+                {inducaoConcluidosPeriodo.map((g: any) => (
+                  <tr key={`ind_${g.id}`}>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.data_realizacao ? new Date(g.data_realizacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                    <td style={{ fontSize: "0.8rem" }}>Indução de lactação</td>
+                    <td style={{ fontSize: "0.78rem" }}>{g.nome_protocolo} — D{g.dia} — {g.animais.join(", ")}</td>
+                    <td>
+                      <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(g.id)} onClick={() => desfazerIatf(g.id)}>
+                        <RotateCcw size={12} /> Desfazer
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {realizadosGenericos.map((r) => (
+                  <tr key={`gen_${r.evento_id}`}>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{new Date(r.marcado_em.slice(0, 10) + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{r.rotulo || "Evento"}</td>
+                    {/* Sem rótulo conhecido para o prefixo: EventoRealizado só guarda
+                        um hash (evento_id), não o texto original da pendência — em
+                        vez de inventar uma descrição, mostra o id cru, honesto sobre
+                        o que dá para nomear (ver _rotulo_evento_realizado no backend). */}
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontFamily: r.rotulo ? undefined : "monospace" }}>{r.rotulo ? "—" : r.evento_id}</td>
+                    <td>
+                      <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(r.evento_id)} onClick={() => desfazerIatf(r.evento_id)}>
+                        <RotateCcw size={12} /> Desfazer
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SecaoRecolhivel>
 
       {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
           de uma atividade: não têm botão de excluir/realizado, ficam fixos
@@ -2132,8 +2216,14 @@ export default function AgendaPage() {
                   <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>{e.descricao}</p>
                   {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
                 </div>
-                {e.categoria === "alimentacao" && (
-                  <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
+                {/* Só o comunicado de NOVA DIETA leva à tela de dieta. A
+                    condição era por categoria, e o alerta de sobra também sai
+                    como "alimentacao" — então herdava este botão, que é
+                    exatamente o atalho de lançamento que o alerta de sobra não
+                    pode ter: ele é comunicado, resolve-se com o Check e nada
+                    mais. */}
+                {e.categoria === "alimentacao" && (e as any).tipo === "nova_dieta" && (
+                  <a href={`/alimentacao?lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
                     <Wheat size={12} /> Ir para Dieta
                   </a>
                 )}
@@ -2144,25 +2234,14 @@ export default function AgendaPage() {
       )}
 
       {/* Linha do tempo unificada — Atrasados (antes de hoje) seguido de Hoje/
-          próximos — ou, na visão de calendário, a grade do mês. Duas formas
-          de ver os MESMOS eventos (a mesma renderEventos por trás de ambas). */}
+          próximos. A grade do mês agora só aparece como overlay dos
+          indicadores (botão "Calendário" do cabeçalho, C3-C5) — este card
+          não tem mais a pílula que trocava entre as duas visões. */}
       <div className="card">
         <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span>Agenda ({eventosPendentes.length + eventosFuturos.length})</span>
           <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            {(["linha_do_tempo", "calendario"] as const).map((v) => (
-              <button key={v} type="button" onClick={() => setVisualizacao(v)}
-                title={v === "linha_do_tempo" ? "Lista única em ordem cronológica" : "Grade do mês — clique num dia para ver os eventos"}
-                style={{
-                  fontSize: "0.75rem", padding: "0.3rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (visualizacao === v ? "var(--dourado)" : "var(--border)"),
-                  background: visualizacao === v ? "var(--dourado)" : "transparent",
-                  color: visualizacao === v ? "#1a1a1a" : "var(--text-muted)", fontWeight: visualizacao === v ? 700 : 400,
-                }}>
-                {v === "linha_do_tempo" ? "Linha do tempo" : "Calendário"}
-              </button>
-            ))}
-            {visualizacao === "linha_do_tempo" && !ate && (
+            {!ate && (
               <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>
             )}
             <ExportarAgendaBotoes eventos={[...eventosPendentes, ...eventosFuturos]} />
@@ -2170,8 +2249,6 @@ export default function AgendaPage() {
         </div>
         {loading ? (
           <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
-        ) : visualizacao === "calendario" ? (
-          <div style={{ marginTop: "0.75rem" }}>{renderCalendario()}</div>
         ) : (
           <div style={{ marginTop: "0.75rem" }}>
             <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
