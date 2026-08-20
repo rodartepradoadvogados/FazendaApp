@@ -36,6 +36,30 @@ jobs:
       - run: pip install "alembic>=1.14" sqlmodel
       - run: python backend/scripts/check_alembic_heads.py
 
+  # Nome usado sem import é a falha mais barata de cometer e a mais cara de
+  # descobrir aqui: ela nao aparece em revisao de diff, nao aparece no
+  # typecheck do frontend, e so estoura em runtime — na pratica, no fim dos
+  # ~24 minutos da suite abaixo, ou pior, em producao, se o caminho nao tiver
+  # teste. Aconteceu duas vezes no mesmo dia de trabalho, as duas ao ligar uma
+  # funcao nova a um chamador sem levar o import junto.
+  #
+  # `ruff check --select F821` responde exatamente essa pergunta ("existe algum
+  # nome indefinido?") em 0,2 segundo sobre o backend inteiro. Fica como job
+  # proprio, antes da suite, pra falhar rapido: nenhuma outra regra de estilo
+  # entra aqui de proposito — o objetivo nao e padronizar codigo, e travar uma
+  # classe de erro especifica que ja custou caro.
+  nomes-indefinidos:
+    name: Nomes indefinidos (F821)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Procurar nomes usados sem definicao/import
+        run: ruff check --select F821 backend/
+
   # Antes deste job, a suite de 3000+ testes so rodava manualmente (na maquina
   # de quem estava trabalhando) — um PR podia quebrar qualquer coisa e mergear
   # verde, porque o unico check automatico (acima) e sobre migracoes, nao

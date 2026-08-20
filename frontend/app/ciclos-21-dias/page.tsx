@@ -182,7 +182,7 @@ export default function Ciclos21DiasPage() {
         {dados && (
           <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
             Período avaliado: {formatDate(dados.periodo.inicio)} a {formatDate(dados.periodo.fim)} ·{" "}
-            {dados.resumo.animais_avaliados} animal(is) no rebanho ·{" "}
+            {dados.resumo.animais_carregados} animal(is) no rebanho, {dados.resumo.animais_avaliados} entraram em algum ciclo ·{" "}
             PEV {dados.parametros.pev_dias} d · mínimo {dados.parametros.dias_minimos_no_ciclo} d no ciclo ·{" "}
             resultado conhecido em {dados.parametros.dias_resultado_conhecido} d
           </p>

@@ -8,13 +8,14 @@ import { useState } from "react";
 import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { CowIcon } from "@/components/CowIcon";
-import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal, type IndicadoresProducao, type AnimalProducaoAoVivo, type ReproducaoCategoria } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 import { exportarPDF, type ColunaExport } from "@/lib/export";
 import { producaoDe, origemDe } from "@/lib/producaoAnimal";
 
 type IndicadoresResp = {
+  data_referencia?: string;
   rebanho?: { total?: number | null };
   reproducao?: {
     prenhes?: number | null; inseminadas?: number | null; vazias?: number | null; aptas?: number | null;
@@ -25,7 +26,11 @@ type IndicadoresResp = {
     gestantes_detalhe?: { numero: string; dias_gestacao: number; parto_previsto: string }[];
     iep_por_matriz?: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
   };
-  reproducao_categorias?: { todas?: { pev?: number | null; vazias?: number | null } };
+  // "todas" é `ReproducaoCategoria` (lib/api.ts) — cada contador pareado com o
+  // `_nums` do MESMO objeto. Os cartões "Gestantes"/"Vazias" leem os dois
+  // (valor E lista) daqui, não mais de `fetchEstadosReprodutivos()` — ver o
+  // comentário longo onde `drill === "gestantes"`/`"vazias"` é montado.
+  reproducao_categorias?: { todas?: ReproducaoCategoria };
   producao?: IndicadoresProducao;
 };
 
@@ -135,8 +140,14 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   const porNumero = new Map(animais.map((a) => [a.numero, a]));
   const categoriaDe = (numero: string) => porNumero.get(numero)?.categoria_abrev || porNumero.get(numero)?.grupo_primario || "—";
   const estadoAnimais = estadosReq.dados?.animais || [];
+  const estadoPorNumero = new Map(estadoAnimais.map((a) => [a.numero, a]));
   const dataRef = estadosReq.dados?.data_referencia || "";
   const contagemEstados = estadosReq.dados?.contagem || {};
+  // Data de referência do PRÓPRIO payload de indicadores (não a de
+  // `estadosReq`, um fetch à parte) — usada pelo drill de "Gestantes" abaixo,
+  // que agora lê tudo (valor, lista, datas) de `dados`.
+  const dataRefIndicadores = dados?.data_referencia || "";
+  const cat = dados?.reproducao_categorias?.todas;
 
   if (numeroAberto) {
     return <FichaDetalhe numero={numeroAberto} onVoltar={() => setNumeroAberto(null)} />;
@@ -158,29 +169,48 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
     let temProducaoCongelada = false;
 
     if (drill === "gestantes") {
-      // Estado AO VIVO (não Animal.sit_rep, congelado do CSV) — ver
-      // GET /indicadores/estados-reprodutivos. Não reordenar: o endpoint já
-      // devolve por número crescente.
-      const lista = estadoAnimais.filter((a) => a.estado === "gestante");
-      total = lista.length;
-      linhas = lista.map((g) => (
-        <LinhaAnimal key={g.numero} onVerAnimal={() => setNumeroAberto(g.numero)} campos={<>
-          <Pilula>{g.categoria}</Pilula>
-          <Campo label="Nº" valor={g.numero} />
-          <Campo label="Dias de gestação" valor={g.dias_gestacao ?? "—"} />
-          <Campo label="Dias para o parto" valor={diasAte(dataRef, g.parto_previsto) ?? "—"} />
-          <Campo label="Parto previsto" valor={formatDate(g.parto_previsto || "")} />
-        </>} />
-      ));
+      // Nº por trás do CARTÃO: `cat.prenhes_nums`, o MESMO campo que dá o
+      // valor mostrado no card "Gestantes" logo abaixo (`cat?.prenhes`) —
+      // não mais `fetchEstadosReprodutivos()`, um fetch e um cache offline
+      // à parte que podia estar desatualizado em relação a `dados` na hora
+      // do clique. Medido antes de mexer
+      // (backend/tests/test_indicadores_menu_prenhes_vazias.py): com os
+      // dois calculados na MESMA hora os dois critérios batem sempre
+      // (mesmo `estado == "gestante"`); o risco era só de tempo, não de
+      // regra — mas era exatamente o padrão que já causou dois defeitos
+      // reais, então a membresia passa a vir de um único lugar.
+      // `dias_gestacao`/`parto_previsto` continuam de `reproducao
+      // .gestantes_detalhe` — mesmo payload de `dados`, só que já existia
+      // pareado com `prenhes_nums` (os dois vêm do mesmo `numeros_gestantes
+      // _vivo` em rules/indicadores.py) e cobre exatamente esta lista.
+      const detalhePorNumero = new Map((rep.gestantes_detalhe || []).map((g) => [g.numero, g]));
+      const nums = [...new Set(cat?.prenhes_nums || [])].sort((a, b) => ordenarNumero({ numero: a }, { numero: b }));
+      total = nums.length;
+      linhas = nums.map((numero) => {
+        const g = detalhePorNumero.get(numero);
+        return (
+          <LinhaAnimal key={numero} onVerAnimal={() => setNumeroAberto(numero)} campos={<>
+            <Pilula>{categoriaDe(numero)}</Pilula>
+            <Campo label="Nº" valor={numero} />
+            <Campo label="Dias de gestação" valor={g?.dias_gestacao ?? "—"} />
+            <Campo label="Dias para o parto" valor={diasAte(dataRefIndicadores, g?.parto_previsto) ?? "—"} />
+            <Campo label="Parto previsto" valor={g?.parto_previsto ? formatDate(g.parto_previsto) : "—"} />
+          </>} />
+        );
+      });
       colunasExport = [
         { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
         { header: "Dias de gestação", key: "dias_gestacao" }, { header: "Dias para o parto", key: "dias_parto" },
         { header: "Parto previsto", key: "parto_previsto" },
       ];
-      linhasExport = lista.map((g) => ({
-        numero: g.numero, categoria: g.categoria, dias_gestacao: g.dias_gestacao ?? "",
-        dias_parto: diasAte(dataRef, g.parto_previsto) ?? "", parto_previsto: formatDate(g.parto_previsto || ""),
-      }));
+      linhasExport = nums.map((numero) => {
+        const g = detalhePorNumero.get(numero);
+        return {
+          numero, categoria: categoriaDe(numero), dias_gestacao: g?.dias_gestacao ?? "",
+          dias_parto: diasAte(dataRefIndicadores, g?.parto_previsto) ?? "",
+          parto_previsto: g?.parto_previsto ? formatDate(g.parto_previsto) : "—",
+        };
+      });
     } else if (drill === "inseminadas") {
       const lista = estadoAnimais.filter((a) => a.estado === "inseminada");
       total = lista.length;
@@ -235,26 +265,40 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
       ];
       linhasExport = lista.map((a) => ({ numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "" }));
     } else if (drill === "vazias") {
-      // Estado AO VIVO. "Vazia" aqui é o guarda-chuva de quem NÃO está prenhe,
-      // inseminada nem em protocolo — mesmo conjunto que o "Vaz.*" do CSV
-      // representava, para o número do card não mudar de significado.
-      const lista = estadoAnimais.filter((a) => ["vazia", "apta", "atrasada", "pev", "nao_apta"].includes(a.estado));
-      total = lista.length;
-      linhas = lista.map((a) => (
-        <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{a.categoria}</Pilula>
-          <Campo label="Nº" valor={a.numero} />
-          <Campo label="Situação" valor={ROTULO_ESTADO[a.estado] || a.estado} />
-          <Campo label="Lote atual" valor={a.lote || "—"} />
-        </>} />
-      ));
+      // Nº por trás do CARTÃO: `cat.vazias_nums` — o mesmo guarda-chuva de 5
+      // estados (vazia/apta/atrasada/pev/nao_apta, sem `em_protocolo`) que o
+      // valor do card já usa (`cat?.vazias`), e o mesmo objeto: card e lista
+      // não podem mais divergir por lerem fetches diferentes. "Situação" e
+      // "Lote atual" continuam de `estadoAnimais`/`animais` — são só
+      // ENRIQUECIMENTO de exibição (o `_nums` não carrega esse detalhe), e
+      // degradam para "—" se esses dois ainda não carregaram, sem tirar nem
+      // acrescentar ninguém à lista.
+      const nums = [...new Set(cat?.vazias_nums || [])].sort((a, b) => ordenarNumero({ numero: a }, { numero: b }));
+      total = nums.length;
+      linhas = nums.map((numero) => {
+        const estado = estadoPorNumero.get(numero);
+        const lote = porNumero.get(numero)?.grupo_primario;
+        return (
+          <LinhaAnimal key={numero} onVerAnimal={() => setNumeroAberto(numero)} campos={<>
+            <Pilula>{categoriaDe(numero)}</Pilula>
+            <Campo label="Nº" valor={numero} />
+            <Campo label="Situação" valor={estado ? (ROTULO_ESTADO[estado.estado] || estado.estado) : "—"} />
+            <Campo label="Lote atual" valor={lote || "—"} />
+          </>} />
+        );
+      });
       colunasExport = [
         { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
         { header: "Situação", key: "situacao" }, { header: "Lote atual", key: "lote" },
       ];
-      linhasExport = lista.map((a) => ({
-        numero: a.numero, categoria: a.categoria, situacao: ROTULO_ESTADO[a.estado] || a.estado, lote: a.lote || "—",
-      }));
+      linhasExport = nums.map((numero) => {
+        const estado = estadoPorNumero.get(numero);
+        const lote = porNumero.get(numero)?.grupo_primario;
+        return {
+          numero, categoria: categoriaDe(numero),
+          situacao: estado ? (ROTULO_ESTADO[estado.estado] || estado.estado) : "—", lote: lote || "—",
+        };
+      });
     } else if (drill === "aptas") {
       // Estado AO VIVO — ver GET /indicadores/estados-reprodutivos.
       const lista = estadoAnimais.filter((a) => a.estado === "apta");
@@ -388,9 +432,13 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
       });
     }
 
+    // "gestantes"/"vazias" saíram desta lista: sua MEMBRESIA (a lista em si)
+    // agora vem de `dados` (fetchIndicadores), não de `estadosReq` — só o
+    // enriquecimento de exibição (Situação/dias de gestação) ainda usa
+    // `estadosReq`, e degrada para "—" sem bloquear a lista se ele atrasar.
     const carregandoLista =
       (drill === "secagens" ? secagemReq.carregando && !secagemReq.dados
-        : ["gestantes", "inseminadas", "protocolo", "pev", "aptas", "atrasadas"].includes(drill) ? estadosReq.carregando && !estadosReq.dados
+        : ["inseminadas", "protocolo", "pev", "aptas", "atrasadas"].includes(drill) ? estadosReq.carregando && !estadosReq.dados
         : animaisReq.carregando && !animaisReq.dados) || (carregando && !dados);
 
     return (
@@ -456,14 +504,21 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   const cartoes: Cartao[] = [
     { chave: "animais", titulo: "Animais", valor: val(animais.length || null), onClick: onAbrirAnimais, icone: <CowIcon size={20} color="var(--mob-dourado-2)" /> },
     { chave: "lotes", titulo: "Lotes", valor: val(totalLotes || null), onClick: onAbrirLotes, icone: <Fence size={20} /> },
-    { chave: "gestantes", titulo: "Gestantes", valor: val(rep.prenhes), onClick: () => setDrill("gestantes"), icone: <Baby size={20} /> },
+    // Valor de `cat.prenhes` (== `reproducao.prenhes`, mesmo critério e
+    // mesma população — ver medição no comentário do drill "gestantes"
+    // acima), mas lido do MESMO objeto que fornece `prenhes_nums` à lista
+    // do drill-down, não de um campo irmão que só por coincidência dá o
+    // mesmo número hoje.
+    { chave: "gestantes", titulo: "Gestantes", valor: val(cat?.prenhes ?? null), onClick: () => setDrill("gestantes"), icone: <Baby size={20} /> },
     { chave: "inseminadas", titulo: "Inseminadas", valor: val(rep.inseminadas), onClick: () => setDrill("inseminadas"), icone: <Syringe size={20} /> },
     { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev"), icone: <CalendarClock size={20} /> },
     // `reproducao.vazias` é o catch-all do backend (tudo que não é gestante
     // nem inseminada — inclusive quem está em protocolo); este card abre a
     // lista dos 5 estados vazia/apta/atrasada/pev/nao_apta, e é
-    // `reproducao_categorias.todas.vazias` que conta exatamente esses 5.
-    { chave: "vazias", titulo: "Vazias", valor: val(dados?.reproducao_categorias?.todas?.vazias ?? null), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
+    // `reproducao_categorias.todas.vazias`/`.vazias_nums` que conta e lista
+    // exatamente esses 5 — os dois lidos do mesmo `cat`, ver comentário no
+    // drill "vazias" acima.
+    { chave: "vazias", titulo: "Vazias", valor: val(cat?.vazias ?? null), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
     { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas"), icone: <CheckCircle2 size={20} /> },
     // Contagem AO VIVO (estado), não mais Animal.sit_rep — mesma fonte da lista de drill-down.
     { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} />, atencao: true },

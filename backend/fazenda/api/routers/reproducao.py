@@ -131,7 +131,7 @@ def ciclos_de_21_dias(
     (regras R1–R9) que define cada um desses conjuntos.
     """
     from fazenda.rules.parametros import (
-        dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
+        dias_minimos_no_ciclo, dias_reinseminacao_min, dias_resultado_conhecido, get_param,
         idade_apta_min_meses,
         idade_max_1a_cobertura_meses, meta_taxa_concepcao, meta_taxa_prenhez,
         meta_taxa_servico, pev_dias, peso_apta_min,
@@ -151,6 +151,12 @@ def ciclos_de_21_dias(
         pev_dias=pev_dias(),
         dias_minimos=dias_minimos_no_ciclo(),
         dias_resultado=dias_resultado_conhecido(),
+        # Janela mínima de cio de repasse — a mesma que a tela de Reprodução
+        # já usa. Sem passar aqui, o motor cairia no piso embutido e o campo
+        # editável em Configurações não faria efeito nenhum (foi por ser um
+        # campo assim, editável e inerte, que `idade_maturidade_novilha` foi
+        # aposentado).
+        dias_minimos_repasse=dias_reinseminacao_min(),
         del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
         idade_apta_dias=int(idade_apta_min_meses() * 30.44),
         idade_atraso_dias=int(idade_max_1a_cobertura_meses() * 30.44),
@@ -167,6 +173,23 @@ def ciclos_de_21_dias(
         soma = sum((l[campo] or 0) * l[denominador] for l in linhas)
         return round(soma / total_den, 1)
 
+    # `animais_avaliados` já se chamou assim sem merecer: media quantos perfis
+    # foram CARREGADOS do banco para o cálculo, não quantos de fato passaram
+    # por algum crivo do BREDSUM\E. Uma vaca gestante o período todo, ou uma
+    # baixada antes do primeiro ciclo, entrava nessa contagem do mesmo jeito
+    # que uma que foi de fato avaliada — nome prometendo mais do que a conta
+    # entregava. A união de br_elig/bred/pg_elig/preg de todos os ciclos já
+    # responde "quem passou por pelo menos um balde", sem inventar cálculo
+    # novo: cada `ResultadoCiclo` já carrega essas listas. O valor antigo (o
+    # tamanho do rebanho carregado) não desaparece — seria informação querida
+    # por quem calibra o carregamento em si — só passa a ter nome que não
+    # mente: `animais_carregados`. Mesmo princípio de `ultimo_por_animal` em
+    # rules/indicadores.py, que preservou um acumulado ao ser destronado do
+    # card.
+    animais_avaliados: set[str] = set()
+    for r in resultados:
+        animais_avaliados.update(r.br_elig, r.bred, r.pg_elig, r.preg)
+
     return {
         "ancora": ancora.isoformat(),
         "modo": modo,
@@ -177,7 +200,8 @@ def ciclos_de_21_dias(
             "taxa_servico": _ponderada("taxa_servico", "br_elig"),
             "taxa_prenhez": _ponderada("taxa_prenhez", "pg_elig"),
             "taxa_concepcao": _ponderada("taxa_concepcao", "servicos_com_resultado"),
-            "animais_avaliados": len(perfis),
+            "animais_avaliados": len(animais_avaliados),
+            "animais_carregados": len(perfis),
         },
         "metas": {
             "taxa_servico": meta_taxa_servico(),
@@ -189,11 +213,17 @@ def ciclos_de_21_dias(
             "dias_minimos_no_ciclo": dias_minimos_no_ciclo(),
             "dias_resultado_conhecido": dias_resultado_conhecido(),
         },
-        # A tela mostra este aviso no rodapé: `Animal.a_descartar` é booleano
-        # sem data, então a marcação atual vale para todo o período avaliado.
+        # Aviso do rodapé da tela. Ficou desatualizado quando `a_descartar_em`
+        # passou a existir (ver `descartada_em` em rules/programa_reprodutivo.py):
+        # dizia ao usuário que a marcação NUNCA tem data, o que virou meia
+        # verdade — passou a valer só para quem foi marcado antes da coluna.
+        # Texto que engana é pior que aviso nenhum, ainda mais um que serve
+        # justamente para o usuário calibrar quanta fé ter na série histórica.
         "ressalva_historica": (
-            "A marcação \"a descartar\" não guarda data — o estado atual do animal "
-            "vale para todo o período. Baixas são datadas e reconstruídas corretamente."
+            "A marcação \"a descartar\" passou a ser datada: quem for marcado de agora "
+            "em diante sai do cálculo só a partir da data da marcação. Quem já estava "
+            "marcado antes disso não tem data registrada e segue valendo para todo o "
+            "período. Baixas sempre foram datadas e são reconstruídas corretamente."
         ),
     }
 

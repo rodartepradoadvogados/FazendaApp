@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby } from "lucide-react";
-import { fetchIndicadores, fetchAnimais, podeModulo, type IndicadoresResposta } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, podeModulo, type IndicadoresResposta, type ReproducaoCategoria } from "@/lib/api";
+import { cartao, cartaoDeMapas } from "@/lib/cartaoDrillDown";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
@@ -32,8 +33,13 @@ export function IndicadoresGerais() {
   useEffect(() => { carregar(); }, []);
 
   const reb = ind?.rebanho, rep = ind?.reproducao, prod = ind?.producao;
-  const repCats: any = ind?.reproducao_categorias || { todas: rep };
-  const repSel: any = repCats[catRep] || rep;
+  // Sem `reproducao_categorias` (payload de cache antigo), cai de volta no
+  // bloco `reproducao` — que não tem TODOS os `_nums` de `ReproducaoCategoria`
+  // (não existe `prenhes_nums` solto, só `prenhes_programa_nums`, o
+  // numerador do programa). O cast só nomeia essa lacuna que já existia aqui
+  // (antes escondida atrás de `any`); em produção `reproducao_categorias`
+  // sempre vem preenchido, então este ramo é só rede de segurança.
+  const repSel = (ind?.reproducao_categorias?.[catRep] || rep) as ReproducaoCategoria | undefined;
   const grupos: [string, number][] = reb ? Object.entries(reb.distribuicao_grupos) : [];
   const maxGrupo = grupos.reduce((m, [, n]) => Math.max(m, n), 0) || 1;
 
@@ -67,16 +73,33 @@ export function IndicadoresGerais() {
   const rotuloProducaoDia = dataControleLabel ? `Produção do dia · ${dataControleLabel}` : "Produção do dia · sem controle lançado";
   const tituloModalControleDia = dataControleLabel ? `Controle leiteiro — ${dataControleLabel}` : "Controle leiteiro do dia";
 
-  // Cada linha abre a lista que o próprio backend contou (`*_nums`), e não um
-  // refiltro do `sit_rep` congelado do CSV: o número do card e a lista que ele
-  // abre passam a vir da mesma conta, inclusive no recorte vaca/novilha (que
-  // no backend sai do registro de Parto, não de `data_ult_parto`).
+  // Cada linha é um Cartao (lib/cartaoDrillDown.ts): valor e `nums` saem das
+  // DUAS chaves do MESMO `repSel`, então não tem como uma linha nova aqui
+  // abrir a lista de outro contador por engano — o TypeScript recusa a
+  // chamada se a chave de `nums` não existir em `ReproducaoCategoria`. O
+  // recorte vaca/novilha vem de graça, porque `repSel` já é o objeto certo
+  // (sai do registro de Parto no backend, não de `data_ult_parto`).
   const linhasRep = useMemo(() => [
-    { label: "Fêmeas aptas", v: repSel?.aptas, cor: undefined, nums: repSel?.aptas_nums },
-    { label: "Prenhes", v: repSel?.prenhes, cor: "var(--green-light)", nums: repSel?.prenhes_nums },
-    { label: "Vazias", v: repSel?.vazias, cor: "var(--amber)", nums: repSel?.vazias_nums },
-    { label: "Inseminadas (aguard. diagnóstico)", v: repSel?.inseminadas, cor: "var(--blue)", nums: repSel?.inseminadas_nums },
-  ], [repSel, catRep]);
+    cartao({ origem: repSel, titulo: "Fêmeas aptas", conta: "aptas", nums: "aptas_nums" }),
+    cartao({ origem: repSel, titulo: "Prenhes", conta: "prenhes", nums: "prenhes_nums", cor: "var(--green-light)" }),
+    cartao({ origem: repSel, titulo: "Vazias", conta: "vazias", nums: "vazias_nums", cor: "var(--amber)" }),
+    cartao({ origem: repSel, titulo: "Inseminadas (aguard. diagnóstico)", conta: "inseminadas", nums: "inseminadas_nums", cor: "var(--blue)" }),
+  ], [repSel]);
+
+  const linhasPartosPrevistos = [
+    { label: "Próximos 30 dias", key: "em_30_dias" as const },
+    { label: "Próximos 60 dias", key: "em_60_dias" as const },
+    { label: "Próximos 90 dias", key: "em_90_dias" as const },
+  ];
+
+  // Mesmo mecanismo dos dois cards acima: valor (a taxa) e `nums` (o
+  // drill-down) saem das duas chaves do MESMO `rep`. O valor é uma TAXA
+  // (denominador = programa reprodutivo) e o drill-down abre o NUMERADOR
+  // (`prenhes_programa_nums`/`vazias_programa_nums`) — os dois de propósito,
+  // documentado em indicadores.py; ver docstring de lib/cartaoDrillDown.ts
+  // sobre por que isso não é o mesmo bug que este módulo evita.
+  const cFemeasPrenhas = cartao({ origem: rep, titulo: "Fêmeas prenhas", conta: "taxa_prenhez_pct", nums: "prenhes_programa_nums", formatar: pct });
+  const cVazias = cartao({ origem: rep, titulo: "Vazias", conta: "perc_vazias_pct", nums: "vazias_programa_nums", formatar: pct });
 
   return (
     <div className="p-6 animate-in">
@@ -95,16 +118,16 @@ export function IndicadoresGerais() {
 
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={pct(rep?.taxa_prenhez_pct)}
+          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={cFemeasPrenhas.valor}
             rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% do rebanho no programa reprodutivo, hoje</span></>}
-            onClick={() => abrirNums("Fêmeas prenhas", rep?.prenhes_programa_nums)} />
+            onClick={() => abrirNums(cFemeasPrenhas.titulo, cFemeasPrenhas.nums)} />
           <Indicador categoria="reprodutivo" cor="var(--blue)" valor={pct(rep?.taxa_concepcao_pct)}
             rotulo={<>Concepção / serviço<span style={{ ...legenda, display: "block" }}>serviços desde {desdeLabel}</span></>} />
           <Indicador categoria="reprodutivo" cor="var(--amber)" valor={num(rep?.iep_meses, " m")}
             rotulo={<>IEP médio<span style={{ ...legenda, display: "block" }}>todo o histórico</span></>} />
-          <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={pct(rep?.perc_vazias_pct)}
+          <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={cVazias.valor}
             rotulo={<>Vazias<span style={{ ...legenda, display: "block" }}>situação atual</span></>}
-            onClick={() => abrirNums("Vazias", rep?.vazias_programa_nums)} />
+            onClick={() => abrirNums(cVazias.titulo, cVazias.nums)} />
         </div>
 
         {/* Produção do dia é o número que o dono olha primeiro todo dia — vira a
@@ -179,10 +202,10 @@ export function IndicadoresGerais() {
             </div>
             <table className="fazenda-table">
               <tbody>
-                {linhasRep.map((r: any) => (
-                  <tr key={r.label} onClick={() => abrirNums(r.label, r.nums)} style={clickable} className={animais.length ? "row-clickable" : ""}>
-                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
-                    <td style={{ fontWeight: 700, textAlign: "right", color: r.cor }}>{num(r.v)}</td>
+                {linhasRep.map((r) => (
+                  <tr key={r.titulo} onClick={() => abrirNums(r.titulo, r.nums)} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.rotulo}</td>
+                    <td style={{ fontWeight: 700, textAlign: "right", color: r.cor }}>{r.valor}</td>
                   </tr>
                 ))}
               </tbody>
@@ -191,16 +214,18 @@ export function IndicadoresGerais() {
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>A coluna à direita é a <strong>quantidade de fêmeas</strong> com parto previsto no período{dica}.</p>
             <table className="fazenda-table">
               <tbody>
-                {[
-                  { label: "Próximos 30 dias", key: "em_30_dias" },
-                  { label: "Próximos 60 dias", key: "em_60_dias" },
-                  { label: "Próximos 90 dias", key: "em_90_dias" },
-                ].map((r) => (
-                  <tr key={r.key} onClick={() => abrirNums(`Partos previstos — ${r.label.toLowerCase()}`, rep?.partos_previstos_nums?.[r.key])} style={clickable} className={animais.length ? "row-clickable" : ""}>
-                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
-                    <td style={{ fontWeight: 700, textAlign: "right" }}>{num(rep?.partos_previstos?.[r.key])}</td>
-                  </tr>
-                ))}
+                {/* `cartaoDeMapas`: a MESMA chave (`r.key`) indexa `partos_previstos`
+                    e `partos_previstos_nums` uma única vez — não tem como o valor
+                    sair de um período e a lista abrir de outro. */}
+                {linhasPartosPrevistos.map((r) => {
+                  const c = cartaoDeMapas(`Partos previstos — ${r.label.toLowerCase()}`, rep?.partos_previstos, rep?.partos_previstos_nums, r.key);
+                  return (
+                    <tr key={r.key} onClick={() => abrirNums(c.titulo, c.nums)} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                      <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
+                      <td style={{ fontWeight: 700, textAlign: "right" }}>{c.valor}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

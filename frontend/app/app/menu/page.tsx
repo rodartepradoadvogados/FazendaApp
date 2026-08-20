@@ -17,7 +17,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
+  Stethoscope, Syringe, CalendarDays, CalendarRange, Wheat, FileBarChart, Gauge,
   LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
   Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
@@ -55,8 +55,9 @@ import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
 import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
 import Sincronizacao from "@/components/mobile/menu/Sincronizacao";
+import Ciclos21Dias from "@/components/mobile/menu/Ciclos21Dias";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
+type SubKey = "agendaVet" | "iatf" | "ciclos21" | "calendario" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
@@ -69,6 +70,11 @@ const GRUPOS: Grupo[] = [
   { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
     { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={20} /> },
     { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={20} /> },
+    // Entra em Reprodução, primeiro nível, e não pendurado dentro de Gestão >
+    // Indicadores: é a medida de eficiência reprodutiva do padrão da área
+    // (BREDSUM\E), não mais um número de consulta rápida. Quem está no curral
+    // procura isto por "reprodução".
+    { chave: "ciclos21", titulo: "Ciclos de 21 dias", subtitulo: "Eficiência reprodutiva ciclo a ciclo", rota: "/ciclos-21-dias", icone: <CalendarRange size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
     { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={20} /> },
@@ -104,6 +110,7 @@ const GRUPOS: Grupo[] = [
 const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactNode> = {
   agendaVet: AgendaVet,
   iatf: ProtocolosIatf,
+  ciclos21: Ciclos21Dias,
   calendario: CalendarioSanitario,
   aplicacoes: AplicacoesSanidade,
   remedios: RemediosPorDoenca,

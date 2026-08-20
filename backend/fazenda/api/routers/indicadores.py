@@ -206,9 +206,21 @@ def _resumo_relatorio_personalizado(
     # deste resumo — taxa_concepcao_pct inclusive — sairiam diferentes das da
     # tela de Indicadores, ou vazias.
     peso_por_animal, lotes, aplicacoes_iatf = _contexto_calculo(session, fazenda_id)
+    # Controles/secagens pelo mesmo motivo do comentário acima: este resumo
+    # hoje só lê o bloco `reproducao`, mas roda o motor INTEIRO. Sem eles o
+    # DEL ao vivo sai sem saber quem já secou — e o dia em que alguém trouxer
+    # um número de produção para este painel, ele nasceria degradado e
+    # discordando de Indicadores > Gerais, sem nada no código denunciando.
+    query_controles = select(ControleLeiteiro)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
     ind = calcular_indicadores(
         animais_dump, servicos_dump, partos_dump, data_ref=hoje,
         peso_por_animal=peso_por_animal, lotes=lotes, aplicacoes_iatf=aplicacoes_iatf,
+        controles=[c.model_dump() for c in session.exec(query_controles).all()],
+        secagens=[sg.model_dump() for sg in session.exec(query_secagens).all()],
     )
     rep = ind.get("reproducao", {})
 

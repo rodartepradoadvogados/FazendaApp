@@ -19,6 +19,7 @@ from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_da_ra
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.producao_leiteira import del_dias_ao_vivo
 from fazenda.rules.parametros import (
+    dias_reinseminacao_min,
     BENCHMARK_METAS,
     data_corte_taxa_concepcao,
     dias_minimos_no_ciclo,
@@ -224,6 +225,9 @@ def _parametros_ciclos() -> dict:
         "pev_dias": pev_dias(),
         "dias_minimos": dias_minimos_no_ciclo(),
         "dias_resultado": dias_resultado_conhecido(),
+        # Janela mínima de cio de repasse: sem passar, o motor usa o piso
+        # embutido e o parâmetro editável da fazenda não faria efeito nenhum.
+        "dias_minimos_repasse": dias_reinseminacao_min(),
         "del_max_1o_servico": int(get_param("meta_del_max_1o_servico", 100) or 100),
         "idade_apta_dias": int(idade_apta_min_meses() * 30.44),
         "idade_atraso_dias": int(idade_max_1a_cobertura_meses() * 30.44),
@@ -381,6 +385,7 @@ def _repro_benchmark(
     perfis: list | None = None,
     params_ciclos: dict | None = None,
     contadores_prontos: dict | None = None,
+    del_por_matriz: dict[str, float] | None = None,
 ) -> list[dict]:
     """Painel de benchmark reprodutivo de um subconjunto do rebanho — usado
     para 'todas', 'vaca' e 'novilha'.
@@ -523,10 +528,20 @@ def _repro_benchmark(
         v for s in serv_periodo if s.get("ordem_tentativa") == 1
         for v in [_del_serv(s)] if v is not None
     ])
-    del_medio = _media([
-        float(a["del_dias"]) for a in animais
-        if _codigo_grupo(a.get("grupo_primario")) in GRUPOS_LACTACAO and a.get("del_dias")
-    ])
+    # DEL das lactantes: o ao vivo quando o chamador o entrega (o mesmo mapa
+    # que alimenta `producao.del_medio` — os dois campos são rotulados "DEL
+    # médio" e não podem discordar dentro do mesmo payload). Sem o mapa
+    # (chamada isolada, testes), cai no `del_dias` congelado como antes.
+    if del_por_matriz is not None:
+        del_medio = _media([
+            v for a in animais
+            for v in [del_por_matriz.get(a.get("numero"))] if v is not None
+        ])
+    else:
+        del_medio = _media([
+            float(a["del_dias"]) for a in animais
+            if _codigo_grupo(a.get("grupo_primario")) in GRUPOS_LACTACAO and a.get("del_dias")
+        ])
     iep_dias = _iep_dias(partos)
     iep_meses = round(iep_dias / 30.44, 1) if iep_dias else None
 
@@ -554,6 +569,7 @@ def _benchmark_categorias(
     estados: dict[str, str] | None = None, hoje: date | None = None,
     aplicacoes_iatf: list[dict] | None = None,
     peso_por_animal: dict[str, float] | None = None,
+    del_por_matriz: dict[str, float] | None = None,
 ) -> dict:
     """Benchmark separado por categoria: todas / vaca (já pariu) / novilha.
 
@@ -586,6 +602,7 @@ def _benchmark_categorias(
     comum = {
         "estados": estados, "hoje": hoje, "descartar_nums": descartar_nums,
         "perfis": perfis, "params_ciclos": params_ciclos,
+        "del_por_matriz": del_por_matriz,
     }
     # O motor de ciclos roda DUAS vezes, não três: a partição por
     # `perfil.eh_vaca` é disjunta e cobre o rebanho, e todos os contadores são
@@ -1081,6 +1098,13 @@ def calcular_indicadores(
         if d and m and (m not in ultima_secagem_por_matriz or d > ultima_secagem_por_matriz[m]):
             ultima_secagem_por_matriz[m] = d
 
+    # Mapa (e não só a lista da média) porque o MESMO DEL ao vivo alimenta o
+    # "DEL médio" do benchmark reprodutivo — ver `_repro_benchmark`. Os dois
+    # campos se chamam `del_medio` e são rotulados "DEL médio" na tela; se um
+    # fosse ao vivo e o outro continuasse no `del_dias` congelado do CSV, o
+    # mesmo painel mostraria dois números diferentes com o mesmo nome — que é
+    # exatamente o defeito que esta correção veio remover, não introduzir.
+    del_vivo_por_matriz: dict[str, float] = {}
     del_vivo_lactacao: list[float] = []
     for a in animais:
         if _codigo_grupo(a.get("grupo_primario")) not in GRUPOS_LACTACAO:
@@ -1092,8 +1116,15 @@ def calcular_indicadores(
             ultima_secagem_por_matriz.get(numero),
             hoje,
         )
-        if del_vivo is not None:
-            del_vivo_lactacao.append(float(del_vivo))
+        if del_vivo is None:
+            continue
+        del_vivo_lactacao.append(float(del_vivo))
+        # O mapa é só o índice para o benchmark. A MÉDIA não depende dele:
+        # um dict de animal sem `numero` (chamada isolada/teste do motor puro)
+        # continua entrando na média, como sempre entrou — indexar não pode
+        # virar critério de inclusão.
+        if numero:
+            del_vivo_por_matriz[numero] = float(del_vivo)
     del_medio = _media(del_vivo_lactacao)
     del_medio_animais = len(del_vivo_lactacao)
 
@@ -1289,6 +1320,7 @@ def calcular_indicadores(
         animais, servicos, partos, vacas_nums, concepcao_desde,
         estados=estados_por_animal, hoje=hoje,
         aplicacoes_iatf=aplicacoes_iatf or [], peso_por_animal=peso_por_animal,
+        del_por_matriz=del_vivo_por_matriz,
     )
     benchmark = benchmark_categorias["todas"]
     _bt = {b["chave"]: b["valor"] for b in benchmark}

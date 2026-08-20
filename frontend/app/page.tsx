@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, podeModulo, type NotaCapa,
+  fetchNotaCapa, podeModulo, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
 } from "@/lib/api";
+import { cartao } from "@/lib/cartaoDrillDown";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
@@ -84,7 +85,8 @@ export default function Home() {
 
   if (!d) return <div className="p-6"><p style={{ color: "var(--text-muted)" }}>Carregando painel…</p></div>;
 
-  const reb = d.ind?.rebanho, rep = d.ind?.reproducao, prod = d.ind?.producao;
+  const reb = d.ind?.rebanho, prod = d.ind?.producao;
+  const rep = d.ind?.reproducao as IndicadoresReproducao | undefined;
   const semDados = !d.ind && !d.ag;
 
   // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria.
@@ -111,8 +113,11 @@ export default function Home() {
   const kgs = serieProd.map((s: any) => s.kg).filter((v: any) => v != null) as number[];
   const kgMin = kgs.length ? Math.floor(Math.min(...kgs) - 1) : 0;
   const kgMax = kgs.length ? Math.ceil(Math.max(...kgs) + 1) : 30;
-  const repCats: any = d.ind?.reproducao_categorias || { todas: rep };
-  const repSel: any = repCats[catRep] || rep;
+  // Mesma rede de segurança de app/indicadores/page.tsx: sem
+  // `reproducao_categorias` (payload de cache antigo), cai de volta no bloco
+  // `reproducao`, que não tem todos os `_nums` de `ReproducaoCategoria` — o
+  // cast só nomeia essa lacuna pré-existente.
+  const repSel = (d.ind?.reproducao_categorias?.[catRep] || rep) as ReproducaoCategoria | undefined;
   // As 6 fatias são uma partição do rebanho da categoria (por isso somam o
   // total): "Em protocolo" entrou justamente porque não cabia em nenhuma das
   // outras — sem ela o donut ficava faltando animais.
@@ -299,12 +304,16 @@ export default function Home() {
           </div>
           {repSel ? (
             <div className="grid grid-cols-3 gap-2 mb-2">
-              {([
-                ["Aptas", repSel.aptas, repSel.aptas_nums],
-                ["Inseminadas", repSel.inseminadas, repSel.inseminadas_nums],
-                ["Gestantes", repSel.prenhes, repSel.prenhes_nums],
-              ] as const).map(([l, v, nums]) => (
-                <KPI key={l} l={l} v={v} cat="reprodutivo" onClick={() => abrirNums(l, nums)} />
+              {/* Cada card é um Cartao (lib/cartaoDrillDown.ts): valor e `nums`
+                  saem das duas chaves do MESMO `repSel`, tipadas contra
+                  `ReproducaoCategoria` — não compila se `nums` apontar para
+                  um campo que não existe nesse objeto. */}
+              {[
+                cartao({ origem: repSel, titulo: "Aptas", conta: "aptas", nums: "aptas_nums" }),
+                cartao({ origem: repSel, titulo: "Inseminadas", conta: "inseminadas", nums: "inseminadas_nums" }),
+                cartao({ origem: repSel, titulo: "Gestantes", conta: "prenhes", nums: "prenhes_nums" }),
+              ].map((c) => (
+                <KPI key={c.titulo} l={c.titulo} v={c.valor} cat="reprodutivo" onClick={() => abrirNums(c.titulo, c.nums)} />
               ))}
             </div>
           ) : null}

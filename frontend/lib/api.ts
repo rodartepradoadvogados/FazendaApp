@@ -1273,10 +1273,56 @@ export type IndicadoresProducao = {
   vacas_com_producao: number;
 };
 
+// Bloco "reproducao_categorias.<todas|vaca|novilha>" de GET /indicadores/
+// (fazenda/rules/indicadores.py::_reproducao_categorias). Cada contador vem
+// pareado com o `_nums` do MESMO objeto — é o que `lib/cartaoDrillDown.ts`
+// exige ao ler os dois campos: não dá para escrever `conta: "prenhes"` e
+// `nums: "aptas_nums"` sem que o par exista de verdade neste tipo.
+export type ReproducaoCategoria = {
+  aptas: number; aptas_nums: string[];
+  prenhes: number; prenhes_nums: string[];
+  vazias: number; vazias_nums: string[];
+  inseminadas: number; inseminadas_nums: string[];
+  pev: number; pev_nums: string[];
+  a_inseminar: number; a_inseminar_nums: string[];
+  nao_classificadas: number; nao_classificadas_nums: string[];
+  em_protocolo: number; em_protocolo_nums: string[];
+};
+
+// Bloco "reproducao" de GET /indicadores/ (mesmo módulo). `prenhes_programa_nums`
+// e `vazias_programa_nums` são os denominadores do PROGRAMA reprodutivo (R1) —
+// pareiam com `taxa_prenhez_pct`/`perc_vazias_pct`, não com `prenhes`/`vazias`
+// (que são o INVENTÁRIO cru do rebanho inteiro, sem os cortes de R1). Ver o
+// comentário longo em indicadores.py sobre por que os dois existem.
+export type IndicadoresReproducao = {
+  aptas: number; aptas_nums: string[];
+  prenhes: number; vazias: number; inseminadas: number;
+  taxa_prenhez_pct: number | null; prenhes_programa_nums: string[];
+  perc_vazias_pct: number | null; vazias_programa_nums: string[];
+  servicos_positivos: number; servicos_negativos: number;
+  iep_dias: number | null; iep_meses: number | null;
+  partos_previstos: { em_30_dias: number; em_60_dias: number; em_90_dias: number };
+  partos_previstos_nums: { em_30_dias: string[]; em_60_dias: string[]; em_90_dias: string[] };
+  partos_previstos_datas: Record<string, string>;
+  gestantes_detalhe: { numero: string; dias_gestacao: number; parto_previsto: string }[];
+  iep_por_matriz: { numero: string; iep_dias: number; data_ultimo_parto: string }[];
+  concepcao_desde: string;
+  taxa_servico_pct: number | null;
+  taxa_concepcao_pct: number | null;
+  taxa_prenhez_ciclo_pct: number | null;
+  servicos_por_prenhez: number | null;
+  taxa_perda_prenhez_pct: number | null;
+  perc_vacas_prenhas_pct: number | null;
+  dias_abertos: number | null;
+  del_1a_ia: number | null;
+};
+
 // O resto do payload segue destipado (cada tela declara o recorte que usa);
 // a assinatura de índice existe para isso não quebrar enquanto migramos.
 export type IndicadoresResposta = {
   producao?: IndicadoresProducao;
+  reproducao?: IndicadoresReproducao;
+  reproducao_categorias?: { todas: ReproducaoCategoria; vaca: ReproducaoCategoria; novilha: ReproducaoCategoria };
   [chave: string]: any;
 };
 
@@ -1342,7 +1388,12 @@ export type CiclosResposta = {
   ciclos: CicloReprodutivo[];
   resumo: {
     taxa_servico: number | null; taxa_prenhez: number | null;
-    taxa_concepcao: number | null; animais_avaliados: number;
+    taxa_concepcao: number | null;
+    // `animais_avaliados`: quantos animais passaram por pelo menos um balde
+    // do BREDSUM\E (união de BR ELIG/BRED/PG ELIG/PREG de todos os ciclos) —
+    // NÃO é o tamanho do rebanho carregado. Quem quer o rebanho carregado
+    // (gestantes e baixadas incluídas) usa `animais_carregados`.
+    animais_avaliados: number; animais_carregados: number;
   };
   metas: { taxa_servico: number; taxa_prenhez: number; taxa_concepcao: number };
   parametros: { pev_dias: number; dias_minimos_no_ciclo: number; dias_resultado_conhecido: number };
@@ -2980,7 +3031,15 @@ export async function criarBaixaAnimal(dados: {
   return res.json();
 }
 
-export async function marcarADescartar(dados: { animais: string[]; descartar?: boolean; observacao?: string }) {
+// `marcado_em`: QUANDO SE DECIDIU (ausente = hoje). É a data que o motor
+// reprodutivo lê para reconstruir o passado — por isso é editável, para quem
+// lança com atraso gravar o dia real da decisão.
+// `previsto_em`: QUANDO SE PRETENDE tirar do rebanho (ausente = sem previsão,
+// que é um estado legítimo). Só informativa: não move taxa nenhuma.
+export async function marcarADescartar(dados: {
+  animais: string[]; descartar?: boolean; observacao?: string;
+  marcado_em?: string | null; previsto_em?: string | null;
+}) {
   const res = await authFetch(`${API}/baixas/a-descartar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -6018,7 +6077,7 @@ export type RecriaCiclo = {
   taxa_servico: number | null; taxa_concepcao: number | null; taxa_prenhez: number | null;
 };
 export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/recria/reproducao/idade-parto`);
-export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; animais_avaliados: number; meta_taxa_prenhez: number }> =>
+export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number; /** Quantos entraram em pelo menos um balde do BREDSUM\E — não o tamanho do rebanho carregado (ver `animais_carregados`). */ animais_avaliados: number; animais_carregados: number; meta_taxa_prenhez: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
 export type RecriaDossie = {

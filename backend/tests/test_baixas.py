@@ -1,6 +1,8 @@
 """Testes de baixa de animal (Rebanho > Baixar animal) — óbito/descarte."""
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -155,6 +157,52 @@ class TestRegistrarBaixa:
         assert historico[1]["numero_animal"] == "900"
 
 
+class TestADescartarEm:
+    """`a_descartar_em` acompanha `a_descartar`: grava a data ao marcar,
+    limpa ao desmarcar. Ver Animal.a_descartar_em e marcar_a_descartar
+    (fazenda/api/routers/baixas.py) — o backfill dos animais marcados ANTES
+    desta coluna existir é NULL de propósito (ver migração
+    c576e514aa3e_animal_a_descartar_em), não é o caso testado aqui."""
+
+    def test_marcar_grava_data_de_hoje(self, client):
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"]})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"afetados": 1, "descartar": True, "nao_encontrados": []}
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar is True
+            assert animal.a_descartar_em == date.today()
+
+    def test_desmarcar_limpa_a_data(self, client):
+        client.post("/baixas/a-descartar", json={"animais": ["900"], "descartar": True})
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"], "descartar": False})
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar is False
+            assert animal.a_descartar_em is None
+
+    def test_lote_varios_animais_grava_data_em_todos(self, client):
+        r = client.post("/baixas/a-descartar", json={"animais": ["900", "901"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["afetados"] == 2
+        with Session(client.engine) as s:
+            for numero in ("900", "901"):
+                animal = s.exec(select(Animal).where(Animal.numero == numero)).first()
+                assert animal.a_descartar_em == date.today()
+
+    def test_animal_ja_marcado_antes_da_coluna_existir_fica_null(self, client):
+        """Simula o registro pré-existente: `a_descartar=True` gravado antes
+        desta coluna nascer (o cadastro direto no banco pula a rota — é
+        exatamente a foto que o backfill NÃO reescreve)."""
+        with Session(client.engine) as s:
+            s.add(Animal(numero="950", grupo_primario="01 - Alta", ativo=True, a_descartar=True))
+            s.commit()
+        animal = client.get("/animais/950").json()
+        assert animal["a_descartar"] is True
+        assert animal["a_descartar_em"] is None
+
+
 class TestVendaGeraFinanceiro:
     def test_venda_por_animal_gera_conta_gerencial_receita(self, client):
         r = client.post("/baixas/", json={
@@ -252,3 +300,90 @@ class TestComissaoCorretagem:
             "forma_comissao": "invalida",
         })
         assert r.status_code == 400
+
+
+class TestDescartePrevistoEm:
+    """A segunda data do descarte: `descarte_previsto_em` — QUANDO SE PRETENDE
+    tirar o animal do rebanho, distinta de `a_descartar_em` (QUANDO SE
+    DECIDIU). Opcional de propósito: ficar em branco é estado legítimo, não
+    pendência. Ver migração d8f1a2c47b93 e Animal.descarte_previsto_em."""
+
+    def test_marcar_sem_datas_mantem_o_comportamento_de_antes(self, client):
+        """Regressão: quem já chamava o endpoint sem os campos novos (o fluxo
+        de sanidade faz exatamente isso) continua gravando marcação em hoje e
+        previsão vazia."""
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"]})
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar_em == date.today()
+            assert animal.descarte_previsto_em is None
+
+    def test_marcar_com_as_duas_datas(self, client):
+        r = client.post("/baixas/a-descartar", json={
+            "animais": ["900"], "marcado_em": "2026-08-01", "previsto_em": "2026-09-15",
+        })
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar_em == date(2026, 8, 1)
+            assert animal.descarte_previsto_em == date(2026, 9, 15)
+
+    def test_marcado_em_retroativo_grava_a_data_informada_nao_hoje(self, client):
+        """A decisão lançada com atraso tem que gravar o dia em que foi tomada:
+        é essa data que o motor reprodutivo usa para reconstruir o passado, e
+        gravar hoje produziria série histórica errada sem ninguém perceber."""
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"], "marcado_em": "2026-07-10"})
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar_em == date(2026, 7, 10)
+            assert animal.a_descartar_em != date.today()
+
+    def test_so_previsao_marca_hoje_e_grava_a_previsao(self, client):
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"], "previsto_em": "2026-12-01"})
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar_em == date.today()
+            assert animal.descarte_previsto_em == date(2026, 12, 1)
+
+    def test_desmarcar_limpa_as_duas_datas(self, client):
+        """Previsão órfã de marcação revertida ainda geraria evento na Agenda
+        para um descarte cancelado — pior que não ter data nenhuma."""
+        client.post("/baixas/a-descartar", json={
+            "animais": ["900"], "marcado_em": "2026-08-01", "previsto_em": "2026-09-15",
+        })
+        r = client.post("/baixas/a-descartar", json={"animais": ["900"], "descartar": False})
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.a_descartar is False
+            assert animal.a_descartar_em is None
+            assert animal.descarte_previsto_em is None
+
+    def test_previsao_antes_da_marcacao_e_recusada_sem_gravar_nada(self, client):
+        """Planejar a saída para antes de ter decidido é erro de digitação. A
+        validação roda ANTES de escrever qualquer animal — o lote inteiro é
+        recusado, não metade dele."""
+        r = client.post("/baixas/a-descartar", json={
+            "animais": ["900", "901"], "marcado_em": "2026-08-20", "previsto_em": "2026-08-01",
+        })
+        assert r.status_code == 400, r.text
+        assert "anterior" in r.json()["detail"].lower()
+        with Session(client.engine) as s:
+            for numero in ("900", "901"):
+                animal = s.exec(select(Animal).where(Animal.numero == numero)).first()
+                assert animal.a_descartar is False
+                assert animal.descarte_previsto_em is None
+
+    def test_previsao_no_mesmo_dia_da_marcacao_e_aceita(self, client):
+        """Decidir e mandar embora no mesmo dia é legítimo — a validação barra
+        anterioridade, não simultaneidade."""
+        r = client.post("/baixas/a-descartar", json={
+            "animais": ["900"], "marcado_em": "2026-08-20", "previsto_em": "2026-08-20",
+        })
+        assert r.status_code == 200, r.text
+        with Session(client.engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "900")).first()
+            assert animal.descarte_previsto_em == date(2026, 8, 20)

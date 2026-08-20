@@ -132,6 +132,7 @@ class TestDiagnosticoExamePositivoNegativoIndefinido:
         with Session(engine) as s:
             animal = s.exec(select(Animal).where(Animal.numero == "101")).first()
             assert animal.a_descartar is True
+            assert animal.a_descartar_em == date.today()
 
     def test_negativo_nao_marca_a_descartar(self, client):
         c, engine = client
@@ -146,6 +147,7 @@ class TestDiagnosticoExamePositivoNegativoIndefinido:
         with Session(engine) as s:
             animal = s.exec(select(Animal).where(Animal.numero == "102")).first()
             assert animal.a_descartar is False
+            assert animal.a_descartar_em is None
 
     def test_indefinido_grava_resultado(self, client):
         c, _ = client

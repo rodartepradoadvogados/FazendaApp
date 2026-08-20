@@ -268,7 +268,7 @@ def reproducao_taxa_prenhez(
     """
     from fazenda.api.routers.reproducao import carregar_perfis_reprodutivos
     from fazenda.rules.parametros import (
-        dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
+        dias_minimos_no_ciclo, dias_reinseminacao_min, dias_resultado_conhecido, get_param,
         idade_apta_min_meses, pev_dias, peso_apta_min,
     )
 
@@ -287,6 +287,12 @@ def reproducao_taxa_prenhez(
         pev_dias=vwp_dias or pev_dias(),
         dias_minimos=dias_minimos_no_ciclo(),
         dias_resultado=dias_resultado_conhecido(),
+        # Janela mínima de cio de repasse — a mesma que a tela de Reprodução
+        # já usa. Sem passar aqui, o motor cairia no piso embutido e o campo
+        # editável em Configurações não faria efeito nenhum (foi por ser um
+        # campo assim, editável e inerte, que `idade_maturidade_novilha` foi
+        # aposentado).
+        dias_minimos_repasse=dias_reinseminacao_min(),
         del_max_1o_servico=int(get_param("meta_del_max_1o_servico", 100) or 100),
         idade_apta_dias=int(idade_apta_min_meses() * 30.44),
         idade_atraso_dias=int(idade_max_1a_cobertura_meses() * 30.44),
@@ -305,6 +311,20 @@ def reproducao_taxa_prenhez(
             "prenhes": d["preg"],
         })
 
+    # Mesma correção já feita no resumo de GET /reproducao/ciclos-21-dias:
+    # `animais_avaliados` contava quantos perfis foram CARREGADOS do banco, não
+    # quantos passaram por algum crivo do BREDSUM\E — uma novilha gestante o
+    # período todo, ou baixada antes do primeiro ciclo, entrava na conta igual
+    # a uma avaliada de verdade. A união de br_elig/bred/pg_elig/preg de todos
+    # os ciclos responde a pergunta certa, e o dado já está aqui.
+    #
+    # Consertar só um dos dois endpoints seria pior que não consertar nenhum:
+    # duas telas do mesmo sistema mostrariam "animais avaliados" com critérios
+    # diferentes, e não haveria como o usuário saber qual das duas ler.
+    avaliados: set[str] = set()
+    for r in resultados:
+        avaliados.update(r.br_elig, r.bred, r.pg_elig, r.preg)
+
     # Resumo do período: prenhez média ponderada pelo denominador de cada ciclo.
     tot_pg = sum(l["pg_elig"] for l in linhas)
     tot_pr = sum((l["taxa_prenhez"] or 0) * l["pg_elig"] for l in linhas)
@@ -314,7 +334,8 @@ def reproducao_taxa_prenhez(
         "taxa_prenhez_media": round(tot_pr / tot_pg, 1) if tot_pg else None,
         "total_servicos": sum(l["bred"] for l in linhas),
         "meta_taxa_prenhez": meta.taxa_prenhez_meta,
-        "animais_avaliados": len(perfis),
+        "animais_avaliados": len(avaliados),
+        "animais_carregados": len(perfis),
     }
 
 

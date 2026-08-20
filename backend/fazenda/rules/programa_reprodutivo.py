@@ -114,6 +114,14 @@ Regras:
 
         DG negativo é um caso de TEM_DG, não um termo separado.
 
+        REINSEMINADA_CIO_REPASSE(s) exige uma nova IA depois de `s`, na mesma
+        lactação, com pelo menos `dias_minimos_repasse` de distância (padrão
+        `DIAS_MINIMOS_REPASSE_PADRAO` = 18, o mesmo piso do parâmetro editável
+        `dias_reinseminacao_min`). Sem essa janela, uma segunda IA lançada 1-2
+        dias depois da primeira — a mesma cobertura relançada, ou erro de
+        data — provaria "a anterior falhou" sem nenhum cio de verdade ter
+        acontecido. Ver `tem_reinseminacao_posterior`.
+
         CONTA_EM_TAXA(s,hoje) <-> ( data_servico(s) <= hoje - 28 )
                                   | RESULTADO_CONHECIDO(s,hoje)
 
@@ -142,21 +150,26 @@ Regras:
         Denominadores diferentes. Há um teste-sentinela que falha se alguém
         reintroduzir o atalho (ver tests/test_programa_reprodutivo.py).
 
-## Limitação assumida — reconstrução histórica de `a_descartar`
+## Reconstrução histórica de `a_descartar` — RESOLVIDO
 
-`Animal.a_descartar` é booleano SEM data: para dias passados não há como saber
-quando a marcação foi feita. Este módulo trata o estado ATUAL como válido para
-todo o período avaliado, e a tela informa isso ao usuário. `data_baixa` é
-datada, então a baixa é reconstruída corretamente. Precisão histórica plena
-exigiria uma coluna `a_descartar_em` + backfill.
+`Animal.a_descartar` era booleano SEM data: a marcação feita hoje retroagia
+para todo o período avaliado, e a vaca sumia de TODOS os ciclos passados,
+inclusive dos denominadores em que estava legitimamente ativa. Isso encolhia o
+BR ELIG histórico justamente nas vacas problema e INFLAVA a taxa de serviço do
+passado — uma versão atenuada do defeito nº 2 que este módulo existe para
+corrigir, e tanto pior quanto mais antigo o ciclo.
 
-A consequência incômoda, que precisa estar escrita: como a marcação retroage,
-a vaca marcada hoje some de TODOS os ciclos passados — inclusive dos
-denominadores. Isso encolhe o BR ELIG histórico justamente nas vacas problema
-e INFLA a taxa de serviço histórica, que é uma versão atenuada do defeito nº 2
-que este módulo existe para corrigir. Quanto mais antigo o ciclo, menos
-confiável a série. Enquanto não houver `a_descartar_em`, leia as séries longas
-com essa ressalva.
+A coluna `Animal.a_descartar_em` fechou isso: `descartada_em(perfil, d)`
+responde "a marcação já valia nesta data?", exatamente como `baixada_em` faz
+com `data_baixa`.
+
+Fica um resíduo conhecido, e é deliberado: os animais marcados ANTES da coluna
+existir têm `a_descartar_em = NULL` e seguem tratados como marcados desde
+sempre — o comportamento antigo. Não houve backfill porque inventar uma data
+produziria um histórico plausível e falso, indistinguível de um retroativo
+real. Ou seja: nenhum número muda no dia do deploy; a precisão histórica passa
+a valer para as marcações feitas de agora em diante, e o resíduo se dissolve
+com o tempo.
 """
 from __future__ import annotations
 
@@ -188,6 +201,17 @@ MOTIVO_BAIXADA = "baixada"
 MOTIVO_IMPUBERE = "impubere"
 MOTIVO_DENTRO_PEV = "dentro_pev"
 MOTIVO_GESTANTE = "gestante"
+# Salvaguarda: nenhum dos estados que `classificar_animal` devolve hoje cai
+# aqui — os que ficam de fora de ESTADOS_APTOS (NAO_APTA/PEV/GESTANTE) já têm
+# branch explícito acima, e os demais estão todos dentro do conjunto. Ou seja:
+# esta constante é inalcançável ENQUANTO os dois lados continuarem
+# sincronizados manualmente — e é exatamente esse acoplamento implícito o
+# problema. Se `estado_reprodutivo` ganhar um estado novo sem que alguém
+# lembre de somá-lo a ESTADOS_APTOS (ou de dar um branch explícito aqui), a
+# linha final de `estado_no_dia` devolvia `apta=False, motivo=None` — e o
+# drill-down da tela, que mostra `motivo`, ficava em branco bem no animal que
+# o usuário mais queria entender. Agora sempre há um motivo.
+MOTIVO_ESTADO_NAO_MAPEADO = "estado_nao_mapeado"
 
 # Estados de `estado_reprodutivo` que satisfazem R4 (apta no dia).
 #
@@ -205,6 +229,18 @@ _NEGATIVO = "NEGATIVO"
 DIAS_CICLO_PADRAO = 21
 DIAS_MINIMOS_PADRAO = 11
 DIAS_RESULTADO_CONHECIDO_PADRAO = 28
+# Janela mínima para uma segunda IA valer como "cio de repasse" (ver
+# `tem_reinseminacao_posterior`). Mesmo valor e mesma origem do parâmetro
+# editável `dias_reinseminacao_min` de `fazenda.rules.parametros` (grupo
+# "reinseminacao_cio"): o ciclo estral da vaca gira em torno de 21 dias, e 18
+# é o piso que a fazenda já usa para reconhecer um cio CURTO como legítimo,
+# não uma repetição de lançamento. Este módulo é regra pura e não importa
+# `parametros` (ver o docstring do módulo); quem chama a partir de uma fazenda
+# real lê `dias_reinseminacao_min()` e passa como `dias_minimos_repasse`, do
+# mesmo jeito que já faz com `pev_dias` — ver `_parametros_ciclos` em
+# rules/indicadores.py e os dois routers. Este número é só o piso de
+# segurança de quem chama sem configurar nada.
+DIAS_MINIMOS_REPASSE_PADRAO = 18
 
 
 def _d(valor: Any) -> date | None:
@@ -306,6 +342,11 @@ class PerfilAnimal:
     peso_kg: float | None = None
     raca: str | None = None
     a_descartar: bool = False
+    # Data em que a marcação de descarte passou a valer — é ela que permite
+    # reconstruir o passado (ver `descartada_em`). `None` com `a_descartar=True`
+    # é registro anterior à coluna, sem backfill de propósito: tratado como
+    # marcação já vigente.
+    a_descartar_em: date | None = None
     ativo: bool = True
     data_baixa: date | None = None
     categoria: str | None = None  # "vaca" | "novilha" — para o filtro da tela
@@ -351,6 +392,7 @@ def montar_perfil(
         peso_kg=_get(animal, "peso_kg"),
         raca=_get(animal, "raca"),
         a_descartar=bool(_get(animal, "a_descartar")),
+        a_descartar_em=_d(_get(animal, "a_descartar_em")),
         ativo=_get(animal, "ativo") is not False,
         data_baixa=_d(_get(animal, "data_baixa")),
         categoria="vaca" if eh_vaca else "novilha",
@@ -395,7 +437,7 @@ def estado_no_dia(
     # R1 — portas de saída do programa, avaliadas antes de tudo.
     if baixada_em(perfil, d):
         return EstadoDia(d, INATIVA, False, MOTIVO_BAIXADA, _E_NAO_APTA)
-    if perfil.a_descartar:
+    if descartada_em(perfil, d):
         return EstadoDia(d, INATIVA, False, MOTIVO_A_DESCARTAR, _E_NAO_APTA)
 
     classificacao = classificar_animal(
@@ -427,7 +469,48 @@ def estado_no_dia(
         return EstadoDia(d, SUSPENSA, False, MOTIVO_GESTANTE, estado)
 
     # R4 — vazia XOR inseminada-sem-DG, ambas já disponíveis (pós-PEV).
-    return EstadoDia(d, ATIVA, estado in ESTADOS_APTOS, None, estado)
+    #
+    # `apta` sai de ESTADOS_APTOS, mas `motivo` NÃO pode sair de "None por
+    # construção": um estado que escape de ESTADOS_APTOS sem ter passado por um
+    # dos branches explícitos acima cairia aqui com `apta=False` e nenhuma
+    # explicação — ver MOTIVO_ESTADO_NAO_MAPEADO.
+    apta = estado in ESTADOS_APTOS
+    motivo = None if apta else MOTIVO_ESTADO_NAO_MAPEADO
+    return EstadoDia(d, ATIVA, apta, motivo, estado)
+
+
+def descartada_em(perfil: PerfilAnimal, d: date) -> bool:
+    """R1 — a marcação de descarte já valia nesta data?
+
+    Espelho de `baixada_em`, e pela mesma razão: sem data, a marcação feita
+    hoje retroagia para TODOS os ciclos passados e a vaca sumia até dos
+    denominadores em que estava legitimamente ativa — encolhendo o BR ELIG
+    histórico justamente nas vacas problema, e inflando a taxa de serviço do
+    passado.
+
+    `a_descartar=True` SEM data é tratado como marcação já vigente: é o que o
+    dado permite afirmar, e é o mesmo critério que `baixada_em` usa para
+    `ativo=False` sem `data_baixa`. São os registros anteriores à coluna
+    `a_descartar_em`, deixados sem backfill de propósito — inventar uma data
+    produziria um histórico plausível e falso, indistinguível de um retroativo
+    real.
+
+    NÃO lê `Animal.descarte_previsto_em`, e isso é deliberado. Aquela coluna é
+    a data em que se PRETENDE tirar o animal do rebanho (a boiada, o caminhão);
+    esta função responde outra pergunta: a partir de quando o animal saiu do
+    PROGRAMA REPRODUTIVO. Quem decide descartar para de inseminar naquele
+    momento — a saída reprodutiva é a decisão, não o transporte. Ler a previsão
+    aqui manteria no denominador uma vaca que ninguém mais vai inseminar, e
+    inflaria a taxa de serviço exatamente como fazia a ausência de data.
+
+    Há teste sentinela travando isso: preencher a previsão não pode mover
+    nenhuma taxa do painel.
+    """
+    if not perfil.a_descartar:
+        return False
+    if perfil.a_descartar_em is not None:
+        return d >= perfil.a_descartar_em
+    return True
 
 
 def _perfil_sem_servicos_do_ciclo(perfil: PerfilAnimal, ciclo: Ciclo) -> PerfilAnimal:
@@ -504,16 +587,29 @@ def elegivel_prenhez(
     if not elegivel_ia(perfil, ciclo, pev_dias=pev_dias, dias_minimos=dias_minimos, **kwargs):
         return False
     fim_janela = ciclo.fim + timedelta(days=dias_janela_dg)
-    return not baixada_em(perfil, fim_janela) and not perfil.a_descartar
+    return not baixada_em(perfil, fim_janela) and not descartada_em(perfil, fim_janela)
 
 
 # ---------------------------------------------------------------------------
 # Resultado conhecido (R7) — a regra dos 28 dias
 # ---------------------------------------------------------------------------
-def tem_reinseminacao_posterior(perfil: PerfilAnimal, servico: Any) -> bool:
-    """Houve nova inseminação depois desta, na mesma lactação? É a
-    "reinseminada em cio de repasse": a nova IA prova que a anterior não pegou,
-    então o desfecho da anterior É conhecido mesmo sem DG lançado."""
+def tem_reinseminacao_posterior(
+    perfil: PerfilAnimal, servico: Any, *,
+    dias_minimos_repasse: int = DIAS_MINIMOS_REPASSE_PADRAO,
+) -> bool:
+    """Houve nova inseminação depois desta, na mesma lactação, e longe o
+    suficiente para valer como "reinseminação em cio de repasse"? A nova IA
+    prova que a anterior não pegou, então o desfecho da anterior É conhecido
+    mesmo sem DG lançado.
+
+    `dias_minimos_repasse` é a guarda que faltava: sem ela, uma segunda IA um
+    ou dois dias depois da primeira (a mesma cobertura relançada, ou um erro de
+    digitação de data) também contava como "prova de que a anterior falhou" —
+    o ciclo estral de uma vaca gira em torno de 21 dias; nada biológico
+    acontece entre o dia 1 e o dia 2. O padrão (ver
+    `DIAS_MINIMOS_REPASSE_PADRAO`) reaproveita o número do parâmetro editável
+    `dias_reinseminacao_min` da fazenda, para não inventar um segundo critério
+    de "cio curto" divergente do que a tela de Reprodução já usa."""
     ds = _d(_get(servico, "data_servico"))
     if ds is None:
         return False
@@ -526,6 +622,8 @@ def tem_reinseminacao_posterior(perfil: PerfilAnimal, servico: Any) -> bool:
             continue
         if ultimo_parto is not None and d_outro <= ultimo_parto:
             continue  # lactação anterior, já resolvida pelo parto
+        if (d_outro - ds).days < dias_minimos_repasse:
+            continue  # perto demais para ser cio de repasse — provável duplicidade de lançamento
         return True
     return False
 
@@ -634,6 +732,8 @@ def calcular_ciclo(
     perfis: list[PerfilAnimal], ciclo: Ciclo, hoje: date, *, pev_dias: int,
     dias_minimos: int = DIAS_MINIMOS_PADRAO,
     dias_resultado: int = DIAS_RESULTADO_CONHECIDO_PADRAO,
+    dias_janela_dg: int = DIAS_CICLO_PADRAO,
+    dias_minimos_repasse: int = DIAS_MINIMOS_REPASSE_PADRAO,
     **kwargs: Any,
 ) -> ResultadoCiclo:
     """Um ciclo do BREDSUM\\E: BR ELIG → BRED → PG ELIG → PREG.
@@ -646,6 +746,14 @@ def calcular_ciclo(
     virar prenhez, o PREG está incompleto e a taxa de prenhez sai subestimada.
     A flag existe para a tela não comparar esse ciclo com a meta. Ver a nota em
     `ResultadoCiclo.taxa_prenhez`.
+
+    `dias_janela_dg` e `dias_minimos_repasse` são declarados aqui DE PROPÓSITO —
+    não deixados para dentro de `**kwargs`. `elegivel_ia` (BR ELIG) não conhece
+    nenhum dos dois; se eles vazassem pelo `**kwargs` compartilhado com
+    `elegivel_prenhez`, cairiam na cadeia `elegivel_ia` → `dias_aptos` →
+    `estado_no_dia`, que não tem `**kwargs` nenhum, e explodiam em `TypeError`.
+    Declará-los aqui os retira do saco genérico e os entrega só a quem sabe o
+    que fazer com eles.
     """
     janela_dg_completa = ciclo.fim + timedelta(days=dias_resultado) <= hoje
 
@@ -661,7 +769,8 @@ def calcular_ciclo(
         br_elig.append(perfil.numero)
 
         elegivel_pg = elegivel_prenhez(
-            perfil, ciclo, pev_dias=pev_dias, dias_minimos=dias_minimos, **kwargs
+            perfil, ciclo, pev_dias=pev_dias, dias_minimos=dias_minimos,
+            dias_janela_dg=dias_janela_dg, **kwargs
         )
         if elegivel_pg:
             pg_elig.append(perfil.numero)
@@ -676,7 +785,9 @@ def calcular_ciclo(
         bred.append(perfil.numero)
 
         for s in no_ciclo:
-            posterior = tem_reinseminacao_posterior(perfil, s)
+            posterior = tem_reinseminacao_posterior(
+                perfil, s, dias_minimos_repasse=dias_minimos_repasse
+            )
             if conta_em_taxa(s, hoje, servico_posterior=posterior, dias=dias_resultado):
                 servicos_com_resultado += 1
 
@@ -684,8 +795,13 @@ def calcular_ciclo(
         # conhecido, e continua elegível para prenhez.
         concebeu = any(
             _diag(s) == _POSITIVO and _d(_get(s, "data_perda_prenhez")) is None
-            and conta_em_taxa(s, hoje, servico_posterior=tem_reinseminacao_posterior(perfil, s),
-                              dias=dias_resultado)
+            and conta_em_taxa(
+                s, hoje,
+                servico_posterior=tem_reinseminacao_posterior(
+                    perfil, s, dias_minimos_repasse=dias_minimos_repasse
+                ),
+                dias=dias_resultado,
+            )
             for s in no_ciclo
         )
         if concebeu and elegivel_pg:

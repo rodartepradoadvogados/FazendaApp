@@ -81,6 +81,33 @@ class Animal(SQLModel, table=True):
     # de todas as ações reprodutivas (IATF, inseminação, candidatas) — marcada
     # para descarte futuro sem dar baixa definitiva.
     a_descartar: bool = False
+    # Data em que a marcação acima passou a valer — ausente em `a_descartar`
+    # (que é só o booleano "sim/não", sem quando). Sem esta data o motor do
+    # programa reprodutivo (fazenda/rules/programa_reprodutivo.py) não
+    # conseguia reconstruir o passado: um animal marcado hoje sumia de TODOS
+    # os ciclos históricos, inclusive dos em que estava ativo. NULL cobre dois
+    # casos que não dá pra distinguir: nunca foi marcado, OU foi marcado antes
+    # de esta coluna existir (ver migração c576e514aa3e — a coluna nasceu sem
+    # backfill retroativo de propósito). Sempre gravada/limpa junto com
+    # `a_descartar` (ver marcar_a_descartar em api/routers/baixas.py).
+    a_descartar_em: Optional[date] = None
+    # QUANDO SE PRETENDE tirar o animal do rebanho — o plano físico da saída
+    # (a boiada, o caminhão, a próxima venda). NÃO confundir com as duas linhas
+    # acima, e a confusão é o risco real deste trio:
+    #
+    #   a_descartar          -> a decisão vale hoje? (booleano)
+    #   a_descartar_em       -> QUANDO SE DECIDIU. É esta que o motor do
+    #                           programa reprodutivo lê (`descartada_em`), e a
+    #                           partir dela o animal sai do denominador.
+    #   descarte_previsto_em -> QUANDO SE PRETENDE FAZER. Opcional, e não
+    #                           influencia cálculo reprodutivo nenhum.
+    #
+    # Opcional de propósito: nem toda decisão de descarte nasce com data
+    # marcada, e ficar em branco é um estado legítimo — não uma pendência.
+    # Quando preenchida, vira evento na Agenda (ver agenda_engine.py) para a
+    # data não ficar só na cabeça de quem decidiu. Limpa junto com as outras
+    # duas ao desmarcar.
+    descarte_previsto_em: Optional[date] = None
     # Marca manual: nunca entra nas listas de candidatas/excluídos do BST
     # (ex.: vaca com contraindicação), independente dos critérios automáticos.
     excluir_bst: bool = False
