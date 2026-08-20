@@ -131,7 +131,7 @@ def ciclos_de_21_dias(
     (regras R1–R9) que define cada um desses conjuntos.
     """
     from fazenda.rules.parametros import (
-        dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
+        dias_minimos_no_ciclo, dias_reinseminacao_min, dias_resultado_conhecido, get_param,
         idade_apta_min_meses,
         idade_max_1a_cobertura_meses, meta_taxa_concepcao, meta_taxa_prenhez,
         meta_taxa_servico, pev_dias, peso_apta_min,

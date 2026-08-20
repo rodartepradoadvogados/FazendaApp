@@ -268,7 +268,7 @@ def reproducao_taxa_prenhez(
     """
     from fazenda.api.routers.reproducao import carregar_perfis_reprodutivos
     from fazenda.rules.parametros import (
-        dias_minimos_no_ciclo, dias_resultado_conhecido, get_param,
+        dias_minimos_no_ciclo, dias_reinseminacao_min, dias_resultado_conhecido, get_param,
         idade_apta_min_meses, pev_dias, peso_apta_min,
     )
 
