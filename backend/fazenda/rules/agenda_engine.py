@@ -60,6 +60,14 @@ def _del_projetado_bst(del_atual: int | None, proxima_visita_bst: date | None, h
     return del_atual + (proxima_visita_bst - hoje).days
 
 
+# Com quanta antecedência o descarte previsto entra na Agenda. Não reaproveita
+# `dias_contas_a_pagar` (padrão 10) de propósito: aquele prazo é de fluxo de
+# caixa, e descarte se organiza com semanas — comprador, transporte, lote de
+# venda. Trinta dias dá tempo de arranjar isso sem encher a agenda de hoje com
+# coisa de dois meses adiante.
+DIAS_HORIZONTE_DESCARTE = 30
+
+
 @dataclass
 class AgendaItem:
     data: date
@@ -708,6 +716,50 @@ class AgendaEngine:
                 ref=str(doc.get("pessoa_id")) if doc.get("pessoa_id") else None,
                 link="/configuracoes?aba=cadastro&sub=pessoas",
             ))
+
+        # 5e. DESCARTE PREVISTO — animal marcado "a descartar" com data de
+        # saída planejada (Animal.descarte_previsto_em, opcional). Sem este
+        # evento a data ficava só guardada no cadastro: ninguém era lembrado
+        # quando ela chegava, e o animal seguia comendo.
+        #
+        # Duas âncoras, de propósito:
+        #   - previsão FUTURA -> evento na própria data prevista;
+        #   - previsão VENCIDA -> evento reancorado em HOJE, e continua
+        #     aparecendo todo dia até a baixa ser lançada.
+        #
+        # A segunda âncora existe porque `AgendaItem.cor` é por CATEGORIA, não
+        # por atraso — a Agenda não tem mecanismo de "vencido". Deixar o evento
+        # na data original faria ele sumir da lista exatamente quando passa a
+        # importar, que é o oposto de um lembrete. Quando a baixa é lançada o
+        # animal deixa de ser `ativo` e o evento some sozinho, sem estado extra.
+        for a_ in animais:
+            if not a_.get("ativo") or not a_.get("a_descartar"):
+                continue
+            previsto = a_.get("descarte_previsto_em")
+            if not previsto:
+                continue  # sem previsão é estado legítimo, não pendência
+            numero = a_.get("numero")
+            if previsto >= data_referencia:
+                if previsto > data_referencia + timedelta(days=DIAS_HORIZONTE_DESCARTE):
+                    continue
+                eventos.append(AgendaItem(
+                    data=previsto,
+                    categoria="Gestão/Financeiro",
+                    descricao=f"Descarte previsto — {numero}",
+                    numero_animal=numero,
+                    link="/rebanho",
+                ))
+            else:
+                eventos.append(AgendaItem(
+                    data=data_referencia,
+                    categoria="Gestão/Financeiro",
+                    descricao=(
+                        f"Descarte VENCIDO — {numero} "
+                        f"(previsto para {previsto.strftime('%d/%m/%Y')}, ainda no rebanho)"
+                    ),
+                    numero_animal=numero,
+                    link="/rebanho",
+                ))
 
         # 6. EVENTOS MANUAIS
         for ev in eventos_manuais:

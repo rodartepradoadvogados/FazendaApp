@@ -494,6 +494,17 @@ def descartada_em(perfil: PerfilAnimal, d: date) -> bool:
     `a_descartar_em`, deixados sem backfill de propósito — inventar uma data
     produziria um histórico plausível e falso, indistinguível de um retroativo
     real.
+
+    NÃO lê `Animal.descarte_previsto_em`, e isso é deliberado. Aquela coluna é
+    a data em que se PRETENDE tirar o animal do rebanho (a boiada, o caminhão);
+    esta função responde outra pergunta: a partir de quando o animal saiu do
+    PROGRAMA REPRODUTIVO. Quem decide descartar para de inseminar naquele
+    momento — a saída reprodutiva é a decisão, não o transporte. Ler a previsão
+    aqui manteria no denominador uma vaca que ninguém mais vai inseminar, e
+    inflaria a taxa de serviço exatamente como fazia a ausência de data.
+
+    Há teste sentinela travando isso: preencher a previsão não pode mover
+    nenhuma taxa do painel.
     """
     if not perfil.a_descartar:
         return False

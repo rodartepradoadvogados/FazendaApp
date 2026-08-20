@@ -56,6 +56,13 @@ export default function BaixarAnimal() {
   const [cliente, setCliente] = useState("");
   const [vendaRecria, setVendaRecria] = useState(false);
   const [dataBaixa, setDataBaixa] = useState(hoje());
+  // Duas datas com papéis diferentes (ver Animal.descarte_previsto_em):
+  // `marcadoEm` é QUANDO SE DECIDIU — é ela que o motor reprodutivo lê, por
+  // isso vem preenchida com hoje mas editável, para quem lança com atraso.
+  // `previstoEm` é QUANDO SE PRETENDE tirar do rebanho, e fica vazia de
+  // propósito: sem previsão é um estado legítimo, não uma pendência.
+  const [marcadoEm, setMarcadoEm] = useState(hoje());
+  const [previstoEm, setPrevistoEm] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [observacao, setObservacao] = useState("");
@@ -106,6 +113,7 @@ export default function BaixarAnimal() {
   const limpar = () => {
     setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoAcidente(""); setMotivoOutro("");
     setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
+    setMarcadoEm(hoje()); setPrevistoEm("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
 
@@ -115,7 +123,10 @@ export default function BaixarAnimal() {
     if (modo === "a_descartar") {
       setSalvando(true);
       try {
-        const r = await marcarADescartar({ animais: Array.from(selecionados), descartar: true, observacao: observacao || undefined });
+        const r = await marcarADescartar({
+          animais: Array.from(selecionados), descartar: true, observacao: observacao || undefined,
+          marcado_em: marcadoEm || undefined, previsto_em: previstoEm || undefined,
+        });
         setMsg({ tipo: "sucesso", texto: `${r.afetados} animal(is) marcado(s) como "A descartar" — seguem ativos, fora das ações reprodutivas.` });
         limpar();
         carregar();
@@ -239,6 +250,21 @@ export default function BaixarAnimal() {
               A(s) vaca(s) marcada(s) continua(m) no rebanho (ordenha, sanidade, movimentação), mas some(m) das candidatas a IATF,
               inseminação e demais ações reprodutivas. Use quando decidir descartar mais adiante, sem dar baixa agora.
             </p>
+          )}
+
+          {modo === "a_descartar" && (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+              <div><label style={labelStyle}>Marcado em</label>
+                <input type="date" style={selStyle} value={marcadoEm} onChange={(e) => setMarcadoEm(e.target.value)} />
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Quando a decisão foi tomada.</span></div>
+              <div><label style={labelStyle}>Previsão de descarte (opcional)</label>
+                <input type="date" style={selStyle} value={previstoEm} min={marcadoEm || undefined} onChange={(e) => setPrevistoEm(e.target.value)} />
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                  {previstoEm ? "Entra na Agenda nessa data." : "Pode ficar em branco — nem toda decisão já tem data de saída."}
+                </span></div>
+              <div style={{ gridColumn: "span 1" }}><label style={labelStyle}>Observação (opcional)</label>
+                <input style={selStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+            </div>
           )}
 
           {modo === "definitiva" && (

@@ -1362,3 +1362,52 @@ class TestDescarteDatado:
         # data sobrando sem a marcação ativa não pode ressuscitar o descarte
         perfil2 = _perfil(_animal(a_descartar=False, a_descartar_em=date(2026, 1, 1)))
         assert descartada_em(perfil2, date(2026, 2, 1)) is False
+
+
+class TestSentinelaPrevisaoDeDescarteNaoMoveTaxa:
+    """`Animal.descarte_previsto_em` (QUANDO SE PRETENDE tirar do rebanho) é
+    INFORMATIVA. Quem manda no cálculo é `a_descartar_em` (QUANDO SE DECIDIU),
+    porque a saída do programa reprodutivo é a decisão, não o caminhão: quem
+    decide descartar para de inseminar naquele momento.
+
+    Se um dia alguém ligar a previsão ao motor, uma vaca que ninguém mais vai
+    inseminar voltaria ao denominador e inflaria a taxa de serviço — o mesmo
+    efeito que a AUSÊNCIA de data causava antes de `a_descartar_em` existir.
+    Estes testes existem para essa mudança não passar despercebida."""
+
+    def test_perfil_do_motor_nao_tem_o_campo(self):
+        """A garantia mais forte é estrutural: o objeto que o motor enxerga não
+        carrega a previsão, então nenhuma regra pode lê-la por acidente."""
+        perfil = _perfil()
+        assert not hasattr(perfil, "descarte_previsto_em")
+
+    def test_previsao_no_dict_do_animal_nao_muda_nada(self):
+        """Ponta a ponta: o mesmo animal, com e sem previsão preenchida, tem de
+        produzir estado idêntico em todas as datas — inclusive com previsão no
+        passado, que é o caso que mais tentaria o motor a reagir."""
+        hoje = date(2026, 8, 20)
+        partos = [_parto(hoje - timedelta(days=90))]
+        servicos = [_servico(hoje - timedelta(days=30))]
+
+        sem = _perfil(_animal(), partos=partos, servicos=servicos)
+        com_futura = _perfil(
+            _animal(descarte_previsto_em=hoje + timedelta(days=60)), partos=partos, servicos=servicos,
+        )
+        com_vencida = _perfil(
+            _animal(descarte_previsto_em=hoje - timedelta(days=10)), partos=partos, servicos=servicos,
+        )
+
+        for d in (hoje - timedelta(days=60), hoje - timedelta(days=5), hoje, hoje + timedelta(days=30)):
+            base = estado_no_dia(sem, d, pev_dias=50)
+            assert estado_no_dia(com_futura, d, pev_dias=50) == base
+            assert estado_no_dia(com_vencida, d, pev_dias=50) == base
+
+    def test_quem_decide_a_saida_e_a_data_da_MARCACAO(self):
+        """Contraprova do teste acima: mudar `a_descartar_em` MUDA o resultado.
+        Sem esta asserção o teste anterior passaria mesmo que o motor tivesse
+        parado de olhar as duas datas."""
+        hoje = date(2026, 8, 20)
+        marcada_ontem = _perfil(_animal(a_descartar=True, a_descartar_em=hoje - timedelta(days=1)))
+        marcada_amanha = _perfil(_animal(a_descartar=True, a_descartar_em=hoje + timedelta(days=1)))
+        assert descartada_em(marcada_ontem, hoje) is True
+        assert descartada_em(marcada_amanha, hoje) is False

@@ -3031,7 +3031,15 @@ export async function criarBaixaAnimal(dados: {
   return res.json();
 }
 
-export async function marcarADescartar(dados: { animais: string[]; descartar?: boolean; observacao?: string }) {
+// `marcado_em`: QUANDO SE DECIDIU (ausente = hoje). É a data que o motor
+// reprodutivo lê para reconstruir o passado — por isso é editável, para quem
+// lança com atraso gravar o dia real da decisão.
+// `previsto_em`: QUANDO SE PRETENDE tirar do rebanho (ausente = sem previsão,
+// que é um estado legítimo). Só informativa: não move taxa nenhuma.
+export async function marcarADescartar(dados: {
+  animais: string[]; descartar?: boolean; observacao?: string;
+  marcado_em?: string | null; previsto_em?: string | null;
+}) {
   const res = await authFetch(`${API}/baixas/a-descartar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
