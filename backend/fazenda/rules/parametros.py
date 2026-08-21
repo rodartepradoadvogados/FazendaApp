@@ -51,9 +51,7 @@ DEFINICOES: list[dict] = [
     # ---- Aptidão de novilhas (gate de entrada em listas de análise/
     # relatório/vacinação/protocolos de novilhas aptas) ----------------------
     {"chave": "peso_apta_min", "grupo": "aptidao_novilha", "label": "Peso mínimo de aptidão", "valor": 300, "unidade": "kg"},
-    {"chave": "peso_verificar_aptidao_min", "grupo": "aptidao_novilha", "label": "Peso mínimo p/ verificar aptidão", "valor": 280, "unidade": "kg"},
     {"chave": "idade_apta_min_meses", "grupo": "aptidao_novilha", "label": "Idade mínima de aptidão", "valor": 15, "unidade": "meses"},
-    {"chave": "idade_verificar_aptidao_meses", "grupo": "aptidao_novilha", "label": "Idade mínima p/ verificar aptidão", "valor": 14, "unidade": "meses"},
     # Teto: passada esta idade, a novilha VAZIA deixa de ser "apta" e passa a
     # "em atraso" — o análogo de `meta_del_max_1o_servico` para quem nunca
     # pariu. O padrão de 16 meses reproduz a classificação do Ideagri: no
@@ -107,6 +105,14 @@ DEFINICOES: list[dict] = [
 
     # ---- Metas reprodutivas ----------------------------------------------------
     {"chave": "meta_del_max_1o_servico", "grupo": "metas_reproducao", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
+    # Análogo do parâmetro acima, para quem nunca pariu: em vez de contar a
+    # partir de um teto fixo de IDADE desde o nascimento (idade_max_1a_
+    # cobertura_meses, que penaliza no mesmo dia a novilha que amadurece
+    # devagar), conta a partir do dia em que ELA ficou apta (idade E peso —
+    # ver estado_reprodutivo.data_em_que_ficou_apta). As duas regras valem
+    # em paralelo: o que vier primeiro marca ATRASADA (decisão do usuário —
+    # manter o teto de idade como rede de segurança).
+    {"chave": "dias_atraso_apos_aptidao_novilha", "grupo": "metas_reproducao", "label": "Dias após aptidão (novilha)", "valor": 30, "unidade": "dias"},
     {"chave": "meta_del_medio_1o_servico", "grupo": "metas_reproducao", "label": "DEL médio ao 1º serviço", "valor": 70, "unidade": "dias"},
     {"chave": "meta_del_medio", "grupo": "metas_reproducao", "label": "DEL médio do rebanho", "valor": 200, "unidade": "dias"},
     {"chave": "meta_taxa_servico", "grupo": "metas_reproducao", "label": "Taxa de serviço em vacas", "valor": 50, "unidade": "%"},
@@ -320,10 +326,6 @@ def peso_apta_min() -> float:
     return float(get_param("peso_apta_min", 300) or 300)
 
 
-def peso_verificar_aptidao_min() -> float:
-    return float(get_param("peso_verificar_aptidao_min", 280) or 280)
-
-
 def idade_apta_min_meses() -> float:
     return float(get_param("idade_apta_min_meses", 15) or 15)
 
@@ -332,8 +334,8 @@ def idade_max_1a_cobertura_meses() -> float:
     return float(get_param("idade_max_1a_cobertura_meses", 16) or 16)
 
 
-def idade_verificar_aptidao_meses() -> float:
-    return float(get_param("idade_verificar_aptidao_meses", 14) or 14)
+def dias_atraso_apos_aptidao_novilha() -> int:
+    return int(get_param("dias_atraso_apos_aptidao_novilha", 30) or 30)
 
 
 def gestacao_dias_min() -> int:

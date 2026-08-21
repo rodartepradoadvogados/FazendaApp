@@ -27,10 +27,12 @@ from fazenda.models import (
 )
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.estado_reprodutivo import APTA, ATRASADA, GESTANTE, INSEMINADA, classificar_animal
+from fazenda.rules.estado_reprodutivo import (
+    APTA, ATRASADA, GESTANTE, INSEMINADA, classificar_animal, data_em_que_ficou_apta,
+)
 from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.parametros import (
-    get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min,
+    dias_atraso_apos_aptidao_novilha, get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min,
     pev_dias as pev_dias_param,
 )
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
@@ -435,9 +437,9 @@ def montar_dossie(
 GESTACAO_DIAS_CATEGORIA = 280  # gestação média — mesma referência de fazenda.rules.relatorios_gerenciais
 
 
-def _parametros_estado_vivo() -> tuple[int, int, int, float, int]:
+def _parametros_estado_vivo() -> tuple[int, int, int, float, int, int]:
     """(pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg,
-    idade_atraso_dias) lidos uma
+    idade_atraso_dias, dias_atraso_apos_aptidao) lidos uma
     vez só — cada chamador desta função (composicao_categorias, ficha do
     animal, critérios de lote) roda `classificar_animal` em loop por animal,
     e cada parâmetro lido por `get_param`/os acessores de parametros.py abre
@@ -447,7 +449,10 @@ def _parametros_estado_vivo() -> tuple[int, int, int, float, int]:
     del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
     idade_apta_dias = round(idade_apta_min_meses() * 30.44)
     idade_atraso_dias = round(idade_max_1a_cobertura_meses() * 30.44)
-    return pev_dias_param(), del_max, idade_apta_dias, peso_apta_min(), idade_atraso_dias
+    return (
+        pev_dias_param(), del_max, idade_apta_dias, peso_apta_min(), idade_atraso_dias,
+        dias_atraso_apos_aptidao_novilha(),
+    )
 
 
 def _status_reprodutivo(estado_vivo: str | None) -> str:
@@ -586,25 +591,35 @@ def _contexto_categoria(
     pev_dias: int | None = None, del_max_1o_servico: int | None = None,
     idade_apta_dias: int | None = None, peso_apta_kg: float | None = None,
     idade_atraso_dias: int | None = None,
+    data_nasc: date | None = None, pesagens: list[tuple[date, float]] | None = None,
+    dias_atraso_apos_aptidao: int | None = None,
 ) -> dict:
     """Monta o contexto de classificação de um animal a partir dos lançamentos
     já feitos (serviço/IA, parto, secagem) — mesma referência de cálculo de
     fazenda.rules.relatorios_gerenciais (concepção = data do serviço com
     diagnóstico positivo e sem perda de prenhez).
 
-    `pev_dias`/`del_max_1o_servico`/`idade_apta_dias`/`peso_apta_kg`: os 4
+    `pev_dias`/`del_max_1o_servico`/`idade_apta_dias`/`peso_apta_kg`: os
     parâmetros que `estado_reprodutivo.classificar_animal` (chamado abaixo)
     precisa — opcionais aqui porque o chamador que roda em loop por animal
     (composicao_categorias, lote_criterios) já leu tudo uma vez via
     `_parametros_estado_vivo()` e passa pronto; só quando ausentes (ex.:
-    chamada avulsa de um único animal) é que lemos aqui, na hora."""
+    chamada avulsa de um único animal) é que lemos aqui, na hora.
+
+    `data_nasc`/`pesagens` (histórico completo, não só o último peso):
+    alimentam `estado_reprodutivo.data_em_que_ficou_apta`, o segundo gatilho
+    de ATRASADA da novilha (dias desde que ELA ficou apta, em paralelo ao
+    teto de idade) — opcionais porque nem todo chamador tem o histórico à
+    mão; ausentes, o gatilho simplesmente não dispara (só o teto de idade
+    vale), sem quebrar nada."""
     if pev_dias is None or del_max_1o_servico is None or idade_apta_dias is None or peso_apta_kg is None:
-        _pev, _del_max, _idade_apta, _peso_apta, _idade_atraso = _parametros_estado_vivo()
+        _pev, _del_max, _idade_apta, _peso_apta, _idade_atraso, _dias_pos_apt = _parametros_estado_vivo()
         pev_dias = pev_dias if pev_dias is not None else _pev
         del_max_1o_servico = del_max_1o_servico if del_max_1o_servico is not None else _del_max
         idade_apta_dias = idade_apta_dias if idade_apta_dias is not None else _idade_apta
         idade_atraso_dias = idade_atraso_dias if idade_atraso_dias is not None else _idade_atraso
         peso_apta_kg = peso_apta_kg if peso_apta_kg is not None else _peso_apta
+        dias_atraso_apos_aptidao = dias_atraso_apos_aptidao if dias_atraso_apos_aptidao is not None else _dias_pos_apt
     servs = sorted((s for s in servicos if s.data_servico), key=lambda s: s.data_servico)
     ult_serv = servs[-1] if servs else None
     dias_desde_servico = (hoje - ult_serv.data_servico).days if ult_serv else None
@@ -648,12 +663,17 @@ def _contexto_categoria(
     # um animal em protocolo aparece como PEV/APTA/ATRASADA, conforme o resto
     # dos dados. Consequência aceita: as categorias/lotes que dependem deste
     # contexto não distinguem "em protocolo" das demais novilhas/vacas aptas.
+    data_ficou_apta = data_em_que_ficou_apta(
+        data_nasc=data_nasc, idade_apta_dias=idade_apta_dias,
+        pesagens=pesagens or [], peso_apta_kg=peso_apta_kg,
+    )
     estado_vivo = classificar_animal(
         numero or "", hoje=hoje, partos=partos, servicos=servicos, aplicacoes_iatf=[],
         pev_dias=pev_dias, del_max_1o_servico=del_max_1o_servico,
         eh_vaca=bool(ult_parto), idade_dias=dias, peso_kg=peso,
         idade_apta_dias=idade_apta_dias, peso_apta_kg=peso_apta_kg,
         idade_atraso_dias=idade_atraso_dias, raca=raca,
+        dias_atraso_apos_aptidao=dias_atraso_apos_aptidao, data_ficou_apta=data_ficou_apta,
     )["estado"]
 
     return {
@@ -689,9 +709,12 @@ def composicao_categorias(
 
     categorias = session.exec(categorias_query).all()
     ult_peso: dict[str, float] = {}
+    pesagens_idx: dict[str, list[tuple[date, float]]] = {}
     for p in session.exec(pesagens_query).all():
         if p.peso_kg:
             ult_peso[p.numero_matriz] = p.peso_kg  # a última pesagem (ordenada asc) prevalece
+            if p.data_pesagem:
+                pesagens_idx.setdefault(p.numero_matriz, []).append((p.data_pesagem, p.peso_kg))
     servicos_idx: dict[str, list[Servico]] = {}
     for s in session.exec(servicos_query).all():
         if s.numero_matriz:
@@ -705,7 +728,7 @@ def composicao_categorias(
         if s.numero_matriz:
             secagens_idx.setdefault(s.numero_matriz, []).append(s)
     hoje = date.today()
-    pev, del_max, idade_apta_dias, peso_apta_kg, idade_atraso_dias = _parametros_estado_vivo()
+    pev, del_max, idade_apta_dias, peso_apta_kg, idade_atraso_dias, dias_atraso_apos_aptidao = _parametros_estado_vivo()
     cont: dict[str, int] = {}
     for a in session.exec(animais_query).all():
         if a.eh_semen or a.sexo == "M":
@@ -717,6 +740,8 @@ def composicao_categorias(
             raca=a.raca, numero=a.numero,
             pev_dias=pev, del_max_1o_servico=del_max, idade_apta_dias=idade_apta_dias,
             peso_apta_kg=peso_apta_kg, idade_atraso_dias=idade_atraso_dias,
+            data_nasc=a.data_nasc, pesagens=pesagens_idx.get(a.numero, []),
+            dias_atraso_apos_aptidao=dias_atraso_apos_aptidao,
         )
         cat = classificar_categoria(ctx, categorias)
         cont[cat] = cont.get(cat, 0) + 1
@@ -752,6 +777,7 @@ def categoria_sugerida_animal(
         secagens_query = secagens_query.where(Secagem.fazenda_id == fazenda_id)
     ult = session.exec(peso_query).all()
     peso = ult[-1].peso_kg if ult else None
+    pesagens = [(p.data_pesagem, p.peso_kg) for p in ult if p.data_pesagem and p.peso_kg]
     servicos_query = select(Servico).where(Servico.numero_matriz == numero)
     partos_query = select(Parto).where(Parto.numero_matriz == numero)
     if fazenda_id is not None:
@@ -760,7 +786,10 @@ def categoria_sugerida_animal(
     servicos = session.exec(servicos_query).all()
     partos = session.exec(partos_query).all()
     secagens = session.exec(secagens_query).all()
-    ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens, raca=animal.raca, numero=numero)
+    ctx = _contexto_categoria(
+        dias, peso, animal.sit_rep, hoje, servicos, partos, secagens, raca=animal.raca, numero=numero,
+        data_nasc=animal.data_nasc, pesagens=pesagens,
+    )
     return {"categoria": classificar_categoria(ctx, categorias)}
 
 

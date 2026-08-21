@@ -1676,7 +1676,6 @@ export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
   { chave: "inseminadas_30_59", rotulo: "Inseminadas 30–59 dias — toque" },
   { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias — reconfirmação" },
   { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas vazias" },
-  { chave: "verificar_aptidao", rotulo: "Verificar aptidão" },
   { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes" },
   { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
   { chave: "verificar_pre_parto", rotulo: "Verificar pré-parto" },
@@ -1684,6 +1683,37 @@ export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
   { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação" },
   { chave: "observacao_cio", rotulo: "Observação de cio" },
 ];
+
+// ── Card configurável da Agenda Reprodutiva (4 eixos: categoria/lote/
+// situação/período) — ver fazenda.rules.agenda_reprodutiva_configuravel. ──
+export type SituacaoCard = "pev" | "inseminada" | "gestante" | "vazia" | "vazia_atrasada" | "a_descartar";
+
+export type CardAgendaReprodutivaConfig = {
+  categoria: "todas" | "vaca" | "novilha";
+  lotes: string[];
+  situacao: SituacaoCard;
+  periodos: [number, number][];
+  somente_atrasadas: boolean;
+  exceto_atrasadas: boolean;
+};
+
+export type ItemCardAgendaReprodutiva = {
+  numero_matriz: string; categoria: string | null; lote_atual: string | null;
+  estado: string | null; del_dias: number | null; dias_gestacao: number | null;
+  dias_desde_servico: number | null; data_servico: string | null; parto_previsto: string | null;
+};
+
+export async function fetchAgendaReprodutivaCard(
+  config: CardAgendaReprodutivaConfig, data?: string,
+): Promise<{ data_referencia: string; total: number; itens: ItemCardAgendaReprodutiva[] }> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/agenda-reprodutiva/card${qs}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao montar o card"); }
+  return res.json();
+}
+
 
 export async function registrarReconfirmacao(dados: {
   numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";

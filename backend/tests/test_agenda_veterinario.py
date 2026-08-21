@@ -274,51 +274,6 @@ class TestNovilhas:
         assert any(a["numero_matriz"] == "23" for a in r.json()["listas"]["novilhas_gestantes"])
 
 
-class TestVerificarAptidao:
-    """Critério próprio: >=280kg, >=15 meses, nunca inseminada/coberta."""
-
-    def test_280kg_15_meses_sem_servico_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "21", "Novilha", idade_meses=15)
-        _add_peso(engine, "21", 280)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert any(a["numero_matriz"] == "21" for a in r.json()["listas"]["verificar_aptidao"])
-
-    def test_abaixo_280kg_nao_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "24", "Novilha", idade_meses=15)
-        _add_peso(engine, "24", 270)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert not any(a["numero_matriz"] == "24" for a in r.json()["listas"]["verificar_aptidao"])
-
-    def test_abaixo_15_meses_nao_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "25", "Novilha", idade_meses=10)
-        _add_peso(engine, "25", 300)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert not any(a["numero_matriz"] == "25" for a in r.json()["listas"]["verificar_aptidao"])
-
-    def test_ja_teve_servico_nao_entra(self, client):
-        c, engine = client
-        _add_animal(engine, "26", "Novilha", idade_meses=IDADE_APTA)
-        _add_peso(engine, "26", 320)
-        _add_servico(engine, "26", 5)
-        # data=HOJE fixa a data de referência do endpoint (default é date.today()
-        # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
-        # pré-parto) driftam e quebram conforme o calendário real avança.
-        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
-        assert not any(a["numero_matriz"] == "26" for a in r.json()["listas"]["verificar_aptidao"])
-
-
 class TestPreParto:
     def test_gestante_0_a_30_dias_para_parto(self, client):
         c, engine = client

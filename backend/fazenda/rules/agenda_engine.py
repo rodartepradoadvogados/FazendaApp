@@ -40,6 +40,7 @@ from fazenda.rules.parametros import (
     pre_parto_max,
 )
 from fazenda.rules.estado_reprodutivo import (
+    ATRASADA as _E_ATRASADA,
     GESTANTE as _E_GESTANTE,
     INSEMINADA as _E_INSEMINADA,
     estados_ao_vivo,
@@ -271,7 +272,42 @@ class AgendaEngine:
             idade_apta_dias=int(_idade_apta_min_meses() * 30.44),
             idade_atraso_dias=int(_idade_max_1a_cobertura_meses() * 30.44),
             peso_apta_kg=_peso_apta_min(),
+            # `dias_atraso_apos_aptidao`/`datas_ficou_apta_por_animal` (o
+            # segundo gatilho de ATRASADA da novilha, dias desde que ELA
+            # ficou apta) não são passados aqui de propósito: exigem o
+            # histórico COMPLETO de pesagem (não só a última, que é tudo que
+            # este motor recebe), e este alerta já cobre o gatilho de idade
+            # (novilha) e o de DEL (vaca) sem essa dependência nova. A
+            # novilha que só ficaria atrasada pelo segundo gatilho continua
+            # visível nas Listas/no card configurável da Agenda Reprodutiva
+            # — só ainda não dispara este alerta proativo.
         )
+
+        # ── ATRASADAS — alerta persistente (reaparece todo dia até a matriz
+        # ser servida ou marcada a descartar): vaca passou do DEL máximo para
+        # o 1º serviço, ou novilha passou do teto de idade para a 1ª
+        # cobertura, sem novo serviço. Mesmo estado ATRASADA que já alimenta
+        # as Listas de Rebanho e o card configurável da Agenda Reprodutiva —
+        # ver `fazenda.rules.estado_reprodutivo`.
+        categoria_por_animal = {
+            a["numero"]: (a.get("categoria_abrev") or a.get("categoria_completa") or "").lower()
+            for a in no_programa
+        }
+        for numero_atrasada, est_atrasada in estados_vivos.items():
+            if est_atrasada.get("estado") != _E_ATRASADA:
+                continue
+            eh_vaca_atrasada = "vaca" in categoria_por_animal.get(numero_atrasada, "")
+            if eh_vaca_atrasada:
+                del_dias_atraso = est_atrasada.get("del_dias")
+                descricao_atraso = f"Vazia atrasada — {del_dias_atraso} dias pós-parto sem novo serviço"
+            else:
+                descricao_atraso = "Novilha atrasada — apta e vazia há tempo demais sem serviço"
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Reprodutivo",
+                descricao=descricao_atraso,
+                numero_animal=numero_atrasada,
+            ))
 
         # 1. CANDIDATAS IATF
         # `no_programa` já aplicou a regra R1 (a_descartar e baixa datada), que

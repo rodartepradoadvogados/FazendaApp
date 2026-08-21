@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 from fazenda.rules.estado_reprodutivo import (
     APTA, ATRASADA, EM_PROTOCOLO, GESTANTE, INSEMINADA, NAO_APTA, PEV,
-    classificar_animal, descrever_servico,
+    classificar_animal, data_em_que_ficou_apta, descrever_servico,
 )
 
 HOJE = date(2026, 7, 28)
@@ -549,3 +549,136 @@ class TestNovilhaEmAtraso:
                          idade_atraso_dias=self.ATRASO_DIAS)
         assert r["estado"] == ATRASADA
         assert r["aptidao_por_idade"] is True
+
+
+class TestNovilhaAtrasadaPorDiasAposAptidao:
+    """O segundo gatilho de ATRASADA para novilha, em paralelo ao teto de
+    idade (decisão do usuário: os dois valem, o que vier primeiro marca
+    ATRASADA). Ele existe porque o teto de idade sozinho só pega quem já
+    passou de 16 meses — uma novilha que ficou apta bem ANTES do teto (idade
+    dentro da janela apta/não-atrasada) e segue vazia por muito tempo não
+    tinha nenhum alarme até esbarrar no teto. Contar a partir da data em que
+    ELA ficou apta, como o DEL conta a partir do PARTO da vaca, dá esse
+    alarme mais cedo — sem tirar o teto de idade como rede de segurança para
+    quem nunca foi pesada."""
+
+    APTA_DIAS = 457    # 15 meses
+    ATRASO_DIAS = 487  # 16 meses — teto de idade, continua valendo em paralelo
+    DIAS_APOS_APTIDAO = 30
+    IDADE_DENTRO_DA_JANELA_APTA = 470  # entre o piso (457) e o teto (487)
+
+    def _novilha(self, idade_dias, data_ficou_apta):
+        return _classificar(
+            "N", eh_vaca=False, idade_dias=idade_dias, peso_kg=320.0,
+            idade_apta_dias=self.APTA_DIAS, peso_apta_kg=300.0,
+            idade_atraso_dias=self.ATRASO_DIAS,
+            dias_atraso_apos_aptidao=self.DIAS_APOS_APTIDAO,
+            data_ficou_apta=data_ficou_apta,
+        )
+
+    def test_ficou_apta_ha_muito_tempo_e_segue_vazia_vira_atrasada_antes_do_teto(self):
+        """Idade ainda dentro da janela apta (470 &lt; 487, o teto) — sem o novo
+        gatilho ela seria só APTA. Como ficou apta há 40 dias (&gt; 30), o novo
+        gatilho pega o atraso antes de a idade sozinha chegar no teto."""
+        r = self._novilha(self.IDADE_DENTRO_DA_JANELA_APTA, HOJE - timedelta(days=40))
+        assert r["estado"] == ATRASADA
+
+    def test_dentro_da_janela_pos_aptidao_ainda_e_apta(self):
+        r = self._novilha(self.IDADE_DENTRO_DA_JANELA_APTA, HOJE - timedelta(days=10))
+        assert r["estado"] == APTA
+
+    def test_no_limite_exato_ainda_nao_e_atrasada(self):
+        r = self._novilha(self.IDADE_DENTRO_DA_JANELA_APTA, HOJE - timedelta(days=self.DIAS_APOS_APTIDAO))
+        assert r["estado"] == APTA
+
+    def test_um_dia_alem_do_limite_ja_e_atrasada(self):
+        r = self._novilha(self.IDADE_DENTRO_DA_JANELA_APTA, HOJE - timedelta(days=self.DIAS_APOS_APTIDAO + 1))
+        assert r["estado"] == ATRASADA
+
+    def test_sem_data_ficou_apta_so_o_teto_de_idade_se_aplica(self):
+        """Sem histórico de pesagem que confirme a data (fazenda que não
+        pesa), o segundo gatilho não pode disparar — só o teto de idade,
+        exatamente o comportamento de antes desta mudança."""
+        r = _classificar(
+            "N", eh_vaca=False, idade_dias=self.IDADE_DENTRO_DA_JANELA_APTA, peso_kg=None,
+            idade_apta_dias=self.APTA_DIAS, peso_apta_kg=300.0,
+            idade_atraso_dias=self.ATRASO_DIAS,
+            dias_atraso_apos_aptidao=self.DIAS_APOS_APTIDAO,
+            data_ficou_apta=None,
+        )
+        assert r["estado"] == APTA
+
+    def test_o_que_vier_primeiro_idade_pode_vencer(self):
+        """Novilha que ficou apta há só 5 dias (dentro da janela de 30), mas
+        já passou do teto de idade (488 dias) — o teto de idade dispara
+        primeiro, confirmando que os dois gatilhos valem em paralelo."""
+        r = self._novilha(488, HOJE - timedelta(days=5))
+        assert r["estado"] == ATRASADA
+
+
+class TestDataEmQueFicouApta:
+    """`data_em_que_ficou_apta` — função pura, sem Session, que ancora o novo
+    gatilho: o MAIOR entre a data em que completou a idade mínima e a
+    primeira pesagem que bateu o peso mínimo."""
+
+    NASC = date(2024, 1, 1)
+    IDADE_APTA_DIAS = 457  # 15 meses
+
+    def test_peso_bate_depois_da_idade_vence_a_data_do_peso(self):
+        data_idade = self.NASC + timedelta(days=self.IDADE_APTA_DIAS)
+        pesagens = [(data_idade + timedelta(days=20), 310.0)]
+        r = data_em_que_ficou_apta(
+            data_nasc=self.NASC, idade_apta_dias=self.IDADE_APTA_DIAS,
+            pesagens=pesagens, peso_apta_kg=300.0,
+        )
+        assert r == data_idade + timedelta(days=20)
+
+    def test_peso_bate_antes_da_idade_vence_a_data_da_idade(self):
+        """Novilha precoce: já pesava 300kg bem antes dos 15 meses — o que
+        falta é a idade, não o peso."""
+        data_idade = self.NASC + timedelta(days=self.IDADE_APTA_DIAS)
+        pesagens = [(self.NASC + timedelta(days=100), 320.0)]
+        r = data_em_que_ficou_apta(
+            data_nasc=self.NASC, idade_apta_dias=self.IDADE_APTA_DIAS,
+            pesagens=pesagens, peso_apta_kg=300.0,
+        )
+        assert r == data_idade
+
+    def test_usa_a_primeira_pesagem_que_bate_o_minimo_nao_a_ultima(self):
+        """O evento é quando ela CRUZOU o mínimo pela primeira vez — pesagens
+        posteriores (ainda acima do mínimo) não empurram a data pra frente."""
+        pesagens = [
+            (date(2025, 6, 1), 305.0),
+            (date(2025, 8, 1), 330.0),
+            (date(2025, 4, 1), 290.0),  # ainda abaixo — não conta
+        ]
+        r = data_em_que_ficou_apta(
+            data_nasc=self.NASC, idade_apta_dias=self.IDADE_APTA_DIAS,
+            pesagens=pesagens, peso_apta_kg=300.0,
+        )
+        assert r == max(self.NASC + timedelta(days=self.IDADE_APTA_DIAS), date(2025, 6, 1))
+
+    def test_nenhuma_pesagem_bate_o_minimo_devolve_none(self):
+        """Nunca confirmou o peso — não afirma nada (mesma disciplina de
+        `classificar_animal` para peso ausente): o chamador cai de volta no
+        teto de idade como única rede de segurança."""
+        pesagens = [(date(2025, 6, 1), 250.0)]
+        r = data_em_que_ficou_apta(
+            data_nasc=self.NASC, idade_apta_dias=self.IDADE_APTA_DIAS,
+            pesagens=pesagens, peso_apta_kg=300.0,
+        )
+        assert r is None
+
+    def test_sem_pesagem_nenhuma_devolve_none(self):
+        r = data_em_que_ficou_apta(
+            data_nasc=self.NASC, idade_apta_dias=self.IDADE_APTA_DIAS,
+            pesagens=[], peso_apta_kg=300.0,
+        )
+        assert r is None
+
+    def test_sem_data_nascimento_devolve_none(self):
+        r = data_em_que_ficou_apta(
+            data_nasc=None, idade_apta_dias=self.IDADE_APTA_DIAS,
+            pesagens=[(date(2025, 6, 1), 320.0)], peso_apta_kg=300.0,
+        )
+        assert r is None

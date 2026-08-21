@@ -349,11 +349,14 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
 
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
+    pesagens_por_animal: dict[str, list[tuple[date, float]]] = {}
     for p in session.exec(query_pesagem).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
+        if p.data_pesagem and p.peso_kg:
+            pesagens_por_animal.setdefault(p.numero_matriz, []).append((p.data_pesagem, p.peso_kg))
 
     partos_obj_por_animal: dict[str, list] = {}
     for p in session.exec(query_parto).all():
@@ -371,13 +374,16 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
     # `animal_atende_criterios`/`sugerir_movimentacoes` rodam em loop (às
     # vezes um por animal por lote), e cada leitura de parâmetro abre uma
     # sessão de banco própria (mesmo cuidado do calendário sanitário).
-    pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg, idade_atraso_dias = _parametros_estado_vivo()
+    pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg, idade_atraso_dias, dias_atraso_apos_aptidao = (
+        _parametros_estado_vivo()
+    )
 
     return {
         "animais": animais,
         "servicos_por_animal": servicos_por_animal,
         "sanidades_por_animal": sanidades_por_animal,
         "peso_por_animal": peso_por_animal,
+        "pesagens_por_animal": pesagens_por_animal,
         "servicos_obj_por_animal": servicos_obj_por_animal,
         "partos_obj_por_animal": partos_obj_por_animal,
         "secagens_obj_por_animal": secagens_obj_por_animal,
@@ -385,6 +391,7 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
         "pev_dias": pev_dias, "del_max_1o_servico": del_max_1o_servico,
         "idade_apta_dias": idade_apta_dias, "peso_apta_kg": peso_apta_kg,
         "idade_atraso_dias": idade_atraso_dias,
+        "dias_atraso_apos_aptidao": dias_atraso_apos_aptidao,
     }
 
 

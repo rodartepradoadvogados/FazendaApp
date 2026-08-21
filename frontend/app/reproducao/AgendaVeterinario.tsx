@@ -6,6 +6,7 @@ import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail,
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CardsAgendaReprodutivaConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
@@ -38,7 +39,6 @@ const LISTAS: {
   { key: "inseminadas_30_59", label: "Inseminadas 30–59 dias — toque", color: "var(--dourado)", acao: "toque" },
   { key: "inseminadas_60_mais", label: "Inseminadas 60+ dias — reconfirmação", color: "var(--amber)", reconfirmavel: true },
   { key: "novilhas_aptas_vazias", label: "Novilhas aptas vazias (≥300 kg)", color: "var(--green-light)" },
-  { key: "verificar_aptidao", label: "Verificar aptidão (≥280 kg, nunca servida)", color: "var(--text-muted)" },
   { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto", acao: "toque_ou_reconfirmacao" },
   { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto", acao: "toque_ou_reconfirmacao" },
   { key: "verificar_pre_parto", label: "Verificar pré-parto (até 30 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
@@ -61,7 +61,6 @@ function statusDe(cfg: typeof LISTAS[number], it: Item): string {
     // (parâmetro idade_max_1a_cobertura_meses) e continua vazia — vem
     // ordenada no topo da lista pelo backend.
     case "novilhas_aptas_vazias": return it.atrasada ? "Atrasada para a 1ª cobertura" : "Apta, vazia";
-    case "verificar_aptidao": return "Verificar aptidão";
     case "novilhas_gestantes":
     case "vacas_gestantes": return "Gestante confirmada";
     case "verificar_pre_parto": return "Pré-parto";
@@ -319,7 +318,7 @@ export default function AgendaVeterinarioPage() {
         <h2 className="text-xl font-bold flex items-center gap-2"><Stethoscope size={20} style={{ color: "var(--dourado)" }} /> Agenda Reprodutiva</h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Roteiro da visita reprodutiva, na data de referência {fmtDia(dados.data_referencia)}. Machos e bezerras nunca
-          entram em nenhuma lista; os demais só entram (exceto em "Verificar aptidão") ao atingir 15 meses e 300 kg.
+          entram em nenhuma lista; "Novilhas aptas vazias" exige 15 meses e 300 kg.
           Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
         </p>
         <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap" }}>
@@ -409,6 +408,9 @@ export default function AgendaVeterinarioPage() {
         </div>
       )}
 
+      <CardsAgendaReprodutivaConfiguraveis dataRef={dados.projetado ? dados.data_referencia : undefined} />
+
+      <p style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.5rem" }}>Listas fixas</p>
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
         {LISTAS.map((l) => {
           const n = dados.totais[l.key] ?? 0;
