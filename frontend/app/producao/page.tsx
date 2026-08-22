@@ -1,8 +1,13 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2, Info } from "lucide-react";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2, Info, Sprout } from "lucide-react";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin } from "@/lib/api";
+import {
+  fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst,
+  fetchRelatorioPesagemCorporal, fetchPesagens, atualizarPesagem, type PesagemLinha, confirmarExclusao, formatDate, ehAdmin,
+  fetchEquivalenteMaduro, type RelatorioEquivalenteMaduro,
+} from "@/lib/api";
+import { CalculadoraEquivalenteMaduro } from "@/components/CalculadoraEquivalenteMaduro";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -1465,7 +1470,7 @@ export function HistoricoInducaoLactacao() {
   );
 }
 
-type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst";
+type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst" | "equivalente-maduro";
 export const ABAS_PRODUCAO = [
   { id: "leiteira" as const, label: "Controle leiteiro", icon: Milk, title: "Série histórica, curva de lactação e ranking por vaca" },
   { id: "pesagens" as const, label: "Pesagem corporal", icon: Scale, title: "Histórico de pesagem corporal — GMD/GPD por animal, lote ou rebanho" },
@@ -1474,7 +1479,102 @@ export const ABAS_PRODUCAO = [
   { id: "qualidade" as const, label: "Qualidade do leite", icon: FlaskConical, title: "CCS, CBT, gordura, proteína, sólidos e ESD — série histórica" },
   { id: "entrega" as const, label: "Venda mensal do leite", icon: TrendingUp, title: "Controle leiteiro × entregue ao laticínio, por período" },
   { id: "bst" as const, label: "BST", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
+  {
+    id: "equivalente-maduro" as const, label: "Equivalente Maduro", icon: Sprout,
+    title: "Produz hoje × produzirá na maturidade, por animal — ajuste pela ordem de parto calibrado no próprio rebanho",
+  },
 ];
+
+// ---------------------------------------------------------------------------
+// Equivalente maduro — ver docs/equivalente-maduro-proposta.md. Relatório do
+// rebanho (produz hoje / produzirá / diferença / ordem de parto / nº de
+// controles / confiança do fator) + calculadora avulsa. A apresentação do
+// trio (a frase "já está na maturidade", a faixa da 1ª cria, o "sem base")
+// fica toda em components/TrioEquivalenteMaduro.tsx — aqui só a listagem.
+// ---------------------------------------------------------------------------
+const COLUNAS_EQUIVALENTE_MADURO = [
+  { header: "Vaca", key: "numero_matriz" }, { header: "Ordem parto", key: "ordem_parto" },
+  { header: "Produz hoje (kg)", key: "producao_hoje_kg" }, { header: "Produzirá (kg)", key: "producao_maturidade_kg" },
+  { header: "Diferença (kg)", key: "diferenca_kg" }, { header: "Controles", key: "n_controles" },
+  { header: "Confiança do fator", key: "confianca_fator" },
+];
+
+export function EquivalenteMaduroView() {
+  const [dados, setDados] = useState<RelatorioEquivalenteMaduro | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => {
+    fetchEquivalenteMaduro().then(setDados).catch((e) => setErro(e.message));
+  }, []);
+
+  const animais = dados?.animais ?? [];
+  const ordEM = useOrdenacao(animais);
+  const badgeStyleEM: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" };
+
+  return (
+    <div className="px-6 pt-6 space-y-4">
+      {erro && <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
+      <div className="card">
+        <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <span className="flex items-center gap-2"><Sprout size={14} /> Equivalente maduro — quem ainda vai crescer</span>
+          <span className="flex items-center gap-2">
+            <span style={badgeStyleEM}>{animais.length} animais</span>
+            <ExportarBotoes
+              titulo="Equivalente maduro" nomeArquivoBase="equivalente_maduro"
+              colunas={COLUNAS_EQUIVALENTE_MADURO}
+              linhas={animais.map((a) => ({ ...a, confianca_fator: a.confianca_fator === "ok" ? "boa" : a.confianca_fator === "baixa" ? "baixa" : "—" }))}
+            />
+          </span>
+        </div>
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+          Ajusta a produção de 305 dias (Test Interval Method) pela ordem de parto DERIVADA na data de cada lactação —
+          não a contagem atual de partos do animal. Os fatores são calibrados nas lactações encerradas deste próprio
+          rebanho (mínimo de 20 por classe; abaixo disso, sem base para ajustar). Ordene por diferença decrescente para
+          ver quem ainda tem mais a crescer — a mesma lista ao contrário é candidata a descarte.
+        </p>
+        {dados?.sem_base_geral && (
+          <p style={{ fontSize: "0.78rem", color: "var(--amber)", marginBottom: "0.75rem" }}>{dados.sem_base_geral}</p>
+        )}
+        <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
+          <table className="fazenda-table" style={{ margin: 0 }}>
+            <thead><tr>
+              <ThOrdenavel label="Vaca" campo="numero_matriz" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} />
+              <ThOrdenavel label="Ordem parto" campo="ordem_parto" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} />
+              <ThOrdenavel label="Produz hoje (kg)" campo="producao_hoje_kg" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
+              <ThOrdenavel label="Produzirá (kg)" campo="producao_maturidade_kg" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
+              <ThOrdenavel label="Diferença (kg)" campo="diferenca_kg" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
+              <ThOrdenavel label="Controles" campo="n_controles" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
+              <th>Confiança</th>
+            </tr></thead>
+            <tbody>
+              {ordEM.linhasOrdenadas.map((a, i) => (
+                <tr key={`${a.numero_matriz}-${i}`}>
+                  <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                  <td>{a.ordem_parto != null ? `${a.ordem_parto}ª` : "—"}</td>
+                  <td style={{ textAlign: "right" }}>{a.producao_hoje_kg?.toLocaleString("pt-BR") ?? "—"}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600 }}>
+                    {a.sem_base ? "—" : a.ja_maduro ? "já é madura" : a.producao_maturidade_kg?.toLocaleString("pt-BR")}
+                  </td>
+                  <td style={{ textAlign: "right", color: (a.diferenca_kg ?? 0) > 0 ? "var(--amber)" : "var(--text-muted)" }}>
+                    {a.sem_base ? "sem base" : a.ja_maduro ? "já chegou lá" : a.faixa_diferenca_kg
+                      ? `${a.faixa_diferenca_kg[0].toLocaleString("pt-BR")} a +${a.faixa_diferenca_kg[1].toLocaleString("pt-BR")}`
+                      : `${(a.diferenca_kg ?? 0) > 0 ? "+" : ""}${a.diferenca_kg?.toLocaleString("pt-BR")}`}
+                  </td>
+                  <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{a.n_controles}</td>
+                  <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                    {a.confianca_fator === "ok" ? "boa" : a.confianca_fator === "baixa" ? "baixa" : "—"}
+                  </td>
+                </tr>
+              ))}
+              {!animais.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma lactação registrada ainda.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <CalculadoraEquivalenteMaduro />
+    </div>
+  );
+}
 
 export default function ProducaoPage() {
   const [aba, setAba] = useState<AbaProducao>("leiteira");
@@ -1486,6 +1586,7 @@ export default function ProducaoPage() {
     case "pesagens": return <RelatoriosPesagemView />;
     case "secagem": return <HistoricoSecagensProducao />;
     case "inducao": return <HistoricoInducaoLactacao />;
+    case "equivalente-maduro": return <EquivalenteMaduroView />;
     case "qualidade": return <ProducaoLeiteira secao="qualidade" />;
     case "entrega": return <ProducaoLeiteira secao="entrega" />;
     default: return <ProducaoLeiteira secao="controle" />;
