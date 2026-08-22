@@ -169,11 +169,23 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
 
   const total = (Number(o1) || 0) + (Number(o2) || 0) + (Number(o3) || 0);
 
+  /**
+   * Só quem tem lactação ABERTA hoje — mesma fonte única que o backend usa
+   * para aceitar o lançamento (`em_lactacao`, calculado da tabela `Lactacao`;
+   * ver backend/fazenda/rules/lactacao.py).
+   *
+   * Este app não filtrava NADA: a lista de animais vinha inteira, e dava para
+   * lançar controle leiteiro de bezerra, de novilha ou de vaca seca — o
+   * registro ia direto para a produção do rebanho e para a curva de lactação.
+   * `em_lactacao === undefined` (app novo contra backend antigo) mantém o
+   * comportamento antigo, para a tela não ficar vazia durante o deploy.
+   */
+  const emLactacao = useMemo(() => animais.filter((a) => a.em_lactacao !== false), [animais]);
   const lotes = useMemo(
-    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-    [animais],
+    () => Array.from(new Set(emLactacao.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [emLactacao],
   );
-  const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  const vacasDoLote = useMemo(() => (lote ? emLactacao.filter((a) => a.grupo_primario === lote) : []), [emLactacao, lote]);
   const setOrdVaca = (numero: string, idx: 0 | 1 | 2, valor: string) =>
     setPorVaca((p) => { const arr: [string, string, string] = [...(p[numero] || ["", "", ""])]; arr[idx] = valor; return { ...p, [numero]: arr }; });
   const totalVaca = (numero: string) => (porVaca[numero] || ["", "", ""]).reduce((s, v) => s + (Number(v) || 0), 0);
@@ -223,8 +235,8 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
       </MobCampo>
 
       {modo === "vaca" ? (
-        <MobCampo label="Vaca (nº / nome)">
-          <SeletorAnimal animais={animais} valor={animal} onChange={setAnimal} placeholder="Buscar vaca…" />
+        <MobCampo label="Vaca em lactação (nº / nome)">
+          <SeletorAnimal animais={emLactacao} valor={animal} onChange={setAnimal} placeholder="Buscar vaca em lactação…" />
         </MobCampo>
       ) : (
         <MobCampo label="Lote">

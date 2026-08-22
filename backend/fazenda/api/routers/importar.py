@@ -23,7 +23,8 @@ from fazenda.api.routers.cadastro.animais import _completar_genealogia_paterna
 from fazenda.api.routers.estoque import MovimentoIn, _criar_movimento_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
 from fazenda.api.routers.producao import (
-    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
+    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, _gravar_controles, criar_controles,
+    criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -315,8 +316,13 @@ async def importar_controle_leiteiro_simples(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session=session, user=user, fazenda_id=fazenda_id)
+        # Importação em massa usa o caminho NÃO estrito: a vaca sem lactação
+        # aberta é pulada e reportada em `erros`, em vez de derrubar o arquivo
+        # inteiro (ver producao._gravar_controles).
+        resultado = _gravar_controles(session, ControlesIn(data_controle=dia, entradas=entradas),
+                                      user.id if isinstance(user, Usuario) else None, fazenda_id, estrito=False)
         criados += resultado["criados"]
+        erros.extend(i["motivo"] for i in resultado["ignorados"])
     return {"categoria": "controle_leiteiro_simples", "criados": criados, "erros": erros}
 
 
@@ -709,6 +715,14 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
             partos_criados += 1
 
     session.commit()
+    # Partos importados também precisam existir como LACTAÇÃO — senão o
+    # controle leiteiro dessas vacas passa a ser recusado (ver
+    # POST /producao/controles) por uma lactação que só falta materializar.
+    # Idempotente: reprocessar não duplica (ver rules/lactacao.py).
+    if partos_criados:
+        from fazenda.rules.lactacao import backfill_lactacoes
+        backfill_lactacoes(session)
+        session.commit()
     return {
         "categoria": "dairycomp", "criados": partos_criados,
         "animais_atualizados": animais_atualizados, "erros": erros,

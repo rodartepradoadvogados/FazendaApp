@@ -8,7 +8,8 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
-import { SelectAnimal, addDias, IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { SelectAnimal, addDias, IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
+import { ErroApi } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 // Mesma regra de fazenda/rules/nomenclatura_protocolo.py — só para pré-visualização;
@@ -140,9 +141,15 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
   );
 }
 
-export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
+export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO }: {
+  animais: AnimalRow[];
+  // numero -> motivo de inaptidão (ver FormInseminacao e rules/aptidao.py).
+  motivosInaptidao?: Map<string, string>;
+  idadeMinServico?: number;
+}) {
   // Novo protocolo (cria um lançamento) ou adicionar animais a um já existente.
   const [modo, setModo] = useState<"novo" | "existente">("novo");
+  const [podeForcar, setPodeForcar] = useState(false);
   const [emLote, setEmLote] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [um, setUm] = useState("");
@@ -185,8 +192,8 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
     if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([]));
   }, [modo]);
 
-  async function salvar() {
-    setErro(null); setSucesso(null);
+  async function salvar(forcar = false) {
+    setErro(null); setSucesso(null); setPodeForcar(false);
     const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
     if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
     setSalvando(true);
@@ -197,7 +204,7 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         setSucesso(`${r.adicionados} animal(is) adicionado(s) ao protocolo "${r.nome_protocolo}".`);
       } else {
         if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
-        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos });
+        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos, forcar: forcar || undefined });
         // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
         // protocolo/D0/animais, ou mesmo D0/animais/hormônios num ad-hoc sem
         // molde) e reaproveitou em vez de duplicar — duplo clique ou retry da
@@ -212,6 +219,8 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => {});
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar protocolo IATF");
+      // 409 de aptidão confirmável — ver o mesmo tratamento em FormInseminacao.
+      if (e instanceof ErroApi && e.status === 409 && e.confirmavel) setPodeForcar(true);
     } finally {
       setSalvando(false);
     }
@@ -268,14 +277,19 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
           ? <AnimalPickerModal
               animais={animais} selecionados={sel} onToggle={toggle}
               titulo="Escolher animais para o protocolo IATF"
+              motivosInaptidao={motivosInaptidao}
               colunas={[
                 { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                 { header: "Lote", render: (a) => a.grupo_primario || "—" },
               ]}
             />
-          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
+          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" motivosInaptidao={motivosInaptidao} />}
       </div>
-      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D{diaFinal}) é lançada à parte, na sub-aba Inseminação.</p>
+      <p style={nota}>
+        A lista mostra todas as fêmeas — as <strong>inaptas em cinza</strong>, com o motivo (idade mínima de {idadeMinServico} meses,
+        animal baixado ou a descartar). Isso só agenda o protocolo hormonal — a inseminação em si (D{diaFinal}) é
+        lançada à parte, na sub-aba Inseminação.
+      </p>
 
       {modo === "novo" && (
         <>
@@ -328,7 +342,13 @@ export function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={() => salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        {podeForcar && (
+          <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
+            title="Lança o protocolo assumindo a situação descrita acima">
+            Confirmar e lançar mesmo assim
+          </button>
+        )}
       </div>
       </div>
       </div>

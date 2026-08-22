@@ -202,7 +202,13 @@ class TestExclusaoParto:
 
         c.post("/reproducao/parto", json={"numero_matriz": "303", "data_parto": "2026-07-01"})
         with _sessao(engine) as s:
-            assert s.exec(select(Animal).where(Animal.numero == "303")).first().del_dias == 0
+            # `del_dias` da mãe passou a sair do DEL AO VIVO da `Lactacao`
+            # aberta pelo parto (ver rules/lactacao.py), não mais de um `0`
+            # cravado no lançamento: num parto retroativo como este, `0` era
+            # simplesmente falso.
+            assert s.exec(select(Animal).where(Animal.numero == "303")).first().del_dias == (
+                date.today() - date(2026, 7, 1)
+            ).days
             parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "303")).first().id
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})

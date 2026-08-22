@@ -22,6 +22,19 @@ export type AnimalRow = {
   data_ult_servico_pos?: string | null;
   data_ult_parto?: string | null;
   a_descartar?: boolean;
+  // FONTE ÚNICA de "está em lactação" (GET /animais/, calculado da tabela
+  // Lactacao — ver backend/fazenda/rules/lactacao.py). Substitui os dois
+  // critérios divergentes que as telas de lançamento usavam antes: "o código
+  // do lote é 01/02/03" e "del_dias > 0" (campo congelado). Opcional só para
+  // o intervalo em que o front novo roda contra um backend antigo.
+  em_lactacao?: boolean;
+  lactacao_inicio?: string | null;
+  // Vêm do cadastro (GET /animais/) e sustentam a marcação visual de
+  // inaptidão a serviço na tela de Lançamentos (ver lib/aptidao.ts).
+  idade_meses?: number | null;
+  data_nasc?: string | null;
+  sexo?: string | null;
+  ativo?: boolean;
 };
 
 const SIT_CORES: Record<string, string> = {

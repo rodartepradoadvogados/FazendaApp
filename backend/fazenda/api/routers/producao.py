@@ -18,7 +18,7 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, g
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
-    FaixaBonificacaoQualidade, LancamentoItem, Lote, ParametroFazenda,
+    FaixaBonificacaoQualidade, Lactacao, LancamentoItem, Lote, ParametroFazenda,
     Parto, PesagemCorporal, ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
     ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
 )
@@ -30,7 +30,9 @@ from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcul
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules import estoque_baixa
 from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
+from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
@@ -118,10 +120,13 @@ def listar_controles(
     # Raça sempre a do cadastro do animal (nunca a copiada/congelada no controle
     # leiteiro, que pode estar desatualizada ou vir de texto livre de CSV antigo).
     raca_por_numero = {a.numero: a.raca for a in animais_cadastro}
-    # Ordem de parto por animal derivada do nº de partos, para preencher os
-    # controles cuja ordem veio vazia (o primeiro parto é sempre "1").
+    # Ordem de parto por animal derivada do nº de partos PRODUTIVOS (aborto
+    # não conta — ver fazenda/rules/parto.py), para preencher os controles
+    # cuja ordem veio vazia (o primeiro parto é sempre "1").
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(partos_query).all():
+        if not eh_parto_produtivo(p):
+            continue
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     controles = session.exec(controles_query).all()
     nomes = mapa_usuarios(session, {c.usuario_id for c in controles})
@@ -148,6 +153,42 @@ def listar_controles(
     return {"controles": registros, "total": len(registros)}
 
 
+def _exigir_lactacao_aberta(
+    session: Session, numero_matriz: str, data_controle: date, fazenda_id: int | None,
+) -> Lactacao:
+    """Recusa (409) um controle leiteiro de quem não tem lactação ABERTA na
+    data do controle.
+
+    Antes desta trava, `POST /producao/controles` não validava absolutamente
+    nada: aceitava vaca seca, novilha, bezerra e até animal inexistente
+    (gravava `animal_id = None` e seguia). O efeito não é só uma linha
+    esquisita no histórico — controle de bicho que não está em lactação entra
+    na produção do rebanho, na curva de lactação e nas médias por lote.
+
+    A mensagem é acionável de propósito: diz o que fazer (lançar o
+    parto/aborto), porque o motivo real quase sempre é o evento que abriu a
+    lactação não ter sido lançado ainda.
+    """
+    lact = regras_lactacao.lactacao_aberta(
+        session, numero_matriz=numero_matriz, data=data_controle, fazenda_id=fazenda_id,
+    )
+    if lact is not None:
+        return lact
+    quando = data_controle.strftime("%d/%m/%Y")
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "erro": "sem_lactacao_aberta",
+            "msg": (
+                f"{numero_matriz} não tem lactação aberta em {quando} — lance o parto/aborto "
+                f"(Lançamentos > Reprodutivo > Parto / nascimento) antes do controle leiteiro."
+            ),
+            "numero_matriz": numero_matriz,
+            "data": data_controle.isoformat(),
+        },
+    )
+
+
 @router.post("/controles")
 def criar_controles(
     dados: ControlesIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
@@ -156,10 +197,52 @@ def criar_controles(
     """
     Registra a pesagem do dia para uma ou várias vacas de uma vez (lançamento
     individual ou em lote — o front manda uma entrada por vaca do lote).
+
+    Exige lactação ABERTA na data do controle (ver `_exigir_lactacao_aberta`)
+    e grava o DEL AO VIVO calculado a partir dela — não mais o
+    `Animal.del_dias` congelado, que era 0 em toda vaca que pariu pelo app e
+    contaminava a curva de lactação do rebanho inteiro.
     """
-    usuario_id = _usuario_id_seguro(user)
+    return _gravar_controles(session, dados, _usuario_id_seguro(user), fazenda_id, estrito=True)
+
+
+def _gravar_controles(
+    session: Session, dados: ControlesIn, usuario_id: int | None, fazenda_id: int | None, *, estrito: bool,
+) -> dict:
+    """Corpo compartilhado entre o lançamento manual e a importação em massa.
+
+    `estrito=True` (lançamento manual, app de campo, bot): uma entrada sem
+    lactação aberta RECUSA a requisição inteira com 409 — a pessoa está ali,
+    vê a mensagem e corrige.
+
+    `estrito=False` (importação de planilha): a entrada sem lactação aberta é
+    PULADA e devolvida em `ignorados`, em vez de derrubar o arquivo inteiro
+    por causa de uma linha. Uma planilha de 300 vacas não pode falhar por
+    completo porque uma delas ainda não teve o parto lançado — mas também não
+    pode gravar essa linha em silêncio, que é o comportamento que esta trava
+    veio corrigir. Quem chama junta `ignorados` aos erros mostrados na tela.
+    """
     criados = []
+    ignorados: list[dict] = []
     for entrada in dados.entradas:
+        if estrito:
+            lactacao_do_controle = _exigir_lactacao_aberta(
+                session, entrada.numero_matriz, dados.data_controle, fazenda_id,
+            )
+        else:
+            lactacao_do_controle = regras_lactacao.lactacao_aberta(
+                session, numero_matriz=entrada.numero_matriz, data=dados.data_controle, fazenda_id=fazenda_id,
+            )
+            if lactacao_do_controle is None:
+                ignorados.append({
+                    "numero_matriz": entrada.numero_matriz,
+                    "data": dados.data_controle.isoformat(),
+                    "motivo": (
+                        f"{entrada.numero_matriz} não tem lactação aberta em "
+                        f"{dados.data_controle.strftime('%d/%m/%Y')} — lance o parto/aborto antes."
+                    ),
+                })
+                continue
         if entrada.total_kg is not None:
             producao_kg = round(entrada.total_kg, 2)
             o1 = o2 = o3 = None
@@ -193,7 +276,12 @@ def criar_controles(
         registro.animal_id = animal.id if animal else None
         registro.raca = animal.raca if animal else None
         registro.producao_kg = producao_kg
-        registro.del_no_controle = animal.del_dias if animal else None
+        # DEL AO VIVO da lactação aberta na data do controle — antes era
+        # `animal.del_dias`, o campo CONGELADO que nasce 0 no instante do
+        # parto e só volta a bater com a realidade no próximo upload do
+        # GERAL.csv. Resultado: toda vaca que pariu pelo app entrava na curva
+        # de lactação do rebanho com DEL 0, achatando a curva inteira.
+        registro.del_no_controle = (dados.data_controle - lactacao_do_controle.data_inicio).days
         registro.ordenha1_kg = o1
         registro.ordenha2_kg = o2
         registro.ordenha3_kg = o3
@@ -201,7 +289,7 @@ def criar_controles(
         session.add(registro)
         criados.append(registro)
     session.commit()
-    return {"criados": len(criados)}
+    return {"criados": len(criados), "ignorados": ignorados}
 
 
 # ---------------------------------------------------------------------------
@@ -412,10 +500,16 @@ def confirmar_controle_leiteiro(
         por_data.setdefault(linha.data_controle, []).append(_linha_para_ordenha_in(linha))
 
     criados = 0
+    ignorados: list[dict] = []
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user, fazenda_id=fazenda_id)
+        # `estrito=False`: uma vaca sem lactação aberta é PULADA e reportada,
+        # em vez de derrubar a planilha inteira — ver `_gravar_controles`.
+        resultado = _gravar_controles(session, ControlesIn(data_controle=dia, entradas=entradas),
+                                      _usuario_id_seguro(user), fazenda_id, estrito=False)
         criados += resultado["criados"]
-    return {"criados": criados}
+        ignorados.extend(resultado["ignorados"])
+    return {"criados": criados, "ignorados": ignorados,
+            "erros": [i["motivo"] for i in ignorados]}
 
 
 @router.post("/controle-leiteiro/importar")
@@ -435,8 +529,10 @@ async def importar_controle_leiteiro(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user, fazenda_id=fazenda_id)
+        resultado = _gravar_controles(session, ControlesIn(data_controle=dia, entradas=entradas),
+                                      _usuario_id_seguro(user), fazenda_id, estrito=False)
         criados += resultado["criados"]
+        erros.extend(i["motivo"] for i in resultado["ignorados"])
     return {"criados": criados, "erros": erros, "modo": modo}
 
 
@@ -1357,7 +1453,7 @@ def registrar_secagem(
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
         raise HTTPException(status_code=400, detail="Escore de condição corporal deve ser entre 1 e 5")
 
-    session.add(Secagem(
+    secagem = Secagem(
         fazenda_id=fazenda_id,
         numero_matriz=dados.numero_matriz,
         data_secagem=dados.data_secagem,
@@ -1366,7 +1462,21 @@ def registrar_secagem(
         observacao=dados.observacao,
         vacina_pre_parto=dados.vacina_pre_parto,
         usuario_id=_usuario_id_seguro(user),
-    ))
+    )
+    session.add(secagem)
+    session.flush()  # precisa do id para vincular à lactação que ela fecha
+
+    # A secagem é o EVENTO QUE FECHA a lactação (ver fazenda/rules/lactacao.py).
+    # Sem isso, a matriz seca continuaria com lactação aberta e o lançamento
+    # de controle leiteiro dela continuaria passando — que é metade do
+    # problema que a Lactacao veio resolver.
+    regras_lactacao.fechar_lactacao_por_secagem(
+        session, numero_matriz=dados.numero_matriz, data_secagem=dados.data_secagem,
+        secagem_id=secagem.id, fazenda_id=fazenda_id,
+    )
+    regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
 
     # Data futura ou "ainda não apliquei" → os produtos de secagem não baixam
     # estoque agora; viram aplicações programadas (Agenda/pendências).

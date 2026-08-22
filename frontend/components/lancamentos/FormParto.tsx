@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Baby, BookOpen, ExternalLink, X } from "lucide-react";
-import { criarMovimentacao, criarParto, previewCriteriosLote, registrarColostragem, registrarPerdaPrenhez, sugestaoLoteEvento, fetchTransferenciaLoteAutomatica, LoteSugeridoEvento } from "@/lib/api";
+import { criarMovimentacao, criarParto, encerrarGestacao, previewCriteriosLote, registrarColostragem, sugestaoLoteEvento, fetchTransferenciaLoteAutomatica, LoteSugeridoEvento } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, nota } from "@/components/lancamentos/comumForms";
@@ -127,9 +127,11 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  // Aborto: não é um parto de verdade — some com o bloco de cria/colostro/IgG
-  // e, ao salvar, segue o mesmo procedimento do 3º diagnóstico de gestação
-  // (perda de prenhez + popup "abrir lactação?"), sem criar Parto nem cria.
+  // Aborto: não gera cria — some com o bloco de cria/colostro/IgG. Ao salvar,
+  // pergunta sobre a lactação (PopupAborto) e grava tudo num POST só (ver
+  // `concluirAborto`): o `Parto` do aborto (com `ordem_parto` NULL, para não
+  // contar como cria em IEP/ordem de parto), a perda de prenhez no serviço
+  // certo e, se for o caso, a `Lactacao` com a data real do evento.
   const ehAborto = tipoParto === "Aborto";
   const [abortoPendente, setAbortoPendente] = useState<string | null>(null);
   // Natimorto: nasceu, mas não entra no rebanho — baixa automática, sexo
@@ -356,23 +358,75 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     setHoraParto(""); setHoraColostro(""); setPesoNascer(""); setApenasColostroPo(false);
   }
 
+  /**
+   * Grava o aborto inteiro num POST só (POST /reproducao/encerramento-gestacao):
+   * `Parto` com `ordem_parto` NULL (a gestação acabou, mas não houve cria),
+   * perda de prenhez carimbada no serviço vigente positivo CERTO, e — se o
+   * usuário respondeu "sim" no popup — a `Lactacao` com a data REAL do
+   * evento, que pode ser retroativa.
+   *
+   * Em seguida roda o MESMO bloco de sugestão de lote do parto normal
+   * (`prepararPendenciaLote`/`alocarSemConfirmar`), que o caminho de aborto
+   * pulava inteiro: a vaca que volta a produzir precisa ir para o lote de
+   * lactação, e ninguém lembrava de mover na mão.
+   */
+  async function concluirAborto(abrirLact: boolean) {
+    setErro(null); setSucesso(null);
+    const numero = matriz;
+    setSalvando(true);
+    try {
+      const r = await encerrarGestacao({
+        numero_matriz: numero,
+        data: dataParto,
+        tipo: "aborto",
+        abrir_lactacao: abrirLact,
+        motivo: "aborto",
+      });
+      const falhasEfeito: string[] = [];
+      const pendencias: PendenciaLote[] = [];
+      const movidos: string[] = [];
+      if (r.sugerir_lote) {
+        const loteAtual = animais.find((a) => a.numero === numero)?.grupo_primario || null;
+        const delDias = r.del_dias ?? 0;
+        if (transferenciaAutomatica) {
+          const destino = await alocarSemConfirmar(numero, "Vaca", { del_dias: delDias }, "Aborto", falhasEfeito);
+          if (destino) movidos.push(`${numero} → ${destino}`);
+        } else {
+          const pend = await prepararPendenciaLote(numero, "a vaca", "Vaca", { del_dias: delDias }, loteAtual, "Aborto", falhasEfeito);
+          if (pend) pendencias.push(pend);
+        }
+      }
+      setSucesso(
+        `Aborto registrado para a matriz ${numero}.` +
+        (r.lactacao_aberta ? ` Lactação aberta em ${new Date(dataParto + "T00:00:00").toLocaleDateString("pt-BR")} (DEL ${r.del_dias ?? 0}).` : "") +
+        (r.perda_prenhez_servico_id ? " Perda de prenhez registrada no serviço vigente." : "") +
+        (pendencias.length ? " Sugestão de troca de lote aguardando confirmação abaixo." : "") +
+        (movidos.length ? ` Transferido(s) automaticamente: ${movidos.join(", ")}.` : "") +
+        (falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : "")
+      );
+      if (pendencias.length) setFilaLotes(pendencias);
+      limparFormulario();
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!matriz) { setErro("Selecione a matriz que pariu."); return; }
     if (ehAborto) {
-      // Aborto não é um parto de verdade — mesmo procedimento do 3º
-      // diagnóstico de gestação: perda de prenhez, sem Parto nem cria.
-      setSalvando(true);
-      try {
-        await registrarPerdaPrenhez({ numero_matriz: matriz, data_perda_prenhez: dataParto, motivo: "aborto" });
-        setSucesso(`Aborto registrado para a matriz ${matriz}.`);
-        setAbortoPendente(matriz);
-        limparFormulario();
-      } catch (e: any) {
-        setErro(e.message || "Erro ao registrar aborto");
-      } finally {
-        setSalvando(false);
-      }
+      // Aborto: só ABRE a pergunta "deseja abrir lactação?" — nada é gravado
+      // ainda. A resposta entra no MESMO POST que grava tudo
+      // (`concluirAborto` abaixo).
+      //
+      // O caminho antigo fazia dois lançamentos independentes e incoerentes:
+      // `registrarPerdaPrenhez` (que não criava Parto nenhum, e carimbava a
+      // perda no serviço mais recente por data — nem sempre o que originou a
+      // gestação perdida) e, se o usuário respondesse "sim", `abrirLactacao`
+      // (que só gravava `del_dias = 0`, sem sequer receber a data do evento).
+      // Sem `Parto`, a matriz continuava "novilha gestante, sem parto" na
+      // Ficha para sempre — o bug que originou esta correção.
+      setAbortoPendente(matriz);
       return;
     }
     const crias = [
@@ -726,7 +780,14 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       )}
 
       {abortoPendente && (
-        <PopupAborto numeroMatriz={abortoPendente} onFechar={() => setAbortoPendente(null)} />
+        <PopupAborto
+          numeroMatriz={abortoPendente}
+          onFechar={() => setAbortoPendente(null)}
+          // A resposta do popup entra no MESMO POST que grava o aborto —
+          // ver `concluirAborto`. Antes eram duas chamadas separadas, e a
+          // segunda (abrir lactação) podia simplesmente não acontecer.
+          onResponder={concluirAborto}
+        />
       )}
 
       {filaLotes.length > 0 && (

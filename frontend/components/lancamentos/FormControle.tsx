@@ -171,16 +171,42 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
   const [sucesso, setSucesso] = useState<string | null>(null);
 
   const del = useMemo(() => animais.find((a) => a.numero === vaca)?.del_dias ?? null, [animais, vaca]);
-  // Controle leiteiro é só de quem está em lactação: em lote de lactação
-  // (01/02/03) ou com DEL em curso (> 0).
+  /**
+   * Quem está em lactação — FONTE ÚNICA: a flag `em_lactacao` que a API de
+   * animais devolve, calculada da `Lactacao` aberta hoje (ver
+   * backend/fazenda/rules/lactacao.py). É o MESMO critério que o backend usa
+   * para aceitar ou recusar o lançamento, então a lista aqui não pode mais
+   * discordar do que acontece ao salvar.
+   *
+   * O critério antigo era um OU de duas heurísticas que discordavam entre si:
+   * "está num lote 01/02/03" (depende de alguém ter movido a vaca de lote) OU
+   * "del_dias > 0" (campo CONGELADO, que nasce 0 no instante do parto). Uma
+   * vaca que pariu ontem falhava nas duas e sumia da lista; uma vaca seca que
+   * ninguém tirou do lote 02 continuava aparecendo.
+   *
+   * `em_lactacao === undefined` (front novo contra backend antigo) cai no
+   * critério antigo, para a tela não ficar vazia durante o deploy.
+   */
   const animaisLact = useMemo(
-    () => animais.filter((a) => (a.grupo_primario && lotesLact.includes(a.grupo_primario)) || ((a.del_dias ?? 0) > 0)),
+    () => animais.filter((a) => (
+      a.em_lactacao !== undefined
+        ? a.em_lactacao
+        : (a.grupo_primario && lotesLact.includes(a.grupo_primario)) || ((a.del_dias ?? 0) > 0)
+    )),
     [animais, lotesLact],
   );
   const total = ord.slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
 
-  // Vacas do lote selecionado — abre a listagem individual pra pesagem de cada uma.
-  const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  // Vacas do lote selecionado — abre a listagem individual pra pesagem de cada
+  // uma. Só as EM LACTAÇÃO: o lote pode ter uma vaca já seca que ninguém
+  // moveu ainda, e o backend recusa o lote inteiro se uma entrada dele não
+  // tiver lactação aberta (ver POST /producao/controles).
+  const numerosDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  const vacasDoLote = useMemo(
+    () => numerosDoLote.filter((a) => a.em_lactacao !== false),
+    [numerosDoLote],
+  );
+  const foraDeLactacaoNoLote = numerosDoLote.length - vacasDoLote.length;
   const ordVacas = useOrdenacao(vacasDoLote);
   const setOrdVaca = (numero: string, idx: number, valor: string) =>
     setPorVaca((p) => { const arr = [...(p[numero] || ["", "", ""])]; arr[idx] = valor; return { ...p, [numero]: arr }; });
@@ -279,7 +305,14 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
       ) : lote ? (
         <div className="card mt-3" style={{ padding: 0 }}>
           <div className="card-header m-3 flex items-center justify-between">
-            <span>Vacas do lote {lote} ({vacasDoLote.length})</span>
+            <span>
+              Vacas do lote {lote} ({vacasDoLote.length})
+              {foraDeLactacaoNoLote > 0 && (
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                  {" "}· {foraDeLactacaoNoLote} fora da lista por não ter lactação aberta
+                </span>
+              )}
+            </span>
             <span style={{ fontSize: "0.78rem", color: "var(--green-light)", fontWeight: 700 }}>Total do lote: {totalLote.toFixed(1)} kg</span>
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
