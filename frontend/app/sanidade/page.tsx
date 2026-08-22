@@ -561,7 +561,10 @@ function CalendarioVisualView({ onAbrirCronograma }: { onAbrirCronograma: (calen
   );
 }
 
-function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" | "cronogramas" } = {}) {
+// Exportado — reaproveitado também em Central de Protocolos > Acompanhamento
+// > Sanitário > Preventivo (ver app/protocolos/page.tsx), mesmo componente,
+// mesmos endpoints: não há dado nem lógica duplicada entre as duas telas.
+export function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" | "cronogramas" } = {}) {
   const [modo, setModo] = useState<"calendario" | "regras" | "cronogramas" | "exames">(modoInicial || "calendario");
   const [cronogramaFiltroCalendarioId, setCronogramaFiltroCalendarioId] = useState<number | null>(null);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);

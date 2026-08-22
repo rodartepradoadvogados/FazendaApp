@@ -424,7 +424,10 @@ class TestRegistrarParto:
             assert cria.mae_numero == "500"
             assert cria.raca == "Girolando"
             mae = s.exec(select(Animal).where(Animal.numero == "500")).first()
-            assert mae.del_dias == 0
+            # `del_dias` da mãe passou a sair do DEL AO VIVO da `Lactacao` que
+            # o parto abre (ver rules/lactacao.py), não mais de um `0` cravado
+            # no lançamento: neste parto retroativo, `0` era simplesmente falso.
+            assert mae.del_dias == (date.today() - date(2026, 7, 8)).days
 
     def test_incrementa_ordem_parto_em_partos_subsequentes(self, client):
         c, engine = client

@@ -17,6 +17,14 @@ Cobre:
 
 Testa tanto a função de regra pura (fazenda.rules.perda_prenhez) quanto a
 integração via API (POST /reproducao/servico + GET /agenda/).
+
+NOTA sobre `"forcar": True` nos lançamentos de integração: reinseminar uma
+matriz que consta como GESTANTE deixou de ser silencioso. A trava de aptidão
+(fazenda/rules/aptidao.py) agora recusa esse lançamento com 409 até alguém
+confirmar explicitamente — justamente porque o efeito dele é o sistema gravar
+uma perda de prenhez que ninguém afirmou. A detecção automática em si não
+mudou: continua acontecendo exatamente como estes testes verificam, só que
+depois de uma decisão humana em vez de por conta própria.
 """
 from __future__ import annotations
 
@@ -212,7 +220,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "200", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico", json={
-            "numero_matriz": "200", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "200", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r.status_code == 200, r.text
 
@@ -239,7 +247,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "201", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico", json={
-            "numero_matriz": "201", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "201", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r.status_code == 200, r.text
 
@@ -275,7 +283,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "203", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r1 = c.post("/reproducao/servico", json={
-            "numero_matriz": "203", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "203", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r1.status_code == 200, r1.text
 
@@ -283,7 +291,7 @@ class TestIntegracaoReinseminacao:
         # 1ª (o serviço imediatamente anterior a esta 3ª é a 2ª IA, sem
         # diagnóstico — não há prenhez vigente para "perder" de novo).
         r2 = c.post("/reproducao/servico", json={
-            "numero_matriz": "203", "data_servico": "2026-09-15", "tipo_servico": "IA",
+            "numero_matriz": "203", "data_servico": "2026-09-15", "tipo_servico": "IA", "forcar": True,
         })
         assert r2.status_code == 200, r2.text
 
@@ -303,7 +311,7 @@ class TestIntegracaoReinseminacao:
         _add_animal(engine, "204")
         _add_servico(engine, "204", date(2026, 3, 1), diagnostico="POSITIVO")
         c.post("/reproducao/servico", json={
-            "numero_matriz": "204", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "204", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         with Session(engine) as s:
             anterior = s.exec(
@@ -324,7 +332,7 @@ class TestIntegracaoReinseminacao:
         _add_animal(engine, "205")
         _add_servico(engine, "205", date(2026, 3, 1), diagnostico="POSITIVO")
         c.post("/reproducao/servico", json={
-            "numero_matriz": "205", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "205", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         with Session(engine) as s:
             anterior = s.exec(
@@ -364,7 +372,7 @@ class TestIntegracaoReinseminacao:
         _add_servico(engine, "207", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico-lote", json={
-            "animais": ["207"], "data_servico": "2026-08-01", "tipo": "cio_natural",
+            "animais": ["207"], "data_servico": "2026-08-01", "tipo": "cio_natural", "forcar": True,
         })
         assert r.status_code == 200, r.text
 
@@ -389,7 +397,7 @@ class TestExcluirServicoCausadorRevertePerdaPrenhez:
         _add_servico(engine, "700", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico", json={
-            "numero_matriz": "700", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "700", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r.status_code == 200, r.text
         causador_id = r.json()["id"]
@@ -423,7 +431,7 @@ class TestExcluirServicoCausadorRevertePerdaPrenhez:
         _add_servico(engine, "701", date(2026, 3, 1), diagnostico="POSITIVO")
 
         r = c.post("/reproducao/servico", json={
-            "numero_matriz": "701", "data_servico": "2026-08-01", "tipo_servico": "IA",
+            "numero_matriz": "701", "data_servico": "2026-08-01", "tipo_servico": "IA", "forcar": True,
         })
         assert r.status_code == 200, r.text
         causador_id = r.json()["id"]

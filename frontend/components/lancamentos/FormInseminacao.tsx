@@ -13,7 +13,8 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota, codigoGrupo } from "@/components/lancamentos/comumForms";
-import { IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
+import { ErroApi } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 const CAT_TOURO = [
@@ -22,8 +23,19 @@ const CAT_TOURO = [
   { id: "fazenda" as const, label: "Touro da fazenda" },
 ];
 
-export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
+export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO }: {
+  animais: AnimalRow[];
+  // numero -> motivo de inaptidão a serviço. A lista mostra TODAS as fêmeas,
+  // com as inaptas em cinza e o motivo ao lado — antes elas simplesmente não
+  // apareciam, e a tela não tinha como explicar por quê (ver
+  // app/lancamentos/page.tsx e backend/fazenda/rules/aptidao.py).
+  motivosInaptidao?: Map<string, string>;
+  idadeMinServico?: number;
+}) {
   const { rotuloDe } = useEstadosReprodutivos();
+  // Ligado quando o backend recusa com um 409 de aptidão CONFIRMÁVEL — aí a
+  // tela oferece "confirmar e lançar mesmo assim" (envia `forcar: true`).
+  const [podeForcar, setPodeForcar] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [dataServico, setDataServico] = useState("");
   const [tipo, setTipo] = useState<"cio_natural" | "iatf" | "monta_natural">("cio_natural");
@@ -156,8 +168,8 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
     [semen, categoria]
   );
 
-  async function salvar() {
-    setErro(null); setSucesso(null);
+  async function salvar(forcar = false) {
+    setErro(null); setSucesso(null); setPodeForcar(false);
     const alvo = Array.from(alvoFinal);
     if (!alvo.length) { setErro("Selecione ao menos uma matriz."); return; }
     if (!dataServico) { setErro("Informe a data da inseminação."); return; }
@@ -169,6 +181,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         protocolo_lancamento_id: tipo === "iatf" && protocoloId ? Number(protocoloId) : null,
         auto_lancar_iatf: tipo === "iatf" ? autoLancar : false,
         tipo_semen: categoria === "fazenda" ? null : categoria,
+        forcar: forcar || undefined,
       });
       if (r.incompativeis.length) {
         setVinculoInsem("animal"); setLotesSelecionadosInsem([]); setSel(new Set(r.incompativeis));
@@ -188,6 +201,12 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
       }
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar inseminação");
+      // 409 de aptidão CONFIRMÁVEL (novilha sem pesagem, ou matriz que consta
+      // como gestante): o backend recusou, mas aceita a decisão de uma
+      // pessoa. Mostra o botão de confirmar em vez de deixar o usuário sem
+      // saída — e sem repetir a inferência silenciosa que o sistema fazia
+      // sozinho antes (registrar uma perda de prenhez que ninguém afirmou).
+      if (e instanceof ErroApi && e.status === 409 && e.confirmavel) setPodeForcar(true);
     } finally {
       setSalvando(false);
     }
@@ -252,6 +271,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                 animais={animais}
                 selecionados={sel} onToggle={toggle}
                 titulo="Escolher matriz / novilha"
+                motivosInaptidao={motivosInaptidao}
                 colunas={[
                   { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                   { header: "Lote", render: (a) => a.grupo_primario || "—" },
@@ -439,11 +459,23 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         </div>
       )}
 
-      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses).</p>
+      <p style={nota}>
+        A lista mostra todas as fêmeas do rebanho. As <strong>inaptas aparecem em cinza</strong>, com o motivo ao lado
+        (idade mínima de {idadeMinServico} meses, animal baixado ou marcado a descartar) — antes elas simplesmente
+        sumiam da lista. Peso mínimo e reinseminação de matriz gestante são conferidos ao salvar.
+      </p>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={() => salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        {/* Só aparece quando o backend disse que ESTE bloqueio admite
+            confirmação manual — nunca para idade/sexo/animal baixado. */}
+        {podeForcar && (
+          <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
+            title="Registra a inseminação assumindo a situação descrita acima">
+            Confirmar e lançar mesmo assim
+          </button>
+        )}
       </div>
       </div>
       </div>

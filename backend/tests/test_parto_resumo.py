@@ -51,7 +51,11 @@ class TestJanelaDaLactacao:
 
 
 class TestProducao:
-    def test_soma_so_controles_dentro_da_janela(self):
+    def test_media_dia_e_soma_dos_controles_a_dividir_pela_quantidade_deles(self):
+        """Média/dia = SOMA dos controles daquele parto ÷ QUANTIDADE de
+        controles daquele parto — NÃO soma ÷ dias em lactação (regressão: essa
+        conta antiga subestimava a média sempre que há poucos controles
+        pontuais espalhados por uma lactação longa)."""
         p1, p2 = date(2025, 1, 1), date(2025, 6, 1)
         controles = [
             _controle(date(2024, 12, 20), 30.0),  # antes do parto — fora
@@ -60,33 +64,49 @@ class TestProducao:
             _controle(date(2025, 6, 15), 15.0),  # depois do próximo parto — fora
         ]
         r = resumo_por_parto([_parto(p1), _parto(p2)], controles, [], [], hoje=HOJE)
-        assert r[0]["producao_total_kg"] == 45.0
+        # Só os dois controles dentro da janela (25.0 e 20.0) entram na conta.
+        assert r[0]["producao_media_dia_kg"] == round((25.0 + 20.0) / 2, 2)
+
+    def test_producao_total_e_media_dia_vezes_del(self):
+        """Produção total = média/dia × DEL (dias em lactação) — uma
+        estimativa a partir da média real, não a soma bruta dos controles
+        lançados (regressão do bug de fórmula do Resumo por parto)."""
+        p1, p2 = date(2025, 1, 1), date(2025, 6, 1)
+        controles = [_controle(date(2025, 2, 1), 25.0), _controle(date(2025, 3, 1), 20.0)]
+        r = resumo_por_parto([_parto(p1), _parto(p2)], controles, [], [], hoje=HOJE)
         dias = (p2 - p1).days
-        assert r[0]["producao_media_dia_kg"] == round(45.0 / dias, 2)
+        media = round((25.0 + 20.0) / 2, 2)
+        assert r[0]["dias_em_lactacao"] == dias
+        assert r[0]["producao_media_dia_kg"] == media
+        assert r[0]["producao_total_kg"] == round(media * dias, 1)
+        # Não é mais a soma bruta dos controles lançados.
+        assert r[0]["producao_total_kg"] != 45.0
 
     def test_sem_controle_leiteiro_produtos_ficam_none(self):
         r = resumo_por_parto([_parto(date(2025, 1, 1))], [], [], [], hoje=HOJE)
         assert r[0]["producao_total_kg"] is None
         assert r[0]["producao_media_dia_kg"] is None
+        assert r[0]["producao_305_dias_kg"] is None
 
 
 class TestProjecao305Dias:
-    def test_lactacao_curta_estima_a_partir_da_media_real(self):
-        p1 = date(2025, 1, 1)
-        p2 = p1 + timedelta(days=100)
-        controles = [_controle(p1 + timedelta(days=d), 20.0) for d in range(0, 100, 10)]
-        r = resumo_por_parto([_parto(p1), _parto(p2)], controles, [], [], hoje=HOJE)
-        assert r[0]["producao_305_dias_estimada"] is True
-        assert r[0]["producao_305_dias_kg"] == round(r[0]["producao_media_dia_kg"] * 305, 1)
-
-    def test_lactacao_longa_usa_soma_real_dos_primeiros_305_dias(self):
+    def test_305_dias_e_sempre_media_dia_vezes_305(self):
+        """305 dias = média/dia × 305, sempre — mesmo quando a lactação já
+        rodou mais de 305 dias (regressão: a fórmula antiga somava os
+        controles reais dentro da janela de 305 dias nesse caso, uma segunda
+        fonte de verdade divergente da média/dia)."""
         p1 = date(2024, 1, 1)
         p2 = p1 + timedelta(days=400)
         controles = [_controle(p1 + timedelta(days=d), 10.0) for d in range(0, 400, 50)]
         r = resumo_por_parto([_parto(p1), _parto(p2)], controles, [], [], hoje=HOJE)
-        assert r[0]["producao_305_dias_estimada"] is False
-        dentro_305 = [c for c in controles if c["data_controle"] < p1 + timedelta(days=305)]
-        assert r[0]["producao_305_dias_kg"] == round(sum(c["producao_kg"] for c in dentro_305), 1)
+        assert r[0]["producao_305_dias_kg"] == round(r[0]["producao_media_dia_kg"] * 305, 1)
+
+    def test_lactacao_curta_tambem_usa_media_dia_vezes_305(self):
+        p1 = date(2025, 1, 1)
+        p2 = p1 + timedelta(days=100)
+        controles = [_controle(p1 + timedelta(days=d), 20.0) for d in range(0, 100, 10)]
+        r = resumo_por_parto([_parto(p1), _parto(p2)], controles, [], [], hoje=HOJE)
+        assert r[0]["producao_305_dias_kg"] == round(r[0]["producao_media_dia_kg"] * 305, 1)
 
 
 class TestReproducaoNaLactacao:

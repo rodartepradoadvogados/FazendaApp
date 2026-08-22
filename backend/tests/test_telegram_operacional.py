@@ -5,6 +5,7 @@ As chamadas de rede ao Telegram são simuladas.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +15,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import fazenda.database as database
 from fazenda.api.routers import telegram
 from fazenda.config import settings
-from fazenda.models import ControleLeiteiro, LancamentoPendente, Lote, Secagem
+from fazenda.models import ControleLeiteiro, Lactacao, LancamentoPendente, Lote, Secagem
 
 SECRET = "seg"
 CHAT = 42
@@ -26,6 +27,13 @@ def ctx(monkeypatch):
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
         s.add(Lote(codigo="02", nome="Lactação alta"))
+        # Aprovar um controle leiteiro grava pelo mesmo caminho do lançamento
+        # direto, que passou a exigir uma `Lactacao` ABERTA na data do controle
+        # (ver rules/lactacao.py) — é dela que sai o DEL. A matriz "1234" do
+        # fluxo do bot precisa, portanto, estar lactando de verdade. Só a
+        # lactação: o `Animal` fica por conta de `_seed_animal`, para os testes
+        # que precisam dele não acabarem com a matriz cadastrada em duplicidade.
+        s.add(Lactacao(numero_matriz="1234", data_inicio=date.today() - timedelta(days=60), origem="parto"))
         s.commit()
 
     def _get_session_override():

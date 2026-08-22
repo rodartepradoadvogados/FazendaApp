@@ -23,7 +23,7 @@ const FormEntregaLeite = dynamic(() => import("@/components/FormEntregaLeite").t
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
-import { IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { inaptidaoServico, useIdadeMinServico } from "@/components/lancamentos/_shared";
 // Formulários por tipo de lançamento (reprodutivo/produção/sanidade/dieta/
 // estoque) — extraídos para components/lancamentos/*, mesmo motivo do bloco
 // de dynamic() acima (code-splitting: só baixa o formulário da sub-aba aberta).
@@ -278,11 +278,27 @@ export default function LancamentosPage() {
     return Array.from(porChave.values()).sort();
   }, [animais]);
   const lotesLact = useMemo(() => lotes.filter((l) => LACT.includes(cod(l))), [lotes]);
-  // Fêmeas aptas a serviço: idade >= 13 meses (mantém as sem idade informada, por segurança).
-  const aptasServico = useMemo(() => animais.filter((a) => {
-    const idade = (a as any).idade_meses;
-    return idade == null || idade >= IDADE_MIN_SERVICO;
-  }), [animais]);
+  // Aptidão a serviço: a lista passa a mostrar TODAS as fêmeas, com as
+  // inaptas em cinza e o motivo ao lado (ver `motivosInaptidao` abaixo), em
+  // vez de escondê-las.
+  //
+  // Antes, este bloco filtrava por `idade_meses >= 13` — um número cravado no
+  // código do front, diferente do parâmetro real da fazenda (15 meses) e
+  // inexistente no backend, que aceitava qualquer coisa que chegasse pela
+  // API. A trava de verdade agora é do backend (409 com o motivo, ver
+  // `backend/fazenda/rules/aptidao.py`); aqui só se ANTECIPA o veredito, com
+  // o parâmetro de verdade, para o usuário não descobrir depois de preencher
+  // o formulário inteiro. Sumir com a vaca da lista era pior que recusá-la:
+  // não explicava nada e ainda parecia bug de cadastro.
+  const idadeMinServico = useIdadeMinServico();
+  const motivosInaptidao = useMemo(() => {
+    const m = new Map<string, string>();
+    animais.forEach((a) => {
+      const i = inaptidaoServico(a, idadeMinServico);
+      if (i) m.set(a.numero, i.rotulo);
+    });
+    return m;
+  }, [animais, idadeMinServico]);
   const tipo = TIPOS_LEAFS.find((t) => t.id === sel)!;
 
   // Piloto do drill-down: a Sidebar desenha esta árvore (grupo → sub-grupo →
@@ -358,11 +374,11 @@ export default function LancamentosPage() {
       <div className="card" ref={cardRef} onChange={verificarSujo}>
         <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
         <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-        {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
-        {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
+        {sel === "protocolo_iatf" && <FormProtocoloIatf animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} />}
+        {sel === "inseminacao" && <FormInseminacao animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} />}
         {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
         {sel === "parto" && <FormParto animais={animais} lotes={lotes} />}
-        {sel === "inducao_cio" && <FormInducaoCio animais={aptasServico} estoque={estoque} />}
+        {sel === "inducao_cio" && <FormInducaoCio animais={animais} estoque={estoque} motivosInaptidao={motivosInaptidao} />}
         {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
         {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
         {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}

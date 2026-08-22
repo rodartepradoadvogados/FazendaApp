@@ -3,7 +3,7 @@ Testes do lançamento de controle leiteiro (por vaca ou em lote, de uma vez).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, ControleLeiteiro
+from fazenda.models import Animal, ControleLeiteiro, Lactacao
 
 
 @pytest.fixture
@@ -39,6 +39,12 @@ def client():
         with Session(engine) as s:
             s.add(Animal(numero="101", grupo_primario="01 - Alta", raca="Girolando", del_dias=50, ativo=True))
             s.add(Animal(numero="102", grupo_primario="01 - Alta", raca="Holandês", del_dias=80, ativo=True))
+            # POST /producao/controles passou a exigir uma `Lactacao` ABERTA na
+            # data do controle (ver rules/lactacao.py) — antes a rota aceitava
+            # qualquer animal, inclusive seco, novilha ou inexistente. O DEL
+            # gravado no controle sai daqui, não mais de `Animal.del_dias`.
+            s.add(Lactacao(numero_matriz="101", data_inicio=date(2026, 7, 8) - timedelta(days=50), origem="parto"))
+            s.add(Lactacao(numero_matriz="102", data_inicio=date(2026, 7, 8) - timedelta(days=80), origem="parto"))
             s.commit()
         yield c
 

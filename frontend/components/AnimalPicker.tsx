@@ -17,9 +17,15 @@ const SIT_CORES: Record<string, string> = {
  * Seletor de animal claro: mostra uma tabela (Nº · Grupo · Categoria · Sit. Rep.
  * · DEL) igual à dos indicadores, evitando confundir o número do animal com o
  * do lote. Abre num clique, tem busca, e devolve o número escolhido.
+ *
+ * `motivosInaptidao` (opcional) marca animais que a tela sabe de antemão que o
+ * backend vai recusar — eles aparecem EM CINZA, com o motivo ao lado, em vez
+ * de sumirem da lista. Esconder era o comportamento antigo em Lançamentos, e
+ * ele produzia a pior pergunta possível no curral: "cadê a vaca 14?".
  */
-export function AnimalPicker({ animais, value, onChange, placeholder = "Selecionar animal…" }:
-  { animais: AnimalRow[]; value: string; onChange: (v: string) => void; placeholder?: string }) {
+export function AnimalPicker({ animais, value, onChange, placeholder = "Selecionar animal…", motivosInaptidao }:
+  { animais: AnimalRow[]; value: string; onChange: (v: string) => void; placeholder?: string;
+    motivosInaptidao?: Map<string, string> }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const sel = animais.find((a) => a.numero === value);
@@ -69,15 +75,23 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
                   <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 </tr></thead>
                 <tbody>
-                  {ord.linhasOrdenadas.map((a) => (
-                    <tr key={a.numero} onClick={() => { onChange(a.numero); setAberto(false); }} style={{ cursor: "pointer", background: a.numero === value ? "rgba(94,26,46,0.35)" : undefined }} className="row-clickable">
-                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                  {ord.linhasOrdenadas.map((a) => {
+                    const inapto = motivosInaptidao?.get(a.numero);
+                    return (
+                    <tr key={a.numero} onClick={() => { onChange(a.numero); setAberto(false); }}
+                      title={inapto || undefined}
+                      style={{ cursor: "pointer", background: a.numero === value ? "rgba(94,26,46,0.35)" : undefined, opacity: inapto ? 0.55 : undefined }} className="row-clickable">
+                      <td style={{ fontWeight: 700, color: inapto ? "var(--text-muted)" : undefined }}>{a.numero}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                      <td><span style={{ color: SIT_CORES[rotuloDe(a.numero)] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero)}</span></td>
+                      <td style={{ fontSize: "0.75rem" }}>
+                        {a.categoria_abrev || a.categoria_completa || "—"}
+                        {inapto && <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}> · {inapto}</span>}
+                      </td>
+                      <td><span style={{ color: inapto ? "var(--text-muted)" : (SIT_CORES[rotuloDe(a.numero)] || "var(--text-muted)"), fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero)}</span></td>
                       <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {!filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
                 </tbody>
               </table>

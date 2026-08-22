@@ -200,8 +200,30 @@ async def _upsert_reprodutivo(content: bytes, session: Session, fazenda_id: int 
     _carimbar(servicos, fazenda_id)
     _carimbar(partos, fazenda_id)
 
-    # Limpa e reinserere (sem chave natural complexa nos serviços — recria a cada upload)
+    # Serviços: limpa e reinsere (o CSV do Ideagri não tem chave natural
+    # estável nos serviços), MAS preservando o que só o app produz.
+    #
+    # O bug que este bloco fecha: o apaga-tudo levava junto tudo que foi
+    # lançado no app e não existe na planilha — a perda de prenhez lançada
+    # pelo produtor (data E motivo), o retoque/reconfirmação marcados pelo
+    # veterinário, o tipo de sêmen e o inseminador gravados na inseminação, e
+    # o carimbo de quem lançou. Um upload de CSV bastava para apagar em
+    # silêncio o aborto que alguém tinha acabado de registrar — e a matriz
+    # voltava a constar como gestante.
+    #
+    # A chave de casamento é (matriz, data do serviço): é o que identifica a
+    # mesma inseminação nos dois lados. Mesmo padrão dos `Parto` logo abaixo
+    # (ver `preservados` lá).
+    CAMPOS_SO_DO_APP = (
+        "data_perda_prenhez", "motivo_perda_prenhez", "origem_perda_prenhez",
+        "retoque", "data_reconfirmacao", "diagnostico_reconfirmacao",
+        "tipo_semen", "inseminador", "usuario_id",
+    )
+    preservados_servico: dict[tuple[str, object], dict] = {}
     for s in session.exec(_escopo(select(Servico), Servico, fazenda_id)).all():
+        guardado = {campo: getattr(s, campo, None) for campo in CAMPOS_SO_DO_APP}
+        if any(v is not None for v in guardado.values()):
+            preservados_servico[(s.numero_matriz, s.data_servico)] = guardado
         session.delete(s)
     session.commit()
 
@@ -213,6 +235,15 @@ async def _upsert_reprodutivo(content: bytes, session: Session, fazenda_id: int 
         ).first()
         if animal:
             servico.animal_id = animal.id
+        salvo = preservados_servico.get((servico.numero_matriz, servico.data_servico))
+        if salvo:
+            for campo, valor in salvo.items():
+                # `or` na direção certa: o que o CSV traz preenchido vence (a
+                # planilha É a fonte para o que ela cobre — ex.: a coluna
+                # "DATA DA PERDA DE PRENHEZ" do Ideagri); o guardado só
+                # preenche o que veio vazio do CSV.
+                if getattr(servico, campo, None) is None:
+                    setattr(servico, campo, valor)
         session.add(servico)
 
     # Partos: reimporta sem DUPLICAR. Antes só inseria — cada reenvio do CSV
@@ -252,6 +283,15 @@ async def _upsert_reprodutivo(content: bytes, session: Session, fazenda_id: int 
         session.add(parto)
 
     session.commit()
+    # Todo parto importado também precisa existir como LACTAÇÃO — senão o
+    # controle leiteiro dessas vacas passa a ser recusado (ver
+    # POST /producao/controles) por uma lactação que só falta materializar.
+    # Reaproveita a MESMA reconstrução da migração de dados; idempotente
+    # (ver rules/lactacao.py::backfill_lactacoes).
+    if partos:
+        from fazenda.rules.lactacao import backfill_lactacoes
+        backfill_lactacoes(session, fazenda_id=fazenda_id)
+        session.commit()
     return {
         "tipo": "reprodutivo",
         "servicos": len(servicos),
