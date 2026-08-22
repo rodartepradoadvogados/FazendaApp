@@ -34,7 +34,7 @@ const FormDiagnostico = dynamic(() => import("@/components/lancamentos/FormDiagn
 const FormParto = dynamic(() => import("@/components/lancamentos/FormParto").then((m) => m.FormParto), { ssr: false });
 const FormControle = dynamic(() => import("@/components/lancamentos/FormControle").then((m) => m.FormControle), { ssr: false });
 const FormSanidade = dynamic(() => import("@/components/lancamentos/FormSanidade").then((m) => m.FormSanidade), { ssr: false });
-const FormCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormCalendarioSanitario").then((m) => m.FormCalendarioSanitario), { ssr: false });
+const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormAplicarCalendarioSanitario").then((m) => m.FormAplicarCalendarioSanitario), { ssr: false });
 const FormPreventivoAplicacao = dynamic(() => import("@/components/lancamentos/FormPreventivoAplicacao").then((m) => m.FormPreventivoAplicacao), { ssr: false });
 const BstLancamentoView = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.BstLancamentoView), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
@@ -127,7 +127,7 @@ const TIPOS_GRUPOS = [
         id: "sanidade_curativa", label: "Curativa", icon: HeartPulse,
         desc: "Tratamento curativo: aplicações de medicamento e protocolos sanitários.",
         subs: [
-          { id: "sanidade_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicação de medicamento curativo — por animal, categoria, vários animais ou lote." },
+          { id: "sanidade_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicação avulsa de medicamento curativo — por animal, categoria, vários animais ou lote." },
           { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
         ],
       },
@@ -135,8 +135,8 @@ const TIPOS_GRUPOS = [
         id: "sanidade_preventiva", label: "Preventiva", icon: Shield,
         desc: "Manejo preventivo: aplicações preventivas e calendário sanitário.",
         subs: [
-          { id: "preventivo_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) a animais, categoria ou lote — registra e alimenta o calendário." },
-          { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
+          { id: "preventivo_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) sem vínculo com um protocolo do calendário — por animal, categoria ou lote." },
+          { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Aplicar um protocolo já cadastrado no calendário (vacina ou exame) — escolha o protocolo e lance para os animais." },
         ],
       },
     ],
@@ -328,9 +328,9 @@ export default function LancamentosPage() {
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : sel === "preventivo_aplicacao" ? (
-            <><strong style={{ color: "var(--text)" }}>Preventivo já grava de verdade.</strong> Escolha o evento preventivo (vacina/exame), o lote/categoria e marque os animais — registra o calendário e, se for vacina/tratamento, a aplicação com baixa de estoque. Exame não baixa estoque.</>
+            <><strong style={{ color: "var(--text)" }}>Avulso já grava de verdade.</strong> Escolha o evento preventivo (vacina/exame), o lote/categoria e marque os animais — sem vínculo com um protocolo do calendário; se for vacina/tratamento, aplica com baixa de estoque. Exame não baixa estoque.</>
           ) : sel === "calendario_sanitario" ? (
-            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Cada regra recorrente vira pendência na Agenda (dá baixa) e aparece na aba Sanidade &gt; Preventivo, com filtro por data e por evento.</>
+            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Aqui só se aplica um protocolo já cadastrado (Central de Protocolos &gt; Cadastro &gt; Sanitário &gt; Preventivo) — escolha-o, confira o resumo e lance para os animais.</>
           ) : sel === "bst" ? (
             <><strong style={{ color: "var(--text)" }}>BST — somatotropina bovina.</strong> Vacas aptas e excluídas do dia, com a próxima visita de BST.</>
           ) : sel === "protocolo_sanitario" ? (
@@ -371,7 +371,7 @@ export default function LancamentosPage() {
         {sel === "entrega_leite" && <FormEntregaLeite />}
         {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
         {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} estoque={estoque} />}
-        {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
+        {sel === "calendario_sanitario" && <FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
         {sel === "bst" && <BstLancamentoView />}
         {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
         {sel === "financeiro_despesa" && (

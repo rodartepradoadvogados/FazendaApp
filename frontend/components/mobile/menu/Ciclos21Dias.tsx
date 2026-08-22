@@ -82,10 +82,10 @@ function CartaoCiclo({ c, onAbrir }: { c: CicloReprodutivo; onAbrir: () => void 
 // "quem entrou em cada cesta").
 function DetalheCiclo({ c, onVoltar }: { c: CicloReprodutivo; onVoltar: () => void }) {
   const grupos: { titulo: string; nums: string[] }[] = [
-    { titulo: "Elegíveis p/ inseminação (BR ELIG)", nums: c.animais?.br_elig ?? [] },
-    { titulo: "Inseminadas no ciclo (BRED)", nums: c.animais?.bred ?? [] },
-    { titulo: "Elegíveis p/ prenhez (PG ELIG)", nums: c.animais?.pg_elig ?? [] },
-    { titulo: "Confirmadas prenhes (PREG)", nums: c.animais?.preg ?? [] },
+    { titulo: "Elegíveis p/ inseminação (Apt)", nums: c.animais?.br_elig ?? [] },
+    { titulo: "Inseminadas no ciclo (Ins.)", nums: c.animais?.bred ?? [] },
+    { titulo: "Elegíveis p/ prenhez (Apt Real)", nums: c.animais?.pg_elig ?? [] },
+    { titulo: "Confirmadas prenhes (Posit.)", nums: c.animais?.preg ?? [] },
   ];
   return (
     <div>

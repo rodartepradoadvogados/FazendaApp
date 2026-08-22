@@ -24,6 +24,15 @@ type Ficha = {
   pai: { nome: string | null; naab: string | null; central: string | null; tpi: number | null; nm_dolar: number | null } | null;
   precisao_parto: PrecisaoParto | null;
   partos: Record<string, unknown>[];
+  // Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
+  // produção, duração, tentativas de emprenhar e DEL de concepção, por
+  // lactação (mais antiga primeiro). Ver fazenda.rules.parto_resumo.
+  resumo_partos: {
+    ordem_parto: number; data_parto: string; lactacao_encerrada: boolean; dias_em_lactacao: number;
+    producao_total_kg: number | null; producao_media_dia_kg: number | null;
+    producao_305_dias_kg: number | null; producao_305_dias_estimada: boolean;
+    tentativas_emprenhar: number | null; del_concepcao: number | null;
+  }[];
   servicos: Record<string, unknown>[];
   protocolos_iatf: Record<string, unknown>[];
   movimentos_lote: Record<string, unknown>[];
@@ -49,6 +58,59 @@ type Ficha = {
   // lactação desenha por trás dos pontos deste animal.
   curva_referencia_rebanho?: FaixaReferencia[];
 };
+
+/**
+ * Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
+ * produção, duração e reprodução de cada lactação, lado a lado. Mais
+ * antiga primeiro (mesma ordem de `ficha.resumo_partos`).
+ */
+function QuadroResumoPartos({ linhas }: { linhas: Ficha["resumo_partos"] }) {
+  if (!linhas?.length) return null;
+  const fmtKg = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg`);
+  return (
+    <div className="card" style={cardStyle}>
+      <div className="card-header mb-2">Resumo por parto</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+        Produção, duração e reprodução de cada lactação — o essencial para avaliar o animal de uma vez.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table">
+          <thead><tr>
+            <th>Parto</th>
+            <th>Status</th>
+            <th style={{ textAlign: "right" }}>Dias em lactação</th>
+            <th style={{ textAlign: "right" }}>Produção total</th>
+            <th style={{ textAlign: "right" }}>Média/dia</th>
+            <th style={{ textAlign: "right" }}>305 dias</th>
+            <th style={{ textAlign: "right" }}>Tentativas p/ emprenhar</th>
+            <th style={{ textAlign: "right" }}>DEL na concepção</th>
+          </tr></thead>
+          <tbody>
+            {linhas.map((l) => (
+              <tr key={l.ordem_parto}>
+                <td style={{ fontWeight: 700 }}>{l.ordem_parto}º — {formatDate(l.data_parto)}</td>
+                <td style={{ fontSize: "0.78rem", color: l.lactacao_encerrada ? "var(--text-muted)" : "var(--dourado-light)" }}>
+                  {l.lactacao_encerrada ? "Encerrada" : "Em andamento"}
+                </td>
+                <td style={{ textAlign: "right" }}>{l.dias_em_lactacao}</td>
+                <td style={{ textAlign: "right" }}>{fmtKg(l.producao_total_kg)}</td>
+                <td style={{ textAlign: "right" }}>{fmtKg(l.producao_media_dia_kg)}</td>
+                <td style={{ textAlign: "right" }}>
+                  {fmtKg(l.producao_305_dias_kg)}
+                  {l.producao_305_dias_kg != null && l.producao_305_dias_estimada && (
+                    <span title="Lactação com menos de 305 dias registrados — estimativa a partir da média diária real" style={{ marginLeft: "0.3rem", fontSize: "0.68rem", color: "var(--text-muted)" }}>(estim.)</span>
+                  )}
+                </td>
+                <td style={{ textAlign: "right" }}>{l.tentativas_emprenhar ?? "—"}</td>
+                <td style={{ textAlign: "right" }}>{l.del_concepcao ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function classeColostro(brix: number | null): string {
   if (brix == null) return "—";
@@ -344,6 +406,10 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
       data_nasc: a2.data_nasc ?? "", data_entrada: a2.data_entrada ?? "",
       mae_numero: a2.mae_numero ?? "", mae_nome: a2.mae_nome ?? "",
       proprietario: a2.proprietario ?? "", valor: a2.valor ?? "", observacoes: a2.observacoes ?? "",
+      // Não editável mais nesta tela (ver remoção do checkbox abaixo), mas
+      // precisa continuar no payload: o PUT reescreve TODOS os campos de
+      // AnimalFichaIn (sem exclude_unset) — se sumisse daqui, salvar
+      // qualquer outro campo da ficha resetaria excluir_bst para False.
       excluir_bst: a2.excluir_bst ?? false,
     });
     setEditAnimal(true); setAviso(null);
@@ -495,12 +561,6 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                   <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Valor (R$)"><CampoMoeda style={inpStyle} value={Number(formAnimal.valor) || 0} onChange={(v) => setFormAnimal((f) => ({ ...f, valor: v ? String(v) : "" }))} /></CampoEdit>
                   <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observações"><input style={inpStyle} value={formAnimal.observacoes} onChange={(e) => setFormAnimal((f) => ({ ...f, observacoes: e.target.value }))} /></CampoEdit></div>
-                  <div className="flex items-end">
-                    <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
-                      <input type="checkbox" checked={!!formAnimal.excluir_bst} onChange={(e) => setFormAnimal((f) => ({ ...f, excluir_bst: e.target.checked }))} />
-                      Excluir do BST (não entra nas listas de candidatas/aptas)
-                    </label>
-                  </div>
                 </div>
                 <div className="flex items-center gap-2 mt-3">
                   <button className="btn-primary" style={btnEdit} disabled={salvando} onClick={() => salvarAnimal()}><Save size={13} /> {salvando ? "Salvando…" : "Salvar"}</button>
@@ -547,6 +607,8 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
           {!!ficha.partos?.length && (
             <SecaoHistoricoTabela chave="partos" titulo="Partos" colunas={SECOES[0].colunas} linhas={formatarLinhas("partos", ficha.partos)} onAbrirCria={buscar} />
           )}
+
+          <QuadroResumoPartos linhas={ficha.resumo_partos} />
 
           <div className="card" style={destacar ? { ...cardStyle, borderColor: "var(--red)" } : cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">

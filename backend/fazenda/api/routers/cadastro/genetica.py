@@ -23,6 +23,7 @@ from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
+from fazenda.rules.reproducao_analise import analisar_servicos, prova_ao_vivo_por_touro
 from fazenda.rules.touros import calcular_prova_media
 
 router = APIRouter()
@@ -303,79 +304,80 @@ def _casar_touro(estoque_item: EstoqueSemen, touro_por_naab: dict, touro_por_nom
 
 @router.get("/estoque-semen/prova-media")
 def prova_media_semen(
-    de: Optional[str] = None, ate: Optional[str] = None, session: Session = Depends(get_session),
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
-    Prova média ponderada pela quantidade de doses de sêmen — metodologia:
-    para cada indicador de prova (PTA leite/gordura/proteína, TPI, NM$, tipo,
-    úbere, pernas, CCS, fertilidade das filhas, facilidade de parto), calcula
-    a média ponderada soma(indicador × doses) / soma(doses) entre os touros
-    considerados (só entram touros casados com o catálogo de provas; um touro
-    sem determinado indicador não entra no cálculo DAQUELE indicador, não
-    zera a média do grupo). Mesma lógica de índice ponderado usada por provas
-    genéticas oficiais (ex.: o PTI combina produção e tipo numa razão fixa) —
-    aqui a ponderação é pela quantidade de sêmen, não por um peso fixo entre
-    índices.
-
-    Dois recortes:
-    - "botijao": todo o estoque de sêmen da fazenda (peso = doses em estoque
-      hoje, tipo convencional/sexado — sêmen "fazenda"/monta natural não
-      entra, não tem prova).
-    - "servicos_periodo": só os serviços/IA já registrados no período
-      informado (de/ate, opcional — sem os dois, considera todo o histórico),
-      peso = nº de serviços por touro (cada serviço = 1 dose usada).
+    Prova média GENÉTICA (índices/PTA do catálogo, não a performance
+    realizada no rebanho — para isso ver GET /estoque-semen/prova-ao-vivo)
+    dos touros com sêmen em estoque hoje (doses > 0; sêmen "fazenda"/monta
+    natural não entra, não tem prova). Dois recortes:
+    - "simples": média simples entre os touros com pelo menos 1 dose em
+      estoque — cada touro pesa 1, tenha 1 dose ou 20.
+    - "ponderada": média ponderada pela quantidade de doses de cada touro —
+      soma(indicador × doses) / soma(doses). Mesma lógica de índice
+      ponderado usada por provas genéticas oficiais (ex.: o TPI combina
+      produção e tipo numa razão fixa) — aqui quem pondera é a quantidade
+      de sêmen, não uma razão fixa entre índices.
+    Em ambos, um touro sem determinado indicador não entra no cálculo
+    DAQUELE indicador — não zera a média do grupo (ver calcular_prova_media).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     touros = session.exec(select(Touro)).all()
     touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
     touro_por_nome = {(t.nome or "").strip().lower(): t for t in touros if t.nome}
 
-    estoque = [e for e in session.exec(select(EstoqueSemen)).all() if e.ativo and e.tipo != "fazenda"]
-    pares_botijao: list[tuple[Touro, int]] = []
+    q_estoque = select(EstoqueSemen)
+    if fazenda_id is not None:
+        q_estoque = q_estoque.where(EstoqueSemen.fazenda_id == fazenda_id)
+    estoque = [e for e in session.exec(q_estoque).all() if e.ativo and e.tipo != "fazenda"]
+    pares: list[tuple[Touro, int]] = []
     for e in estoque:
         if (e.doses or 0) <= 0:
             continue
         touro = _casar_touro(e, touro_por_naab, touro_por_nome)
         if touro:
-            pares_botijao.append((touro, e.doses))
-    total_doses_botijao = sum(p for _, p in pares_botijao)
-
-    de_d = parse_date(de) if de else None
-    ate_d = parse_date(ate) if ate else None
-    servicos = session.exec(select(Servico)).all()
-    contagem_por_reprodutor: dict[str, int] = {}
-    for s in servicos:
-        if not s.reprodutor:
-            continue
-        if de_d and (not s.data_servico or s.data_servico < de_d):
-            continue
-        if ate_d and (not s.data_servico or s.data_servico > ate_d):
-            continue
-        chave = s.reprodutor.strip().lower()
-        contagem_por_reprodutor[chave] = contagem_por_reprodutor.get(chave, 0) + 1
-
-    estoque_por_nome = {(e.touro_nome or "").strip().lower(): e for e in session.exec(select(EstoqueSemen)).all()}
-    pares_servicos: list[tuple[Touro, int]] = []
-    for nome, qtd in contagem_por_reprodutor.items():
-        item_estoque = estoque_por_nome.get(nome)
-        touro = (_casar_touro(item_estoque, touro_por_naab, touro_por_nome) if item_estoque
-                 else touro_por_nome.get(nome))
-        if touro:
-            pares_servicos.append((touro, qtd))
-    total_doses_servicos = sum(p for _, p in pares_servicos)
+            pares.append((touro, e.doses))
+    total_doses = sum(p for _, p in pares)
 
     return {
-        "botijao": {
-            "prova": calcular_prova_media(pares_botijao),
-            "total_doses": total_doses_botijao,
-            "touros_considerados": len(pares_botijao),
+        "simples": {
+            "prova": calcular_prova_media([(t, 1) for t, _ in pares]),
+            "touros_considerados": len(pares),
         },
-        "servicos_periodo": {
-            "prova": calcular_prova_media(pares_servicos),
-            "total_doses": total_doses_servicos,
-            "touros_considerados": len(pares_servicos),
-            "de": de, "ate": ate,
+        "ponderada": {
+            "prova": calcular_prova_media(pares),
+            "total_doses": total_doses,
+            "touros_considerados": len(pares),
         },
     }
+
+
+@router.get("/estoque-semen/prova-ao-vivo")
+def prova_ao_vivo_semen(
+    categoria: Optional[str] = None, ano_nascimento: Optional[int] = None,
+    de: Optional[str] = None, ate: Optional[str] = None,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    "Prova ao vivo" — taxa de concepção REALIZADA no próprio rebanho, por
+    touro/sêmen (não o índice genético do catálogo — para isso ver GET
+    /estoque-semen/prova-media). Filtros opcionais, só limitam o resultado:
+    categoria (vaca/novilha/todas), ano de nascimento da matriz, e período
+    da inseminação (de/ate, sobre a data do serviço).
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    q_servicos = select(Servico)
+    if fazenda_id is not None:
+        q_servicos = q_servicos.where(Servico.fazenda_id == fazenda_id)
+    servicos = [s.model_dump() for s in session.exec(q_servicos).all()]
+    registros = analisar_servicos(servicos)
+    de_d = parse_date(de) if de else None
+    ate_d = parse_date(ate) if ate else None
+    resultado = prova_ao_vivo_por_touro(
+        registros, categoria=categoria, ano_nascimento=ano_nascimento,
+        periodo_de=de_d, periodo_ate=ate_d,
+    )
+    return {"touros": resultado, "categoria": categoria or "todas", "ano_nascimento": ano_nascimento, "de": de, "ate": ate}
 
 
 # ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────

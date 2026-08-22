@@ -32,6 +32,10 @@ const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/Fo
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
+// Cadastro do Calendário Sanitário (Preventivo) — migrado de Lançamentos para
+// cá: em Lançamentos só se aplica uma regra já cadastrada (ver
+// FormAplicarCalendarioSanitario), o cadastro da regra em si mora aqui.
+const FormCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormCalendarioSanitario").then((m) => m.FormCalendarioSanitario), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
 const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
@@ -271,7 +275,7 @@ function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange 
 // mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
 // paralela: cadastrar aqui ou lá é indiferente.
 const TIPOS_CADASTRO = [
-  { id: "sanitario", label: "Sanitário", desc: "Curativo ou preventivo — cronograma de dias (D0/D1/D2…)" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (calendário sanitário — regra recorrente)" },
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
@@ -279,23 +283,45 @@ const TIPOS_CADASTRO = [
 ] as const;
 type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 
-function CadastroTab() {
+// Sanitário se divide em dois sub-cards: Curativo (cronograma de etapas de
+// dias fixos, D0/D1/D2…) e Preventivo (o Calendário Sanitário — regra
+// recorrente por frequência ou por evento de vida, ver FormCalendarioSanitario).
+// São modelos de dados bem diferentes — por isso viram sub-abas, não um
+// campo a mais no mesmo formulário.
+const SUBS_SANITARIO = [
+  { id: "curativo", label: "Curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…)" },
+  { id: "preventivo", label: "Preventivo", desc: "Calendário sanitário — regra recorrente (frequência ou evento de vida)" },
+] as const;
+type SubSanitario = typeof SUBS_SANITARIO[number]["id"];
+
+function CadastroTab({ estoque }: { estoque: EstoqueItem[] }) {
   const [tipo, setTipo] = useState<TipoCadastro>("sanitario");
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
+  // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade)
+  // — abre direto em Sanitário > Preventivo.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const tipoQs = qs.get("tipo");
+    if (tipoQs && TIPOS_CADASTRO.some((t) => t.id === tipoQs)) setTipo(tipoQs as TipoCadastro);
+    const subQs = qs.get("sub");
+    if (subQs && SUBS_SANITARIO.some((s) => s.id === subQs)) setSubSanitario(subQs as SubSanitario);
+  }, []);
 
   return (
     <div>
       <SeletorTipoProtocolo titulo="Do que se trata o protocolo?" tipos={TIPOS_CADASTRO} tipo={tipo} onChange={setTipo} />
 
+      {tipo === "sanitario" && (
+        <>
+          <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO} tipo={subSanitario} onChange={setSubSanitario} />
+          {subSanitario === "curativo" && <CadastroProtocolosSanitarios />}
+          {subSanitario === "preventivo" && <FormCalendarioSanitario estoque={estoque} />}
+        </>
+      )}
       {tipo === "iatf" && <CadastroIatf />}
-      {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
       {tipo === "inducao" && <CadastroProtocolosInducao />}
       {tipo === "customizado" && <CadastroProtocolosCustomizados />}
       {tipo === "lida" && <CadastroLida />}
-
-      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "1rem" }}>
-        Regra que <strong>se repete</strong> no tempo (vermífugo a cada 4 meses, Brucelose no nascimento) não é protocolo
-        de etapas — continua no <strong>Calendário Sanitário</strong>, em Sanidade. Aqui ficam só os cronogramas de dias fixos.
-      </p>
     </div>
   );
 }
@@ -942,6 +968,14 @@ export default function ProtocolosPage() {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
   }, []);
+  // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade,
+  // ou no relatório de Exclusão) — só escolhe a aba certa; a Central de
+  // Protocolos não permite pular direto para uma regra específica, mesmo
+  // padrão do "ir=" de Lançamentos.
+  useEffect(() => {
+    const abaQs = new URLSearchParams(window.location.search).get("aba");
+    if (abaQs && ["cadastro", "lancamento", "acompanhamento", "historico"].includes(abaQs)) setAba(abaQs as typeof aba);
+  }, []);
 
   return (
     <div className="p-6">
@@ -962,7 +996,7 @@ export default function ProtocolosPage() {
         onChange={setAba}
       />
 
-      {aba === "cadastro" && <CadastroTab />}
+      {aba === "cadastro" && <CadastroTab estoque={estoque} />}
       {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} />}
       {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
       {aba === "historico" && <ListaProtocolos historico />}

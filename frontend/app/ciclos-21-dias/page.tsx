@@ -35,24 +35,23 @@ function Pct({ valor, meta }: { valor: number | null; meta?: number }) {
 }
 
 const AJUDA = {
-  br_elig: "BR ELIG — elegíveis para inseminação: estiveram aptas em pelo menos 11 dos 21 dias do ciclo",
-  bred: "BRED — dessas, as que efetivamente receberam inseminação dentro do ciclo",
-  pg_elig: "PG ELIG — elegíveis para prenhez: das BR ELIG, as que continuavam no rebanho no fim da janela de diagnóstico",
-  preg: "PREG — confirmadas prenhes a partir de um serviço deste ciclo",
-  servico: "Taxa de serviço — BRED ÷ BR ELIG. Quanto do rebanho disponível foi inseminado.",
-  prenhez: "Taxa de prenhez — PREG ÷ PG ELIG. NÃO é serviço × concepção: os denominadores são diferentes.",
-  concepcao: "Taxa de concepção — PREG ÷ serviços do ciclo cujo resultado já dá para saber",
+  br_elig: "Apt — elegíveis para inseminação: estiveram aptas em pelo menos 11 dos 21 dias do ciclo",
+  bred: "Ins. — dessas, as que efetivamente receberam inseminação dentro do ciclo",
+  pg_elig: "Apt Real — elegíveis para prenhez: das Apt, as que continuavam no rebanho no fim da janela de diagnóstico",
+  preg: "Posit. — confirmadas prenhes a partir de um serviço deste ciclo",
+  servico: "Taxa de serviço — Ins. ÷ Apt. Quanto do rebanho disponível foi inseminado.",
+  prenhez: "Taxa de prenhez — Posit. ÷ Apt Real. NÃO é serviço × concepção: os denominadores são diferentes.",
+  concepcao: "Taxa de concepção — Posit. ÷ serviços do ciclo cujo resultado já dá para saber",
 };
 
 // Legenda visível, não tooltip: esta tela é usada em tablet, e `title` não
-// existe em toque. As quatro siglas são inglês abreviado do DairyComp e ninguém
-// as adivinha.
+// existe em toque.
 function Legenda() {
   const itens = [
-    ["BR ELIG", "aptas ≥ 11 dos 21 dias — quem podia ser inseminada"],
-    ["BRED", "dessas, quem foi inseminada no ciclo"],
-    ["PG ELIG", "das BR ELIG, quem seguia no rebanho no fim do diagnóstico"],
-    ["PREG", "quem ficou prenhe de um serviço deste ciclo"],
+    ["Apt", "aptas ≥ 11 dos 21 dias — quem podia ser inseminada"],
+    ["Ins.", "dessas, quem foi inseminada no ciclo"],
+    ["Apt Real", "das Apt, quem seguia no rebanho no fim do diagnóstico"],
+    ["Posit.", "quem ficou prenhe de um serviço deste ciclo"],
   ];
   return (
     <div className="card" style={{ marginBottom: "1rem", background: "var(--surface-2)" }}>
@@ -64,24 +63,24 @@ function Legenda() {
         ))}
       </div>
       <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
-        Serviço = BRED ÷ BR ELIG · Prenhez = PREG ÷ PG ELIG · Concepção = PREG ÷ serviços com resultado.{" "}
+        Serviço = Ins. ÷ Apt · Prenhez = Posit. ÷ Apt Real · Concepção = Posit. ÷ serviços com resultado.{" "}
         <strong>Prenhez não é serviço × concepção</strong> — os denominadores são diferentes.
       </p>
     </div>
   );
 }
 
-// Dois pares, NÃO um funil. PG ELIG é subconjunto de BR ELIG, não de BRED: numa
+// Dois pares, NÃO um funil. Apt Real é subconjunto de Apt, não de Ins.: numa
 // cascata de quatro barras a terceira pode CRESCER, e quem lê como funil conclui
 // que o rebanho "recuperou" vacas no meio do caminho. São duas perguntas
 // distintas — quantas foram inseminadas, e quantas ficaram prenhes — cada uma
 // com seu próprio denominador.
 function Pares({ c }: { c: CicloReprodutivo }) {
   const pares = [
-    { titulo: "Serviço", den: { rotulo: "BR ELIG", n: c.br_elig, ajuda: AJUDA.br_elig },
-      num: { rotulo: "BRED", n: c.bred, ajuda: AJUDA.bred }, taxa: c.taxa_servico },
-    { titulo: "Prenhez", den: { rotulo: "PG ELIG", n: c.pg_elig, ajuda: AJUDA.pg_elig },
-      num: { rotulo: "PREG", n: c.preg, ajuda: AJUDA.preg }, taxa: c.taxa_prenhez },
+    { titulo: "Serviço", den: { rotulo: "Apt", n: c.br_elig, ajuda: AJUDA.br_elig },
+      num: { rotulo: "Ins.", n: c.bred, ajuda: AJUDA.bred }, taxa: c.taxa_servico },
+    { titulo: "Prenhez", den: { rotulo: "Apt Real", n: c.pg_elig, ajuda: AJUDA.pg_elig },
+      num: { rotulo: "Posit.", n: c.preg, ajuda: AJUDA.preg }, taxa: c.taxa_prenhez },
   ];
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.7rem" }}>
@@ -204,10 +203,10 @@ export default function Ciclos21DiasPage() {
         <>
           {/* ---------------- Resumo do período ---------------- */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3" style={{ marginBottom: "1rem" }}>
-            <Indicador rotulo="Taxa de serviço" title={`Meta ${dados.metas.taxa_servico}% — servidas ÷ elegíveis (BRED ÷ BR ELIG)`}
+            <Indicador rotulo="Taxa de serviço" title={`Meta ${dados.metas.taxa_servico}% — servidas ÷ elegíveis (Ins. ÷ Apt)`}
               valor={dados.resumo.taxa_servico === null ? "—" : `${dados.resumo.taxa_servico}%`}
               cor={dados.resumo.taxa_servico !== null && dados.resumo.taxa_servico >= dados.metas.taxa_servico ? "var(--green-light)" : "var(--amber)"} />
-            <Indicador rotulo="Taxa de prenhez (21 d)" title={`Meta ${dados.metas.taxa_prenhez}% — prenhes ÷ PG ELIG. NÃO é serviço × concepção.`}
+            <Indicador rotulo="Taxa de prenhez (21 d)" title={`Meta ${dados.metas.taxa_prenhez}% — prenhes ÷ Apt Real. NÃO é serviço × concepção.`}
               valor={dados.resumo.taxa_prenhez === null ? "—" : `${dados.resumo.taxa_prenhez}%`}
               cor={dados.resumo.taxa_prenhez !== null && dados.resumo.taxa_prenhez >= dados.metas.taxa_prenhez ? "var(--green-light)" : "var(--amber)"} />
             <Indicador rotulo="Taxa de concepção" title={`Meta ${dados.metas.taxa_concepcao}% — prenhes ÷ serviços com resultado conhecido`}
@@ -222,11 +221,11 @@ export default function Ciclos21DiasPage() {
                 <thead>
                   <tr>
                     <th>Ciclo</th><th>Período</th>
-                    <th style={{ textAlign: "right" }} title={AJUDA.br_elig}>BR ELIG</th>
-                    <th style={{ textAlign: "right" }} title={AJUDA.bred}>BRED</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.br_elig}>Apt</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.bred}>Ins.</th>
                     <th style={{ textAlign: "right" }} title={AJUDA.servico}>Serviço</th>
-                    <th style={{ textAlign: "right" }} title={AJUDA.pg_elig}>PG ELIG</th>
-                    <th style={{ textAlign: "right" }} title={AJUDA.preg}>PREG</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.pg_elig}>Apt Real</th>
+                    <th style={{ textAlign: "right" }} title={AJUDA.preg}>Posit.</th>
                     <th style={{ textAlign: "right" }} title={AJUDA.prenhez}>Prenhez</th>
                     <th style={{ textAlign: "right" }} title={AJUDA.concepcao}>Concepção</th>
                   </tr>
@@ -300,10 +299,10 @@ export default function Ciclos21DiasPage() {
             </div>
             <div style={{ overflowY: "auto" }}>
               {([
-                ["Elegíveis para inseminação (BR ELIG)", detalhe.animais.br_elig],
-                ["Inseminadas no ciclo (BRED)", detalhe.animais.bred],
-                ["Elegíveis para prenhez (PG ELIG)", detalhe.animais.pg_elig],
-                ["Confirmadas prenhes (PREG)", detalhe.animais.preg],
+                ["Elegíveis para inseminação (Apt)", detalhe.animais.br_elig],
+                ["Inseminadas no ciclo (Ins.)", detalhe.animais.bred],
+                ["Elegíveis para prenhez (Apt Real)", detalhe.animais.pg_elig],
+                ["Confirmadas prenhes (Posit.)", detalhe.animais.preg],
               ] as const).map(([titulo, nums]) => (
                 <div key={titulo} style={{ marginBottom: "0.9rem" }}>
                   <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.35rem" }}>

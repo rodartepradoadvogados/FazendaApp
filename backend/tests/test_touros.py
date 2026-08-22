@@ -240,54 +240,35 @@ class TestCadastroManual:
 
 
 class TestProvaMediaSemen:
-    def test_media_ponderada_pelas_doses_do_botijao(self, client):
+    def test_simples_e_ponderada_entre_touros_com_dose_em_estoque(self, client):
         c, engine = client
-        from datetime import date
-        from fazenda.models import EstoqueSemen, Servico
+        from fazenda.models import EstoqueSemen
 
         with Session(engine) as s:
             s.add(Touro(naab="1HO001", nome="TOURO A", tpi=2900, leite_kg=800))
             s.add(Touro(naab="1HO002", nome="TOURO B", tpi=2700, leite_kg=600))
             s.add(EstoqueSemen(touro_nome="TOURO A", naab="1HO001", tipo="convencional", doses=3))
             s.add(EstoqueSemen(touro_nome="TOURO B", naab="1HO002", tipo="convencional", doses=1))
-            # Sêmen de touro de monta natural (tipo "fazenda") não entra na prova média do botijão.
+            # Sêmen de touro de monta natural (tipo "fazenda") não entra em nenhum dos dois recortes.
             s.add(EstoqueSemen(touro_nome="TOURO FAZENDA", tipo="fazenda", doses=99))
-            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 10), reprodutor="TOURO A"))
-            s.add(Servico(numero_matriz="2", data_servico=date(2026, 1, 15), reprodutor="TOURO A"))
-            s.add(Servico(numero_matriz="3", data_servico=date(2026, 2, 1), reprodutor="TOURO B"))
+            # Zero doses em estoque: fora dos dois recortes (não é "pelo menos 1 dose").
+            s.add(Touro(naab="1HO099", nome="TOURO ZERADO", tpi=9999))
+            s.add(EstoqueSemen(touro_nome="TOURO ZERADO", naab="1HO099", tipo="convencional", doses=0))
             s.commit()
 
         resp = c.get("/cadastro/estoque-semen/prova-media")
         assert resp.status_code == 200, resp.text
         corpo = resp.json()
 
-        # Botijão: 3 doses do touro A (TPI 2900) + 1 dose do touro B (TPI 2700).
+        # Simples: cada touro pesa 1, tenha 1 dose ou 3 — (2900 + 2700) / 2 = 2800.
+        assert corpo["simples"]["touros_considerados"] == 2
+        assert corpo["simples"]["prova"]["tpi"] == 2800.0
+
+        # Ponderada: 3 doses do touro A (TPI 2900) + 1 dose do touro B (TPI 2700).
         # Média ponderada = (2900*3 + 2700*1) / 4 = 2850.
-        assert corpo["botijao"]["total_doses"] == 4
-        assert corpo["botijao"]["touros_considerados"] == 2
-        assert corpo["botijao"]["prova"]["tpi"] == 2850.0
-
-        # Serviços (sem filtro de período): 2 do touro A + 1 do touro B.
-        # Média ponderada = (2900*2 + 2700*1) / 3 = 2833.33.
-        assert corpo["servicos_periodo"]["total_doses"] == 3
-        assert corpo["servicos_periodo"]["prova"]["tpi"] == pytest.approx(2833.33, abs=0.01)
-
-    def test_filtro_de_periodo_nos_servicos(self, client):
-        c, engine = client
-        from datetime import date
-        from fazenda.models import EstoqueSemen, Servico
-
-        with Session(engine) as s:
-            s.add(Touro(naab="1HO003", nome="TOURO C", tpi=3000))
-            s.add(EstoqueSemen(touro_nome="TOURO C", naab="1HO003", tipo="convencional", doses=1))
-            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 1), reprodutor="TOURO C"))
-            s.add(Servico(numero_matriz="2", data_servico=date(2026, 6, 1), reprodutor="TOURO C"))
-            s.commit()
-
-        resp = c.get("/cadastro/estoque-semen/prova-media", params={"de": "2026-05-01", "ate": "2026-12-31"})
-        assert resp.status_code == 200
-        corpo = resp.json()
-        assert corpo["servicos_periodo"]["total_doses"] == 1
+        assert corpo["ponderada"]["total_doses"] == 4
+        assert corpo["ponderada"]["touros_considerados"] == 2
+        assert corpo["ponderada"]["prova"]["tpi"] == 2850.0
 
     def test_touro_sem_prova_naquele_indicador_nao_entra_no_calculo(self, client):
         c, engine = client
@@ -301,5 +282,107 @@ class TestProvaMediaSemen:
         resp = c.get("/cadastro/estoque-semen/prova-media")
         assert resp.status_code == 200
         corpo = resp.json()
-        assert corpo["botijao"]["prova"]["tpi"] == 2500.0
-        assert corpo["botijao"]["prova"]["nm_dolar"] is None
+        assert corpo["ponderada"]["prova"]["tpi"] == 2500.0
+        assert corpo["ponderada"]["prova"]["nm_dolar"] is None
+        assert corpo["simples"]["prova"]["tpi"] == 2500.0
+        assert corpo["simples"]["prova"]["nm_dolar"] is None
+
+
+class TestProvaAoVivoSemen:
+    """"Prova ao vivo" (Estoque de Sêmen > Prova média) — taxa de concepção
+    REALIZADA no rebanho por touro, não o índice genético do catálogo."""
+
+    def test_taxa_de_concepcao_por_touro(self, client):
+        c, engine = client
+        from datetime import date, timedelta
+        from fazenda.models import Servico
+
+        hoje = date(2026, 6, 1)
+        antigo = hoje - timedelta(days=60)
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="1", categoria="Vaca", reprodutor="TOURO A", data_servico=antigo, diagnostico="POSITIVO"))
+            s.add(Servico(numero_matriz="2", categoria="Vaca", reprodutor="TOURO A", data_servico=antigo, diagnostico="NEGATIVO"))
+            s.add(Servico(numero_matriz="3", categoria="Vaca", reprodutor="TOURO B", data_servico=antigo, diagnostico="POSITIVO"))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.status_code == 200, resp.text
+        touros = {t["touro"]: t for t in resp.json()["touros"]}
+        assert touros["TOURO A"]["elegiveis"] == 2
+        assert touros["TOURO A"]["positivos"] == 1
+        assert touros["TOURO A"]["taxa_concepcao"] == 50.0
+        assert touros["TOURO B"]["taxa_concepcao"] == 100.0
+        # Melhor taxa primeiro.
+        assert resp.json()["touros"][0]["touro"] == "TOURO B"
+
+    def test_servico_sem_touro_nao_entra(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 1), diagnostico="POSITIVO"))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.status_code == 200
+        assert resp.json()["touros"] == []
+
+    def test_servico_recente_sem_desfecho_ainda_nao_entra_no_calculo(self, client):
+        c, engine = client
+        from datetime import date, timedelta
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            # Sem `diagnostico` e recente demais para presumir resultado — não
+            # é nem sucesso nem fracasso ainda, então não deve contar.
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO C", data_servico=date.today() - timedelta(days=5)))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo")
+        assert resp.status_code == 200
+        touros = {t["touro"]: t for t in resp.json()["touros"]}
+        assert touros["TOURO C"]["servicos"] == 1
+        assert touros["TOURO C"]["elegiveis"] == 0
+        assert touros["TOURO C"]["taxa_concepcao"] is None
+
+    def test_filtro_categoria(self, client):
+        c, engine = client
+        from datetime import date, timedelta
+        from fazenda.models import Servico
+
+        antigo = date(2026, 1, 1)
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="1", categoria="Vaca", reprodutor="TOURO A", data_servico=antigo, diagnostico="POSITIVO"))
+            s.add(Servico(numero_matriz="2", categoria="Novilha", reprodutor="TOURO A", data_servico=antigo, diagnostico="NEGATIVO"))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"categoria": "vaca"})
+        assert resp.status_code == 200
+        touros = {t["touro"]: t for t in resp.json()["touros"]}
+        assert touros["TOURO A"]["servicos"] == 1
+        assert touros["TOURO A"]["taxa_concepcao"] == 100.0
+
+    def test_filtro_ano_nascimento_e_periodo(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Servico
+
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO A", data_nasc_matriz=date(2022, 3, 1),
+                          data_servico=date(2026, 1, 10), diagnostico="POSITIVO"))
+            s.add(Servico(numero_matriz="2", reprodutor="TOURO A", data_nasc_matriz=date(2023, 3, 1),
+                          data_servico=date(2026, 1, 10), diagnostico="POSITIVO"))
+            s.add(Servico(numero_matriz="1", reprodutor="TOURO A", data_nasc_matriz=date(2022, 3, 1),
+                          data_servico=date(2026, 6, 1), diagnostico="NEGATIVO"))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"ano_nascimento": 2022})
+        assert resp.status_code == 200
+        touros = {t["touro"]: t for t in resp.json()["touros"]}
+        assert touros["TOURO A"]["servicos"] == 2
+
+        resp2 = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"ano_nascimento": 2022, "de": "2026-01-01", "ate": "2026-03-01"})
+        assert resp2.status_code == 200
+        touros2 = {t["touro"]: t for t in resp2.json()["touros"]}
+        assert touros2["TOURO A"]["servicos"] == 1

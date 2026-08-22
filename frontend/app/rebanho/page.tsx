@@ -56,6 +56,14 @@ const ROTULO_ESTADO: Record<string, string> = {
   gestante: "Gestante", inseminada: "Inseminada", em_protocolo: "Em protocolo (IA atual)",
   pev: "PEV", apta: "Apta", atrasada: "Atrasada", nao_apta: "Não apta", vazia: "Vazia",
 };
+// Cores do donut de Situação Reprodutiva — as mesmas 6 fatias e cores da Capa
+// (app/page.tsx, SIT_CORES), à parte da paleta acima (que é por rótulo de
+// estado ao vivo cru, usada nas tabelas desta página).
+const SIT_CORES_DONUT: Record<string, string> = {
+  Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
+  "Em protocolo": "var(--vinho-light, #416180)",
+  PEV: "var(--amber)", "A inseminar": "var(--blue)", Vazias: "var(--red)",
+};
 // Rótulo do estado ao vivo de um animal a partir do mapa numero→estado — animal
 // sem estado (ex.: macho) devolve undefined, que os chamadores tratam como "—".
 function rotuloEstadoDoAnimal(numero: string, porNumero: Map<string, EstadoReprodutivoAnimal>): string | undefined {
@@ -359,11 +367,38 @@ function RebanhoVisaoGeral() {
     return Array.from(by.entries()).map(([grupo, n]) => ({ grupo, n })).sort((a, b) => a.grupo.localeCompare(b.grupo));
   }, [filtrados]);
 
-  const porSit = useMemo(() => {
-    const by = new Map<string, number>();
-    filtrados.forEach((a) => { const s = rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || "(sem)"; by.set(s, (by.get(s) ?? 0) + 1); });
-    return Array.from(by.entries()).map(([sit, n]) => ({ sit, n }));
-  }, [filtrados, estadosPorNumero]);
+  // Situação Reprodutiva (donut) — mesmo gráfico da Capa (app/page.tsx),
+  // repetido aqui: mesma partição em 6 fatias, mesmas cores, mesmo alternador
+  // Todas/Vacas/Novilhas. A diferença é a base: aqui parte de `filtrados`
+  // (já filtrado por grupo/situação/busca desta página), não do rebanho
+  // inteiro — por isso respeita a mesma regra do banner acima ("este filtro
+  // comanda os resultados de toda a página abaixo").
+  const [catRepChart, setCatRepChart] = useState<"todas" | "vaca" | "novilha">("todas");
+  const filtradosParaChartRep = useMemo(
+    () => catRepChart === "todas" ? filtrados : filtrados.filter((a) => (a.categoria_abrev || "").toLowerCase() === catRepChart),
+    [filtrados, catRepChart]
+  );
+  const donutRep = useMemo(() => {
+    // Mesmo agrupamento que o backend usa para o donut da Capa (ver
+    // `_reproducao_categorias` em backend/fazenda/rules/indicadores.py):
+    // pev/em_protocolo/gestante/inseminada mantêm o nome; apta+atrasada
+    // viram "A inseminar"; vazia+nao_apta viram "Vazias". Sem estado (ex.:
+    // macho, se incluído) não entra em fatia nenhuma — mesma regra de lá.
+    const BUCKET_DE_ESTADO: Record<string, string> = {
+      gestante: "Prenhes", inseminada: "Inseminadas", em_protocolo: "Em protocolo",
+      pev: "PEV", apta: "A inseminar", atrasada: "A inseminar", vazia: "Vazias", nao_apta: "Vazias",
+    };
+    const por = new Map<string, Animal[]>();
+    filtradosParaChartRep.forEach((a) => {
+      const estado = estadoDe(a.numero);
+      const bucket = estado ? BUCKET_DE_ESTADO[estado] : undefined;
+      if (!bucket) return;
+      (por.get(bucket) ?? por.set(bucket, []).get(bucket)!).push(a);
+    });
+    return ["Prenhes", "Inseminadas", "Em protocolo", "PEV", "A inseminar", "Vazias"]
+      .map((nome) => ({ nome, v: por.get(nome)?.length ?? 0, animais: por.get(nome) ?? [] }))
+      .filter((x) => x.v > 0);
+  }, [filtradosParaChartRep, estadosPorNumero]);
 
   const grupoLista = useMemo(() => {
     const by = new Map<string, Animal[]>();
@@ -455,17 +490,36 @@ function RebanhoVisaoGeral() {
               </ResponsiveContainer>
             </div>
             <div className="card">
-              <div className="card-header mb-3">Situação Reprodutiva <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span></div>
-              <ResponsiveContainer width="100%" height={240}>
-                <PieChart>
-                  <Pie data={porSit} dataKey="n" nameKey="sit" cx="50%" cy="50%" outerRadius={80} label={(e: any) => `${e.sit} (${e.n})`} labelLine={false} fontSize={10}
-                    style={{ cursor: "pointer" }}
-                    onClick={(e: any) => { const sit = e?.sit; if (!sit) return; setModal({ title: `Situação: ${sit}`, list: filtrados.filter((a) => (rotuloDe(a.numero) || "(sem)") === sit) }); }}>
-                    {porSit.map((s, i) => <Cell key={i} fill={SIT_CORES[s.sit] || "var(--text-muted)"} />)}
-                  </Pie>
-                  <Tooltip contentStyle={tip} />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="card-header mb-2 flex flex-wrap items-center gap-2">
+                Situação Reprodutiva <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span>
+                <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+                  {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+                    <button key={k} onClick={() => setCatRepChart(k)} title={`Ver situação reprodutiva — ${lbl}`}
+                      style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                        border: "1px solid " + (catRepChart === k ? "var(--dourado)" : "var(--border)"),
+                        background: catRepChart === k ? "var(--dourado)" : "transparent",
+                        color: catRepChart === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRepChart === k ? 700 : 400 }}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {donutRep.length ? (
+                <ResponsiveContainer width="100%" height={240}>
+                  <PieChart>
+                    <Pie data={donutRep} dataKey="v" nameKey="nome" cx="50%" cy="50%" innerRadius={45} outerRadius={80} label={(e: any) => `${e.nome} (${e.v})`} labelLine={false} fontSize={10}
+                      style={{ cursor: "pointer" }}
+                      onClick={(e: any) => {
+                        const nome = e?.name; if (!nome) return;
+                        const grupo = donutRep.find((s) => s.nome === nome);
+                        if (grupo) setModal({ title: nome, list: grupo.animais });
+                      }}>
+                      {donutRep.map((s, i) => <Cell key={i} fill={SIT_CORES_DONUT[s.nome]} />)}
+                    </Pie>
+                    <Tooltip contentStyle={tip} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados reprodutivos para esse filtro.</p>}
             </div>
           </div>
 

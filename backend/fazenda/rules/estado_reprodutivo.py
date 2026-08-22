@@ -38,12 +38,16 @@ por isso a ordem abaixo importa mais que qualquer condição individual:
                   sem serviço depois, ou é novilha que atingiu idade e peso
                   de aptidão. É a definição dada pelo produtor.
   6. ATRASADA     seria APTA, mas passou do prazo — subconjunto de "deveria
-                  ter sido inseminada e não foi". Dois prazos, um por origem:
-                  a VACA, pelo DEL máximo para o 1º serviço (conta a partir do
-                  parto, que é o evento que a habilitou); a NOVILHA nulípara,
-                  pela idade máxima para a 1ª cobertura (conta a partir do
-                  nascimento, porque para ela o evento habilitador é atingir
-                  idade/peso, e DEL não existe).
+                  ter sido inseminada e não foi". Um prazo para a VACA: DEL
+                  máximo para o 1º serviço (conta a partir do parto, o evento
+                  que a habilitou). Dois prazos EM PARALELO para a NOVILHA
+                  nulípara — o que vier primeiro marca ATRASADA: a idade
+                  máxima para a 1ª cobertura (conta a partir do NASCIMENTO,
+                  um teto populacional fixo) e os dias após aptidão (conta a
+                  partir da data em que ELA ficou apta — idade E peso, ver
+                  `data_em_que_ficou_apta` — o evento individual, análogo ao
+                  parto da vaca). Sem histórico de pesagem que confirme o
+                  peso mínimo, só o teto de idade se aplica.
   7. NAO_APTA     novilha que ainda não atingiu idade/peso.
   8. VAZIA        DECLARADO, MAS NUNCA PRODUZIDO hoje. O docstring dizia que
                   era o fallback de "sem dados suficientes para classificar";
@@ -123,6 +127,42 @@ def _get(obj: Any, campo: str) -> Any:
     return getattr(obj, campo, None)
 
 
+def data_em_que_ficou_apta(
+    *,
+    data_nasc: date | None,
+    idade_apta_dias: int | None,
+    pesagens: list[tuple[date, float]],
+    peso_apta_kg: float | None,
+) -> date | None:
+    """Data em que a novilha passou a satisfazer idade E peso de aptidão —
+    o evento individual que ancora `dias_atraso_apos_aptidao_novilha`, do
+    mesmo jeito que o parto ancora `meta_del_max_1o_servico` para a vaca.
+
+    É o MAIOR dos dois marcos: a data em que completou a idade mínima, e a
+    primeira pesagem (ordenada por data) que bateu o peso mínimo. Antes dos
+    dois marcos ela não está apta; o mais tardio dos dois é quando passou a
+    estar, de fato.
+
+    Devolve `None` quando não dá para saber — nascimento ausente, ou nenhuma
+    pesagem no histórico bateu o peso mínimo. `None` aqui não é "nunca vai
+    ficar atrasada por este critério": é "não afirme nada", a mesma
+    disciplina de `peso_kg` ausente em `classificar_animal` — o chamador cai
+    de volta no teto de idade (`idade_atraso_dias`) como única rede de
+    segurança para quem nunca foi pesada."""
+    if data_nasc is None or idade_apta_dias is None or peso_apta_kg is None:
+        return None
+    data_idade_ok = data_nasc + timedelta(days=idade_apta_dias)
+
+    data_peso_ok = None
+    for d, peso in sorted(pesagens, key=lambda item: item[0]):
+        if peso is not None and peso >= peso_apta_kg:
+            data_peso_ok = d
+            break
+    if data_peso_ok is None:
+        return None
+    return max(data_idade_ok, data_peso_ok)
+
+
 def classificar_animal(
     numero: str,
     *,
@@ -139,6 +179,8 @@ def classificar_animal(
     idade_atraso_dias: int | None = None,
     peso_apta_kg: float | None = None,
     raca: str | None = None,
+    dias_atraso_apos_aptidao: int | None = None,
+    data_ficou_apta: date | None = None,
 ) -> dict:
     """Estado reprodutivo de UM animal, recalculado dos registros.
 
@@ -260,7 +302,17 @@ def classificar_animal(
         # Note que isto só SUBDIVIDE o balde das aptas: ATRASADA já está em
         # ESTADOS_APTOS e em ESTADOS_CANDIDATA, então nenhum animal entra ou
         # sai de conjunto nenhum, e nenhuma taxa muda de valor.
-        if idade_atraso_dias is not None and tem_idade and idade_dias > idade_atraso_dias:
+        atrasada_por_idade = idade_atraso_dias is not None and tem_idade and idade_dias > idade_atraso_dias
+        # Segundo gatilho, em paralelo (decisão do usuário: o que vier
+        # primeiro marca ATRASADA — o teto de idade continua valendo como
+        # rede de segurança para quem nunca foi pesada, já que sem pesagem
+        # `data_ficou_apta` vem None e este segundo gatilho não dispara).
+        atrasada_por_aptidao = (
+            data_ficou_apta is not None
+            and dias_atraso_apos_aptidao is not None
+            and (hoje - data_ficou_apta).days > dias_atraso_apos_aptidao
+        )
+        if atrasada_por_idade or atrasada_por_aptidao:
             return {**base, "estado": ATRASADA, "aptidao_por_idade": not tem_peso}
         return {**base, "estado": APTA, "aptidao_por_idade": not tem_peso}
     return {**base, "estado": NAO_APTA, "aptidao_por_idade": False}
@@ -317,6 +369,8 @@ def estados_ao_vivo(
     idade_apta_dias: int | None = None,
     idade_atraso_dias: int | None = None,
     peso_apta_kg: float | None = None,
+    dias_atraso_apos_aptidao: int | None = None,
+    datas_ficou_apta_por_animal: dict[str, date] | None = None,
 ) -> dict[str, dict]:
     """`classificar_animal` em lote: devolve {numero -> dict completo}.
 
@@ -335,6 +389,7 @@ def estados_ao_vivo(
     cima — ou usar `programa_reprodutivo.estado_no_dia`, que já faz isso.
     """
     peso_por_animal = peso_por_animal or {}
+    datas_ficou_apta_por_animal = datas_ficou_apta_por_animal or {}
 
     servicos_por: dict[str, list] = {}
     for s in servicos:
@@ -371,5 +426,7 @@ def estados_ao_vivo(
             idade_atraso_dias=idade_atraso_dias,
             peso_apta_kg=peso_apta_kg,
             raca=_get(a, "raca"),
+            dias_atraso_apos_aptidao=dias_atraso_apos_aptidao,
+            data_ficou_apta=datas_ficou_apta_por_animal.get(numero),
         )
     return resultado

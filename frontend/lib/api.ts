@@ -1676,7 +1676,6 @@ export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
   { chave: "inseminadas_30_59", rotulo: "Inseminadas 30–59 dias — toque" },
   { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias — reconfirmação" },
   { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas vazias" },
-  { chave: "verificar_aptidao", rotulo: "Verificar aptidão" },
   { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes" },
   { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
   { chave: "verificar_pre_parto", rotulo: "Verificar pré-parto" },
@@ -1684,6 +1683,37 @@ export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
   { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação" },
   { chave: "observacao_cio", rotulo: "Observação de cio" },
 ];
+
+// ── Card configurável da Agenda Reprodutiva (4 eixos: categoria/lote/
+// situação/período) — ver fazenda.rules.agenda_reprodutiva_configuravel. ──
+export type SituacaoCard = "pev" | "inseminada" | "gestante" | "vazia" | "vazia_atrasada" | "a_descartar";
+
+export type CardAgendaReprodutivaConfig = {
+  categoria: "todas" | "vaca" | "novilha";
+  lotes: string[];
+  situacao: SituacaoCard;
+  periodos: [number, number][];
+  somente_atrasadas: boolean;
+  exceto_atrasadas: boolean;
+};
+
+export type ItemCardAgendaReprodutiva = {
+  numero_matriz: string; categoria: string | null; lote_atual: string | null;
+  estado: string | null; del_dias: number | null; dias_gestacao: number | null;
+  dias_desde_servico: number | null; data_servico: string | null; parto_previsto: string | null;
+};
+
+export async function fetchAgendaReprodutivaCard(
+  config: CardAgendaReprodutivaConfig, data?: string,
+): Promise<{ data_referencia: string; total: number; itens: ItemCardAgendaReprodutiva[] }> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/agenda-reprodutiva/card${qs}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao montar o card"); }
+  return res.json();
+}
+
 
 export async function registrarReconfirmacao(dados: {
   numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";
@@ -6236,17 +6266,25 @@ export type ProvaMediaCampos = Record<
   | "tipo_composto" | "ubere_composto" | "pernas_composto" | "ccs_score" | "fertilidade_filhas" | "facilidade_parto",
   number | null
 >;
-export type ProvaMediaRecorte = { prova: ProvaMediaCampos; total_doses: number; touros_considerados: number };
+export type ProvaMediaRecorte = { prova: ProvaMediaCampos; touros_considerados: number };
 export type ProvaMediaSemen = {
-  botijao: ProvaMediaRecorte;
-  servicos_periodo: ProvaMediaRecorte & { de: string | null; ate: string | null };
+  simples: ProvaMediaRecorte;
+  ponderada: ProvaMediaRecorte & { total_doses: number };
 };
-export const fetchProvaMediaSemen = (de?: string, ate?: string): Promise<ProvaMediaSemen> => {
+export const fetchProvaMediaSemen = (): Promise<ProvaMediaSemen> => _rGet(`/cadastro/estoque-semen/prova-media`);
+
+// "Prova ao vivo" — taxa de concepção REALIZADA no rebanho por touro (não o
+// índice genético do catálogo, ver ProvaMediaSemen acima).
+export type ProvaAoVivoTouro = { touro: string; servicos: number; elegiveis: number; positivos: number; taxa_concepcao: number | null };
+export type ProvaAoVivoSemen = { touros: ProvaAoVivoTouro[]; categoria: string; ano_nascimento: number | null; de: string | null; ate: string | null };
+export const fetchProvaAoVivoSemen = (filtros?: { categoria?: "todas" | "vaca" | "novilha"; anoNascimento?: number; de?: string; ate?: string }): Promise<ProvaAoVivoSemen> => {
   const p = new URLSearchParams();
-  if (de) p.set("de", de);
-  if (ate) p.set("ate", ate);
+  if (filtros?.categoria && filtros.categoria !== "todas") p.set("categoria", filtros.categoria);
+  if (filtros?.anoNascimento) p.set("ano_nascimento", String(filtros.anoNascimento));
+  if (filtros?.de) p.set("de", filtros.de);
+  if (filtros?.ate) p.set("ate", filtros.ate);
   const qs = p.toString();
-  return _rGet(`/cadastro/estoque-semen/prova-media${qs ? `?${qs}` : ""}`);
+  return _rGet(`/cadastro/estoque-semen/prova-ao-vivo${qs ? `?${qs}` : ""}`);
 };
 
 // ── News (blog de pecuária leiteira) ──

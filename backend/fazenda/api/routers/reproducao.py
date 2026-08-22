@@ -18,12 +18,18 @@ from fazenda.models import (
     Sanidade, SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.agenda_reprodutiva_configuravel import SITUACOES, avaliar_card
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
+from fazenda.rules.estado_reprodutivo import data_em_que_ficou_apta, estados_ao_vivo
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.parametros import (
+    dias_atraso_apos_aptidao_novilha, get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min,
+    pev_dias as pev_dias_param,
+)
 from fazenda.rules.perda_prenhez import (
     MOTIVOS_PERDA_PRENHEZ,
     MOTIVOS_PERDA_PRENHEZ_VALIDOS,
@@ -494,6 +500,122 @@ def agenda_veterinario(
         "ultimo_servico": ultimo_servico.isoformat() if ultimo_servico else None,
         "proxima_visita_reprodutiva": proxima_visita_reprodutiva.isoformat() if proxima_visita_reprodutiva else None,
         "intervalo_visita_reprodutiva": intervalo,
+    }
+
+
+class CardAgendaReprodutivaIn(BaseModel):
+    """Definição de um card configurável da Agenda Reprodutiva — os 4 eixos
+    (ver fazenda.rules.agenda_reprodutiva_configuravel). `periodos` é uma
+    lista de (de, ate) em dias; o eixo do dia depende de `situacao` (PEV/
+    vazia: dias desde o parto; inseminada: dias desde o serviço; gestante:
+    dias de gestação). Vazia = sem restrição de período."""
+
+    categoria: str = "todas"  # "vaca" | "novilha" | "todas"
+    lotes: list[str] = []
+    situacao: str  # "pev" | "inseminada" | "gestante" | "vazia" | "vazia_atrasada" | "a_descartar"
+    periodos: list[tuple[int, int]] = []
+    somente_atrasadas: bool = False
+    exceto_atrasadas: bool = False
+
+
+@router.post("/agenda-reprodutiva/card")
+def agenda_reprodutiva_card(
+    config: CardAgendaReprodutivaIn,
+    data: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Resultado de UM card configurável da Agenda Reprodutiva (ver proposta:
+    substitui os cards fixos de `/agenda-veterinario`, exceto "Vazias por
+    diagnóstico" e "Pendentes de classificação", que não são situação
+    reprodutiva e continuam só naquele endpoint).
+
+    Mesmo padrão de coleta de dados de `/agenda-veterinario` acima —
+    `aplicacoes_iatf=[]` porque este endpoint não carrega
+    ProtocoloIatfAplicacao: um animal em protocolo aparece como PEV/APTA/
+    ATRASADA conforme o resto dos dados, mesma limitação aceita de
+    `recria._contexto_categoria` (ver o comentário lá)."""
+    if config.situacao not in SITUACOES:
+        raise HTTPException(status_code=422, detail=f"situacao inválida: {config.situacao}")
+    if config.categoria not in ("todas", "vaca", "novilha"):
+        raise HTTPException(status_code=422, detail=f"categoria inválida: {config.categoria}")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = data or date.today()
+
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais = [a.model_dump() for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
+
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    query_pesagens = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_pesagens = query_pesagens.where(PesagemCorporal.fazenda_id == fazenda_id)
+    servicos = session.exec(query_servicos).all()
+    partos = session.exec(query_partos).all()
+
+    peso_por_animal: dict[str, float] = {}
+    pesagens_por_animal: dict[str, list[tuple[date, float]]] = {}
+    for p in session.exec(query_pesagens).all():
+        if not p.peso_kg or not p.data_pesagem:
+            continue
+        pesagens_por_animal.setdefault(p.numero_matriz, []).append((p.data_pesagem, p.peso_kg))
+    for numero, lista in pesagens_por_animal.items():
+        lista.sort(key=lambda item: item[0])
+        peso_por_animal[numero] = lista[-1][1]
+
+    pev = pev_dias_param()
+    del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
+    idade_apta_dias = round(idade_apta_min_meses() * 30.44)
+    idade_atraso_dias = round(idade_max_1a_cobertura_meses() * 30.44)
+    peso_apta_kg = peso_apta_min()
+    dias_atraso_apos_aptidao = dias_atraso_apos_aptidao_novilha()
+
+    datas_ficou_apta: dict[str, date] = {}
+    for a in animais:
+        numero = a["numero"]
+        d = data_em_que_ficou_apta(
+            data_nasc=a.get("data_nasc"), idade_apta_dias=idade_apta_dias,
+            pesagens=pesagens_por_animal.get(numero, []), peso_apta_kg=peso_apta_kg,
+        )
+        if d is not None:
+            datas_ficou_apta[numero] = d
+
+    estados = estados_ao_vivo(
+        animais, hoje=hoje, partos=partos, servicos=servicos, aplicacoes_iatf=[],
+        pev_dias=pev, del_max_1o_servico=del_max, peso_por_animal=peso_por_animal,
+        idade_apta_dias=idade_apta_dias, idade_atraso_dias=idade_atraso_dias, peso_apta_kg=peso_apta_kg,
+        dias_atraso_apos_aptidao=dias_atraso_apos_aptidao, datas_ficou_apta_por_animal=datas_ficou_apta,
+    )
+
+    itens = avaliar_card(
+        categoria=config.categoria, lotes=config.lotes, situacao=config.situacao,
+        periodos=[tuple(p) for p in config.periodos],
+        somente_atrasadas=config.somente_atrasadas, exceto_atrasadas=config.exceto_atrasadas,
+        animais=animais, estados=estados,
+    )
+    itens.sort(key=lambda it: chave_numero(it.get("numero")))
+
+    return {
+        "data_referencia": hoje.isoformat(),
+        "total": len(itens),
+        "itens": [
+            {
+                "numero_matriz": it.get("numero"),
+                "categoria": it.get("categoria_normalizada"),
+                "lote_atual": it.get("grupo_primario"),
+                "estado": it.get("estado"),
+                "del_dias": it.get("del_dias"),
+                "dias_gestacao": it.get("dias_gestacao"),
+                "dias_desde_servico": it.get("dias_desde_servico"),
+                "data_servico": it.get("data_servico"),
+                "parto_previsto": it.get("parto_previsto"),
+            }
+            for it in itens
+        ],
     }
 
 

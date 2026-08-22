@@ -2,10 +2,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus, Download, ClipboardEdit, ArrowRight } from "lucide-react";
-import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
+import { fetchAgendaVeterinario, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { CardsAgendaReprodutivaConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
@@ -31,22 +32,14 @@ function BadgeDiag({ v }: { v: string | null | undefined }) {
 }
 
 const LISTAS: {
-  key: string; label: string; color: string; extra?: "dias_para_parto" | "motivo"; reconfirmavel?: boolean;
-  acao?: "toque" | "toque_ou_reconfirmacao"; vazia?: boolean; lancar?: boolean;
+  key: string; label: string; color: string; extra?: "motivo"; vazia?: boolean; lancar?: boolean;
 }[] = [
-  { key: "inseminadas_1_29", label: "Inseminadas 1–29 dias", color: "var(--blue)", acao: "toque" },
-  { key: "inseminadas_30_59", label: "Inseminadas 30–59 dias — toque", color: "var(--dourado)", acao: "toque" },
-  { key: "inseminadas_60_mais", label: "Inseminadas 60+ dias — reconfirmação", color: "var(--amber)", reconfirmavel: true },
-  { key: "novilhas_aptas_vazias", label: "Novilhas aptas vazias (≥300 kg)", color: "var(--green-light)" },
-  { key: "verificar_aptidao", label: "Verificar aptidão (≥280 kg, nunca servida)", color: "var(--text-muted)" },
-  { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto", acao: "toque_ou_reconfirmacao" },
-  { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto", acao: "toque_ou_reconfirmacao" },
-  { key: "verificar_pre_parto", label: "Verificar pré-parto (até 30 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
+  // Só estas duas continuam fixas: não são "situação reprodutiva" (uma vem de
+  // resultado de diagnóstico, a outra é dado faltante), então não têm
+  // equivalente nos cards configuráveis acima — ver
+  // fazenda.rules.agenda_reprodutiva_configuravel.
   { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/perda) — novo serviço", color: "var(--red)", extra: "motivo", vazia: true },
   { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo", lancar: true },
-  // Só aparece (pílula com contagem > 0) quando o parâmetro
-  // "usa_adesivo_deteccao_cio" está ativo — ver Configurações > Parâmetros.
-  { key: "observacao_cio", label: "Observação de cio — adesivo de repasse (15–28 dias)", color: "var(--dourado)" },
 ];
 
 /** Rótulo de Status por lista — a categoria em que o animal foi classificado
@@ -54,20 +47,8 @@ const LISTAS: {
  * com a variação "atrasada" quando fizer sentido. */
 function statusDe(cfg: typeof LISTAS[number], it: Item): string {
   switch (cfg.key) {
-    case "inseminadas_1_29": return "Aguardando toque";
-    case "inseminadas_30_59": return it.atrasada ? "Toque atrasado" : "Aguardando toque";
-    case "inseminadas_60_mais": return it.atrasada ? "Reconfirmação atrasada" : "Aguardando reconfirmação";
-    // `atrasada` aqui = passou da idade máxima para a 1ª cobertura
-    // (parâmetro idade_max_1a_cobertura_meses) e continua vazia — vem
-    // ordenada no topo da lista pelo backend.
-    case "novilhas_aptas_vazias": return it.atrasada ? "Atrasada para a 1ª cobertura" : "Apta, vazia";
-    case "verificar_aptidao": return "Verificar aptidão";
-    case "novilhas_gestantes":
-    case "vacas_gestantes": return "Gestante confirmada";
-    case "verificar_pre_parto": return "Pré-parto";
     case "vazias_por_diagnostico": return "Vazia — aguardando novo serviço";
     case "pendentes_classificacao": return "Pendente de classificação";
-    case "observacao_cio": return "Observação de cio (adesivo)";
     default: return cfg.label;
   }
 }
@@ -84,7 +65,6 @@ function colunasDaCategoria(cfg: typeof LISTAS[number]): ColunaExport[] {
     { header: "Resultado 1º toque", key: "diagnostico_fmt" }, { header: "Data 1º toque", key: "data_diagnostico_fmt" },
     { header: "Res. Reconf.", key: "diagnostico_reconfirmacao_fmt" }, { header: "Data Reconfirmação", key: "data_reconfirmacao_fmt" },
     { header: "Status", key: "status_fmt" },
-    ...(cfg.extra === "dias_para_parto" ? [{ header: "Dias p/ parto", key: "dias_para_parto" }] : []),
     ...(cfg.extra === "motivo" ? [{ header: "Motivo", key: "motivo" }] : []),
     ...(cfg.vazia ? [
       { header: "Data DG negativo", key: "data_dg_negativo_fmt" },
@@ -102,39 +82,6 @@ function linhasDaCategoria(itens: Item[], cfg: typeof LISTAS[number]): Record<st
     status_fmt: statusDe(cfg, it),
     data_dg_negativo_fmt: fmtDia(it.data_dg_negativo), proxima_data_dg_estimada_fmt: fmtDia(it.proxima_data_dg_estimada),
   }));
-}
-
-function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: (numero: string) => void; onCancelar: () => void }) {
-  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
-  const [resultado, setResultado] = useState<"positivo" | "negativo">("positivo");
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
-
-  async function salvar() {
-    setSalvando(true); setErro(null);
-    try {
-      await registrarReconfirmacao({ numero_matriz: numero, data_reconfirmacao: data, resultado });
-      onSalvo(numero);
-    } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
-  }
-
-  return (
-    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-      <input type="date" style={selStyle} value={data} onChange={(e) => setData(e.target.value)} />
-      <select style={selStyle} value={resultado} onChange={(e) => setResultado(e.target.value as any)}>
-        <option value="positivo">Positivo (gestante confirmada)</option>
-        <option value="negativo">Negativo (perda de prenhez)</option>
-      </select>
-      <button onClick={salvar} disabled={salvando} className="btn-primary" title="Salvar a reconfirmação de prenhez desta matriz" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-        <Check size={13} /> {salvando ? "Salvando…" : "Salvar"}
-      </button>
-      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
-        <X size={13} />
-      </button>
-      {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
-    </div>
-  );
 }
 
 function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: string; onEnviado: (numero: string) => void; onCancelar: () => void }) {
@@ -216,7 +163,6 @@ export default function AgendaVeterinarioPage() {
   const [modo, setModo] = useState<"atual" | "projecao">("atual");
   const [error, setError] = useState<string | null>(null);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
-  const [reconfirmando, setReconfirmando] = useState<string | null>(null);
   const [enviandoDg, setEnviandoDg] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [lancandoPendente, setLancandoPendente] = useState<Item | null>(null);
@@ -319,8 +265,8 @@ export default function AgendaVeterinarioPage() {
         <h2 className="text-xl font-bold flex items-center gap-2"><Stethoscope size={20} style={{ color: "var(--dourado)" }} /> Agenda Reprodutiva</h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Roteiro da visita reprodutiva, na data de referência {fmtDia(dados.data_referencia)}. Machos e bezerras nunca
-          entram em nenhuma lista; os demais só entram (exceto em "Verificar aptidão") ao atingir 15 meses e 300 kg.
-          Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
+          entram em nenhuma lista. Monte cards configuráveis por categoria, lote e situação reprodutiva abaixo;
+          "Outras pendências" reúne as duas listas que não são situação reprodutiva.
         </p>
         <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap" }}>
           <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
@@ -409,6 +355,12 @@ export default function AgendaVeterinarioPage() {
         </div>
       )}
 
+      <CardsAgendaReprodutivaConfiguraveis dataRef={dados.projetado ? dados.data_referencia : undefined} />
+
+      <p style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.25rem" }}>Outras pendências</p>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginBottom: "0.5rem" }}>
+        Não são situação reprodutiva (uma vem de resultado de diagnóstico, a outra é dado faltante) — por isso não têm card configurável equivalente.
+      </p>
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
         {LISTAS.map((l) => {
           const n = dados.totais[l.key] ?? 0;
@@ -429,8 +381,6 @@ export default function AgendaVeterinarioPage() {
 
       {LISTAS.filter((l) => abertas.has(l.key) && (dados.totais[l.key] ?? 0) > 0).map((l) => (
         <ListaTabela key={l.key} cfg={l} itens={dados.listas[l.key] ?? []}
-          reconfirmando={reconfirmando} setReconfirmando={setReconfirmando}
-          onSalvo={(numero) => { setReconfirmando(null); setSucesso(`Reconfirmação registrada para a matriz ${numero}.`); carregar(); }}
           enviandoDg={enviandoDg} setEnviandoDg={setEnviandoDg}
           onDgEnviado={(numero) => { setEnviandoDg(null); setSucesso(`Diagnóstico enviado por e-mail (matriz ${numero}).`); }}
           onLancar={setLancandoPendente} />
@@ -506,53 +456,14 @@ export default function AgendaVeterinarioPage() {
   );
 }
 
-// Botão de ação de registro (toque/reconfirmação) por linha — cada lista usa
-// no máximo um: link para /lancamentos pré-selecionando a matriz (toque/DG
-// antecipado, mesmo padrão de "Ir para Inseminação") ou o mini-form inline já
-// existente (reconfirmação, que não precisa de tela própria).
-function botaoRegistroLabel(cfg: typeof LISTAS[number]): string {
-  if (cfg.key === "inseminadas_1_29") return "Registrar DG antecipado";
-  return "Registrar toque";
-}
-function CelulaAcaoRegistro({ cfg, it, reconfirmando, setReconfirmando, onSalvo }: {
-  cfg: typeof LISTAS[number]; it: Item;
-  reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: (numero: string) => void;
-}) {
-  const linkBtn: React.CSSProperties = { fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem" };
-  if (cfg.reconfirmavel) {
-    if (reconfirmando === it.numero_matriz) {
-      return <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />;
-    }
-    return <button onClick={() => setReconfirmando(it.numero_matriz)} style={{ ...linkBtn, border: "1px solid var(--dourado)" }}>Registrar reconfirmação</button>;
-  }
-  if (cfg.acao === "toque") {
-    return <Link href={`/lancamentos?ir=diagnostico&numero_matriz=${encodeURIComponent(it.numero_matriz)}`} style={linkBtn}>{botaoRegistroLabel(cfg)}</Link>;
-  }
-  if (cfg.acao === "toque_ou_reconfirmacao") {
-    if (!it.tocada) {
-      return <Link href={`/lancamentos?ir=diagnostico&numero_matriz=${encodeURIComponent(it.numero_matriz)}`} style={linkBtn}>Registrar toque</Link>;
-    }
-    if (!it.reconfirmada) {
-      if (reconfirmando === it.numero_matriz) {
-        return <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />;
-      }
-      return <button onClick={() => setReconfirmando(it.numero_matriz)} style={linkBtn}>Registrar reconfirmação</button>;
-    }
-    return <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>—</span>;
-  }
-  return null;
-}
-
-function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, enviandoDg, setEnviandoDg, onDgEnviado, onLancar }: {
+function ListaTabela({ cfg, itens, enviandoDg, setEnviandoDg, onDgEnviado, onLancar }: {
   cfg: typeof LISTAS[number]; itens: Item[];
-  reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: (numero: string) => void;
   enviandoDg: string | null; setEnviandoDg: (n: string | null) => void; onDgEnviado: (numero: string) => void;
   onLancar: (it: Item) => void;
 }) {
   const ord = useOrdenacao(itens);
   const colunasExport = colunasDaCategoria(cfg);
   const linhasExport = linhasDaCategoria(ord.linhasOrdenadas, cfg);
-  const temAcaoRegistro = cfg.reconfirmavel || !!cfg.acao;
   return (
     <div className="card mb-3" style={{ overflowX: "auto" }}>
       <div className="card-header mb-2 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
@@ -574,13 +485,11 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
           <ThOrdenavel label="Res. Reconf." campo="diagnostico_reconfirmacao" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
           <ThOrdenavel label="Data Reconfirmação" campo="data_reconfirmacao" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
           <th>Status</th>
-          {cfg.extra === "dias_para_parto" && <ThOrdenavel label="Dias p/ parto" campo="dias_para_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.extra === "motivo" && <ThOrdenavel label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.vazia && <ThOrdenavel label="Data DG negativo" campo="data_dg_negativo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.vazia && <ThOrdenavel label="DEL projetado no próximo serviço" campo="del_projetado_proximo_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.vazia && <th>Novo serviço</th>}
           {cfg.lancar && <th>Lançar</th>}
-          {temAcaoRegistro && <th></th>}
           <th>DG por e-mail</th>
         </tr></thead>
         <tbody>
@@ -599,7 +508,6 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
               <td><BadgeDiag v={it.diagnostico_reconfirmacao} /></td>
               <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_reconfirmacao)}</td>
               <td style={{ fontSize: "0.78rem" }}>{statusDe(cfg, it)}</td>
-              {cfg.extra === "dias_para_parto" && <td>{it.dias_para_parto ?? "—"}</td>}
               {cfg.extra === "motivo" && <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{it.motivo}</td>}
               {cfg.vazia && <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_dg_negativo)}</td>}
               {cfg.vazia && (
@@ -627,11 +535,6 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
                     style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                     <ClipboardEdit size={13} /> Lançar
                   </button>
-                </td>
-              )}
-              {temAcaoRegistro && (
-                <td>
-                  <CelulaAcaoRegistro cfg={cfg} it={it} reconfirmando={reconfirmando} setReconfirmando={setReconfirmando} onSalvo={onSalvo} />
                 </td>
               )}
               <td>

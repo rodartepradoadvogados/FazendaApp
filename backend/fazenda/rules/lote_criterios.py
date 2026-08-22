@@ -126,13 +126,15 @@ def _contexto_animal(animal: dict, hoje: date, dados: dict) -> dict:
         dados["partos_obj_por_animal"].get(numero, []),
         dados["secagens_obj_por_animal"].get(numero, []),
         numero=numero,
-        # Os 4 parâmetros do estado ao vivo (pev_dias etc.) vêm prontos de
+        # Os parâmetros do estado ao vivo (pev_dias etc.) vêm prontos de
         # `coletar_dados_criterios` (routers/lotes.py) — lidos uma vez só lá,
         # não a cada animal: este contexto roda em loop (um por animal, às
         # vezes um por animal por lote em `sugerir_movimentacoes`).
         pev_dias=dados.get("pev_dias"), del_max_1o_servico=dados.get("del_max_1o_servico"),
         idade_apta_dias=dados.get("idade_apta_dias"), peso_apta_kg=dados.get("peso_apta_kg"),
         idade_atraso_dias=dados.get("idade_atraso_dias"),
+        data_nasc=animal.get("data_nasc"), pesagens=dados.get("pesagens_por_animal", {}).get(numero, []),
+        dias_atraso_apos_aptidao=dados.get("dias_atraso_apos_aptidao"),
     )
 
 

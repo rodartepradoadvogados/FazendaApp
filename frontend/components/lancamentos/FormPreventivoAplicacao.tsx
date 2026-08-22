@@ -24,10 +24,21 @@ type EventoPrev = {
 };
 const LABEL_RESULTADO_EXAME: Record<string, string> = { positivo: "Positivo", negativo: "Negativo", indefinido: "Indefinido" };
 
-export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
+/**
+ * `calendarioFixo` — usado pela tela "Calendário sanitário" (Lançamentos >
+ * Sanitário > Preventiva): o usuário já escolheu qual regra do calendário
+ * aplicar (ver FormAplicarCalendarioSanitario), então este formulário deve
+ * travar no evento/regra escolhidos, nunca oferecer criar uma regra nova nem
+ * perguntar "já existe uma regra — quer usá-la?" (a resposta já é sim, e já
+ * se sabe QUAL regra). Sem isto, sobra só o fluxo "Avulso" de sempre.
+ */
+export function FormPreventivoAplicacao({ animais, lotes, estoque, calendarioFixo }: {
+  animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[];
+  calendarioFixo?: { id: number; evento_sanitario_id: number };
+}) {
   const { rotuloDe } = useEstadosReprodutivos();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
-  const [eventoId, setEventoId] = useState("");
+  const [eventoId, setEventoId] = useState(calendarioFixo ? String(calendarioFixo.evento_sanitario_id) : "");
   const [dataEvento, setDataEvento] = useState("");
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
@@ -100,7 +111,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
   // existente (tipo "calendario_sanitario") — nesse caso não se cria uma regra
   // nova nem se redefine frequência: é a baixa de uma ocorrência da regra
   // apontada por este id (ver calendario_id em CadastrarPreventivoIn).
-  const [calendarioIdAgenda, setCalendarioIdAgenda] = useState<number | null>(null);
+  const [calendarioIdAgenda, setCalendarioIdAgenda] = useState<number | null>(calendarioFixo?.id ?? null);
 
   // Diagnóstico do exame (positivo/negativo/indefinido) ou resultado numérico
   // — só para eventos categoria_preventiva == "exame". Nunca gera aplicação
@@ -120,6 +131,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
   // número da matriz já vêm prontos; o restante (categoria/lote, se for um
   // lembrete de rebanho) o usuário escolhe na hora.
   useEffect(() => {
+    if (calendarioFixo) return; // regra já travada por prop — nada a puxar da URL
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("ir") !== "preventivo_aplicacao") return;
     const evId = qs.get("evento_sanitario_id");
@@ -277,8 +289,12 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
       <p style={nota}>Registra um preventivo (vacina/exame/tratamento) mirando animais, categoria ou lote — grava a regra no calendário e, para vacina/tratamento, a aplicação com baixa de estoque. Exame não baixa estoque; permite vincular o veterinário.</p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
         <Campo label="Evento preventivo">
-          <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={eventoId} onEventoId={setEventoId}
-            onEventosRecarregados={() => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {})} />
+          {calendarioFixo ? (
+            <p style={{ fontSize: "0.85rem", fontWeight: 700, marginTop: "0.3rem" }}>{evento?.nome ?? "—"}</p>
+          ) : (
+            <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={eventoId} onEventoId={setEventoId}
+              onEventosRecarregados={() => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {})} />
+          )}
         </Campo>
         <Campo label="Data de referência"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
         {decisaoRegra === "existente" || calendarioIdAgenda != null ? (

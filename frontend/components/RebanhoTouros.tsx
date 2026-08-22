@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Dna, Search, Warehouse, FlaskConical, Database, Pencil, Trash2, X } from "lucide-react";
 import {
   fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, atualizarTouro, excluirEstoqueSemen,
-  fetchProvaMediaSemen, type Touro, type TouroIn, type ProvaMediaSemen, type ProvaMediaCampos,
+  fetchProvaMediaSemen, fetchProvaAoVivoSemen, type Touro, type TouroIn, type ProvaMediaSemen, type ProvaMediaCampos,
+  type ProvaAoVivoSemen,
 } from "@/lib/api";
 import type { AnimalRow } from "./AnimalModal";
 import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./CadastroTouros";
@@ -114,24 +115,39 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   const [editNaab, setEditNaab] = useState<Touro | null>(null);
   const [provaMedia, setProvaMedia] = useState<ProvaMediaSemen | null>(null);
   const [provaErro, setProvaErro] = useState<string | null>(null);
-  const [provaDe, setProvaDe] = useState("");
-  const [provaAte, setProvaAte] = useState("");
+  // Prova ao vivo (performance REALIZADA no rebanho, não o índice genético
+  // do catálogo) — filtros opcionais, só limitam o resultado.
+  const [pavCategoria, setPavCategoria] = useState<"todas" | "vaca" | "novilha">("todas");
+  const [pavAno, setPavAno] = useState("");
+  const [pavDe, setPavDe] = useState("");
+  const [pavAte, setPavAte] = useState("");
+  const [provaAoVivo, setProvaAoVivo] = useState<ProvaAoVivoSemen | null>(null);
+  const [provaAoVivoErro, setProvaAoVivoErro] = useState<string | null>(null);
 
   useEffect(() => {
     fetchEstoqueSemen().then(setEstoque).catch(() => setEstoque([]));
     fetchAnimais({ incluirMachos: true }).then((d) => setMachos(d.filter((a: MachoAnimal) => a.sexo === "M"))).catch(() => {});
   }, []);
 
-  // Prova média (Quadro 3): só faz sentido olhando o estoque de sêmen (é ele
-  // que dá o peso/doses) — recalcula ao entrar na sub-aba ou trocar o
-  // período dos serviços considerados.
+  // Prova média genética (Quadro 3, simples/ponderada): só faz sentido
+  // olhando o estoque de sêmen (é ele que dá o peso/doses) — recalcula ao
+  // entrar na sub-aba.
   useEffect(() => {
     if (origemSemen !== "estoque") return;
     setProvaErro(null);
-    fetchProvaMediaSemen(provaDe || undefined, provaAte || undefined)
+    fetchProvaMediaSemen()
       .then(setProvaMedia)
       .catch((e: any) => setProvaErro(e.message || "Erro ao calcular a prova média"));
-  }, [origemSemen, provaDe, provaAte]);
+  }, [origemSemen]);
+
+  // Prova ao vivo: recalcula ao entrar na sub-aba ou trocar qualquer filtro.
+  useEffect(() => {
+    if (origemSemen !== "estoque") return;
+    setProvaAoVivoErro(null);
+    fetchProvaAoVivoSemen({ categoria: pavCategoria, anoNascimento: pavAno ? Number(pavAno) : undefined, de: pavDe || undefined, ate: pavAte || undefined })
+      .then(setProvaAoVivo)
+      .catch((e: any) => setProvaAoVivoErro(e.message || "Erro ao calcular a prova ao vivo"));
+  }, [origemSemen, pavCategoria, pavAno, pavDe, pavAte]);
 
   const abrirTouroFazenda = (touroNome: string, f: EstoqueSemenItem) => {
     const animal = machos.find((a) => (a.nome || "").trim().toLowerCase() === touroNome.trim().toLowerCase());
@@ -417,47 +433,97 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
         <div className="card mb-4">
           <div className="card-header mb-3">3. Prova média — automático</div>
           <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>
-            Média ponderada dos indicadores de prova de cada touro pela quantidade de doses de sêmen — soma(indicador × doses) ÷ soma(doses).
-            É a mesma lógica de índice ponderado que provas genéticas oficiais já usam (ex.: o PTI combina produção e tipo numa razão fixa entre eles);
-            aqui quem pondera é a quantidade de sêmen, não uma razão fixa. Um touro sem determinado indicador não entra no cálculo
-            daquele indicador específico — não puxa a média do grupo para baixo.
+            Três recortes: os dois primeiros são o índice genético/PTA do catálogo de cada touro (a "prova de papel", a mesma
+            de sempre); o terceiro é a performance REALIZADA no seu próprio rebanho — o que de fato aconteceu ao usar aquele sêmen.
           </p>
-          <div className="grid grid-cols-2 gap-3 mb-4" style={{ maxWidth: 420 }}>
-            <div><label style={labelStyle}>Serviços de (data)</label><input type="date" style={inputStyle} value={provaDe} onChange={(e) => setProvaDe(e.target.value)} /></div>
-            <div><label style={labelStyle}>Serviços até (data)</label><input type="date" style={inputStyle} value={provaAte} onChange={(e) => setProvaAte(e.target.value)} /></div>
-          </div>
+          <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.4rem" }}>Prova genética (catálogo)</p>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Só entram touros com pelo menos 1 dose em estoque hoje (sêmen "fazenda"/monta natural fica de fora, não tem prova).
+            Um touro sem determinado indicador não entra no cálculo daquele indicador específico — não puxa a média do grupo para baixo.
+          </p>
           {provaErro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{provaErro}</p>}
           {!provaMedia && !provaErro && <p style={{ color: "var(--text-muted)" }}>Calculando…</p>}
           {provaMedia && (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto mb-4">
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <thead>
                   <tr>
                     <th>Indicador</th>
-                    <th style={{ textAlign: "right" }}>Prova média do botijão (fazenda toda)</th>
-                    <th style={{ textAlign: "right" }}>Prova média das doses usadas nos serviços</th>
+                    <th style={{ textAlign: "right" }} title="Cada touro pesa 1, tenha 1 dose ou 20 em estoque">Prova média — simples</th>
+                    <th style={{ textAlign: "right" }} title="Soma(indicador × doses) ÷ soma(doses)">Prova média — ponderada pelas doses</th>
                   </tr>
                 </thead>
                 <tbody>
                   {CAMPOS_NUMERICOS.map(({ chave, label }) => (
                     <tr key={chave}>
                       <td style={{ fontSize: "0.82rem" }}>{label}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt(provaMedia.botijao.prova[chave as keyof ProvaMediaCampos], 2)}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(provaMedia.servicos_periodo.prova[chave as keyof ProvaMediaCampos], 2)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt(provaMedia.simples.prova[chave as keyof ProvaMediaCampos], 2)}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(provaMedia.ponderada.prova[chave as keyof ProvaMediaCampos], 2)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Doses / touros considerados</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Touros / doses considerados</td>
                     <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>
-                      {provaMedia.botijao.total_doses} dose(s) · {provaMedia.botijao.touros_considerados} touro(s)
+                      {provaMedia.simples.touros_considerados} touro(s)
                     </td>
                     <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>
-                      {provaMedia.servicos_periodo.total_doses} dose(s) · {provaMedia.servicos_periodo.touros_considerados} touro(s)
+                      {provaMedia.ponderada.total_doses} dose(s) · {provaMedia.ponderada.touros_considerados} touro(s)
                     </td>
                   </tr>
                 </tfoot>
+              </table>
+            </div>
+          )}
+
+          <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.4rem", borderTop: "1px solid var(--border)", paddingTop: "0.9rem" }}>
+            Prova ao vivo — performance realizada no rebanho
+          </p>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+            Taxa de concepção real (positivos ÷ serviços com resultado já conhecido) por touro/sêmen usado. Filtros opcionais — só limitam o resultado.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div>
+              <label style={labelStyle}>Categoria</label>
+              <select style={inputStyle} value={pavCategoria} onChange={(e) => setPavCategoria(e.target.value as any)}>
+                <option value="todas">Todas</option>
+                <option value="vaca">Vaca</option>
+                <option value="novilha">Novilha</option>
+              </select>
+            </div>
+            <div><label style={labelStyle}>Ano de nascimento</label><input type="number" style={inputStyle} value={pavAno} onChange={(e) => setPavAno(e.target.value)} placeholder="ex.: 2023" /></div>
+            <div><label style={labelStyle}>Inseminação de (data)</label><input type="date" style={inputStyle} value={pavDe} onChange={(e) => setPavDe(e.target.value)} /></div>
+            <div><label style={labelStyle}>Inseminação até (data)</label><input type="date" style={inputStyle} value={pavAte} onChange={(e) => setPavAte(e.target.value)} /></div>
+          </div>
+          {provaAoVivoErro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{provaAoVivoErro}</p>}
+          {!provaAoVivo && !provaAoVivoErro && <p style={{ color: "var(--text-muted)" }}>Calculando…</p>}
+          {provaAoVivo && (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Touro / sêmen</th>
+                    <th style={{ textAlign: "right" }}>Serviços</th>
+                    <th style={{ textAlign: "right" }} title="Com resultado já conhecido — os muito recentes ainda não entram">Elegíveis</th>
+                    <th style={{ textAlign: "right" }}>Positivos</th>
+                    <th style={{ textAlign: "right" }}>Taxa de concepção</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {provaAoVivo.touros.map((t) => (
+                    <tr key={t.touro}>
+                      <td style={{ fontSize: "0.82rem", fontWeight: 700 }}>{t.touro}</td>
+                      <td style={{ textAlign: "right" }}>{t.servicos}</td>
+                      <td style={{ textAlign: "right" }}>{t.elegiveis}</td>
+                      <td style={{ textAlign: "right" }}>{t.positivos}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700, color: "var(--dourado-light)" }}>{t.taxa_concepcao == null ? "—" : `${t.taxa_concepcao}%`}</td>
+                    </tr>
+                  ))}
+                  {!provaAoVivo.touros.length && (
+                    <tr><td colSpan={5} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum serviço com touro/sêmen identificado para esse filtro.</td></tr>
+                  )}
+                </tbody>
               </table>
             </div>
           )}

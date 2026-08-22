@@ -83,17 +83,23 @@ export default function SugestoesMovimentacao() {
   }
   useEffect(carregar, []);
 
-  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
-  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
-
-  const opcoesLote = Array.from(new Set(dados.sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
-  const opcoesCategoria = Array.from(new Set(dados.sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
-  const sugestoesFiltradas = dados.sugestoes.filter((s) =>
+  // `useOrdenacao` é um hook de verdade (useState/useMemo por dentro), então
+  // tem que rodar em toda renderização — nunca depois de um retorno
+  // condicional (error/!dados), senão a 1ª renderização (dados ainda null)
+  // pula essas chamadas e a 2ª (já com dados) as adiciona, quebrando a ordem
+  // dos hooks entre renders.
+  const sugestoes = dados?.sugestoes ?? [];
+  const opcoesLote = Array.from(new Set(sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
+  const opcoesCategoria = Array.from(new Set(sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
+  const sugestoesFiltradas = sugestoes.filter((s) =>
     casaBusca(s.numero_matriz, fAnimal) &&
     (!fLote || s.lote_atual === fLote) &&
     (!fCategoria || categoriaPorAnimal[s.numero_matriz] === fCategoria)
   );
   const ord = useOrdenacao(sugestoesFiltradas);
+
+  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
+  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
 
   return (
     <div className="card">
