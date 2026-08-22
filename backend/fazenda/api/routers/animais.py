@@ -21,6 +21,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
+from fazenda.rules.parto_resumo import resumo_por_parto
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.producao_leiteira import com_fallback_animal, del_dias_ao_vivo, ultimo_controle_por_animal
@@ -692,6 +693,16 @@ def ficha_animal(
         animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
     )
 
+    # Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
+    # produção, duração da lactação, tentativas de emprenhar e DEL de
+    # concepção, por lactação (ver fazenda.rules.parto_resumo).
+    resumo_partos = resumo_por_parto(
+        [{"data_parto": p.data_parto} for p in partos],
+        [{"data_controle": c.data_controle, "producao_kg": c.producao_kg} for c in controles_leiteiros],
+        [{"data_secagem": s.data_secagem} for s in secagens],
+        [{"data_servico": s.data_servico, "diagnostico": s.diagnostico, "ordem_tentativa": s.ordem_tentativa} for s in servicos],
+    )
+
     return {
         "animal": animal_dump,
         "pai": pai,
@@ -699,6 +710,7 @@ def ficha_animal(
         "previsao_secagem": previsao_secagem,
         "precisao_parto": precisao_parto,
         "partos": partos_dump,
+        "resumo_partos": resumo_partos,
         "servicos": servicos_dump,
         # Já vem agrupado por protocolo (dicts prontos), não passa por _dump.
         "protocolos_iatf": protocolos_iatf,

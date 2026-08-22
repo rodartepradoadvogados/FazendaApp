@@ -32,7 +32,7 @@ type RegraCalendario = {
 const TIPOS_REGRA_FILTRO = [
   { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
 ] as const;
-function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
+export function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
   if (r.categoria_preventiva === "exame") return "exame";
   if (r.categoria_preventiva === "vacina") return "vacina";
   return "avulso";

@@ -6266,17 +6266,25 @@ export type ProvaMediaCampos = Record<
   | "tipo_composto" | "ubere_composto" | "pernas_composto" | "ccs_score" | "fertilidade_filhas" | "facilidade_parto",
   number | null
 >;
-export type ProvaMediaRecorte = { prova: ProvaMediaCampos; total_doses: number; touros_considerados: number };
+export type ProvaMediaRecorte = { prova: ProvaMediaCampos; touros_considerados: number };
 export type ProvaMediaSemen = {
-  botijao: ProvaMediaRecorte;
-  servicos_periodo: ProvaMediaRecorte & { de: string | null; ate: string | null };
+  simples: ProvaMediaRecorte;
+  ponderada: ProvaMediaRecorte & { total_doses: number };
 };
-export const fetchProvaMediaSemen = (de?: string, ate?: string): Promise<ProvaMediaSemen> => {
+export const fetchProvaMediaSemen = (): Promise<ProvaMediaSemen> => _rGet(`/cadastro/estoque-semen/prova-media`);
+
+// "Prova ao vivo" — taxa de concepção REALIZADA no rebanho por touro (não o
+// índice genético do catálogo, ver ProvaMediaSemen acima).
+export type ProvaAoVivoTouro = { touro: string; servicos: number; elegiveis: number; positivos: number; taxa_concepcao: number | null };
+export type ProvaAoVivoSemen = { touros: ProvaAoVivoTouro[]; categoria: string; ano_nascimento: number | null; de: string | null; ate: string | null };
+export const fetchProvaAoVivoSemen = (filtros?: { categoria?: "todas" | "vaca" | "novilha"; anoNascimento?: number; de?: string; ate?: string }): Promise<ProvaAoVivoSemen> => {
   const p = new URLSearchParams();
-  if (de) p.set("de", de);
-  if (ate) p.set("ate", ate);
+  if (filtros?.categoria && filtros.categoria !== "todas") p.set("categoria", filtros.categoria);
+  if (filtros?.anoNascimento) p.set("ano_nascimento", String(filtros.anoNascimento));
+  if (filtros?.de) p.set("de", filtros.de);
+  if (filtros?.ate) p.set("ate", filtros.ate);
   const qs = p.toString();
-  return _rGet(`/cadastro/estoque-semen/prova-media${qs ? `?${qs}` : ""}`);
+  return _rGet(`/cadastro/estoque-semen/prova-ao-vivo${qs ? `?${qs}` : ""}`);
 };
 
 // ── News (blog de pecuária leiteira) ──

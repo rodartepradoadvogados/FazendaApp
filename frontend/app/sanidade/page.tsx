@@ -694,7 +694,7 @@ function CalendarioSanitarioView({ modoInicial }: { modoInicial?: "calendario" |
                           {servico && (
                             <button title={`Lançar financeiro (${servico})`} onClick={() => lancarFinanceiro(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--green-light)", fontSize: "0.72rem", fontWeight: 700 }}>$ Financeiro</button>
                           )}
-                          <a title="Editar em Lançamentos" href="/lancamentos?ir=calendario_sanitario" style={{ color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></a>
+                          <a title="Editar em Central de Protocolos" href="/protocolos?aba=cadastro&tipo=sanitario&sub=preventivo" style={{ color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></a>
                           <button title="Excluir" onClick={() => excluir(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
                         </span>
                       </td>

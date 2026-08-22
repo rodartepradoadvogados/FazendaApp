@@ -26,7 +26,7 @@ const DESTINO_EDITAR: Record<string, string> = {
   venda_animal: "/lancamentos?ir=vender_animal",
   estoque: "/lancamentos?ir=estoque_entradas_saidas",
   evento_manual: "/agenda",
-  calendario_sanitario: "/lancamentos?ir=calendario_sanitario",
+  calendario_sanitario: "/protocolos?aba=cadastro&tipo=sanitario&sub=preventivo",
   lote: "/configuracoes?aba=cadastro",
   fornecedor: "/configuracoes?aba=cadastro",
   motivo_movimentacao: "/configuracoes?aba=cadastro",
