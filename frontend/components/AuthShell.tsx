@@ -7,7 +7,6 @@ import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NewsButton } from "@/components/NewsButton";
-import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
@@ -214,17 +213,20 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         style={{ ["--top-actions-width" as any]: `${larguraTopActions}px` }}
       >
         <Sidebar />
-        {/* News fica sempre; Manual da Fazenda só na Capa (path === "/"); tema e
-            sino de notificações também moram aqui — os quatro num único
+        {/* News, Manual da Fazenda, tema e sino de notificações moram num único
             container fixed com gap (.site-top-actions, ver globals.css) em vez
             de cada um calcular sua própria posição (era assim que ficavam
-            sobrepostos, ver comentário em globals.css). */}
-        <div className="site-top-actions" ref={topActionsRef}>
-          {path === "/" && <ManualFazendaButton />}
-          <NewsButton />
-          <ThemeSwitcher />
-          <NotificationBell />
-        </div>
+            sobrepostos, ver comentário em globals.css). Exceto na Capa
+            (redesign T1, mockup 1b): lá os mesmos quatro saem do fixed e
+            entram no fluxo normal, dentro do próprio cabeçalho da página
+            (ver app/page.tsx) — por isso não renderizam aqui nesse path. */}
+        {path !== "/" && (
+          <div className="site-top-actions" ref={topActionsRef}>
+            <NewsButton />
+            <ThemeSwitcher />
+            <NotificationBell />
+          </div>
+        )}
         <AssistenteClaude />
         <main className="flex-1 md:overflow-y-auto app-main">
           <SubNavTabs />

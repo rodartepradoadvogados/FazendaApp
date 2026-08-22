@@ -1,17 +1,20 @@
 "use client";
-import { useEffect, useState } from "react";
-import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search, CheckCircle2, ArrowRight, Plus } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, podeModulo, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
+  fetchNotaCapa, podeModulo, today, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
 } from "@/lib/api";
 import { cartao } from "@/lib/cartaoDrillDown";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { OnboardingChecklist } from "@/components/OnboardingChecklist";
-import { Gauge } from "@/components/Gauge";
 import { Indicador, EstadoVazio } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { NewsButton } from "@/components/NewsButton";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { NotificationBell } from "@/components/NotificationBell";
+import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -33,7 +36,6 @@ export default function Home() {
   const [d, setD] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
-  const [benchAberto, setBenchAberto] = useState(false);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
   const [recarregando, setRecarregando] = useState(false);
   // Quando qualquer fetch falha, alguns cards mostram "—"; sinalizamos isso num banner.
@@ -47,6 +49,30 @@ export default function Home() {
   // pelo dono da plataforma; some quando não há nenhuma ativa.
   const [nota, setNota] = useState<NotaCapa | null>(null);
   const [notaFechada, setNotaFechada] = useState(false);
+
+  // Busca rápida por nº de animal (⌘K/Ctrl+K foca o campo) — redesign T1,
+  // cabeçalho da Capa. Reaproveita o AnimalModal já usado nos outros
+  // drill-downs desta tela; não é uma busca global do site (telas, ajuda
+  // etc.), só animais, que é o que se procura com mais urgência no dia a dia.
+  const [busca, setBusca] = useState("");
+  const buscaRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        buscaRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const buscarAnimal = (e: React.FormEvent) => {
+    e.preventDefault();
+    const termo = busca.trim().toLowerCase();
+    if (!termo || !animais.length) return;
+    const achados = animais.filter((a) => a.numero.toLowerCase().includes(termo));
+    setModal({ title: `Busca — "${busca.trim()}"`, list: achados });
+  };
 
   const carregar = () => {
     setRecarregando(true);
@@ -89,11 +115,13 @@ export default function Home() {
   const rep = d.ind?.reproducao as IndicadoresReproducao | undefined;
   const semDados = !d.ind && !d.ag;
 
-  // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria.
+  // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria
+  // — o comparativo completo (medidores + tabela de meta/média do país) migrou
+  // para Indicadores (redesign T1); aqui só lê os dois valores que viraram
+  // KPI ("Prenhez/21d" e "Taxa de serviço").
   const benchCats: any = d.ind?.benchmark_categorias || { todas: d.ind?.benchmark || [] };
   const bench: any[] = benchCats[catRep] || benchCats.todas || [];
   const bm = (k: string) => bench.find((b) => b.chave === k) || {};
-  const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
   // Resultado do mês mais recente (competência) — já vem pronto do backend
   // (GET /financeiro/resultado-mes-recente), sem precisar do extrato
@@ -105,6 +133,18 @@ export default function Home() {
   const implante = d.ag?.hormonios_check?.find((h: any) => h.nome?.toLowerCase().includes("implante") || h.nome?.toLowerCase().includes("sincrogest"));
   const implanteFalta = implante && !implante.suficiente;
   const contasPagar = d.ag?.totais?.contas_a_pagar ?? 0;
+
+  // Bloco "Hoje" (redesign T1, mockup 1b): tudo que precisa ser feito hoje —
+  // o que já está atrasado (data < hoje) mais o que vence hoje — mesma fonte
+  // que a Agenda usa (d.ag.eventos), só um recorte mais curto pra Capa. Ação
+  // de fato (marcar realizado etc.) continua só na Agenda — aqui é resumo +
+  // atalho, não duplica a lógica de baixa por tipo de evento.
+  const hoje = today();
+  const eventosAtivos: any[] = (d.ag?.eventos || []).filter((e: any) => !e.comunicado);
+  const tarefasAtrasadas = eventosAtivos.filter((e: any) => e.data < hoje);
+  const tarefasDeHoje = eventosAtivos.filter((e: any) => e.data === hoje);
+  const tarefasHoje = [...tarefasAtrasadas, ...tarefasDeHoje];
+  const TAREFAS_VISIVEIS = 4;
 
   const serieProd = (d.prod?.serie_temporal || []).slice(-12).map((s: any) => ({
     mes: s.data ? new Date(s.data + "T00:00:00").toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "") : "",
@@ -145,16 +185,31 @@ export default function Home() {
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-5 flex items-start justify-between gap-3">
+      {/* Cabeçalho: título/subtítulo + busca/News/tema/sino no fluxo normal —
+          redesign T1 (mockup 1b). Nas demais telas esses três últimos
+          continuam fixos no topo (ver AuthShell.tsx); só aqui saem do
+          position:fixed, porque a Capa é a única com esse cabeçalho próprio
+          logo abaixo do topo (nas outras, SubNavTabs/o cabeçalho de cada
+          página fica mais abaixo e continua precisando da faixa fixa). */}
+      <div className="mb-5 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Fazenda Estreito Ponte de Pedra</h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
             Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Botão Manual da Fazenda mudou para o topo fixo (junto do News) —
-              ver AuthShell.tsx — para nunca mais sobrepor outro botão fixo. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <form onSubmit={buscarAnimal} className="flex items-center gap-2"
+            style={{ border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", minWidth: "180px", background: "var(--surface)" }}>
+            <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+            <input ref={buscaRef} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar animal…"
+              style={{ border: "none", background: "none", outline: "none", fontSize: "0.78rem", color: "var(--text)", width: "100%" }} />
+            <span style={{ fontSize: "0.62rem", fontWeight: 600, border: "1px solid var(--border)", borderRadius: "4px", padding: "0.05rem 0.3rem", color: "var(--text-muted)", flexShrink: 0 }}>⌘K</span>
+          </form>
+          <ManualFazendaButton />
+          <NewsButton />
+          <ThemeSwitcher />
+          <NotificationBell />
           <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
             <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
           </button>
@@ -182,87 +237,106 @@ export default function Home() {
         <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os dados</a>.</span></div>
       )}
 
-      {/* Alertas */}
-      <div className="flex flex-wrap gap-3 mb-5">
-        {implanteFalta && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.15)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Syringe size={15} style={{ color: "var(--red)" }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF</div>}
-        {contasPagar > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><TrendingDown size={15} style={{ color: "var(--amber)" }} /> {contasPagar} conta(s) a pagar (10 dias)</div>}
-        {!!abaixoMin && abaixoMin > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.12)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Package size={15} style={{ color: "var(--red)" }} /> {abaixoMin} item(ns) abaixo do mínimo</div>}
+      {/* Bloco "Hoje" (redesign T1, mockup 1b): abre pela tarefa do dia em vez
+          do módulo — tarefas de hoje/atrasadas à esquerda (mesma fonte que a
+          Agenda usa), "Fora do esperado" (os 3 alertas que antes eram uma
+          faixa solta) à direita. Ação de cada item continua só na Agenda. */}
+      <div className="card mb-5" style={{ borderLeft: "3px solid var(--vinho)", padding: 0 }}>
+        <div className="flex items-center gap-3 flex-wrap" style={{ padding: "0.7rem 0.9rem", borderBottom: "1px solid var(--border)" }}>
+          <span className="card-header" style={{ margin: 0 }}>Hoje</span>
+          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-muted)" }}>
+            {tarefasHoje.length} tarefa{tarefasHoje.length === 1 ? "" : "s"}
+            {tarefasAtrasadas.length > 0 && <> · <span style={{ color: "var(--red)" }}>{tarefasAtrasadas.length} atrasada{tarefasAtrasadas.length === 1 ? "" : "s"}</span></>}
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem" }}>
+            <a href="/agenda" className="btn-ghost" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem" }}>Ver agenda completa</a>
+            <a href="/lancamentos" className="btn-ghost" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}><Plus size={13} /> Lançar</a>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_236px]">
+          <div style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem", borderRight: "1px solid var(--border)" }}>
+            {tarefasHoje.length ? (
+              <>
+                {tarefasHoje.slice(0, TAREFAS_VISIVEIS).map((ev: any, i: number) => {
+                  const atrasado = ev.data < hoje;
+                  return (
+                    <a key={ev.id ?? i} href="/agenda"
+                      className="flex items-center gap-3"
+                      style={{ padding: "0.5rem 0.6rem", border: "1px solid var(--border)", borderLeft: `3px solid ${atrasado ? "var(--red)" : "var(--dourado)"}`, borderRadius: "var(--r-sm)", textDecoration: "none" }}>
+                      <span style={{ flex: 1 }}>
+                        <span style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>{ev.numero_animal ? `${ev.numero_animal} · ` : ""}{ev.descricao}</span>
+                        <span style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                          {ev.categoria}{atrasado ? ` · atrasado desde ${new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}` : ""}
+                        </span>
+                      </span>
+                      <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--dourado-light)", display: "flex", alignItems: "center", gap: "0.2rem", flexShrink: 0 }}>Abrir <ArrowRight size={12} /></span>
+                    </a>
+                  );
+                })}
+                {tarefasHoje.length > TAREFAS_VISIVEIS && (
+                  <a href="/agenda" style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--vinho, var(--dourado-light))", paddingLeft: "0.2rem" }}>
+                    + {tarefasHoje.length - TAREFAS_VISIVEIS} tarefa{tarefasHoje.length - TAREFAS_VISIVEIS === 1 ? "" : "s"} de hoje
+                  </a>
+                )}
+              </>
+            ) : (
+              <EstadoVazio icon={CheckCircle2}>Nada pendente para hoje.</EstadoVazio>
+            )}
+          </div>
+          <div style={{ padding: "0.6rem 0.9rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            <span className="card-header" style={{ fontSize: "0.66rem", margin: 0 }}>Fora do esperado</span>
+            {implanteFalta && (
+              <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+                <Syringe size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF
+              </div>
+            )}
+            {contasPagar > 0 && (
+              <div className="flex items-start gap-2" style={{ background: "rgba(185,131,31,0.1)", borderLeft: "3px solid var(--amber)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+                <TrendingDown size={13} style={{ color: "var(--amber)", marginTop: "0.1rem", flexShrink: 0 }} /> {contasPagar} conta(s) a pagar (10 dias)
+              </div>
+            )}
+            {!!abaixoMin && abaixoMin > 0 && (
+              <div className="flex items-start gap-2" style={{ background: "rgba(168,52,28,0.08)", borderLeft: "3px solid var(--red)", padding: "0.45rem 0.5rem", fontSize: "0.76rem" }}>
+                <Package size={13} style={{ color: "var(--red)", marginTop: "0.1rem", flexShrink: 0 }} /> {abaixoMin} item(ns) abaixo do mínimo
+              </div>
+            )}
+            {!implanteFalta && !(contasPagar > 0) && !(!!abaixoMin && abaixoMin > 0) && (
+              <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Nada fora do esperado.</span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* KPIs executivos */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+      {/* KPIs executivos — 12 no total, em duas grades de 6 (redesign T1): a
+          primeira é a visão geral que já existia; a segunda promove pra cima
+          os 3 números que antes só apareciam dentro do card de medidores
+          (Prenhez/21d, Taxa de serviço, IEP médio) e o descarte, que antes
+          vinha só dentro do card de Situação Reprodutiva. O card de medidores
+          em si (com meta/média do país) migrou para Indicadores. */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-2">
         <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" cat="geral" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
         <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
         <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Fêmeas prenhas" cat="reprodutivo" />
         <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" cat="reprodutivo" />
         <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" cat="producao" />
         <KPI v={prod?.del_medio ?? "—"} l="DEL médio" cat="producao" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
         <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" cat="reprodutivo"
           podeClicar={candidatasList.length > 0}
           onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
+        <KPI v={bm("taxa_prenhez_ciclo").valor != null ? `${bm("taxa_prenhez_ciclo").valor}%` : "—"} l="Prenhez / 21 dias" cat="reprodutivo" podeClicar={false} />
+        <KPI v={bm("taxa_servico").valor != null ? `${bm("taxa_servico").valor}%` : "—"} l="Taxa de serviço" cat="reprodutivo" podeClicar={false} />
+        <KPI v={rep?.iep_meses ?? "—"} l="IEP médio (meses)" cat="reprodutivo" podeClicar={false} />
+        <KPI v={descartadosList.length} l={`Descartadas ${new Date(desdeDescarte + "T00:00:00").getFullYear()}`} cat="geral" c="var(--red)"
+          podeClicar={descartadosList.length > 0}
+          onClick={() => setModalDescartados({ title: "Descartados", list: descartadosList })} />
         {/* Some por completo (não só o valor) para quem não tem o módulo
             Financeiro contratado — antes o card ficava sempre visível, com
             "—" no lugar do valor, revelando uma métrica paga a quem nunca
             comprou o módulo (ver auditoria de planos). */}
         {podeModulo("financeiro") && (
           <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
-        )}
-      </div>
-
-      {/* Medidores reprodutivos (modelo velocímetro) */}
-      <div className="card mb-5">
-        <div className="card-header mb-3 flex flex-wrap items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
-          {/* A legenda descreve a conta que o backend faz hoje (ver
-              rules/indicadores._taxas_por_ciclos): as três taxas saem do motor
-              de ciclos de 21 dias, agregadas por soma de numeradores e
-              denominadores — média PONDERADA pelo tamanho de cada ciclo, não
-              um acumulado do período dividido pelas aptas de hoje. */}
-          <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· ciclos de 21 dias desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} (média ponderada) · Prenhez = prenhes ÷ elegíveis do ciclo</span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
-            {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
-              <button key={k} onClick={() => setCatRep(k)} title={`Ver eficiência reprodutiva — ${lbl}`}
-                style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
-                  background: catRep === k ? "var(--dourado)" : "transparent",
-                  color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
-                {lbl}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} mediaPais={bm("taxa_servico").media_pais} maiorMelhor={bm("taxa_servico").maior_melhor ?? true} />
-          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} mediaPais={bm("taxa_concepcao").media_pais} maiorMelhor={bm("taxa_concepcao").maior_melhor ?? true} />
-          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} mediaPais={bm("taxa_prenhez_ciclo").media_pais} maiorMelhor={bm("taxa_prenhez_ciclo").maior_melhor ?? true} />
-        </div>
-        {/* Linha expansível: painel completo de benchmark */}
-        <button onClick={() => setBenchAberto((v) => !v)}
-          style={{ marginTop: "0.6rem", width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.2rem", background: "none", border: "none", borderTop: "1px solid var(--border)", color: "var(--dourado-light)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
-          {benchAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          Comparar com metas e média do país <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {catRep === "todas" ? "todas as fêmeas" : catRep === "vaca" ? "vacas" : "novilhas"}</span>
-        </button>
-        {benchAberto && (
-          <div className="overflow-x-auto">
-            <table className="fazenda-table" style={{ marginTop: "0.4rem" }}>
-              <thead><tr><th>Indicador</th><th style={{ textAlign: "right" }}>Nosso</th><th style={{ textAlign: "right" }}>Meta</th><th style={{ textAlign: "right" }}>Média país</th></tr></thead>
-              <tbody>
-                {bench.map((b: any) => {
-                  const ok = b.valor != null && b.meta != null && (b.maior_melhor ? b.valor >= b.meta : b.valor <= b.meta);
-                  return (
-                    <tr key={b.chave}>
-                      <td>{b.label}</td>
-                      <td style={{ textAlign: "right", fontWeight: 700, color: b.valor == null ? "var(--text-muted)" : ok ? "var(--green-light)" : "var(--amber)" }}>{fmtBench(b)}</td>
-                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.meta != null ? `${b.meta}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
-                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.media_pais != null ? `${b.media_pais}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-              Estimativas a partir dos serviços e diagnósticos carregados. Metas ajustáveis em <a href="/parametros" style={{ color: "var(--dourado-light)" }}>Parâmetros</a>.
-            </p>
-          </div>
         )}
       </div>
 
@@ -352,26 +426,6 @@ export default function Home() {
             </ResponsiveContainer>
           ) : <EstadoVazio icon={HeartPulse}>Sem dados reprodutivos ainda — assim que houver lançamentos, o gráfico aparece aqui.</EstadoVazio>}
         </div>
-      </div>
-
-      {/* Próximos eventos */}
-      <div className="card">
-        <div className="card-header mb-3">Próximos Eventos (7 dias)</div>
-        {(() => {
-          const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-          const limite = new Date(hoje); limite.setDate(limite.getDate() + 7);
-          const evs = (d.ag?.eventos || []).filter((e: any) => { const dt = new Date(e.data + "T00:00:00"); return dt >= hoje && dt <= limite; }).slice(0, 10);
-          return evs.length ? (
-            <div className="space-y-2">
-              {evs.map((ev: any, i: number) => (
-                <div key={i} className="flex items-start gap-3 py-1">
-                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", minWidth: "4.5rem" }}>{new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</span>
-                  <span style={{ fontSize: "0.82rem", color: "var(--text)" }}>{ev.numero_animal ? <strong>{ev.numero_animal} · </strong> : null}{ev.descricao}</span>
-                </div>
-              ))}
-            </div>
-          ) : <EstadoVazio icon={Calendar}>Nenhum evento nos próximos 7 dias.</EstadoVazio>;
-        })()}
       </div>
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}

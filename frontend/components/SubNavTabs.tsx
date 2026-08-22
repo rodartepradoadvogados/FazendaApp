@@ -25,8 +25,11 @@ export function SubNavTabs() {
   // reservando o padding-right nem empurrando o cabeçalho da própria página
   // para baixo — sem o espaçador, esse cabeçalho nasce colado no topo e fica
   // por baixo da faixa fixa .site-top-actions (News/Tema/Sino), ver
-  // .subnav-espacador-topo em globals.css.
-  if (!subNav) return <div className="subnav-espacador-topo" aria-hidden="true" />;
+  // .subnav-espacador-topo em globals.css. Exceção: a Capa (path === "/") não
+  // tem mais .site-top-actions fixo (ver AuthShell.tsx) — o próprio
+  // cabeçalho da página já entra no fluxo normal, sem nada fixo por cima
+  // para reservar espaço.
+  if (!subNav) return pathname === "/" ? null : <div className="subnav-espacador-topo" aria-hidden="true" />;
 
   const caminho = caminhoAte(subNav.tree, subNav.activeId) ?? [];
 

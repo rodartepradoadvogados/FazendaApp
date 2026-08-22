@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby } from "lucide-react";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby, Gauge as GaugeIcon, ChevronDown, ChevronRight } from "lucide-react";
 import { fetchIndicadores, fetchAnimais, podeModulo, type IndicadoresResposta, type ReproducaoCategoria } from "@/lib/api";
 import { cartao, cartaoDeMapas } from "@/lib/cartaoDrillDown";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -10,6 +10,7 @@ import RelatorioBezerras from "@/components/RelatorioBezerras";
 import NaoConformidades from "@/components/NaoConformidades";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
+import { Gauge } from "@/components/Gauge";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
@@ -23,6 +24,11 @@ export function IndicadoresGerais() {
   const [recarregando, setRecarregando] = useState(false);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
+  // Card "Eficiência Reprodutiva" (medidores + benchmark) — migrou da Capa
+  // para cá no redesign T1 (mockup 1b): a Capa passou a abrir pela tarefa do
+  // dia, e este card (denso, de comparação com meta/país) ficou mais em casa
+  // aqui, ao lado dos demais indicadores. Nenhum dado novo, só mudou de tela.
+  const [benchAberto, setBenchAberto] = useState(false);
 
   const carregar = () => {
     setRecarregando(true);
@@ -100,6 +106,13 @@ export function IndicadoresGerais() {
   // sobre por que isso não é o mesmo bug que este módulo evita.
   const cFemeasPrenhas = cartao({ origem: rep, titulo: "Fêmeas prenhas", conta: "taxa_prenhez_pct", nums: "prenhes_programa_nums", formatar: pct });
   const cVazias = cartao({ origem: rep, titulo: "Vazias", conta: "perc_vazias_pct", nums: "vazias_programa_nums", formatar: pct });
+
+  // Benchmark reprodutivo (nosso valor × meta × média do país) — mesmo motor
+  // que alimentava os medidores da Capa antes do redesign T1.
+  const benchCats: any = ind?.benchmark_categorias || { todas: (ind as any)?.benchmark || [] };
+  const bench: any[] = benchCats[catRep] || benchCats.todas || [];
+  const bm = (k: string) => bench.find((b: any) => b.chave === k) || {};
+  const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
   return (
     <div className="p-6 animate-in">
@@ -181,6 +194,58 @@ export function IndicadoresGerais() {
                   </span>
                 </>
               )}
+            </div>
+          )}
+        </div>
+
+        {/* Medidores reprodutivos (modelo velocímetro) — migrou da Capa para
+            cá no redesign T1 (mockup 1b, ver globals.css/page.tsx da Capa). */}
+        <div className="card mb-6">
+          <div className="card-header mb-3 flex flex-wrap items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
+            <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· ciclos de 21 dias desde {desdeLabel} (média ponderada) · Prenhez = prenhes ÷ elegíveis do ciclo</span>
+            <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+              {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setCatRep(k)} title={`Ver eficiência reprodutiva — ${lbl}`}
+                  style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                    border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
+                    background: catRep === k ? "var(--dourado)" : "transparent",
+                    color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} mediaPais={bm("taxa_servico").media_pais} maiorMelhor={bm("taxa_servico").maior_melhor ?? true} />
+            <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} mediaPais={bm("taxa_concepcao").media_pais} maiorMelhor={bm("taxa_concepcao").maior_melhor ?? true} />
+            <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} mediaPais={bm("taxa_prenhez_ciclo").media_pais} maiorMelhor={bm("taxa_prenhez_ciclo").maior_melhor ?? true} />
+          </div>
+          <button onClick={() => setBenchAberto((v) => !v)}
+            style={{ marginTop: "0.6rem", width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.2rem", background: "none", border: "none", borderTop: "1px solid var(--border)", color: "var(--dourado-light)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
+            {benchAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            Comparar com metas e média do país <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {catRep === "todas" ? "todas as fêmeas" : catRep === "vaca" ? "vacas" : "novilhas"}</span>
+          </button>
+          {benchAberto && (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ marginTop: "0.4rem" }}>
+                <thead><tr><th>Indicador</th><th style={{ textAlign: "right" }}>Nosso</th><th style={{ textAlign: "right" }}>Meta</th><th style={{ textAlign: "right" }}>Média país</th></tr></thead>
+                <tbody>
+                  {bench.map((b: any) => {
+                    const ok = b.valor != null && b.meta != null && (b.maior_melhor ? b.valor >= b.meta : b.valor <= b.meta);
+                    return (
+                      <tr key={b.chave}>
+                        <td>{b.label}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: b.valor == null ? "var(--text-muted)" : ok ? "var(--green-light)" : "var(--amber)" }}>{fmtBench(b)}</td>
+                        <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.meta != null ? `${b.meta}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
+                        <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.media_pais != null ? `${b.media_pais}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                Estimativas a partir dos serviços e diagnósticos carregados. Metas ajustáveis em <a href="/parametros" style={{ color: "var(--dourado-light)" }}>Parâmetros</a>.
+              </p>
             </div>
           )}
         </div>

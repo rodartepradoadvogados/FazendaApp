@@ -49,7 +49,7 @@ function SidebarLink({ href, title, label, active, recolhida, children }: {
     <Link
       href={href}
       title={title || label}
-      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
+      className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
       style={{
         background: active ? "var(--sidebar-active-bg)" : "transparent",
         color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
@@ -255,7 +255,7 @@ export function Sidebar() {
         // sempre abre na largura cheia (w-56 base), independente da
         // preferência de recolher salva (essa é só para a barra fixa do
         // desktop; no mobile o menu já fecha inteiro depois de navegar).
-        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-56"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+        className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-[196px]"} flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
       {/* Botão fechar — só no mobile */}
       <button onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu de navegação"
