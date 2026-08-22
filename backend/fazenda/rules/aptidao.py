@@ -25,20 +25,23 @@ qualquer chamada direta à API passavam por baixo dela.
   * **DURO** — o claramente errado: sexo masculino, animal baixado ou marcado
     a descartar, idade abaixo do mínimo. Devolve 409 e não há como
     prosseguir; se o dado estiver errado, corrige-se o cadastro.
-  * **CONFIRMÁVEL** — o limítrofe e legítimo: novilha sem NENHUMA pesagem
-    registrada, novilha com peso abaixo do mínimo, e matriz que consta como
-    gestante vigente. Devolve 409 explicando a situação; o chamador reenvia
-    com `forcar: true` para dizer "eu sei, é isso mesmo". A diferença em
-    relação a antes é que a decisão passa a ser de uma PESSOA, e não uma
-    inferência silenciosa do sistema.
+  * **CONFIRMÁVEL** — o limítrofe e legítimo: novilha com peso LANÇADO abaixo
+    do mínimo, e matriz que consta como gestante vigente. Devolve 409
+    explicando a situação; o chamador reenvia com `forcar: true` para dizer
+    "eu sei, é isso mesmo". A diferença em relação a antes é que a decisão
+    passa a ser de uma PESSOA, e não uma inferência silenciosa do sistema.
 
 ## Lacunas assumidas de propósito
 
-  * **Sem pesagem nenhuma, não se inventa peso.** O peso vem exclusivamente
-    de `PesagemCorporal`, e muita fazenda não pesa novilha. Por isso "sem
-    pesagem" é confirmável e não duro — mesma disciplina de
+  * **Sem pesagem nenhuma, não se bloqueia nada.** O peso vem exclusivamente
+    de `PesagemCorporal`, e muita fazenda não pesa novilha — "sem pesagem" é
+    o caso COMUM, não o limítrofe. Bloquear ali (mesmo como confirmável) foi
+    tentado e reprovado: recusava a inseminação de rotina do rebanho inteiro
+    e transformava o `forcar` num clique automático, o que é pior que não ter
+    trava — ensina a ignorar o aviso. Mesma disciplina de
     `rules.estado_reprodutivo.classificar_animal`, que também se recusa a
-    reprovar por um dado que nunca foi coletado.
+    reprovar por um dado que nunca foi coletado. Peso LANÇADO abaixo do
+    mínimo continua bloqueando (confirmável): ali o dado existe e diz algo.
   * **O critério de peso só vale para NULÍPARA.** Uma matriz que já pariu
     passou do estágio em que "atingiu peso de cobertura" quer dizer alguma
     coisa; cobrar pesagem dela seria ruído puro.
@@ -81,7 +84,6 @@ MOTIVO_SEXO = "sexo"
 MOTIVO_INATIVO = "inativo"
 MOTIVO_A_DESCARTAR = "a_descartar"
 MOTIVO_IDADE = "idade"
-MOTIVO_SEM_PESAGEM = "sem_pesagem"
 MOTIVO_PESO = "peso"
 MOTIVO_GESTANTE = "gestante"
 
@@ -209,15 +211,14 @@ def avaliar_aptidao_servico(
             "correto antes.",
             SEVERIDADE_CONFIRMAVEL,
         )
-    # Peso só faz sentido para nulípara — ver a docstring do módulo.
-    if not contexto.ja_pariu:
-        if not contexto.tem_pesagem:
-            return AptidaoResultado(
-                False, MOTIVO_SEM_PESAGEM,
-                f"{numero} não tem nenhuma pesagem registrada, então não dá para conferir o peso mínimo de "
-                f"aptidão ({params.peso_apta_min_kg:g} kg). Lance a pesagem ou confirme o serviço mesmo assim.",
-                SEVERIDADE_CONFIRMAVEL,
-            )
+    # Peso só faz sentido para nulípara — ver a docstring do módulo. E SÓ
+    # quando existe pesagem: sem nenhuma, não se bloqueia nada (ver a lacuna
+    # documentada no topo). Bloquear aqui foi tentado e reprovado: a maioria
+    # das fazendas não pesa novilha, então "sem pesagem" é o caso COMUM, não
+    # o limítrofe — a trava recusaria a inseminação de rotina do rebanho
+    # inteiro e viraria um `forcar` clicado no automático, que é pior que não
+    # ter trava (ensina a ignorar o aviso).
+    if not contexto.ja_pariu and contexto.tem_pesagem:
         if contexto.peso_kg is not None and contexto.peso_kg < params.peso_apta_min_kg:
             return AptidaoResultado(
                 False, MOTIVO_PESO,

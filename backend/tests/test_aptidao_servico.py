@@ -25,7 +25,7 @@ import fazenda.database as database
 from fazenda.models import Animal, PesagemCorporal, Servico
 from fazenda.rules.aptidao import (
     APTA, AptidaoResultado, ContextoAptidao, ParametrosAptidao, MOTIVO_GESTANTE, MOTIVO_IDADE,
-    MOTIVO_PESO, MOTIVO_SEM_PESAGEM, MOTIVO_SEXO, avaliar_aptidao_servico,
+    MOTIVO_PESO, MOTIVO_SEXO, avaliar_aptidao_servico,
 )
 
 HOJE = date.today()
@@ -66,15 +66,17 @@ def test_macho_e_animal_baixado_sao_bloqueios_duros():
     assert baixado.bloqueia(forcar=True)
 
 
-def test_sem_pesagem_nao_inventa_peso_mas_pede_confirmacao():
-    """Novilha sem NENHUMA pesagem: não se afirma que está leve (o dado não
-    existe), mas também não passa em silêncio — exige confirmação explícita."""
+def test_sem_pesagem_nao_bloqueia():
+    """Novilha sem NENHUMA pesagem passa: o dado não existe, e não se reprova
+    por dado ausente.
+
+    Bloquear aqui (mesmo como confirmável) foi tentado e reprovado — a maioria
+    das fazendas não pesa novilha, então "sem pesagem" é o caso COMUM: a trava
+    recusaria a inseminação de rotina do rebanho inteiro e viraria um `forcar`
+    clicado no automático, pior que não ter trava."""
     animal = {"numero": "10", "sexo": "F", "ativo": True}
     ctx = ContextoAptidao(idade_dias=_meses(20), peso_kg=None, tem_pesagem=False)
-    r = avaliar_aptidao_servico(animal, ctx, PARAMS)
-    assert r.motivo == MOTIVO_SEM_PESAGEM
-    assert r.bloqueia(forcar=False)
-    assert not r.bloqueia(forcar=True)
+    assert avaliar_aptidao_servico(animal, ctx, PARAMS).apta
 
 
 def test_peso_abaixo_do_minimo_e_confirmavel():
@@ -183,13 +185,19 @@ def test_post_servico_bezerra_nao_passa_nem_com_forcar(client):
     assert r.status_code == 409
 
 
-def test_post_servico_novilha_sem_pesagem_bloqueia_e_forcar_destrava(client):
+def test_post_servico_novilha_abaixo_do_peso_bloqueia_e_forcar_destrava(client):
+    """Peso LANÇADO abaixo do mínimo: o dado existe e diz que ela não está
+    pronta — bloqueia, mas admite a confirmação de uma pessoa."""
     c, engine = client
-    _add(engine, Animal(numero="902", sexo="F", ativo=True, data_nasc=HOJE - timedelta(days=_meses(20))))
+    _add(
+        engine,
+        Animal(numero="902", sexo="F", ativo=True, data_nasc=HOJE - timedelta(days=_meses(20))),
+        PesagemCorporal(numero_matriz="902", data_pesagem=HOJE - timedelta(days=10), peso_kg=240),
+    )
 
     bloqueado = c.post("/reproducao/servico", json={"numero_matriz": "902", "data_servico": HOJE.isoformat()})
     assert bloqueado.status_code == 409
-    assert bloqueado.json()["detail"]["motivo"] == MOTIVO_SEM_PESAGEM
+    assert bloqueado.json()["detail"]["motivo"] == MOTIVO_PESO
     assert bloqueado.json()["detail"]["confirmavel"] is True
 
     ok = c.post("/reproducao/servico", json={
@@ -198,6 +206,15 @@ def test_post_servico_novilha_sem_pesagem_bloqueia_e_forcar_destrava(client):
     assert ok.status_code == 200
     with Session(engine) as s:
         assert s.exec(select(Servico)).first() is not None
+
+
+def test_post_servico_novilha_sem_pesagem_passa(client):
+    """O caso COMUM (fazenda que não pesa novilha) não pode ser bloqueado —
+    ver a lacuna documentada em rules/aptidao.py."""
+    c, engine = client
+    _add(engine, Animal(numero="905", sexo="F", ativo=True, data_nasc=HOJE - timedelta(days=_meses(20))))
+    r = c.post("/reproducao/servico", json={"numero_matriz": "905", "data_servico": HOJE.isoformat()})
+    assert r.status_code == 200
 
 
 def test_post_servico_com_pesagem_suficiente_passa_direto(client):
