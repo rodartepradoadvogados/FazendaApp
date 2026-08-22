@@ -4,8 +4,8 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Pencil, Plus, Trash2, X } from "lucide-react";
-import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Trash2, X } from "lucide-react";
+import { fetchServicosAnalise, atualizarServico, fetchInseminadores, fetchAnimais, ehAdmin, confirmarExclusao } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -237,8 +237,6 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && <>
-        {foco === "perdas" && <LancarPerdaPrenhez onSalvo={carregar} />}
-
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
           <TabBar
@@ -451,62 +449,6 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
               </button>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Formulário mínimo para registrar a perda de prenhez com motivo — antes só
- * existia via importação de CSV, sem classificação nenhuma. */
-function LancarPerdaPrenhez({ onSalvo }: { onSalvo: () => void }) {
-  const [aberto, setAberto] = useState(false);
-  const [numeroMatriz, setNumeroMatriz] = useState("");
-  const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
-  const [motivo, setMotivo] = useState<"aborto" | "natimorto" | "outros">("aborto");
-  const [salvando, setSalvando] = useState(false);
-  const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
-
-  async function salvar() {
-    setMsg(null);
-    if (!numeroMatriz.trim()) { setMsg({ tipo: "erro", texto: "Informe o número da matriz." }); return; }
-    setSalvando(true);
-    try {
-      await registrarPerdaPrenhez({ numero_matriz: numeroMatriz.trim(), data_perda_prenhez: data, motivo });
-      setMsg({ tipo: "sucesso", texto: "Perda de prenhez registrada." });
-      setNumeroMatriz("");
-      onSalvo();
-    } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao registrar perda de prenhez" });
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  return (
-    <div className="card mb-4">
-      <div className="card-header mb-2 flex items-center justify-between">
-        <span>Registrar perda de prenhez</span>
-        <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setAberto((v) => !v)}>
-          <Plus size={13} /> {aberto ? "Fechar" : "Lançar"}
-        </button>
-      </div>
-      {aberto && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Matriz</label>
-            <input style={selStyle} value={numeroMatriz} onChange={(e) => setNumeroMatriz(e.target.value)} placeholder="ex.: 068" /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data da perda</label>
-            <input type="date" style={selStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Motivo</label>
-            <select style={selStyle} value={motivo} onChange={(e) => setMotivo(e.target.value as any)}>
-              <option value="aborto">Aborto</option>
-              <option value="natimorto">Natimorto</option>
-              <option value="outros">Outros</option>
-            </select></div>
-          <div style={{ display: "flex", alignItems: "flex-end" }}>
-            <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-          </div>
-          {msg && <p style={{ gridColumn: "1 / -1", color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", margin: 0 }}>{msg.texto}</p>}
         </div>
       )}
     </div>
