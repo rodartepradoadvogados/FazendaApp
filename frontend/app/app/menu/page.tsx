@@ -20,7 +20,7 @@ import {
   Stethoscope, Syringe, CalendarDays, CalendarRange, Wheat, FileBarChart, Gauge,
   LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
-  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
@@ -500,6 +500,7 @@ export default function Pagina() {
       )}
 
       <SecaoRetratil chave="app" titulo="App" colapsada={secoesColapsadas.has("app")} onAlternar={alternarSecao}>
+        <LinhaMenu icone={<Sun size={20} />} titulo="Modo Curral" subtitulo="Telas grandes e alto contraste para o curral" cor="var(--mob-dourado)" onClick={() => router.push("/app/curral")} />
         <LinhaMenu icone={<Palette size={20} />} titulo="Aparência" subtitulo="Tema claro ou escuro" cor="var(--mob-dourado)" onClick={() => setTela("aparencia")} />
         <LinhaMenu icone={<WifiOff size={20} />} titulo="Sincronização" subtitulo={fila.length > 0 ? `${fila.length} pendente${fila.length > 1 ? "s" : ""}` : "Fila em dia"} cor={fila.length > 0 ? "var(--mob-ambar)" : "var(--mob-dourado)"} onClick={() => setTela("sincronizacao")} />
         {/* Escape hatch para as áreas que só existem no site (Configurações,
