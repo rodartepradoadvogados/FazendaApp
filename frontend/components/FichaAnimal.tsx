@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { FileText, AlertTriangle, Download, Pencil, Save, X } from "lucide-react";
-import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida, verificarMaeParto, type VerificacaoMaeParto } from "@/lib/api";
+import {
+  fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida,
+  verificarMaeParto, type VerificacaoMaeParto, fetchEquivalenteMaduroDoAnimal, type TrioEquivalenteMaduro,
+} from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -10,6 +13,7 @@ import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { CurvaLactacao, type FaixaReferencia } from "@/components/CurvaLactacao";
+import { TrioEquivalenteMaduroView } from "@/components/TrioEquivalenteMaduro";
 
 type PrecisaoParto = {
   data_ultima_ia_positiva: string | null;
@@ -381,15 +385,25 @@ function SecaoHistoricoTabela({ chave, titulo, colunas, linhas, onAbrirCria }: {
 // linha a linha) e a curva de lactação (a forma da lactação ao longo do DEL,
 // comparada com a média do rebanho). São perguntas diferentes sobre os mesmos
 // números: "o que foi medido?" e "isto está bom?".
-function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCria }: {
+function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCria, numeroMatriz }: {
   colunas: ColunaExport[];
   linhas: Record<string, unknown>[];
   brutas: Record<string, unknown>[];
   referencia?: FaixaReferencia[];
   onAbrirCria: (numero: string) => void;
+  numeroMatriz: string;
 }) {
   const [aba, setAba] = useState<"tabela" | "curva">("tabela");
   const ord = useOrdenacao(linhas);
+
+  // Equivalente maduro deste animal — produz hoje × produzirá na
+  // maturidade, calculado pelo mesmo motor do relatório de Produção (ver
+  // docs/equivalente-maduro-proposta.md). Erro/404 (sem lactação ainda) fica
+  // silencioso — não é uma falha da ficha, é o animal não ter base ainda.
+  const [trioEM, setTrioEM] = useState<TrioEquivalenteMaduro | null>(null);
+  useEffect(() => {
+    fetchEquivalenteMaduroDoAnimal(numeroMatriz).then(setTrioEM).catch(() => setTrioEM(null));
+  }, [numeroMatriz]);
 
   const pontos = brutas
     .map((c) => ({
@@ -409,6 +423,12 @@ function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCri
         ativa={aba}
         onChange={setAba}
       />
+      {trioEM && (
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.8rem", margin: "0.75rem 0" }}>
+          <p style={{ margin: "0 0 0.5rem", fontWeight: 700, fontSize: "0.8rem" }}>Equivalente maduro</p>
+          <TrioEquivalenteMaduroView trio={trioEM} />
+        </div>
+      )}
       {aba === "curva" ? (
         <CurvaLactacao pontos={pontos} referencia={referencia} />
       ) : (
@@ -850,7 +870,8 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             if (s.chave === "controles_leiteiros") {
               return (
                 <SecaoControleLeiteiro key={s.chave} colunas={s.colunas} linhas={linhas}
-                  brutas={linhasBrutas} referencia={ficha.curva_referencia_rebanho} onAbrirCria={buscar} />
+                  brutas={linhasBrutas} referencia={ficha.curva_referencia_rebanho} onAbrirCria={buscar}
+                  numeroMatriz={String(ficha.animal.numero ?? "")} />
               );
             }
             return (

@@ -4365,6 +4365,64 @@ export async function fetchControles() {
   return res.json();
 }
 
+// Equivalente maduro — ver docs/equivalente-maduro-proposta.md. O trio de
+// apresentação (produz hoje / produzirá / diferença) nunca aparece sozinho;
+// os três tipos abaixo espelham exatamente o `TrioEquivalenteMaduro` do
+// backend (`fazenda/rules/equivalente_maduro.py`).
+export type TrioEquivalenteMaduro = {
+  numero_matriz?: string;
+  ordem_parto: number | null;
+  classe: number | null;
+  producao_hoje_kg: number | null;
+  n_controles: number;
+  ja_maduro: boolean;
+  producao_maturidade_kg: number | null;
+  diferenca_kg: number | null;
+  faixa_diferenca_kg: [number, number] | null;
+  confianca_fator: "baixa" | "ok" | null;
+  sem_base: boolean;
+  motivo: string | null;
+};
+
+export type FatorClasseEM = {
+  classe: number;
+  n_lactacoes: number;
+  media_305_kg: number;
+  fator: number;
+  desvio_fator: number;
+  confianca: "baixa" | "ok";
+};
+
+export type RelatorioEquivalenteMaduro = {
+  fatores: Record<string, FatorClasseEM>;
+  sem_base_geral: string | null;
+  animais: TrioEquivalenteMaduro[];
+};
+
+export async function fetchEquivalenteMaduro(): Promise<RelatorioEquivalenteMaduro> {
+  const res = await authFetch(`${API}/producao/equivalente-maduro`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Equivalente maduro error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEquivalenteMaduroDoAnimal(numeroMatriz: string): Promise<TrioEquivalenteMaduro & { sem_base_geral: string | null }> {
+  const res = await authFetch(`${API}/producao/equivalente-maduro/${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Equivalente maduro error: ${res.status}`); }
+  return res.json();
+}
+
+export async function calcularEquivalenteMaduro(dados: {
+  ordem_parto: number;
+  pontos: { del_dias: number; producao_kg: number }[];
+  del_secagem?: number | null;
+}): Promise<TrioEquivalenteMaduro> {
+  const res = await authFetch(`${API}/producao/equivalente-maduro/calcular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular equivalente maduro"); }
+  return res.json();
+}
+
 export async function criarControlesLeiteiros(dados: {
   data_controle: string;
   entradas: { numero_matriz: string; ordenhas: (number | null)[] }[];
