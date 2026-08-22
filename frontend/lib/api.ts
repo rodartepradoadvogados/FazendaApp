@@ -56,28 +56,35 @@ export function mensagemErroApi(detail: unknown): string | null {
  * `message` continua sendo a mensagem legível de sempre, então quem só faz
  * `catch (e) { setErro(e.message) }` não muda em nada.
  */
+/** O formato do `detail` que as travas devolvem no 409. */
+type DetalheBloqueio = { motivo?: string | null; confirmavel?: boolean };
+
 export class ErroApi extends Error {
   status: number;
-  detalhe: any;
+  detalhe: unknown;
   constructor(mensagem: string, status: number, detalhe: unknown) {
     super(mensagem);
     this.name = "ErroApi";
     this.status = status;
     this.detalhe = detalhe;
   }
+  /** O `detail` quando ele é o objeto estruturado de bloqueio; senão `null`. */
+  private get bloqueio(): DetalheBloqueio | null {
+    return this.detalhe && typeof this.detalhe === "object" ? (this.detalhe as DetalheBloqueio) : null;
+  }
   /** Código do motivo do bloqueio (ex.: "idade", "gestante", "sem_pesagem"). */
   get motivo(): string | null {
-    return this.detalhe && typeof this.detalhe === "object" ? (this.detalhe.motivo ?? null) : null;
+    return this.bloqueio?.motivo ?? null;
   }
   /** True quando reenviar com `forcar: true` destrava (bloqueio limítrofe, não erro grave). */
   get confirmavel(): boolean {
-    return !!(this.detalhe && typeof this.detalhe === "object" && this.detalhe.confirmavel);
+    return !!this.bloqueio?.confirmavel;
   }
 }
 
 /** Lê o corpo do erro e devolve um `ErroApi` com o `detail` preservado. */
 export async function erroDaResposta(res: Response, padrao: string): Promise<ErroApi> {
-  const d = await res.json().catch(() => ({} as any));
+  const d: { detail?: unknown } = await res.json().catch(() => ({}));
   return new ErroApi(mensagemErroApi(d?.detail) || padrao, res.status, d?.detail);
 }
 
