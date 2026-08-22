@@ -15,8 +15,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Lote
-from fazenda.models.producao import Lactacao
+from fazenda.models import Animal, Lactacao, Lote
 
 
 def _xlsx_bytes(header: list[str], rows: list[list]) -> bytes:
