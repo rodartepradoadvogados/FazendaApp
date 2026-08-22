@@ -6,6 +6,7 @@ leite, atalho embutido na tela de Lançamentos.
 from __future__ import annotations
 
 import io
+from datetime import date, timedelta
 
 import openpyxl
 import pytest
@@ -15,6 +16,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import Animal, Lote
+from fazenda.models.producao import Lactacao
 
 
 def _xlsx_bytes(header: list[str], rows: list[list]) -> bytes:
