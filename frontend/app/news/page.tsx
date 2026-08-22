@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight, TrendingUp, Mail, CheckCircle2 } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
 import { imagemMateria } from "@/lib/newsVisual";
 
@@ -34,27 +34,36 @@ function corBadgeCategoria(categoria?: string | null): string {
 
 // A maioria das matérias do robô /milknews não vem com `categoria` marcada —
 // para dar hierarquia visual ao restante da lista mesmo sem essa marcação
-// manual, deriva uma seção por palavra-chave da manchete/resumo. É só um
-// agrupamento de exibição (nunca sobrescreve o campo categoria real).
+// manual, deriva um assunto por palavra-chave da manchete/resumo. É só um
+// agrupamento de exibição (nunca sobrescreve o campo categoria real), e é a
+// mesma taxonomia usada tanto no filtro por assunto (item 3 do DoD, T9)
+// quanto na faixa de cotação: "mercado" cobre exatamente as matérias que a
+// skill /milknews classifica como Mercado, Mercado Internacional ou Custo de
+// Produção (ver backend/fazenda/seed_data/milknews_lotes/*.json).
 type SecaoNews = { chave: string; label: string; cor: string };
 const SECOES_NEWS: SecaoNews[] = [
-  { chave: "mercado", label: "Mercado e cotação", cor: "var(--dourado)" },
+  { chave: "mercado", label: "Cotação e mercado", cor: "var(--dourado)" },
   { chave: "regulacao", label: "Regulação e política agrícola", cor: "var(--cat-financeiro)" },
   { chave: "manejo", label: "Manejo e clima", cor: "var(--cat-sanidade)" },
-  { chave: "tecnico", label: "Conteúdo técnico", cor: "var(--cat-gestao)" },
-  { chave: "geral", label: "Notícias do setor", cor: "var(--cat-estoque)" },
+  { chave: "tecnico", label: "Genética e técnica", cor: "var(--cat-gestao)" },
+  { chave: "geral", label: "Notícia setorial", cor: "var(--cat-estoque)" },
 ];
 const REGRAS_SECAO: [RegExp, string][] = [
   [/cota[çc][ãa]o|leil[ãa]o|gdt|cepea|pre[çc]o|mercado|export|import|d[óo]lar|commodit/i, "mercado"],
   [/\blei\b|\bpl\b|proje[t]?o de lei|tarifa|imposto|camex|c[âa]mara dos deputados|senado|decreto|regula/i, "regulacao"],
   [/calor|clima|estresse t[ée]rmico|ver[ãa]o|inverno|chuva|seca\b/i, "manejo"],
   [/vacina|doen[çc]a|sanit[áa]rio|mastite|surto/i, "manejo"],
-  [/gen[ée]tica|reprodu[çc][ãa]o|nutri[çc][ãa]o|manejo|compost barn|free stall/i, "tecnico"],
+  [/gen[ée]tica|reprodu[çc][ãa]o|nutri[çc][ãa]o|manejo|compost barn|free stall|ci[êe]ncia|journal/i, "tecnico"],
 ];
 function secaoDaMateria(n: NoticiaNews): SecaoNews {
   const alvo = n.categoria?.trim();
   if (alvo) {
     const chave = alvo.toLowerCase();
+    // Rótulos reais gravados pela skill /milknews: "Mercado", "Mercado
+    // Internacional" e "Custo de Produção" caem no mesmo balde de
+    // cotação/mercado do filtro; "Genética" no de genética/técnica.
+    if (/mercado|custo de produ[çc][ãa]o/.test(chave)) return SECOES_NEWS[0];
+    if (/gen[ée]tica|ci[êe]ncia/.test(chave)) return SECOES_NEWS[3];
     const conhecida = SECOES_NEWS.find((s) => s.chave === chave || s.label.toLowerCase() === chave);
     if (conhecida) return conhecida;
   }
@@ -63,6 +72,87 @@ function secaoDaMateria(n: NoticiaNews): SecaoNews {
     if (regex.test(texto)) return SECOES_NEWS.find((s) => s.chave === chave)!;
   }
   return SECOES_NEWS[SECOES_NEWS.length - 1];
+}
+
+// Extrai o primeiro número "de cotação" (R$/US$/NZ$ por unidade, ou
+// percentual) do texto da matéria, para a faixa de cotação (item 1 do DoD,
+// T9). Não é uma fonte de dado nova: é só um recorte do que a própria matéria
+// já escreveu (que por sua vez já teve seus números conferidos em duas
+// fontes independentes — ver regra 1 de .claude/skills/milknews/SKILL.md).
+// Quando nada bate no texto, a matéria não entra na faixa (nunca inventa
+// número).
+const REGEX_NUMERO_COTACAO = /(?:R\$|US\$|NZ\$|AU\$|€)\s?[\d.,]+(?:\/\w+)?|[\d.,]+\s?%/;
+function numeroCotacao(n: NoticiaNews): string | null {
+  const texto = `${n.manchete} ${n.resumo || ""}`;
+  const m = texto.match(REGEX_NUMERO_COTACAO);
+  return m ? m[0].trim() : null;
+}
+
+// ── Captura de e-mail (item 5 do DoD, T9) ──────────────────────────────────
+// Não existe endpoint de assinatura de newsletter no back-end (conferido em
+// backend/fazenda/api/routers/ — só há POST/DELETE /push/subscribe, que é
+// notificação push do app instalado, um canal totalmente diferente). Este
+// formulário é SÓ FRONT-END: grava o e-mail no localStorage do navegador de
+// quem preenche, como confirmação visual de "seu pedido ficou registrado
+// aqui" — não envia e-mail nenhum, não avisa ninguém do lado da fazenda, não
+// sincroniza entre aparelhos nem persiste no banco de dados. Quando existir
+// um endpoint de verdade (ex.: POST /news/newsletter), trocar
+// `inscreverLocalmente` por uma chamada a `_rSend` (ver lib/api.ts) e
+// remover este aviso.
+const CHAVE_INSCRICAO_LOCAL = "milknews_inscricoes_email_somente_local";
+function inscreverLocalmente(email: string) {
+  try {
+    const atuais: string[] = JSON.parse(localStorage.getItem(CHAVE_INSCRICAO_LOCAL) || "[]");
+    if (!atuais.includes(email)) atuais.push(email);
+    localStorage.setItem(CHAVE_INSCRICAO_LOCAL, JSON.stringify(atuais));
+  } catch {
+    // localStorage indisponível (modo privado, etc.) — segue sem persistir;
+    // o formulário já deixa claro que não há back-end por trás mesmo.
+  }
+}
+
+function NewsletterForm() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "ok" | "erro">("idle");
+
+  const enviar = (e: React.FormEvent) => {
+    e.preventDefault();
+    const valido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    if (!valido) { setStatus("erro"); return; }
+    inscreverLocalmente(email.trim());
+    setStatus("ok");
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: "40rem", margin: "2.5rem auto 0" }}>
+      <div className="card-header mb-2" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+        <Mail size={14} /> Receba as matérias por e-mail
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "1rem" }}>
+        Avise-me quando sair matéria nova de cotação, mercado, genética ou ciência.
+      </p>
+      {status === "ok" ? (
+        <p style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "var(--dourado-light)", fontSize: "0.86rem" }}>
+          <CheckCircle2 size={16} /> Pedido registrado neste navegador. (Ainda não há envio de e-mail de verdade — ver nota no código-fonte.)
+        </p>
+      ) : (
+        <form onSubmit={enviar} style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+          <input
+            type="email" required value={email} placeholder="seuemail@exemplo.com"
+            onChange={(e) => { setEmail(e.target.value); if (status === "erro") setStatus("idle"); }}
+            style={{
+              flex: "1 1 220px", background: "var(--surface-2)", color: "var(--text)",
+              border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.9rem",
+            }}
+          />
+          <button type="submit" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
+            <Mail size={14} /> Assinar
+          </button>
+        </form>
+      )}
+      {status === "erro" && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>Digite um e-mail válido.</p>}
+    </div>
+  );
 }
 
 export default function NewsPage() {
@@ -88,21 +178,41 @@ export default function NewsPage() {
   useEffect(() => { carregar(verTudo); }, [carregar, verTudo]);
 
   const destaque = materias && materias.length ? materias[0] : null;
-  const restantes = materias && materias.length > 1 ? materias.slice(1) : [];
+  const restantes = useMemo(
+    () => (materias && materias.length > 1 ? materias.slice(1) : []),
+    [materias]
+  );
 
-  const grupos: { secao: SecaoNews; itens: NoticiaNews[] }[] = [];
-  for (const n of restantes) {
-    const secao = secaoDaMateria(n);
-    let grupo = grupos.find((g) => g.secao.chave === secao.chave);
-    if (!grupo) { grupo = { secao, itens: [] }; grupos.push(grupo); }
-    grupo.itens.push(n);
-  }
-  const mostrarCabecalhoSecao = grupos.length > 1;
+  // Faixa de cotação (item 1 do DoD, T9): as matérias mais recentes já
+  // classificadas como "mercado" (cotação/leilão/preço/GDT/Cepea...) pela
+  // seção derivada acima.
+  const materiasCotacao = useMemo(
+    () => (materias || []).filter((n) => secaoDaMateria(n).chave === "mercado").slice(0, 8),
+    [materias]
+  );
 
-  function cardPequeno(n: NoticiaNews, i: number, cor: string) {
+  // Filtro por assunto (item 3 do DoD, T9) — null = "todos". Antes os
+  // assuntos só serviam para agrupar a lista em seções sempre visíveis; agora
+  // viram pílulas clicáveis que filtram a grade abaixo, e o agrupamento fixo
+  // sai (a grade de 3 colunas do item 4 substitui as seções empilhadas). O
+  // destaque editorial continua sempre visível, independente do filtro — só
+  // a grade é filtrada, como em qualquer portal de notícia (manchete do dia
+  // fixa, feed abaixo filtrável).
+  const [filtro, setFiltro] = useState<string | null>(null);
+  const secoesComItens = useMemo(
+    () => SECOES_NEWS.filter((s) => restantes.some((n) => secaoDaMateria(n).chave === s.chave)),
+    [restantes]
+  );
+  const restantesFiltradas = useMemo(
+    () => (filtro ? restantes.filter((n) => secaoDaMateria(n).chave === filtro) : restantes),
+    [restantes, filtro]
+  );
+
+  function cardGrade(n: NoticiaNews, i: number) {
+    const cor = secaoDaMateria(n).cor;
     return (
       <article key={n.id} className="rounded-xl overflow-hidden flex flex-col" style={{ border: "1px solid var(--border)", background: "var(--surface)", transition: "transform 0.15s ease" }}>
-        <div className="relative" style={{ height: "148px" }}>
+        <div className="relative" style={{ height: "160px" }}>
           <img src={imagemMateria(n, i)} alt="" className="w-full h-full object-cover" />
           <div className="absolute left-0 right-0 bottom-0" style={{ height: "3px", background: cor }} />
         </div>
@@ -111,9 +221,14 @@ export default function NewsPage() {
             <span style={{ width: "5px", height: "5px", borderRadius: "50%", background: cor, flexShrink: 0 }} />
             {secaoDaMateria(n).label}
           </div>
-          <h3 className="font-bold mb-2" style={{ fontSize: "0.92rem", color: "var(--dourado-light)", lineHeight: 1.35, fontFamily: "var(--font-sora), sans-serif" }}>
+          <h3 className="font-bold mb-2" style={{ fontSize: "0.95rem", color: "var(--dourado-light)", lineHeight: 1.35, fontFamily: "var(--font-sora), sans-serif" }}>
             {n.manchete}
           </h3>
+          {(n.materia || n.resumo) && (
+            <p className="line-clamp-2 flex-1" style={{ color: "var(--text-muted)", fontSize: "0.82rem", lineHeight: 1.5, marginBottom: "0.6rem" }}>
+              {n.materia || n.resumo}
+            </p>
+          )}
           <div className="pt-3 mt-auto flex items-center justify-between" style={{ borderTop: "1px solid var(--border)", fontSize: "0.68rem", color: "var(--text-muted)" }}>
             <span className="flex items-center gap-1"><CalendarDays size={11} /> {formatarData(n.data_publicacao)}</span>
             {!!(n.fontes || []).length && (
@@ -150,6 +265,38 @@ export default function NewsPage() {
           </button>
         </div>
       </div>
+
+      {materiasCotacao.length > 0 && (
+        <div className="card mb-6">
+          <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <TrendingUp size={14} /> Faixa de cotação e mercado
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", paddingBottom: "0.2rem" }}>
+            {materiasCotacao.map((n) => {
+              const numero = numeroCotacao(n);
+              return (
+                <div key={`cot-${n.id}`} style={{
+                  flex: "0 0 auto", minWidth: "190px", maxWidth: "230px",
+                  border: "1px solid var(--border)", borderRadius: "10px", padding: "0.65rem 0.85rem",
+                  background: "var(--surface-2)",
+                }}>
+                  {numero && (
+                    <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--dourado-light)", marginBottom: "0.2rem" }}>
+                      {numero}
+                    </div>
+                  )}
+                  <div className="line-clamp-2" style={{ fontSize: "0.76rem", color: "var(--text)", lineHeight: 1.35 }}>
+                    {n.manchete}
+                  </div>
+                  <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", marginTop: "0.35rem" }}>
+                    {formatarData(n.data_publicacao)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="card mb-6">
         <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
@@ -190,8 +337,18 @@ export default function NewsPage() {
           >
             <div className="md:w-3/5 relative" style={{ minHeight: "260px" }}>
               <img src={imagemMateria(destaque, 0)} alt="" className="w-full h-full object-cover" style={{ minHeight: "260px", maxHeight: "420px" }} />
+              {/* Selo "Destaque de hoje" (item 2 do DoD, T9) — separa
+                  visualmente a matéria mais recente da grade comum abaixo,
+                  além do próprio tamanho maior que o hero já tinha. */}
+              <span className="absolute top-4 left-4" style={{
+                fontSize: "0.62rem", fontWeight: 700, padding: "0.28rem 0.7rem", borderRadius: "999px",
+                textTransform: "uppercase", letterSpacing: "0.05em", background: "rgba(0,0,0,0.55)",
+                color: "#fff", backdropFilter: "blur(4px)",
+              }}>
+                Destaque de hoje
+              </span>
               {destaque.categoria && (
-                <span className="absolute top-4 left-4" style={{
+                <span className="absolute top-4 right-4" style={{
                   fontSize: "0.68rem", fontWeight: 700, padding: "0.3rem 0.75rem", borderRadius: "999px",
                   textTransform: "uppercase", letterSpacing: "0.03em", background: corBadgeCategoria(destaque.categoria),
                   color: "#fff", backdropFilter: "blur(4px)",
@@ -236,60 +393,53 @@ export default function NewsPage() {
           </article>
         )}
 
-        {grupos.map((grupo, gi) => {
-          const [primeira, ...resto] = grupo.itens;
-          return (
-            <section key={grupo.secao.chave}>
-              {mostrarCabecalhoSecao && (
-                <div className="flex items-baseline gap-3 mb-4" style={{ marginTop: gi === 0 ? 0 : "1rem" }}>
-                  <h2 style={{ fontFamily: "var(--font-sora), sans-serif", fontWeight: 700, fontSize: "1.05rem", margin: 0 }}>{grupo.secao.label}</h2>
-                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{grupo.itens.length} matéria{grupo.itens.length > 1 ? "s" : ""}</span>
-                  <div style={{ flex: 1, height: "1px", background: "var(--border)" }} />
-                </div>
-              )}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {resto.length > 0 ? (
-                  <>
-                    <article className="rounded-xl overflow-hidden flex flex-col md:col-span-2" style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
-                      <div className="relative" style={{ height: "220px" }}>
-                        <img src={imagemMateria(primeira, gi)} alt="" className="w-full h-full object-cover" />
-                        <div className="absolute left-0 right-0 bottom-0" style={{ height: "3px", background: grupo.secao.cor }} />
-                      </div>
-                      <div className="p-5 flex flex-col flex-1">
-                        <div className="flex items-center gap-1 mb-1" style={{ fontSize: "0.66rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: grupo.secao.cor }}>
-                          <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: grupo.secao.cor, flexShrink: 0 }} />
-                          {grupo.secao.label}
-                        </div>
-                        <h3 className="font-bold mb-2" style={{ fontSize: "1.15rem", color: "var(--dourado-light)", lineHeight: 1.3, fontFamily: "var(--font-sora), sans-serif" }}>
-                          {primeira.manchete}
-                        </h3>
-                        {(primeira.materia || primeira.resumo) && (
-                          <p className="line-clamp-2 flex-1" style={{ color: "var(--text-muted)", fontSize: "0.85rem", lineHeight: 1.55, marginBottom: "0.75rem" }}>
-                            {primeira.materia || primeira.resumo}
-                          </p>
-                        )}
-                        <div className="pt-3 mt-auto flex items-center justify-between" style={{ borderTop: "1px solid var(--border)", fontSize: "0.7rem", color: "var(--text-muted)" }}>
-                          <span className="flex items-center gap-1"><CalendarDays size={11} /> {formatarData(primeira.data_publicacao)}</span>
-                          {!!(primeira.fontes || []).length && (
-                            <a href={primeira.fontes![0]} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "var(--text-muted)", textDecoration: "none" }}>
-                              <LinkIcon size={10} /> {dominio(primeira.fontes![0])}
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                    <div className="flex flex-col gap-5">
-                      {resto.slice(0, 2).map((n, i) => cardPequeno(n, gi * 10 + i + 1, grupo.secao.cor))}
-                    </div>
-                    {resto.slice(2).map((n, i) => cardPequeno(n, gi * 10 + i + 3, grupo.secao.cor))}
-                  </>
-                ) : (
-                  cardPequeno(primeira, gi, grupo.secao.cor)
-                )}
+        {restantes.length > 0 && (
+          <section>
+            {/* Filtro por assunto (item 3 do DoD, T9) — só aparece quando há
+                mais de um assunto na lista (senão seria uma pílula sozinha,
+                sem função). */}
+            {secoesComItens.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <button
+                  onClick={() => setFiltro(null)}
+                  className={filtro === null ? "btn-primary" : "btn-ghost"}
+                  style={{ fontSize: "0.76rem" }}
+                >
+                  Todos os assuntos ({restantes.length})
+                </button>
+                {secoesComItens.map((s) => {
+                  const count = restantes.filter((n) => secaoDaMateria(n).chave === s.chave).length;
+                  const ativo = filtro === s.chave;
+                  return (
+                    <button
+                      key={s.chave}
+                      onClick={() => setFiltro(ativo ? null : s.chave)}
+                      className={ativo ? "btn-primary" : "btn-ghost"}
+                      style={{ fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.35rem" }}
+                    >
+                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: s.cor, flexShrink: 0 }} />
+                      {s.label} ({count})
+                    </button>
+                  );
+                })}
               </div>
-            </section>
-          );
-        })}
+            )}
+
+            {/* Grade de 3 colunas (item 4 do DoD, T9), responsiva — substitui
+                o antigo empilhamento fixo de "1 grande + 2 pequenas" por
+                seção; o assunto de cada matéria agora é filtrável (acima) em
+                vez de forçar um agrupamento sempre visível. */}
+            {restantesFiltradas.length === 0 ? (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma matéria neste assunto ainda.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {restantesFiltradas.map((n, i) => cardGrade(n, i))}
+              </div>
+            )}
+          </section>
+        )}
+
+        <NewsletterForm />
       </div>
     </div>
   );
