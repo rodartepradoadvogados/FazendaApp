@@ -244,8 +244,18 @@ export default function NewsPage() {
           >
             <div className="md:w-3/5 relative" style={{ minHeight: "260px" }}>
               <img src={imagemMateria(destaque, 0)} alt="" className="w-full h-full object-cover" style={{ minHeight: "260px", maxHeight: "420px" }} />
+              {/* Selo "Destaque de hoje" (item 2 do DoD, T9) — separa
+                  visualmente a matéria mais recente da grade comum abaixo,
+                  além do próprio tamanho maior que o hero já tinha. */}
+              <span className="absolute top-4 left-4" style={{
+                fontSize: "0.62rem", fontWeight: 700, padding: "0.28rem 0.7rem", borderRadius: "999px",
+                textTransform: "uppercase", letterSpacing: "0.05em", background: "rgba(0,0,0,0.55)",
+                color: "#fff", backdropFilter: "blur(4px)",
+              }}>
+                Destaque de hoje
+              </span>
               {destaque.categoria && (
-                <span className="absolute top-4 left-4" style={{
+                <span className="absolute top-4 right-4" style={{
                   fontSize: "0.68rem", fontWeight: 700, padding: "0.3rem 0.75rem", borderRadius: "999px",
                   textTransform: "uppercase", letterSpacing: "0.03em", background: corBadgeCategoria(destaque.categoria),
                   color: "#fff", backdropFilter: "blur(4px)",
