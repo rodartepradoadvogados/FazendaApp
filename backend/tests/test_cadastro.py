@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContaCorrente, Estoque, PlanoContaGerencial, SeedFlag
+from fazenda.models import Animal, ContaCorrente, Estoque, Parto, PlanoContaGerencial, SeedFlag
 
 
 def _criar_conta_corrente(engine) -> int:
@@ -121,6 +121,98 @@ class TestFichaAnimal:
         c, engine = client
         r = c.put("/cadastro/animais/999", json={"numero": "999"})
         assert r.status_code == 404
+
+
+class TestMatrizesComParto:
+    def test_lista_so_femeas_com_pelo_menos_1_parto(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="750", nome="Estrela", sexo="F", ativo=True))
+            s.add(Animal(numero="751", nome="Sem parto", sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="750", ordem_parto=1))
+            s.commit()
+        r = c.get("/cadastro/animais/matrizes")
+        assert r.status_code == 200
+        numeros = [m["numero"] for m in r.json()]
+        assert "750" in numeros
+        assert "751" not in numeros
+        assert next(m for m in r.json() if m["numero"] == "750")["nome"] == "Estrela"
+
+
+class TestValidacaoMaeParto:
+    """A ficha do animal (Configurações > Cadastro > Animal) permite informar
+    a mãe manualmente, fora do lançamento de Parto — mas isso precisa casar
+    com o histórico reprodutivo já lançado dela (ver
+    `validar_e_vincular_mae` em fazenda/api/routers/cadastro/animais.py)."""
+
+    def test_mae_sem_nenhum_parto_bloqueia(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="700", sexo="F", ativo=True))
+            s.commit()
+        r = c.post("/cadastro/animais", json={"numero": "701", "sexo": "F", "mae_numero": "700"})
+        assert r.status_code == 409
+        assert "nenhum parto" in r.json()["detail"]
+
+    def test_mae_com_todos_partos_vinculados_a_outros_animais_bloqueia(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="710", sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="710", ordem_parto=1, numero_cria_1="711"))
+            s.add(Parto(numero_matriz="710", ordem_parto=2, numero_cria_1="712"))
+            s.commit()
+        r = c.post("/cadastro/animais", json={"numero": "713", "sexo": "F", "mae_numero": "710"})
+        assert r.status_code == 409
+        detalhe = r.json()["detail"]
+        assert "2" in detalhe
+        assert "711" in detalhe and "712" in detalhe
+
+    def test_mae_com_parto_livre_permite_e_vincula_a_cria(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="720", sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="720", ordem_parto=1, numero_cria_1="721"))
+            parto_livre = Parto(numero_matriz="720", ordem_parto=2)
+            s.add(parto_livre)
+            s.commit()
+            parto_livre_id = parto_livre.id
+
+        r = c.post("/cadastro/animais", json={"numero": "722", "sexo": "F", "mae_numero": "720"})
+        assert r.status_code == 200, r.text
+        assert r.json()["mae_numero"] == "720"
+
+        with Session(engine) as s:
+            parto = s.get(Parto, parto_livre_id)
+            assert parto.numero_cria_1 == "722"
+            outro_parto = s.exec(select(Parto).where(Parto.numero_matriz == "720", Parto.ordem_parto == 1)).first()
+            assert outro_parto.numero_cria_1 == "721"  # não mexeu no parto já ocupado por outra cria
+
+    def test_reeditar_a_mesma_ficha_sem_mudar_mae_nao_bloqueia(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="730", sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="730", ordem_parto=1))
+            s.commit()
+        c.post("/cadastro/animais", json={"numero": "731", "sexo": "F", "mae_numero": "730"})
+
+        r = c.put("/cadastro/animais/731", json={"numero": "731", "sexo": "F", "mae_numero": "730", "nome": "Estrela"})
+        assert r.status_code == 200, r.text
+        assert r.json()["nome"] == "Estrela"
+
+    def test_remover_mae_desvincula_o_parto(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="740", sexo="F", ativo=True))
+            parto = Parto(numero_matriz="740", ordem_parto=1)
+            s.add(parto)
+            s.commit()
+            parto_id = parto.id
+        c.post("/cadastro/animais", json={"numero": "741", "sexo": "F", "mae_numero": "740"})
+
+        r = c.put("/cadastro/animais/741", json={"numero": "741", "sexo": "F", "mae_numero": None})
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.get(Parto, parto_id).numero_cria_1 is None
 
 
 class TestMetaEstoque:

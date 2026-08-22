@@ -2575,14 +2575,35 @@ export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar animal"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar animal");
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 export async function atualizarAnimalFicha(numero: string, dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais/${numero}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar ficha"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao atualizar ficha");
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+// Fêmeas da fazenda com pelo menos 1 parto registrado — matrizes possíveis
+// para a sugestão/autocomplete do campo "Número da mãe" na ficha do animal
+// (CadastroAnimalForm). O backend valida a compatibilidade de verdade ao
+// salvar (ver validar_e_vincular_mae) — isto aqui é só a sugestão no campo.
+export type MatrizComParto = { numero: string; nome: string | null };
+export async function fetchMatrizesComParto(): Promise<MatrizComParto[]> {
+  const res = await authFetch(`${API}/cadastro/animais/matrizes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Matrizes com parto error: ${res.status}`);
   return res.json();
 }
 

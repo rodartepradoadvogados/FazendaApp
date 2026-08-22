@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Raca, SeedFlag
+from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Parto, Raca, SeedFlag
 from fazenda.rules.auditoria import fazenda_id_seguro
 
 from ._comum import _crud_nome_ativo
@@ -75,6 +75,119 @@ def _completar_genealogia_paterna(session: Session, animal: Animal) -> None:
             animal.bisavo_paterno_naab = avo_animal.pai_naab
 
 
+def _partos_da_matriz(session: Session, fazenda_id: int | None, mae_numero: str) -> list[Parto]:
+    query = select(Parto).where(Parto.numero_matriz == mae_numero)
+    if fazenda_id is not None:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    return list(session.exec(query.order_by(Parto.ordem_parto, Parto.id)).all())
+
+
+def _desvincular_cria_de_outros_partos(
+    session: Session, fazenda_id: int | None, numero_animal: str, manter_parto_id: int | None = None,
+) -> None:
+    """Remove o vínculo deste animal (como cria) de qualquer parto que hoje
+    aponte para ele, exceto o `manter_parto_id` informado — evita deixar o
+    mesmo animal "duplicado" como cria de dois partos diferentes quando a mãe
+    informada na ficha é trocada (ou removida)."""
+    query = select(Parto).where(
+        (Parto.numero_cria_1 == numero_animal) | (Parto.numero_cria_2 == numero_animal)
+    )
+    if fazenda_id is not None:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    for p in session.exec(query).all():
+        if manter_parto_id is not None and p.id == manter_parto_id:
+            continue
+        if p.numero_cria_1 == numero_animal:
+            p.numero_cria_1 = None
+        if p.numero_cria_2 == numero_animal:
+            p.numero_cria_2 = None
+        session.add(p)
+
+
+def validar_e_vincular_mae(session: Session, fazenda_id: int | None, mae_numero: str | None, numero_animal: str) -> None:
+    """Cruza a mãe informada manualmente na ficha do animal (fora do
+    lançamento de Parto) com o histórico reprodutivo JÁ LANÇADO dela, e só
+    permite gravar se sobrar pelo menos 1 parto da mãe ainda sem cria
+    vinculada (ou já vinculado a este mesmo animal, no caso de reeditar a
+    mesma ficha sem trocar a mãe) — vincula automaticamente a esse parto
+    livre (Parto.numero_cria_1/2), o mesmo campo usado pelo lançamento normal
+    de parto (ver `registrar_parto` em fazenda/api/routers/reproducao.py).
+
+    Sem essa validação, cadastrar/editar a mãe de qualquer jeito (inclusive
+    direto pela API, sem passar pela Ficha) deixaria o número da mãe como
+    texto solto, sem nenhum parto de fato vinculado a ela — e duas crias
+    diferentes poderiam "roubar" o mesmo parto uma da outra sem aviso.
+
+    Fonte da verdade no backend: chamada tanto por `criar_animal` quanto por
+    `atualizar_ficha_animal`, então nenhuma chamada direta à API contorna a
+    checagem (só a Ficha do Animal reforça isso no front, com um popup)."""
+    if not mae_numero:
+        # Mãe removida/vazia — desfaz qualquer vínculo anterior deste animal
+        # como cria de algum parto, para não deixar um parto "grudado" numa
+        # ficha que já não referencia mais aquela mãe.
+        _desvincular_cria_de_outros_partos(session, fazenda_id, numero_animal)
+        return
+
+    partos = _partos_da_matriz(session, fazenda_id, mae_numero)
+    if not partos:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Não é possível lançar essa mãe para esse animal, pois ela não possui nenhum parto "
+                f"registrado. Se quiser realizar esse lançamento, lance o histórico reprodutivo dessa "
+                f"vaca, inclusive o parto, e então cadastre esse animal."
+            ),
+        )
+
+    livre: Parto | None = None
+    ocupantes: list[str] = []
+    for p in partos:
+        outros = [n for n in (p.numero_cria_1, p.numero_cria_2) if n and n != numero_animal]
+        if outros:
+            ocupantes.extend(outros)
+        elif livre is None:
+            livre = p
+
+    if livre is None:
+        nomes = ", ".join(sorted(set(ocupantes)))
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Não é possível lançar essa mãe para esse animal, pois ela possui {len(partos)} "
+                f"parto(s) (dos animais {nomes}). Se quiser realizar esse lançamento, lance o "
+                f"histórico reprodutivo dessa vaca, inclusive o parto, e então cadastre esse animal."
+            ),
+        )
+
+    _desvincular_cria_de_outros_partos(session, fazenda_id, numero_animal, manter_parto_id=livre.id)
+    if livre.numero_cria_1 in (None, numero_animal):
+        livre.numero_cria_1 = numero_animal
+    elif livre.numero_cria_2 in (None, numero_animal):
+        livre.numero_cria_2 = numero_animal
+    session.add(livre)
+
+
+@router.get("/animais/matrizes")
+def listar_matrizes_com_parto(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Fêmeas da fazenda que já tiveram pelo menos 1 parto registrado —
+    matrizes possíveis para a sugestão/autocomplete do campo "Número da mãe"
+    na ficha de cadastro do animal (Configurações > Cadastro > Animal)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Parto)
+    if fazenda_id is not None:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    numeros = sorted({p.numero_matriz for p in session.exec(query).all() if p.numero_matriz})
+    if not numeros:
+        return []
+    query_animais = select(Animal).where(Animal.numero.in_(numeros))
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    nomes = {a.numero: a.nome for a in session.exec(query_animais).all()}
+    return [{"numero": n, "nome": nomes.get(n)} for n in numeros]
+
+
 @router.post("/animais")
 def criar_animal(
     dados: AnimalFichaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)
@@ -93,6 +206,8 @@ def criar_animal(
     for campo, valor in dados.model_dump(exclude={"numero"}).items():
         setattr(animal, campo, valor)
     _completar_genealogia_paterna(session, animal)
+    mae_numero = (animal.mae_numero or "").strip() or None
+    validar_e_vincular_mae(session, fazenda_id, mae_numero, numero)
     session.add(animal)
     session.commit()
     session.refresh(animal)
@@ -115,6 +230,8 @@ def atualizar_ficha_animal(
     if dados.data_baixa is not None:
         animal.ativo = False
     _completar_genealogia_paterna(session, animal)
+    mae_numero = (animal.mae_numero or "").strip() or None
+    validar_e_vincular_mae(session, fazenda_id, mae_numero, numero)
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
     session.commit()
