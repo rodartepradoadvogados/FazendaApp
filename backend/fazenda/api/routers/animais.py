@@ -346,17 +346,19 @@ def ficha_animal(
     if fazenda_id is not None:
         query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
     partos = session.exec(query_partos.order_by(Parto.data_parto)).all()
-    # Ordem de parto = posição cronológica (1º, 2º, 3º…). Quando a fonte não
-    # traz o número (ex.: animal com um único parto), deriva pela ordem da data
-    # — o primeiro parto é sempre "1", não fica em branco/zero. Exibida como
-    # "X de N" (N = total de partos do animal) para ficar claro de cara quantos
-    # partos o animal já teve ao todo.
+    # Ordem de parto = SEMPRE a posição cronológica (1º, 2º, 3º…) dentro desta
+    # lista, já ordenada por data_parto — nunca o `Parto.ordem_parto` gravado
+    # no banco. Esse campo vem do import de CSV (ver parsers/reprodutivo.py) e
+    # pode chegar errado ou duplicado (ex.: dois partos do mesmo animal ambos
+    # com ordem_parto=1) — confiar nele aqui fazia a vaca aparecer com "1 de 2"
+    # duas vezes em vez de "1 de 2" e "2 de 2" (bug relatado para o animal 403).
+    # Exibida como "X de N" (N = total de partos do animal) para ficar claro
+    # de cara quantos partos o animal já teve ao todo.
     total_partos = len(partos)
     partos_dump = []
     for idx, p in enumerate(partos):
         d = p.model_dump()
-        ordem = d.get("ordem_parto") or (idx + 1)
-        d["ordem_parto"] = f"{ordem} de {total_partos}"
+        d["ordem_parto"] = f"{idx + 1} de {total_partos}"
         partos_dump.append(d)
     query_servicos = select(Servico).where(Servico.numero_matriz == numero)
     if fazenda_id is not None:
@@ -399,9 +401,24 @@ def ficha_animal(
         # Servico.ordem_parto, que só é preenchido pelo import do CSV
         # REPRODUTIVO) para valer também para lançamentos manuais de IA.
         if s.data_servico:
-            d["ordem_parto_na_ia"] = sum(1 for p in partos if p.data_parto and p.data_parto < s.data_servico) + 1
+            ordem_alvo = sum(1 for p in partos if p.data_parto and p.data_parto < s.data_servico) + 1
         else:
-            d["ordem_parto_na_ia"] = None
+            ordem_alvo = None
+        d["ordem_parto_na_ia"] = ordem_alvo
+        # Parto que ESTE serviço deu origem, para a coluna "Parto" da tabela de
+        # Serviço/IA e diagnóstico: não há FK Servico→Parto no modelo, então
+        # usa a mesma ordem cronológica calculada acima — este serviço mira o
+        # parto que ocupa a posição `ordem_alvo` na lista de partos do animal
+        # (já ordenada por data). Só é preenchido quando o diagnóstico deste
+        # serviço é POSITIVO (regra do card "Parto" na ficha) — None tanto
+        # para diagnóstico não positivo quanto para o parto ainda não ter
+        # acontecido (frontend distingue "vazio" de "—" pelo próprio
+        # `diagnostico`, que já vai no dump).
+        diagnostico_positivo = (s.diagnostico or "").strip().upper() == "POSITIVO"
+        parto_alvo = (
+            partos[ordem_alvo - 1] if diagnostico_positivo and ordem_alvo and ordem_alvo <= total_partos else None
+        )
+        d["parto_resultante_data"] = parto_alvo.data_parto.isoformat() if parto_alvo and parto_alvo.data_parto else None
         servicos_dump.append(d)
 
     # Pai deste animal (nome de guerra + NAAB). Prioridade 1: cadastrado
@@ -692,6 +709,24 @@ def ficha_animal(
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
         animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
     )
+
+    # Mãe: prioridade 1 é o cadastro manual (Animal.mae_numero, preenchido em
+    # Configurações > Cadastro > Animal); fallback é o vínculo real de
+    # parentesco — o Parto que lista este animal como cria (`parto_como_cria`,
+    # já buscado acima para achar o pai) tem `numero_matriz`, que É a mãe. Sem
+    # este fallback, um animal nascido de um Parto lançado no sistema (sem
+    # ninguém preencher o cadastro manual depois) nunca mostrava a mãe na
+    # ficha — nem na versão de mesa, nem no app de campo — apesar do vínculo
+    # já existir nos dados.
+    if not animal_dump.get("mae_numero") and parto_como_cria:
+        animal_dump["mae_numero"] = parto_como_cria.numero_matriz
+        if not animal_dump.get("mae_nome"):
+            query_mae = select(Animal).where(Animal.numero == parto_como_cria.numero_matriz)
+            if fazenda_id is not None:
+                query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
+            mae_animal = session.exec(query_mae).first()
+            if mae_animal and mae_animal.nome:
+                animal_dump["mae_nome"] = mae_animal.nome
 
     # Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
     # produção, duração da lactação, tentativas de emprenhar e DEL de

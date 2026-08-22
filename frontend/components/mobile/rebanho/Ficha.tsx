@@ -18,6 +18,10 @@ import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/Selet
 // técnica de "--tint-cor" já usada no Menu (app/app/menu/page.tsx) — assim o
 // gráfico nasce com a paleta do app de campo sem duplicar a lógica do SVG.
 import { CurvaLactacao, type FaixaReferencia } from "@/components/CurvaLactacao";
+// Mesma regra da coluna "Parto" da versão de mesa (Reprodução — Serviço/IA e
+// diagnóstico): só mostra a que parto aquele serviço deu origem quando o
+// diagnóstico foi POSITIVO e o parto já aconteceu.
+import { textoPartoOriginado } from "@/components/FichaAnimal";
 
 // Campos ordenáveis da lista "Todos os animais" (Rebanho › Ficha do animal).
 const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
@@ -46,7 +50,7 @@ type Campo = [chave: string, rotulo: string, data?: boolean];
 const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "movimentos_lote", titulo: "Movimentações de lote", campos: [["data_movimento", "Data", true], ["lote_origem", "De"], ["lote_destino", "Para"], ["motivo", "Motivo"], ["origem", "Origem"]] },
   { chave: "partos", titulo: "Partos", campos: [["data_parto", "Data", true], ["ordem_parto", "Ordem"], ["tipo_parto", "Tipo"]] },
-  { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["tipo_semen", "Sêmen"], ["ordem_parto_na_ia", "Ordem de parto (na IA)"], ["diagnostico", "Diagnóstico"], ["data_diagnostico", "Diagnosticado em", true]] },
+  { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["tipo_semen", "Sêmen"], ["ordem_parto_na_ia", "Ordem de parto (na IA)"], ["diagnostico", "Diagnóstico"], ["data_diagnostico", "Diagnosticado em", true], ["parto", "Parto"]] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF", campos: [["dia", "Dia"], ["descricao", "Descrição"], ["data_prevista", "Prevista", true], ["realizada", "Feito"]] },
   { chave: "controles_leiteiros", titulo: "Controle leiteiro", campos: [["data_controle", "Data", true], ["producao_kg", "Produção (kg)"], ["del_no_controle", "DEL"]] },
   { chave: "pesagens_corporais", titulo: "Pesagens", campos: [["data_pesagem", "Data", true], ["peso_kg", "Peso (kg)"], ["del_dias", "DEL"]] },
@@ -97,7 +101,11 @@ function Secao({ chave, titulo, linhas, campos, altInicio }: { chave: string; ti
             style={chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}>
             <Grade>
               {campos.map(([chave, rot, data]) => (
-                <ParDado key={chave} label={rot} valor={chave === "origem" ? rotuloOrigemMovimentoLote(l[chave]) : mostrarValor(l[chave], data)} />
+                <ParDado key={chave} label={rot} valor={
+                  chave === "origem" ? rotuloOrigemMovimentoLote(l[chave])
+                  : chave === "parto" ? textoPartoOriginado(l)
+                  : mostrarValor(l[chave], data)
+                } />
               ))}
             </Grade>
           </MobCard>

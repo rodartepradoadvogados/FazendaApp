@@ -138,6 +138,11 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
     { header: "Central do pai", key: "touro_central" }, { header: "TPI do pai", key: "touro_tpi" }, { header: "NM$ do pai", key: "touro_nm" },
     { header: "Ordem de parto (na IA)", key: "ordem_parto_na_ia" }, { header: "Tentativa", key: "ordem_tentativa" },
     { header: "Data diagnóstico", key: "data_diagnosticoFmt" }, { header: "Diagnóstico", key: "diagnostico" },
+    // Parto que ESTE serviço deu origem — só preenchida quando o diagnóstico
+    // foi POSITIVO ("—" se ainda não pariu apesar disso; vazia se o
+    // diagnóstico não foi positivo). Ver `parto_resultante_data` no backend
+    // (fazenda.api.routers.animais.ficha_animal) e `textoPartoOriginado` abaixo.
+    { header: "Parto", key: "parto" },
   ] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF (D0/D7/D9/D11)", colunas: [
     { header: "Dia", key: "dia" }, { header: "Descrição", key: "descricao" }, { header: "Data prevista", key: "data_previstaFmt" },
@@ -205,6 +210,19 @@ const DATA_KEYS_EXTRA: Record<string, string[]> = {
   inducao_lactacao: ["data_realizacao"], protocolos_customizados: ["data_realizacao"],
 };
 
+// Coluna "Parto" da tabela de Serviço/IA e diagnóstico: texto curto (não é
+// data formatada nem "—"/vazio padrão) — por isso não segue o padrão
+// "campoFmt" das demais colunas de data, e sim uma função própria,
+// reaproveitada tal e qual pela versão mobile (ver FichaDetalhe em
+// mobile/rebanho/Ficha.tsx) para as duas telas mostrarem exatamente a mesma
+// regra.
+export function textoPartoOriginado(l: Record<string, unknown>): string {
+  const positivo = String(l.diagnostico || "").trim().toUpperCase() === "POSITIVO";
+  if (!positivo) return "";
+  const dataParto = l.parto_resultante_data as string | null | undefined;
+  return dataParto ? formatDate(dataParto) : "—";
+}
+
 function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Record<string, unknown>[] {
   return linhas.map((l) => {
     const nova: Record<string, unknown> = { ...l };
@@ -219,8 +237,89 @@ function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Recor
     // Rótulo amigável da origem (manual/sugestão confirmada/automática/passiva)
     // — badge só de leitura na Ficha, mantendo o valor bruto para ordenação.
     if (chave === "movimentos_lote") nova.origemFmt = rotuloOrigemMovimentoLote(l.origem);
+    if (chave === "servicos") nova.parto = textoPartoOriginado(l);
     return nova;
   });
+}
+
+// As três primeiras seções do PDF exportado (Quadro resumo, Informação da
+// previsão de parto e Resumo por parto) não vêm de uma lista (`ficha[chave]`)
+// como as demais — são os cartões de identificação/previsão/lactação
+// mostrados no topo da tela, com uma única linha cada. Construídas aqui a
+// partir dos MESMOS campos já exibidos na tela (nenhum dado novo, só
+// reorganizados para o formato tabela do exportador).
+function construirSecaoQuadroResumo(ficha: Ficha): SecaoFicha {
+  const a = ficha.animal as Record<string, unknown>;
+  const linha: Record<string, unknown> = {
+    sexo: a.sexo === "M" ? "Macho" : a.sexo === "F" ? "Fêmea" : "—",
+    categoria: String(a.categoria_abrev || a.categoria_completa || "—"),
+    lote_atual: String(a.grupo_primario || "—"),
+    data_nasc: a.data_nasc ? formatDate(a.data_nasc as string) : "—",
+    mae: String(a.mae_numero || "—"),
+    pai: ficha.pai?.nome ? `${ficha.pai.nome}${ficha.pai.naab ? ` (NAAB ${ficha.pai.naab})` : ""}` : "—",
+    raca: String(a.raca || "—"),
+    grau_sangue: String(a.grau_sangue || "—"),
+    situacao: a.ativo ? "Ativo" : "Baixado",
+    data_entrada: a.data_entrada ? formatDate(a.data_entrada as string) : "—",
+    valor: a.valor != null ? `R$ ${a.valor}` : "—",
+    dias_gestacao: ficha.precisao_parto?.dias_gestacao ?? "—",
+    del_atual: a.del_dias != null ? String(a.del_dias) : "—",
+    previsao_parto: ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—",
+  };
+  return {
+    titulo: "Quadro resumo",
+    colunas: [
+      { header: "Sexo", key: "sexo" }, { header: "Categoria", key: "categoria" }, { header: "Lote atual", key: "lote_atual" },
+      { header: "Data de nascimento", key: "data_nasc" }, { header: "Mãe", key: "mae" }, { header: "Pai", key: "pai" },
+      { header: "Raça", key: "raca" }, { header: "Grau de sangue", key: "grau_sangue" }, { header: "Situação", key: "situacao" },
+      { header: "Data de entrada", key: "data_entrada" }, { header: "Valor", key: "valor" },
+      { header: "Dias de gestação", key: "dias_gestacao" }, { header: "DEL atual", key: "del_atual" },
+      { header: "Previsão de parto", key: "previsao_parto" },
+    ],
+    linhas: [linha],
+  };
+}
+
+function construirSecaoPrevisaoParto(pp: PrecisaoParto): SecaoFicha {
+  const linha: Record<string, unknown> = {
+    ultima_ia: pp.data_ultima_ia_positiva ? formatDate(pp.data_ultima_ia_positiva) : "—",
+    diagnostico_positivo: pp.data_confirmacao_prenhez ? formatDate(pp.data_confirmacao_prenhez) : "—",
+    dias_gestacao: pp.dias_gestacao ?? "—",
+    previsao_parto: pp.data_parto_provavel ? formatDate(pp.data_parto_provavel) : "—",
+    dias_faltam: pp.dias_para_parto != null ? `${pp.dias_para_parto} dia(s)` : "—",
+  };
+  return {
+    titulo: "Informação da previsão de parto",
+    colunas: [
+      { header: "Última IA", key: "ultima_ia" }, { header: "Último diagnóstico positivo", key: "diagnostico_positivo" },
+      { header: "Dias de gestação", key: "dias_gestacao" }, { header: "Previsão de parto", key: "previsao_parto" },
+      { header: "Faltam", key: "dias_faltam" },
+    ],
+    linhas: [linha],
+  };
+}
+
+function construirSecaoResumoPartos(linhas: Ficha["resumo_partos"]): SecaoFicha {
+  const fmtKg = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg`);
+  return {
+    titulo: "Resumo por parto",
+    colunas: [
+      { header: "Parto", key: "parto" }, { header: "Status", key: "status" },
+      { header: "DEL", key: "dias_em_lactacao" }, { header: "Produção total", key: "producao_total" },
+      { header: "Média/dia", key: "producao_media_dia" }, { header: "305 dias", key: "producao_305_dias" },
+      { header: "Tentativas p/ emprenhar", key: "tentativas_emprenhar" }, { header: "DEL na concepção", key: "del_concepcao" },
+    ],
+    linhas: linhas.map((l) => ({
+      parto: `${l.ordem_parto}º — ${formatDate(l.data_parto)}`,
+      status: l.lactacao_encerrada ? "Encerrada" : "Em andamento",
+      dias_em_lactacao: l.dias_em_lactacao,
+      producao_total: fmtKg(l.producao_total_kg),
+      producao_media_dia: fmtKg(l.producao_media_dia_kg),
+      producao_305_dias: fmtKg(l.producao_305_dias_kg),
+      tentativas_emprenhar: l.tentativas_emprenhar ?? "—",
+      del_concepcao: l.del_concepcao ?? "—",
+    })),
+  };
 }
 
 const cardStyle: React.CSSProperties = { marginBottom: "1rem" };
@@ -499,8 +598,22 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
 
   async function exportarPDF() {
     if (!ficha) return;
-    const secoes: SecaoFicha[] = SECOES
+    // Ordem fixa dos 4 primeiros blocos do PDF exportado — a mesma sequência
+    // em que o usuário lê a ficha na tela (identificação → previsão de parto
+    // em aberto → histórico de partos → resumo por lactação) — só depois vem
+    // o restante das seções (reprodução, sanidade, produção etc.), na mesma
+    // ordem de sempre (SECOES, sem "partos" — já usado no bloco 3).
+    const partosSecao = SECOES.find((s) => s.chave === "partos")!;
+    const demaisSecoes: SecaoFicha[] = SECOES
+      .filter((s) => s.chave !== "partos")
       .map((s) => ({ titulo: s.titulo, colunas: s.colunas, linhas: formatarLinhas(s.chave, (ficha[s.chave] as Record<string, unknown>[]) || []) }));
+    const secoes: SecaoFicha[] = [
+      construirSecaoQuadroResumo(ficha),
+      ...(ficha.precisao_parto ? [construirSecaoPrevisaoParto(ficha.precisao_parto)] : []),
+      { titulo: partosSecao.titulo, colunas: partosSecao.colunas, linhas: formatarLinhas("partos", ficha.partos || []) },
+      construirSecaoResumoPartos(ficha.resumo_partos || []),
+      ...demaisSecoes,
+    ];
     try {
       await exportarFichaPDF(
         `Ficha do animal ${numero}`,
