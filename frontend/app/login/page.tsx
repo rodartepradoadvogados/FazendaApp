@@ -1,31 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X, ShieldCheck } from "lucide-react";
-import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type NoticiaNews, type FazendaAtual } from "@/lib/api";
+import { LogIn, Loader2, Eye, EyeOff, X, ShieldCheck, Building2 } from "lucide-react";
+import { login, selecionarFazenda, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type FazendaAtual } from "@/lib/api";
 import { ehAppOuPwa } from "@/lib/nativo";
-import { Building2 } from "lucide-react";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
-import { BannerCarousel } from "@/components/login/BannerCarousel";
-import FeatureShowcase from "@/components/login/FeatureShowcase";
-import BannerGrid from "@/components/login/BannerGrid";
-import MilkPriceExplainer from "@/components/login/MilkPriceExplainer";
-
-function useUltimaNoticia() {
-  const [noticia, setNoticia] = useState<NoticiaNews | null | undefined>(undefined);
-  useEffect(() => {
-    fetchNoticias(false)
-      .then((feed) => {
-        const todas = feed.fontes.flatMap((f) => f.noticias);
-        todas.sort((a, b) => (b.data_publicacao || b.capturado_em).localeCompare(a.data_publicacao || a.capturado_em));
-        setNoticia(todas[0] ?? null);
-      })
-      .catch(() => setNoticia(null));
-  }, []);
-  return noticia;
-}
+import { CowDataMark } from "@/components/brand/CowDataMark";
+import { CowDataWordmark } from "@/components/CowDataWordmark";
 
 // Fluxo "Esqueci minha senha", em etapas:
 //  - "pedirLogin": usuário ainda não digitou o login no formulário — pergunta qual é.
@@ -242,26 +224,30 @@ function Hero() {
   };
 
   return (
-    <section style={{ position: "relative", overflow: "hidden", padding: "3.5rem 1.5rem 4rem" }}>
+    <section style={{
+      position: "relative", overflow: "hidden", minHeight: "calc(100vh - 4.2rem)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: "3rem 1.5rem",
+    }}>
       <LoginWatermark />
-      <div style={{
-        position: "relative", zIndex: 1, maxWidth: "1320px", margin: "0 auto",
-        display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(340px,0.85fr)", gap: "3.2rem", alignItems: "center",
-      }} className="login-hero-grid">
-        <BannerCarousel />
+      {/* Curva da marca em SVG no rodapé da página (redesign T7, mockup 1h) —
+          o mesmo traço do ícone CowDataMark, só decorativo (aria-hidden). */}
+      <svg aria-hidden="true" viewBox="0 0 600 200" preserveAspectRatio="none"
+        style={{ position: "absolute", left: 0, right: 0, bottom: 0, width: "100%", height: "180px", opacity: 0.22, zIndex: 0 }}>
+        <path d="M0 170 C90 160 140 60 240 44 C300 34 330 34 380 50 C470 78 520 150 600 168" fill="none" stroke="var(--dourado-light)" strokeWidth="2" />
+      </svg>
 
-        {/* Cartão de login: largura fixa e ancorado à direita da coluna —
-            não se move quando o carrossel troca de banner ao lado. */}
-        <div
-          className="card login-card-offset"
-          style={{
-            boxShadow: "0 20px 50px rgba(0,0,0,0.4)", justifySelf: "end", width: "100%", maxWidth: "380px",
-            // 2,5cm para a direita — mas nunca mais do que o espaço livre até a
-            // borda da seção, senão o cartão vaza para fora da tela em telas menores.
-            transform: "translateX(min(2.5cm, max(0px, calc((100vw - 1320px) / 2 - 12px))))",
-          }}
-        >
-          {fazendasParaEscolher ? (
+      {/* Cartão de login: enxuto — só entrar (redesign T7, mockup 1h). O
+          carrossel/showcase de recursos/grid de banners/simulador de preço/
+          callout de News saíram daqui (viram a landing pública — T8, ainda
+          não construída). Nenhuma lógica do formulário mudou, só o layout
+          ao redor: antes era 2 colunas (carrossel + cartão à direita),
+          agora é 1 cartão único e centralizado. */}
+      <div className="card" style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: "352px", boxShadow: "0 24px 60px rgba(0,0,0,0.45)" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", marginBottom: "1.3rem" }}>
+          <CowDataMark size={46} />
+          <CowDataWordmark size="1.3rem" />
+        </div>
+        {fazendasParaEscolher ? (
             <>
               <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
                 {fazendasParaEscolher.some((f) => f.cowdata)
@@ -330,7 +316,6 @@ function Hero() {
             </>
           )}
         </div>
-      </div>
 
       <EsqueciSenhaModal
         etapa={etapaEsqueci}
@@ -348,66 +333,18 @@ function Hero() {
   );
 }
 
-function Secao({ id, titulo, subtitulo, children }: { id: string; titulo: string; subtitulo?: string; children: React.ReactNode }) {
-  return (
-    <section id={id} style={{ padding: "3rem 1.5rem" }}>
-      <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
-        <h2 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#fff", margin: "0 0 0.4rem", textAlign: "center" }}>{titulo}</h2>
-        {subtitulo && <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.9rem", maxWidth: "36rem", margin: "0 auto 2rem" }}>{subtitulo}</p>}
-        {!subtitulo && <div style={{ marginBottom: "2rem" }} />}
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function MilkNewsCallout() {
-  const noticia = useUltimaNoticia();
-  return (
-    <section id="milknews" style={{ padding: "3rem 1.5rem 4rem" }}>
-      <div style={{ maxWidth: "1080px", margin: "0 auto" }}>
-        <Link href="/news" style={{
-          display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1.2rem", textDecoration: "none",
-          padding: "1.6rem 1.8rem", borderRadius: "var(--r-sm)",
-          background: "linear-gradient(135deg, var(--vinho), var(--vinho-dark))",
-          border: "1px solid var(--vinho-light)", boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
-        }}>
-          <span style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: "3.2rem", height: "3.2rem", borderRadius: "999px",
-            background: "rgba(201,164,76,0.15)", flexShrink: 0,
-          }}>
-            <Newspaper size={26} style={{ color: "#C9A44C" }} />
-          </span>
-          <span style={{ flex: 1, minWidth: "16rem" }}>
-            <span style={{ display: "block", color: "#C9A44C", fontWeight: 800, fontSize: "1.15rem" }}>Milk News — nosso blog de pecuária leiteira</span>
-            <span style={{ display: "block", color: "rgba(255,255,255,0.8)", fontSize: "0.85rem", marginTop: "0.2rem" }}>
-              {noticia === undefined && "Carregando a última matéria…"}
-              {noticia === null && "Cotação do leite, mercado, genética e manejo — aberto a qualquer visitante, sem precisar de login."}
-              {noticia && <>Última matéria: <strong>{noticia.manchete}</strong></>}
-            </span>
-          </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", color: "#C9A44C", fontWeight: 700, fontSize: "0.9rem", flexShrink: 0 }}>
-            Ler o blog <ArrowRight size={18} />
-          </span>
-        </Link>
-      </div>
-    </section>
-  );
-}
-
+// Redesign T7 (mockup 1h) — "Login enxuto — só entrar": as seções de
+// marketing que existiam aqui (showcase de recursos, grid de banners,
+// simulador de preço do leite, callout do Milk News, via os componentes
+// Secao/MilkNewsCallout que moravam neste arquivo) saíram; o login volta a
+// ser só o cartão de entrar. Esse conteúdo vira a landing pública (mockup
+// 1g, ainda não construída) — os componentes que ele usava
+// (BannerCarousel/FeatureShowcase/BannerGrid/MilkPriceExplainer) continuam
+// existindo em components/login/*, só não são mais importados aqui.
 export default function LoginPage() {
   return (
     <PublicPage variant="login">
       <Hero />
-      <Secao id="recursos" titulo="Tudo que a fazenda precisa, em um painel só" subtitulo="Seis frentes cobertas de ponta a ponta — sem planilha solta, sem informação perdida.">
-        <FeatureShowcase />
-        <BannerGrid />
-      </Secao>
-      <Secao id="simulador" titulo="Entenda o preço do seu leite" subtitulo="Um exemplo de como qualidade e volume pesam no preço final — e uma referência geral de como esse preço costuma ser montado.">
-        <MilkPriceExplainer />
-      </Secao>
-      <MilkNewsCallout />
     </PublicPage>
   );
 }
