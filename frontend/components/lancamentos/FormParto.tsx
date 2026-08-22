@@ -110,7 +110,7 @@ function classeColostragemUI(brix: number | null, proteina: number | null): { tx
   return { txt: "—", cor: "var(--text-muted)" };
 }
 
-export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
+export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; lotes: string[]; onSalvo?: () => void }) {
   const [modo, setModo] = useState<"animal" | "lote" | "categoria">("animal");
   const [matriz, setMatriz] = useState("");
   const [dataParto, setDataParto] = useState(() => new Date().toISOString().slice(0, 10));
@@ -406,6 +406,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       );
       if (pendencias.length) setFilaLotes(pendencias);
       limparFormulario();
+      onSalvo?.();
     } finally {
       setSalvando(false);
     }
@@ -498,6 +499,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${pendencias.length ? ` ${pendencias.length} sugestão(ões) de troca de lote aguardando confirmação abaixo.` : ""}${movidosAutomaticamente.length ? ` Transferido(s) automaticamente: ${movidosAutomaticamente.join(", ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
       if (pendencias.length) setFilaLotes(pendencias);
       limparFormulario();
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar parto");
     } finally {

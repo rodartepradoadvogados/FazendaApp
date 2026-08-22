@@ -35,7 +35,7 @@ export function BstLancamentoView() {
   );
 }
 
-export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
+export function FormProtocoloSanitario({ animais, estoque, onSalvo }: { animais: AnimalRow[]; estoque: EstoqueItem[]; onSalvo?: () => void }) {
   const [protocolos, setProtocolos] = useState<ProtocoloLocal[]>([]);
   const [protocoloId, setProtocoloId] = useState("");
   const [matriz, setMatriz] = useState("");
@@ -214,6 +214,7 @@ export function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRo
         : `Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.${avisoTxt}`);
       setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setGrauMastite(""); setAgente(""); setResultadoCmt(""); setTetosSel(new Set());
       setAnimaisSelecionados(new Set()); setLotesSelecionados(new Set()); setCategoriaId("");
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar protocolo sanitário");
     } finally {

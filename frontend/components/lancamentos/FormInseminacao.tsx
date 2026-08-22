@@ -23,7 +23,7 @@ const CAT_TOURO = [
   { id: "fazenda" as const, label: "Touro da fazenda" },
 ];
 
-export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO }: {
+export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO, prefill, onSalvo }: {
   animais: AnimalRow[];
   // numero -> motivo de inaptidão a serviço. A lista mostra TODAS as fêmeas,
   // com as inaptas em cinza e o motivo ao lado — antes elas simplesmente não
@@ -31,6 +31,8 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
   // app/lancamentos/page.tsx e backend/fazenda/rules/aptidao.py).
   motivosInaptidao?: Map<string, string>;
   idadeMinServico?: number;
+  prefill?: { numeroMatriz?: string | null; protocolo?: string | null };
+  onSalvo?: () => void;
 }) {
   const { rotuloDe } = useEstadosReprodutivos();
   // Ligado quando o backend recusa com um 409 de aptidão CONFIRMÁVEL — aí a
@@ -141,12 +143,15 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
   }, []);
 
   // Vindo da Agenda (link "Ir para Inseminação" do D11): pré-seleciona matriz + IATF.
+  // `prefill` (quando a gaveta é aberta direto pela própria Agenda, sem
+  // navegar pra outra página) tem prioridade; sem ele, cai no querystring de
+  // sempre (fluxo antigo via /lancamentos?ir=inseminacao&...).
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
-    const numeroMatriz = qs.get("numero_matriz");
+    const numeroMatriz = prefill?.numeroMatriz ?? qs.get("numero_matriz");
     if (numeroMatriz) setSel(new Set([numeroMatriz]));
-    if (qs.get("protocolo")) { setTipo("iatf"); setOrigemSelecao("protocolo"); }
-  }, []);
+    if (prefill?.protocolo ?? qs.get("protocolo")) { setTipo("iatf"); setOrigemSelecao("protocolo"); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Na origem "protocolo", quando a seleção pertence a um único lançamento
   // IATF, vincula automaticamente — evita o usuário ter que escolher à toa.
@@ -190,6 +195,7 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
       } else {
         setSucesso(`${r.criados} inseminação(ões) registrada(s)${tipo === "iatf" ? " (IATF)" : tipo === "monta_natural" ? " (monta natural)" : " (cio natural)"}.`);
         setSel(new Set()); setLotesSelecionadosInsem([]); setTouro("");
+        onSalvo?.();
       }
       // Sem isso, o estoque de sêmen exibido (doses do touro) e a lista de
       // matrizes em protocolo IATF vigente ficavam presos no valor de quando

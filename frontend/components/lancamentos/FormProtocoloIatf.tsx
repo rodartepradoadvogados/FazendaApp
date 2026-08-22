@@ -141,11 +141,12 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
   );
 }
 
-export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO }: {
+export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO, onSalvo }: {
   animais: AnimalRow[];
   // numero -> motivo de inaptidão (ver FormInseminacao e rules/aptidao.py).
   motivosInaptidao?: Map<string, string>;
   idadeMinServico?: number;
+  onSalvo?: () => void;
 }) {
   // Novo protocolo (cria um lançamento) ou adicionar animais a um já existente.
   const [modo, setModo] = useState<"novo" | "existente">("novo");
@@ -217,6 +218,7 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
       setSel(new Set()); setUm("");
       recarregarAtivosRef.current();
       if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => {});
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar protocolo IATF");
       // 409 de aptidão confirmável — ver o mesmo tratamento em FormInseminacao.

@@ -32,9 +32,13 @@ const LABEL_RESULTADO_EXAME: Record<string, string> = { positivo: "Positivo", ne
  * perguntar "já existe uma regra — quer usá-la?" (a resposta já é sim, e já
  * se sabe QUAL regra). Sem isto, sobra só o fluxo "Avulso" de sempre.
  */
-export function FormPreventivoAplicacao({ animais, lotes, estoque, calendarioFixo }: {
+export function FormPreventivoAplicacao({ animais, lotes, estoque, calendarioFixo, prefill, onSalvo }: {
   animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[];
   calendarioFixo?: { id: number; evento_sanitario_id: number };
+  /** Vindo direto da Agenda (gaveta aberta sem navegar) — equivalente aos
+   * mesmos parâmetros que hoje chegam via querystring (?evento_agenda=...). */
+  prefill?: { eventoAgenda?: string | null; eventoSanitarioId?: string | null; numeroMatriz?: string | null; data?: string | null; calendarioId?: string | null };
+  onSalvo?: () => void;
 }) {
   const { rotuloDe } = useEstadosReprodutivos();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
@@ -132,6 +136,16 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque, calendarioFix
   // lembrete de rebanho) o usuário escolhe na hora.
   useEffect(() => {
     if (calendarioFixo) return; // regra já travada por prop — nada a puxar da URL
+    // Gaveta aberta direto pela Agenda (sem navegar): `prefill` chega pronto,
+    // sem passar pela querystring — mesmos campos, mesma prioridade.
+    if (prefill) {
+      if (prefill.eventoSanitarioId) setEventoId(prefill.eventoSanitarioId);
+      if (prefill.data) setDataEvento(prefill.data);
+      if (prefill.numeroMatriz) { setVinculo("animal"); setAnimaisSel(new Set([prefill.numeroMatriz])); }
+      setEventoAgenda(prefill.eventoAgenda ?? null);
+      if (prefill.calendarioId) setCalendarioIdAgenda(Number(prefill.calendarioId));
+      return;
+    }
     const qs = new URLSearchParams(window.location.search);
     if (qs.get("ir") !== "preventivo_aplicacao") return;
     const evId = qs.get("evento_sanitario_id");
@@ -142,7 +156,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque, calendarioFix
     setEventoAgenda(qs.get("evento_agenda"));
     const calId = qs.get("calendario_id");
     if (calId) setCalendarioIdAgenda(Number(calId));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
@@ -280,6 +294,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque, calendarioFix
       }
       setAnimaisSel(new Set()); setLotesSelecionados([]); setCategoriasSel(new Set());
       setDiagnostico(""); setResultadoNumerico("");
+      onSalvo?.();
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
     finally { setSalvando(false); }
   }

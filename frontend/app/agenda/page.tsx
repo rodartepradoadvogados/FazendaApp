@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
-  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
+  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoque, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
   criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
   authFetch, API, mensagemErroApi,
@@ -22,6 +23,14 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Indicador, SecaoRecolhivel } from "@/components/ui";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
+import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
+import { type EstoqueItem } from "@/components/lancamentos/comumForms";
+// Mesmos dois formulários de components/lancamentos/* que a tela de Lançamentos
+// abre na gaveta (ver GAVETA_LEAFS em app/lancamentos/page.tsx) — aqui abrem
+// direto da Agenda, sem navegar pra outra página (ver abrirGavetaPreventivo/
+// abrirGavetaInseminacao mais abaixo).
+const FormPreventivoAplicacao = dynamic(() => import("@/components/lancamentos/FormPreventivoAplicacao").then((m) => m.FormPreventivoAplicacao), { ssr: false });
+const FormInseminacao = dynamic(() => import("@/components/lancamentos/FormInseminacao").then((m) => m.FormInseminacao), { ssr: false });
 
 const COLUNAS_AGENDA = [
   { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
@@ -362,6 +371,45 @@ export default function AgendaPage() {
     catch (e: any) { setAgenda(null); setErro(e?.message || "erro desconhecido"); }
     finally { setLoading(false); }
   }, [data, diasJanela]);
+
+  // Gaveta lateral (T2, mockup 1e) — Preventivo/Inseminação abertos direto
+  // daqui, sem navegar pra /lancamentos (ver abrirGavetaPreventivo/
+  // abrirGavetaInseminacao mais abaixo, usados no lugar dos antigos
+  // <a href="/lancamentos?ir=..."> ). animais/estoque próprios (não reusa
+  // `animaisTodos`, que só carrega sob demanda pro vínculo do evento manual)
+  // porque aqui precisam estar prontos assim que a Agenda abre.
+  const [animaisGaveta, setAnimaisGaveta] = useState<AnimalRow[]>([]);
+  const [estoqueGaveta, setEstoqueGaveta] = useState<EstoqueItem[]>([]);
+  useEffect(() => {
+    fetchAnimais().then(setAnimaisGaveta).catch(() => {});
+    fetchEstoque().then((d) => setEstoqueGaveta(d.itens || [])).catch(() => {});
+  }, []);
+  const lotesGaveta = useMemo(
+    () => Array.from(new Set(animaisGaveta.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
+    [animaisGaveta],
+  );
+  type GavetaAgendaEstado =
+    | { tipo: "preventivo_aplicacao"; prefill: { eventoAgenda?: string | null; eventoSanitarioId?: string | null; numeroMatriz?: string | null; data?: string | null; calendarioId?: string | null } }
+    | { tipo: "inseminacao"; prefill: { numeroMatriz?: string | null; protocolo?: string | null } }
+    | null;
+  const [gavetaAgenda, setGavetaAgenda] = useState<GavetaAgendaEstado>(null);
+  const [formKeyGavetaAgenda, setFormKeyGavetaAgenda] = useState(0);
+  const [mensagemSalvaGavetaAgenda, setMensagemSalvaGavetaAgenda] = useState<string | null>(null);
+  const abrirGavetaPreventivo = useCallback((prefill: Extract<GavetaAgendaEstado, { tipo: "preventivo_aplicacao" }>["prefill"]) => {
+    setGavetaAgenda({ tipo: "preventivo_aplicacao", prefill });
+    setMensagemSalvaGavetaAgenda(null);
+  }, []);
+  const abrirGavetaInseminacao = useCallback((prefill: Extract<GavetaAgendaEstado, { tipo: "inseminacao" }>["prefill"]) => {
+    setGavetaAgenda({ tipo: "inseminacao", prefill });
+    setMensagemSalvaGavetaAgenda(null);
+  }, []);
+  const fecharGavetaAgenda = useCallback(() => { setGavetaAgenda(null); setMensagemSalvaGavetaAgenda(null); }, []);
+  const aoSalvarGavetaAgenda = useCallback(() => {
+    setMensagemSalvaGavetaAgenda("Lançamento salvo com sucesso.");
+    carregar();
+  }, [carregar]);
+  const salvarEProximoGavetaAgenda = useCallback(() => { setMensagemSalvaGavetaAgenda(null); setFormKeyGavetaAgenda((k) => k + 1); }, []);
+  const concluirGavetaAgenda = useCallback(() => { setMensagemSalvaGavetaAgenda(null); setGavetaAgenda(null); }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -1030,17 +1078,22 @@ export default function AgendaPage() {
                       // Em modo linha única (grupo inteiro selecionado), o painel some daqui
                       // e some 1 vez só, compartilhado, logo antes do botão de confirmar.
                       const painelAberto = elegivel && (loteAtivoDia ? (selecionadoLote && !modoLinhaUnicaDia) : expandidoBaixa.has(e.id));
-                      const linkFormularioCompleto = (numeroObrigatorio: boolean) => {
+                      // Abre a gaveta de Preventivo/Avulso direto aqui (mesma tela de
+                      // Lançamentos > Sanitário > Preventivo, sem navegar pra lá) —
+                      // antes navegava pra "/lancamentos?ir=preventivo_aplicacao&...";
+                      // o prefill abaixo é equivalente aos mesmos parâmetros.
+                      const prefillPreventivo = (numeroObrigatorio: boolean) => {
                         const ev = e as any;
-                        const p = new URLSearchParams({ ir: "preventivo_aplicacao", evento_agenda: e.id });
-                        if (ev.evento_sanitario_id) p.set("evento_sanitario_id", String(ev.evento_sanitario_id));
-                        if (numeroObrigatorio && e.numero_animal) p.set("numero_matriz", e.numero_animal);
-                        if (e.data) p.set("data", e.data);
-                        // Pendência de uma regra do calendário sanitário JÁ existente
-                        // (tipo calendario_sanitario) — leva o id para não criar uma
-                        // regra nova duplicada ao dar baixa em Lançamentos.
-                        if (ev.tipo === "calendario_sanitario" && ev.calendario_id) p.set("calendario_id", String(ev.calendario_id));
-                        return `/lancamentos?${p.toString()}`;
+                        return {
+                          eventoAgenda: String(e.id),
+                          eventoSanitarioId: ev.evento_sanitario_id ? String(ev.evento_sanitario_id) : null,
+                          numeroMatriz: numeroObrigatorio && e.numero_animal ? e.numero_animal : null,
+                          data: e.data || null,
+                          // Pendência de uma regra do calendário sanitário JÁ existente
+                          // (tipo calendario_sanitario) — leva o id para não criar uma
+                          // regra nova duplicada ao dar baixa em Lançamentos.
+                          calendarioId: ev.tipo === "calendario_sanitario" && ev.calendario_id ? String(ev.calendario_id) : null,
+                        };
                       };
                       const ehSugestaoMov = (e as any).tipo === "sugestao_movimentacao";
                       const ehBstAplicacao = (e as any).tipo === "bst_aplicacao";
@@ -1117,9 +1170,9 @@ export default function AgendaPage() {
                                   // resolver inline sem escolher os animais; segue para o formulário,
                                   // que já sabe tratar exame (sem produto/dose) e vacina/tratamento.
                                   <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
-                                    <a href={linkFormularioCompleto(false)} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (evento sem matriz específica — escolha o alvo no formulário)">
+                                    <button type="button" onClick={() => abrirGavetaPreventivo(prefillPreventivo(false))} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (evento sem matriz específica — escolha o alvo no formulário)">
                                       <Syringe size={12} /> Dar baixa (aplicar)
-                                    </a>
+                                    </button>
                                     <BotaoDescartar e={e} />
                                   </div>
                                 ) : loteAtivoDia ? (
@@ -1131,9 +1184,9 @@ export default function AgendaPage() {
                                   </label>
                                 ) : (abrirLancamento[e.id] ?? false) ? (
                                   <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
-                                    <a href={linkFormularioCompleto(true)} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Abre a tela completa de lançamento">
+                                    <button type="button" onClick={() => abrirGavetaPreventivo(prefillPreventivo(true))} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Abre o formulário completo (gaveta)">
                                       <Syringe size={12} /> Dar baixa (aplicar)
-                                    </a>
+                                    </button>
                                     <label className="flex items-center gap-1" style={{ fontSize: "0.66rem", color: "var(--text-muted)", cursor: "pointer" }}>
                                       <input type="checkbox" checked={abrirLancamento[e.id] ?? false} onChange={() => setAbrirLancamento((p) => ({ ...p, [e.id]: !p[e.id] }))} /> abrir lançamento
                                     </label>
@@ -1233,12 +1286,13 @@ export default function AgendaPage() {
                                           <td style={{ fontWeight: 700 }}>{numero}</td>
                                           {ehD11 && (
                                             <td>
-                                              <a
-                                                href={`/lancamentos?ir=inseminacao&numero_matriz=${encodeURIComponent(numero)}&protocolo=${encodeURIComponent(e.protocolo || "")}`}
+                                              <button
+                                                type="button"
+                                                onClick={() => abrirGavetaInseminacao({ numeroMatriz: numero, protocolo: e.protocolo || null })}
                                                 className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
                                               >
                                                 <Syringe size={12} /> Ir para Inseminação
-                                              </a>
+                                              </button>
                                             </td>
                                           )}
                                         </tr>
@@ -2568,6 +2622,35 @@ export default function AgendaPage() {
         </div>
       )}
 
+      {/* Gaveta lateral (T2, mockup 1e) — Preventivo/Avulso e Inseminação
+          abertos direto de uma linha da Agenda (ver abrirGavetaPreventivo/
+          abrirGavetaInseminacao acima), sem navegar pra /lancamentos. */}
+      <GavetaLancamento
+        aberto={gavetaAgenda != null}
+        onFechar={fecharGavetaAgenda}
+        titulo={gavetaAgenda?.tipo === "inseminacao" ? "Inseminação" : "Preventivo — Avulso"}
+        icone={gavetaAgenda?.tipo === "inseminacao" ? Heart : Syringe}
+        mensagemSalva={mensagemSalvaGavetaAgenda}
+        onSalvarProximo={salvarEProximoGavetaAgenda}
+        onConcluir={concluirGavetaAgenda}
+      >
+        {gavetaAgenda?.tipo === "preventivo_aplicacao" && (
+          <FormPreventivoAplicacao
+            key={formKeyGavetaAgenda}
+            animais={animaisGaveta} lotes={lotesGaveta} estoque={estoqueGaveta}
+            prefill={gavetaAgenda.prefill}
+            onSalvo={aoSalvarGavetaAgenda}
+          />
+        )}
+        {gavetaAgenda?.tipo === "inseminacao" && (
+          <FormInseminacao
+            key={formKeyGavetaAgenda}
+            animais={animaisGaveta}
+            prefill={gavetaAgenda.prefill}
+            onSalvo={aoSalvarGavetaAgenda}
+          />
+        )}
+      </GavetaLancamento>
     </div>
   );
 }

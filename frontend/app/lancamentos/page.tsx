@@ -24,6 +24,7 @@ const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactac
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { inaptidaoServico, useIdadeMinServico } from "@/components/lancamentos/_shared";
+import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 // Formulários por tipo de lançamento (reprodutivo/produção/sanidade/dieta/
 // estoque) — extraídos para components/lancamentos/*, mesmo motivo do bloco
 // de dynamic() acima (code-splitting: só baixa o formulário da sub-aba aberta).
@@ -56,6 +57,19 @@ const FormAjusteSaldoEstoque = dynamic(() => import("@/components/lancamentos/Fo
 
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : "");
 const LACT = ["01", "02", "03"];
+
+// Redesign "Cooperativa" (T2, mockup 1e) — sub-tipos que abrem numa gaveta
+// lateral (~330px) em vez do card cheio de sempre: todo o conteúdo físico de
+// components/lancamentos/* (reprodutivo, produção, sanidade, alimentação,
+// estoque). Financeiro (T4, duas colunas — outro agente mexendo em paralelo)
+// e os demais sub-tipos (Pesagem, Secagem, Indução de lactação, Qualidade do
+// leite, Venda mensal, Animais, Excluir lançamento) ficam de fora de propósito
+// — continuam exatamente como eram, no card cheio abaixo.
+const GAVETA_LEAFS = new Set([
+  "protocolo_iatf", "inseminacao", "diagnostico", "parto", "inducao_cio", "controle",
+  "sanidade_aplicacao", "preventivo_aplicacao", "calendario_sanitario", "bst", "protocolo_sanitario",
+  "alimentacao_dieta", "estoque_entradas_saidas", "estoque_ajuste_saldo",
+]);
 
 // Tipos de lançamento, agrupados: alguns grupos (Reprodutivo, Produção) têm uma
 // camada inferior de sub-tipos, para economizar abas no menu.
@@ -168,6 +182,25 @@ export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [sujo, setSujo] = useState(false);
+  // Gaveta lateral (T2, mockup 1e) — abre sozinha ao entrar/trocar para um dos
+  // GAVETA_LEAFS; fechada, a tela só mostra a faixa "Abrir lançamento" no
+  // lugar do formulário. `formKey` força o formulário a nascer de novo (só ao
+  // clicar "Salvar e próximo" no rodapé, nunca sozinho, senão descartaria
+  // trabalho em andamento) e `mensagemSalva` controla esse rodapé.
+  const ehGaveta = GAVETA_LEAFS.has(sel);
+  const [gavetaAberta, setGavetaAberta] = useState(false);
+  const [formKey, setFormKey] = useState(0);
+  const [mensagemSalva, setMensagemSalva] = useState<string | null>(null);
+  useEffect(() => {
+    setGavetaAberta(GAVETA_LEAFS.has(sel));
+    setMensagemSalva(null);
+  }, [sel]);
+  const fecharGaveta = useCallback(() => {
+    if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
+    setSujo(false);
+    setMensagemSalva(null);
+    setGavetaAberta(false);
+  }, [sujo]);
   // Contas a pagar também permite compra de sêmen — em vez de duplicar o
   // fluxo, reusa o mesmo formulário/endpoint de Lançamentos > Animais >
   // Compra/Venda > Comprar sêmen (mesma CompraSemen + baixa/soma de doses).
@@ -237,8 +270,11 @@ export default function LancamentosPage() {
     baselineRef.current = el ? Array.from(el.querySelectorAll("input, textarea, select")).map(valorDoCampo) : [];
   }, []);
   // Recaptura a baseline sempre que a sub-aba muda — é o formulário NOVO que
-  // acabou de nascer que serve de referência, nunca o antigo.
-  useEffect(() => { capturarBaseline(); }, [sel, capturarBaseline]);
+  // acabou de nascer que serve de referência, nunca o antigo. Para as sub-abas
+  // de gaveta, o formulário só existe de verdade quando ela está aberta (o
+  // `{gavetaAberta && <Form.../>}` abaixo) e nasce de novo a cada `formKey` —
+  // as duas entram nas dependências para recapturar no momento certo.
+  useEffect(() => { capturarBaseline(); }, [sel, gavetaAberta, formKey, capturarBaseline]);
   const verificarSujo = useCallback(() => {
     if (sel === "exclusao") return;
     const el = cardRef.current;
@@ -252,11 +288,30 @@ export default function LancamentosPage() {
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
   const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
-  useEffect(() => {
+  const recarregarListasBase = useCallback(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchServicosAnalise().then((d) => setServicos(d.servicos || [])).catch(() => {});
     fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
+  }, []);
+  useEffect(() => { recarregarListasBase(); }, [recarregarListasBase]);
+  // Disparado por qualquer Form* da gaveta assim que salva com sucesso (prop
+  // `onSalvo`) — mostra o rodapé "Salvar e próximo"/"Concluir" e já atualiza
+  // as listas (saldo de estoque, animais) para o próximo lançamento em
+  // sequência já refletir o que acabou de mudar.
+  const aoSalvarNaGaveta = useCallback(() => {
+    setMensagemSalva("Lançamento salvo com sucesso.");
+    recarregarListasBase();
+  }, [recarregarListasBase]);
+  const salvarEProximo = useCallback(() => {
+    setMensagemSalva(null);
+    setSujo(false);
+    setFormKey((k) => k + 1);
+  }, []);
+  const concluirGaveta = useCallback(() => {
+    setMensagemSalva(null);
+    setSujo(false);
+    setGavetaAberta(false);
   }, []);
 
   // Última IA/cobertura por matriz (para o diagnóstico puxar automático).
@@ -371,61 +426,86 @@ export default function LancamentosPage() {
         </p>
       </div>
 
-      <div className="card" ref={cardRef} onChange={verificarSujo}>
-        <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-        {sel === "protocolo_iatf" && <FormProtocoloIatf animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} />}
-        {sel === "inseminacao" && <FormInseminacao animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} />}
-        {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
-        {sel === "parto" && <FormParto animais={animais} lotes={lotes} />}
-        {sel === "inducao_cio" && <FormInducaoCio animais={animais} estoque={estoque} motivosInaptidao={motivosInaptidao} />}
-        {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
-        {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
-        {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
-        {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
-        {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
-        {sel === "entrega_leite" && <FormEntregaLeite />}
-        {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-        {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} estoque={estoque} />}
-        {sel === "calendario_sanitario" && <FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
-        {sel === "bst" && <BstLancamentoView />}
-        {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
-        {sel === "financeiro_despesa" && (
-          <>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <button type="button" className={despesaCompraSemen ? "btn-secondary" : "btn-primary"} style={{ fontSize: "0.8rem" }}
-                onClick={() => setDespesaCompraSemen(false)}>
-                Lançamento genérico
-              </button>
-              <button type="button" className={despesaCompraSemen ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
-                onClick={() => setDespesaCompraSemen(true)}>
-                Compra de sêmen
-              </button>
-            </div>
-            {despesaCompraSemen ? (
-              <>
-                <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
-                  Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
-                  doses no Estoque de sêmen e gera a conta a pagar (3.01.02.01 — Sêmen) automaticamente.
-                </p>
-                <CompraSemenForm />
-              </>
-            ) : (
-              <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} />
-            )}
-          </>
+      {ehGaveta ? (
+        <div className="card">
+          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          <button type="button" className="btn-primary" onClick={() => setGavetaAberta(true)}>
+            <tipo.icon size={14} /> Abrir lançamento
+          </button>
+        </div>
+      ) : (
+        <div className="card" ref={cardRef} onChange={verificarSujo}>
+          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
+          {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+          {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
+          {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
+          {sel === "entrega_leite" && <FormEntregaLeite />}
+          {sel === "financeiro_despesa" && (
+            <>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button type="button" className={despesaCompraSemen ? "btn-secondary" : "btn-primary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setDespesaCompraSemen(false)}>
+                  Lançamento genérico
+                </button>
+                <button type="button" className={despesaCompraSemen ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setDespesaCompraSemen(true)}>
+                  Compra de sêmen
+                </button>
+              </div>
+              {despesaCompraSemen ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
+                    doses no Estoque de sêmen e gera a conta a pagar (3.01.02.01 — Sêmen) automaticamente.
+                  </p>
+                  <CompraSemenForm />
+                </>
+              ) : (
+                <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} />
+              )}
+            </>
+          )}
+          {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />}
+          {sel === "mover_animais" && <MovimentarAnimais />}
+          {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
+          {sel === "comprar_semen" && <CompraSemenForm />}
+          {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
+          {sel === "baixar_animal" && <BaixarAnimal />}
+          {sel === "exclusao" && <FormExclusao />}
+        </div>
+      )}
+
+      <GavetaLancamento
+        aberto={ehGaveta && gavetaAberta}
+        onFechar={fecharGaveta}
+        titulo={tipo.label}
+        icone={tipo.icon}
+        mensagemSalva={mensagemSalva}
+        onSalvarProximo={salvarEProximo}
+        onConcluir={concluirGaveta}
+      >
+        {ehGaveta && gavetaAberta && (
+          <div ref={cardRef} onChange={verificarSujo}>
+            {sel === "protocolo_iatf" && <FormProtocoloIatf key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "inseminacao" && <FormInseminacao key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "diagnostico" && <FormDiagnostico key={formKey} animais={animais} ultServico={ultServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "parto" && <FormParto key={formKey} animais={animais} lotes={lotes} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "inducao_cio" && <FormInducaoCio key={formKey} animais={animais} estoque={estoque} motivosInaptidao={motivosInaptidao} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "controle" && <FormControle key={formKey} animais={animais} lotesLact={lotesLact} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "sanidade_aplicacao" && <FormSanidade key={formKey} animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao key={formKey} animais={animais} lotes={lotes} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "calendario_sanitario" && <FormAplicarCalendarioSanitario key={formKey} animais={animais} lotes={lotes} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "bst" && <BstLancamentoView key={formKey} />}
+            {sel === "protocolo_sanitario" && <FormProtocoloSanitario key={formKey} animais={animais} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "alimentacao_dieta" && <ConsumoAlimento key={formKey} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "estoque_entradas_saidas" && <FormEstoque key={formKey} estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "estoque_ajuste_saldo" && <FormAjusteSaldoEstoque key={formKey} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
+          </div>
         )}
-        {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />}
-        {sel === "estoque_entradas_saidas" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
-        {sel === "estoque_ajuste_saldo" && <FormAjusteSaldoEstoque estoque={estoque} />}
-        {sel === "mover_animais" && <MovimentarAnimais />}
-        {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
-        {sel === "comprar_semen" && <CompraSemenForm />}
-        {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
-        {sel === "baixar_animal" && <BaixarAnimal />}
-        {sel === "alimentacao_dieta" && <ConsumoAlimento />}
-        {sel === "exclusao" && <FormExclusao />}
-      </div>
+      </GavetaLancamento>
     </div>
   );
 }
