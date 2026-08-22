@@ -548,6 +548,26 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const somaParcelas = useMemo(() => parcelas.reduce((a, p) => a + (Number(p.valor) || 0), 0), [parcelas]);
   const diferencaPagamento = useMemo(() => (valorPago ? Math.round((Number(valorPago) - valorLiquido) * 100) / 100 : 0), [valorPago, valorLiquido]);
 
+  // ── Resumo fixo (rodapé sticky) ──────────────────────────────────────
+  // Só leitura, nenhum cálculo novo — reaproveita os mesmos valores já
+  // derivados acima (valorLiquido, parcelas, centroCusto...) e só resume
+  // o que este lançamento reflete em estoque/pedido/DRE, pra ficar visível
+  // sem precisar rolar até o fim de nenhuma das duas colunas.
+  const numeroParcelasResumo = parcelado ? (parcelas.length || Math.max(1, Math.round(Number(qtdParcelas) || 0))) : 1;
+  const primeiroVencimentoResumo = parcelado ? (parcelas[0]?.data_vencimento || null) : (dataVencimento || null);
+  // Itens que de fato mexem em saldo de estoque (produto do estoque E
+  // marcado como estocável no cadastro — os demais são só organização
+  // financeira, ver comentário de `modoProduto` acima).
+  const itensComReflexoEstoque = useMemo(
+    () => itens.filter((i) => i.tipo_item === "produto" && i.produto.trim() && i.modoProduto === "estoque"
+      && produtosEstoque.some((p) => p.nome === i.produto && p.estocavel)),
+    [itens, produtosEstoque],
+  );
+  const pedidoVinculadoResumo = useMemo(
+    () => (pedidoId ? pedidosAbertos.find((p) => String(p.id) === pedidoId) || null : null),
+    [pedidoId, pedidosAbertos],
+  );
+
   // Baixa de UMA parcela dentro do lançamento parcelado (item 3) — marcar o
   // checkbox "Pago" pré-preenche valor pago (com o valor da própria parcela)
   // e data de pagamento (hoje), ambos editáveis; desmarcar limpa a baixa.
@@ -1727,16 +1747,61 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </div>
       )}
 
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando || verificandoDuplicado}>
-          {salvando ? "Salvando…" : verificandoDuplicado ? "Verificando…" : "Salvar lançamento"}
-        </button>
+      </div>
       </div>
 
-      </div>
+      {/* Resumo fixo — sticky no rodapé (fora das duas colunas de rolagem
+          própria acima), sempre visível: total, nº de parcelas, data do 1º
+          vencimento e o que este lançamento reflete em estoque/pedido/DRE.
+          Só leitura, mesmos valores já calculados nas colunas (ver
+          numeroParcelasResumo/primeiroVencimentoResumo/itensComReflexoEstoque/
+          pedidoVinculadoResumo acima) — nenhuma conta nova, e o botão
+          "Salvar lançamento" (com o mesmo onClick/disabled de sempre) mora
+          aqui agora, junto do erro/sucesso, pra não sumir rolando a coluna. */}
+      <div className="card" style={{
+        position: "sticky", bottom: 0, marginTop: "1rem", zIndex: 5,
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap",
+        boxShadow: "0 -2px 10px rgba(20,30,45,0.16)",
+      }}>
+        <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total do lançamento</div>
+            <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Parcelas</div>
+            <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{numeroParcelasResumo}x{!parcelado ? " (à vista)" : ""}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>1º vencimento</div>
+            <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+              {primeiroVencimentoResumo ? new Date(primeiroVencimentoResumo + "T00:00:00").toLocaleDateString("pt-BR") : "—"}
+            </div>
+          </div>
+          {itensComReflexoEstoque.length > 0 && (
+            <div>
+              <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Estoque</div>
+              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{itensComReflexoEstoque.length} item(ns) atualiza(m) saldo</div>
+            </div>
+          )}
+          {pedidoVinculadoResumo && (
+            <div>
+              <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pedido</div>
+              <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{pedidoVinculadoResumo.numero_pedido}</div>
+            </div>
+          )}
+          <div>
+            <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>DRE</div>
+            <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{centroCusto || "—"}{classificacao ? ` · ${classificacao}` : ""}</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.3rem" }}>
+          {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: 0, maxWidth: "22rem", textAlign: "right" }}>{erro}</p>}
+          {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", margin: 0, maxWidth: "22rem", textAlign: "right" }}>{sucesso}</p>}
+          <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando || verificandoDuplicado}>
+            {salvando ? "Salvando…" : verificandoDuplicado ? "Verificando…" : "Salvar lançamento"}
+          </button>
+        </div>
       </div>
 
       {categoriaPopupFile && (() => {
