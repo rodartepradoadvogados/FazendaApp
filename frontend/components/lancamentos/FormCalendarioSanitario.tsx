@@ -14,6 +14,7 @@ import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "@/components/lancamentos/comumForms";
 import { FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 const CadastroEventosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroEventosSanitarios), { ssr: false });
 
 type OpcaoNomeAtivo = { id: number; nome: string; ativo: boolean };
@@ -118,6 +119,34 @@ export function SeletorEventoPreventivo({ eventos, exames, eventoId, onEventoId,
   );
 }
 
+// Wizard de 4 etapas (redesign "Cooperativa", T5) — todos os campos de UMA
+// regra do calendário sanitário vivem num único objeto (antes eram ~20
+// useState soltos) para caber na API do WizardProtocolo (form único +
+// setForm). Divisão escolhida:
+//  1. Identificação — QUAL evento sanitário (vacina/exame/avulso), categoria
+//     alvo e doença combatida: o que este registro do calendário representa.
+//  2. Critérios (quando disparar) — frequência periódica OU evento de vida
+//     (gatilho/lote/idade/offset), e o toggle "usar cronograma sanitário"
+//     (lista de espera em vez de cobrar aplicação na hora).
+//  3. Roteiro (o que aplicar) — responsável/veterinário, princípio
+//     ativo/produto/dosagem (ou nada, se for exame), observação e "já foi
+//     realizado".
+//  4. Revisão — resumo antes de gravar.
+type CalendarioForm = {
+  eventoId: string; categoriaAlvoSel: string[]; doencaId: string; produto: string; principioId: string;
+  dosagem: string; unidade: string; responsavel: string; veterinario: string;
+  freqValor: string; freqUnidade: string; dataEvento: string; observacao: string; realizado: boolean;
+  usaCronograma: boolean;
+  modoFreq: "periodica" | "evento_vida"; gatilho: string; gatilhoLote: string; gatilhoIdadeMeses: string; offsetDias: string;
+};
+const calendarioFormVazio = (): CalendarioForm => ({
+  eventoId: "", categoriaAlvoSel: [], doencaId: "", produto: "", principioId: "",
+  dosagem: "", unidade: "", responsavel: "", veterinario: "",
+  freqValor: "1", freqUnidade: "meses", dataEvento: "", observacao: "", realizado: false,
+  usaCronograma: false,
+  modoFreq: "periodica", gatilho: "nascimento", gatilhoLote: "", gatilhoIdadeMeses: "", offsetDias: "0",
+});
+
 export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [eventos, setEventos] = useState<OpcaoNomeAtivo[]>([]);
   const [exames, setExames] = useState<ExameDef[]>([]);
@@ -130,24 +159,10 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
 
   const [editando, setEditando] = useState<number | null>(null);
-  const [eventoId, setEventoId] = useState("");
-  const [categoriaAlvoSel, setCategoriaAlvoSel] = useState<string[]>([]);
-  const [doencaId, setDoencaId] = useState("");
-  const [produto, setProduto] = useState("");
-  const [principioId, setPrincipioId] = useState("");
-  const [dosagem, setDosagem] = useState("");
-  const [unidade, setUnidade] = useState("");
-  const [responsavel, setResponsavel] = useState("");
-  const [veterinario, setVeterinario] = useState("");
-  const [freqValor, setFreqValor] = useState("1");
-  const [freqUnidade, setFreqUnidade] = useState("meses");
-  const [dataEvento, setDataEvento] = useState("");
-  const [observacao, setObservacao] = useState("");
-  const [realizado, setRealizado] = useState(false);
-  // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py): em vez
-  // de cobrar aplicação na hora, o animal que bate o critério entra numa
-  // lista de espera até o usuário decidir veterinário/aplicação própria.
-  const [usaCronograma, setUsaCronograma] = useState(false);
+  const [form, setForm] = useState<CalendarioForm>(calendarioFormVazio());
+  const { eventoId, categoriaAlvoSel, doencaId, produto, principioId, dosagem, unidade, responsavel, veterinario,
+    freqValor, freqUnidade, dataEvento, observacao, realizado, usaCronograma,
+    modoFreq, gatilho, gatilhoLote, gatilhoIdadeMeses, offsetDias } = form;
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -164,16 +179,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     [pessoasAtivas]
   );
 
-  // Frequência periódica (regra recorrente do calendário) OU por evento de
-  // vida (desmama, aptidão, secagem…) — nesse 2º modo não cria regra nenhuma:
-  // configura o EVENTO SANITÁRIO selecionado para agendar por animal (mesmo
-  // mecanismo que já gera a Agenda por evento — ver eventos_sanitarios.py).
-  const [modoFreq, setModoFreq] = useState<"periodica" | "evento_vida">("periodica");
   const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
-  const [gatilho, setGatilho] = useState("nascimento");
-  const [gatilhoLote, setGatilhoLote] = useState("");
-  const [gatilhoIdadeMeses, setGatilhoIdadeMeses] = useState("");
-  const [offsetDias, setOffsetDias] = useState("0");
 
   useEffect(() => { fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {}); }, []);
 
@@ -189,23 +195,25 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     if (editando !== null) return;
     if (!eventoSel) return;
     if (eventoSel.tipo_agendamento === "evento" && eventoSel.gatilho) {
-      setModoFreq("evento_vida");
-      setGatilho(eventoSel.gatilho);
-      setGatilhoLote(eventoSel.gatilho_lote || "");
-      setGatilhoIdadeMeses(eventoSel.gatilho_idade_meses ? String(eventoSel.gatilho_idade_meses) : "");
-      setOffsetDias(eventoSel.offset_dias != null ? String(eventoSel.offset_dias) : "0");
       // Pré-preenche o cronograma já vinculado a este evento (se existir) —
       // permite revisar/ligar "usar cronograma sanitário" de um evento por
       // evento de vida (ex.: Brucelose B19) direto por aqui, sem precisar
       // achar a regra na lista "Regras cadastradas".
       const regraVinculada = (regras ?? []).find((r) => r.evento_sanitario_id === eventoSel.id);
-      setUsaCronograma(regraVinculada?.usa_cronograma ?? false);
-      setFreqValor(regraVinculada ? String(regraVinculada.frequencia_valor) : "30");
-      setFreqUnidade(regraVinculada ? regraVinculada.frequencia_unidade : "dias");
-      setDataEvento(regraVinculada ? regraVinculada.data_evento : new Date().toISOString().slice(0, 10));
+      setForm((f) => ({
+        ...f,
+        modoFreq: "evento_vida",
+        gatilho: eventoSel.gatilho,
+        gatilhoLote: eventoSel.gatilho_lote || "",
+        gatilhoIdadeMeses: eventoSel.gatilho_idade_meses ? String(eventoSel.gatilho_idade_meses) : "",
+        offsetDias: eventoSel.offset_dias != null ? String(eventoSel.offset_dias) : "0",
+        usaCronograma: regraVinculada?.usa_cronograma ?? false,
+        freqValor: regraVinculada ? String(regraVinculada.frequencia_valor) : "30",
+        freqUnidade: regraVinculada ? regraVinculada.frequencia_unidade : "dias",
+        dataEvento: regraVinculada ? regraVinculada.data_evento : new Date().toISOString().slice(0, 10),
+      }));
     } else {
-      setModoFreq("periodica");
-      setUsaCronograma(false);
+      setForm((f) => ({ ...f, modoFreq: "periodica", usaCronograma: false }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventoId, editando]);
@@ -222,30 +230,29 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   }, []);
   const [abrirNovoEvento, setAbrirNovoEvento] = useState(false);
 
-  const limpar = () => {
-    setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setDoencaId(""); setProduto("");
-    setPrincipioId(""); setDosagem(""); setUnidade(""); setResponsavel(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
-    setDataEvento(""); setObservacao(""); setRealizado(false); setUsaCronograma(false);
-    setModoFreq("periodica"); setGatilho("nascimento"); setGatilhoLote(""); setGatilhoIdadeMeses(""); setOffsetDias("0");
-  };
+  const limpar = () => { setEditando(null); setForm(calendarioFormVazio()); };
 
   const abrirEdicao = (r: RegraCalendario) => {
-    setEditando(r.id); setEventoId(String(r.evento_sanitario_id));
-    setCategoriaAlvoSel(r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : []);
-    setDoencaId(r.doenca_id ? String(r.doenca_id) : ""); setProduto(r.produto || "");
-    setPrincipioId(r.principio_ativo_id ? String(r.principio_ativo_id) : ""); setDosagem(r.dosagem || "");
-    setUnidade(r.unidade || "");
-    setResponsavel(r.responsavel || "");
-    setVeterinario((r as any).veterinario || "");
-    setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade);
-    setDataEvento(r.data_evento); setObservacao(r.observacao || ""); setRealizado(false);
-    setUsaCronograma(r.usa_cronograma ?? false);
-    // Está editando uma regra JÁ existente (linha real de CalendarioSanitario) —
-    // o modo é sempre "periódica", mesmo que o evento vinculado também tenha
-    // um agendamento "por evento de vida" configurado (ex.: Brucelose B19).
-    // Sem isto, o efeito abaixo trocava de modo sozinho e escondia os campos
-    // da própria regra que se está editando.
-    setModoFreq("periodica");
+    setEditando(r.id);
+    setForm((f) => ({
+      ...f,
+      eventoId: String(r.evento_sanitario_id),
+      categoriaAlvoSel: r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : [],
+      doencaId: r.doenca_id ? String(r.doenca_id) : "", produto: r.produto || "",
+      principioId: r.principio_ativo_id ? String(r.principio_ativo_id) : "", dosagem: r.dosagem || "",
+      unidade: r.unidade || "",
+      responsavel: r.responsavel || "",
+      veterinario: (r as any).veterinario || "",
+      freqValor: String(r.frequencia_valor), freqUnidade: r.frequencia_unidade,
+      dataEvento: r.data_evento, observacao: r.observacao || "", realizado: false,
+      usaCronograma: r.usa_cronograma ?? false,
+      // Está editando uma regra JÁ existente (linha real de CalendarioSanitario) —
+      // o modo é sempre "periódica", mesmo que o evento vinculado também tenha
+      // um agendamento "por evento de vida" configurado (ex.: Brucelose B19).
+      // Sem isto, o efeito acima trocava de modo sozinho e escondia os campos
+      // da própria regra que se está editando.
+      modoFreq: "periodica",
+    }));
   };
 
   const excluir = async (r: RegraCalendario) => {
@@ -263,16 +270,18 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
     ? (regras ?? []).find((r) => r.evento_sanitario_id === Number(eventoId))
     : undefined;
 
-  async function salvar() {
+  // Devolve true só quando salvou de verdade — sinal que o wizard usa para
+  // limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
+  async function salvar(): Promise<boolean> {
     setErro(null); setSucesso(null);
-    if (!eventoId) { setErro("Selecione o evento sanitário."); return; }
-    if (precisaCicloRegra && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return; }
-    if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return; }
-    if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return; }
+    if (!eventoId) { setErro("Selecione o evento sanitário."); return false; }
+    if (precisaCicloRegra && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return false; }
+    if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return false; }
+    if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return false; }
     // Só se marca como realizado evento do dia corrente ou retroativo — nunca um evento futuro.
     if (modoFreq === "periodica" && realizado && dataEvento && dataEvento > new Date().toISOString().slice(0, 10)) {
       setErro("Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.");
-      return;
+      return false;
     }
     setSalvando(true);
     try {
@@ -308,14 +317,14 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
         }
         if (usaCronograma) {
           window.location.href = "/sanidade?ir=cronogramas";
-          return;
+          return true;
         }
         setSucesso("Evento sanitário configurado para agendar por evento de vida.");
         limpar();
         carregarEventos();
         carregarRegras();
         setSalvando(false);
-        return;
+        return true;
       }
       const dados = montarDadosRegra();
       if (editando) await atualizarCalendarioSanitario(editando, dados);
@@ -326,167 +335,231 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
         // para confirmar o 1º ciclo (agendar com veterinário, aplicação
         // própria ou deixar em aberto), como pedido no momento do cadastro.
         window.location.href = "/sanidade?ir=cronogramas";
-        return;
+        return true;
       }
       setSucesso(editando ? "Regra atualizada com sucesso." : "Regra do calendário sanitário criada com sucesso.");
       limpar();
       carregarRegras();
+      return true;
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar a regra do calendário sanitário");
+      return false;
     } finally {
       setSalvando(false);
     }
   }
 
-  return (
-    <>
-      <p style={nota}>
-        Ex.: <strong>Vermífugo</strong> a cada 4 meses para bezerras (calendário sazonal), ou <strong>Brucelose B19</strong> uma
-        vez, no nascimento (protocolo por fase fisiológica) — escolha o evento, a frequência e preencha a dosagem.
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-        <Campo label="Evento sanitário">
-          <div className="flex items-center gap-2">
-            <div style={{ flex: 1 }}>
-              <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={eventoId} onEventoId={setEventoId} onEventosRecarregados={carregarEventos} />
+  const passos: PassoWizard<CalendarioForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.eventoId ? "Selecione o evento sanitário." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <p style={nota}>
+            Ex.: <strong>Vermífugo</strong> a cada 4 meses para bezerras (calendário sazonal), ou <strong>Brucelose B19</strong> uma
+            vez, no nascimento (protocolo por fase fisiológica) — escolha o evento, a frequência e preencha a dosagem.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+            <Campo label="Evento sanitário">
+              <div className="flex items-center gap-2">
+                <div style={{ flex: 1 }}>
+                  <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={f.eventoId} onEventoId={(v) => sf({ ...f, eventoId: v })} onEventosRecarregados={carregarEventos} />
+                </div>
+                <button type="button" className="btn-ghost" title="Cadastrar novo evento sanitário" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoEvento(true)}>
+                  <Plus size={13} /> Novo
+                </button>
+              </div>
+              {abrirNovoEvento && (
+                <Modal title="Novo evento sanitário" onClose={() => { setAbrirNovoEvento(false); carregarEventos(); }} width="900px">
+                  <CadastroEventosSanitarios />
+                </Modal>
+              )}
+            </Campo>
+            <Campo label="Categoria(s) alvo (período de vida)">
+              <MultiFiltro
+                label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...f.categoriaAlvoSel]))}
+                selecionados={f.categoriaAlvoSel} onChange={(v) => sf({ ...f, categoriaAlvoSel: v })}
+                permitirNovo placeholderNovo="+ outra categoria…"
+                onAdicionarNovo={(v) => sf({ ...f, categoriaAlvoSel: Array.from(new Set([...f.categoriaAlvoSel, v])) })}
+              />
+            </Campo>
+            <Campo label="Doença combatida">
+              <select style={inputStyle} value={f.doencaId} onChange={(e) => sf({ ...f, doencaId: e.target.value })}>
+                <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+              </select>
+            </Campo>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      validar: (f) => {
+        const precisaCiclo = f.modoFreq === "periodica" || f.usaCronograma;
+        if (precisaCiclo && (!f.dataEvento || !f.freqValor)) return "Selecione a frequência e a data do evento.";
+        if (f.modoFreq === "evento_vida" && f.gatilho === "entrada_lote" && !f.gatilhoLote.trim()) return "Informe o lote do gatilho (entrada no lote).";
+        if (f.modoFreq === "evento_vida" && f.gatilho === "novilha_apta" && !f.gatilhoIdadeMeses) return "Informe a idade-alvo em meses (aptidão de novilha).";
+        return null;
+      },
+      render: ({ form: f, setForm: sf }) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Campo label="Repetir por" full>
+            <div className="flex items-center gap-4" style={{ fontSize: "0.85rem" }}>
+              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                <input type="radio" checked={f.modoFreq === "periodica"} onChange={() => sf({ ...f, modoFreq: "periodica" })} /> Frequência periódica
+              </label>
+              <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                <input type="radio" checked={f.modoFreq === "evento_vida"} onChange={() => sf({ ...f, modoFreq: "evento_vida" })} /> Evento de vida do animal
+              </label>
             </div>
-            <button type="button" className="btn-ghost" title="Cadastrar novo evento sanitário" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoEvento(true)}>
-              <Plus size={13} /> Novo
-            </button>
-          </div>
-          {abrirNovoEvento && (
-            <Modal title="Novo evento sanitário" onClose={() => { setAbrirNovoEvento(false); carregarEventos(); }} width="900px">
-              <CadastroEventosSanitarios />
-            </Modal>
-          )}
-        </Campo>
-        <Campo label="Categoria(s) alvo (período de vida)">
-          <MultiFiltro
-            label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...categoriaAlvoSel]))}
-            selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel}
-            permitirNovo placeholderNovo="+ outra categoria…"
-            onAdicionarNovo={(v) => setCategoriaAlvoSel((p) => Array.from(new Set([...p, v])))}
-          />
-        </Campo>
-        <Campo label="Doença combatida">
-          <select style={inputStyle} value={doencaId} onChange={(e) => setDoencaId(e.target.value)}>
-            <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Responsável">
-          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
-            <option value="">Opcional</option>
-            {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
-          </select>
-        </Campo>
-        {ehExame ? (
-          <Campo label="Veterinário (exame)">
-            <select style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)}>
-              <option value="">Opcional</option>
-              {veterinariosZootecnistas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
-            </select>
           </Campo>
-        ) : (
-          <>
-            <Campo label="Princípio ativo">
-              <select style={inputStyle} value={principioId} onChange={(e) => setPrincipioId(e.target.value)}>
-                <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-              </select>
-            </Campo>
-            <Campo label="Produto (item de estoque)">
-              <EstoquePicker itens={estoque} value={produto} onChange={setProduto} />
-            </Campo>
-            <Campo label="Dosagem recomendada">
-              <input style={inputStyle} value={dosagem} onChange={(e) => setDosagem(e.target.value)} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
-            </Campo>
-            <Campo label="Unidade">
-              <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}>
-                <option value="">—</option>
-                {unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade).map((u) => <option key={u}>{u}</option>)}
-              </select>
-            </Campo>
-          </>
-        )}
-        <Campo label="Repetir por" full>
-          <div className="flex items-center gap-4" style={{ fontSize: "0.85rem" }}>
-            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-              <input type="radio" checked={modoFreq === "periodica"} onChange={() => setModoFreq("periodica")} /> Frequência periódica
-            </label>
-            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
-              <input type="radio" checked={modoFreq === "evento_vida"} onChange={() => setModoFreq("evento_vida")} /> Evento de vida do animal
-            </label>
-          </div>
-        </Campo>
-        {modoFreq === "evento_vida" && (
-          <>
-            <Campo label="Evento de vida">
-              <select style={inputStyle} value={gatilho} onChange={(e) => setGatilho(e.target.value)}>
-                {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
-              </select>
-            </Campo>
-            {gatilho === "entrada_lote" && (
-              <Campo label="Lote do gatilho"><input style={inputStyle} value={gatilhoLote} onChange={(e) => setGatilhoLote(e.target.value)} placeholder="ex.: PRE_PARTO" /></Campo>
-            )}
-            {gatilho === "novilha_apta" && (
-              <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={gatilhoIdadeMeses} onChange={(e) => setGatilhoIdadeMeses(e.target.value)} placeholder="ex.: 13" /></Campo>
-            )}
-            <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={offsetDias} onChange={(e) => setOffsetDias(e.target.value)} /></Campo>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                Este modo por si só não cria uma regra de frequência — ele configura o evento sanitário selecionado para
-                entrar na Agenda automaticamente quando cada animal atingir esse evento de vida (por animal, não por
-                rebanho todo). Marque "Usar cronograma sanitário" abaixo para, em vez de cobrar aplicação na hora
-                assim que o animal bater o critério, colocá-lo numa lista de espera por leva.
+          {f.modoFreq === "evento_vida" && (
+            <>
+              <Campo label="Evento de vida">
+                <select style={inputStyle} value={f.gatilho} onChange={(e) => sf({ ...f, gatilho: e.target.value })}>
+                  {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
+                </select>
+              </Campo>
+              {f.gatilho === "entrada_lote" && (
+                <Campo label="Lote do gatilho"><input style={inputStyle} value={f.gatilhoLote} onChange={(e) => sf({ ...f, gatilhoLote: e.target.value })} placeholder="ex.: PRE_PARTO" /></Campo>
+              )}
+              {f.gatilho === "novilha_apta" && (
+                <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={f.gatilhoIdadeMeses} onChange={(e) => sf({ ...f, gatilhoIdadeMeses: e.target.value })} placeholder="ex.: 13" /></Campo>
+              )}
+              <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={f.offsetDias} onChange={(e) => sf({ ...f, offsetDias: e.target.value })} /></Campo>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                  Este modo por si só não cria uma regra de frequência — ele configura o evento sanitário selecionado para
+                  entrar na Agenda automaticamente quando cada animal atingir esse evento de vida (por animal, não por
+                  rebanho todo). Marque "Usar cronograma sanitário" abaixo para, em vez de cobrar aplicação na hora
+                  assim que o animal bater o critério, colocá-lo numa lista de espera por leva.
+                </p>
+              </div>
+            </>
+          )}
+          {(f.modoFreq === "periodica" || f.usaCronograma) && (
+            <>
+              <Campo label={f.modoFreq === "evento_vida" ? "Frequência da leva do cronograma" : "Frequência"}>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={1} style={inputStyle} value={f.freqValor} onChange={(e) => sf({ ...f, freqValor: e.target.value })} />
+                  <select style={inputStyle} value={f.freqUnidade} onChange={(e) => sf({ ...f, freqUnidade: e.target.value })}>
+                    {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+                  </select>
+                </div>
+              </Campo>
+              <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={f.dataEvento} onChange={(e) => sf({ ...f, dataEvento: e.target.value })} /></Campo>
+            </>
+          )}
+          {!!f.eventoId && (
+            <div style={{ gridColumn: "1 / -1", marginTop: "0.3rem", padding: "0.6rem 0.7rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)" }}>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", fontWeight: 700 }}>
+                <input type="checkbox" checked={f.usaCronograma} onChange={(e) => sf({ ...f, usaCronograma: e.target.checked })} /> Usar cronograma sanitário
+              </label>
+              <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                Em vez de cobrar aplicação na hora, os animais que baterem o critério entram numa lista de espera até você agendar
+                com o veterinário ou confirmar aplicação própria. A Agenda mostra a lista de espera, a decisão de quem vai aplicar e,
+                perto da data prevista sem decisão, cobra confirmação obrigatória. Funciona tanto para uma regra de frequência
+                periódica quanto para um evento por evento de vida (ex.: uma vacina aplicada numa idade-alvo específica).
               </p>
             </div>
-          </>
-        )}
-        {precisaCicloRegra && (
-          <>
-            <Campo label={modoFreq === "evento_vida" ? "Frequência da leva do cronograma" : "Frequência"}>
-              <div className="flex items-center gap-2">
-                <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-                <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-                  {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
-                </select>
-              </div>
-            </Campo>
-            <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
-          </>
-        )}
-        <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
-      </div>
-
-      {ehExame && (
-        <p style={{ fontSize: "0.75rem", color: "var(--blue)", marginTop: "0.5rem" }}>
-          Exame — sem baixa de estoque, só o agendamento. Use o botão "Lançar financeiro" na aba Sanidade &gt; Preventivo para registrar o custo do exame.
-        </p>
-      )}
-      {modoFreq === "periodica" && (
-        <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
-          <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
-        </label>
-      )}
-      {!!eventoId && (
-        <div style={{ marginTop: "0.5rem", padding: "0.6rem 0.7rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)" }}>
-          <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", fontWeight: 700 }}>
-            <input type="checkbox" checked={usaCronograma} onChange={(e) => setUsaCronograma(e.target.checked)} /> Usar cronograma sanitário
-          </label>
-          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
-            Em vez de cobrar aplicação na hora, os animais que baterem o critério entram numa lista de espera até você agendar
-            com o veterinário ou confirmar aplicação própria. A Agenda mostra a lista de espera, a decisão de quem vai aplicar e,
-            perto da data prevista sem decisão, cobra confirmação obrigatória. Funciona tanto para uma regra de frequência
-            periódica quanto para um evento por evento de vida (ex.: uma vacina aplicada numa idade-alvo específica).
-          </p>
+          )}
         </div>
-      )}
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => {
+        const hoje = new Date().toISOString().slice(0, 10);
+        if (f.modoFreq === "periodica" && f.realizado && f.dataEvento && f.dataEvento > hoje)
+          return "Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.";
+        return null;
+      },
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Campo label="Responsável">
+              <select style={inputStyle} value={f.responsavel} onChange={(e) => sf({ ...f, responsavel: e.target.value })}>
+                <option value="">Opcional</option>
+                {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+              </select>
+            </Campo>
+            {ehExame ? (
+              <Campo label="Veterinário (exame)">
+                <select style={inputStyle} value={f.veterinario} onChange={(e) => sf({ ...f, veterinario: e.target.value })}>
+                  <option value="">Opcional</option>
+                  {veterinariosZootecnistas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+                </select>
+              </Campo>
+            ) : (
+              <>
+                <Campo label="Princípio ativo">
+                  <select style={inputStyle} value={f.principioId} onChange={(e) => sf({ ...f, principioId: e.target.value })}>
+                    <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                </Campo>
+                <Campo label="Produto (item de estoque)">
+                  <EstoquePicker itens={estoque} value={f.produto} onChange={(v) => sf({ ...f, produto: v })} />
+                </Campo>
+                <Campo label="Dosagem recomendada">
+                  <input style={inputStyle} value={f.dosagem} onChange={(e) => sf({ ...f, dosagem: e.target.value })} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
+                </Campo>
+                <Campo label="Unidade">
+                  <select style={inputStyle} value={f.unidade} onChange={(e) => sf({ ...f, unidade: e.target.value })}>
+                    <option value="">—</option>
+                    {unidadesCompativeis(estoque.find((e) => e.nome === f.produto)?.unidade).map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </Campo>
+              </>
+            )}
+            <Campo label="Observação" full><input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} /></Campo>
+          </div>
+          {ehExame && (
+            <p style={{ fontSize: "0.75rem", color: "var(--blue)", marginTop: "0.5rem" }}>
+              Exame — sem baixa de estoque, só o agendamento. Use o botão "Lançar financeiro" na aba Sanidade &gt; Preventivo para registrar o custo do exame.
+            </p>
+          )}
+          {f.modoFreq === "periodica" && (
+            <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
+              <input type="checkbox" checked={f.realizado} onChange={(e) => sf({ ...f, realizado: e.target.checked })} /> Já foi realizado (não entra como pendência na Agenda)
+            </label>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}>
+            <strong>{eventos.find((e) => String(e.id) === f.eventoId)?.nome || "(sem evento)"}</strong>
+          </p>
+          <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.9, paddingLeft: "1.1rem" }}>
+            <li>Categoria(s) alvo: {f.categoriaAlvoSel.join(", ") || "—"}</li>
+            <li>Doença: {doencas.find((d) => String(d.id) === f.doencaId)?.nome || "—"}</li>
+            <li>Repete por: {f.modoFreq === "periodica" ? `a cada ${f.freqValor} ${FREQUENCIA_UNIDADES.find((u) => u.v === f.freqUnidade)?.l}` : `evento de vida (${gatilhosVida.find((g) => g.gatilho === f.gatilho)?.rotulo || f.gatilho})`}</li>
+            {!ehExame && <li>Produto: {f.produto || "—"} {f.dosagem ? `— ${f.dosagem} ${f.unidade || ""}` : ""}</li>}
+            <li>Usa cronograma sanitário: {f.usaCronograma ? "Sim" : "Não"}</li>
+          </ul>
+        </div>
+      ),
+    },
+  ];
 
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+  return (
+    <>
+      <WizardProtocolo<CalendarioForm>
+        key={editando ?? "novo"}
+        chaveRascunho={editando === null ? "wizard-protocolo:sanitario-preventivo" : null}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.eventoId && !f.observacao.trim() && !f.produto.trim()}
+        passos={passos}
+        onCancelar={limpar}
+        onConcluir={salvar}
+        salvando={salvando}
+        rotuloConcluir={editando ? "Salvar alterações" : "Salvar"}
+        erro={erro}
+      />
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : editando ? "Salvar alterações" : "Salvar"}</button>
-        {editando && <button className="btn-ghost" onClick={limpar}>Cancelar edição</button>}
-      </div>
 
       {regras && (
         <div className="mt-4">
