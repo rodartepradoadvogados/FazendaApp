@@ -21,6 +21,7 @@ import { UNIDADES_PROTOCOLO } from "@/lib/constants";
 import { TabBar } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
+import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
 // Os mesmos formulários já usados em Lançamentos — reaproveitados aqui, na
@@ -72,10 +73,21 @@ function novaEtapaIatf(dia: number): EtapaProtocoloIatf {
   return { dia, criterio_tipo: "medicamento", produto: "", dose: null, unidade: "", via: "" };
 }
 
+type IatfMoldeForm = { nome: string; observacao: string; etapas: EtapaProtocoloIatf[] };
+const iatfMoldeFormVazio = (): IatfMoldeForm => ({ nome: "", observacao: "", etapas: [novaEtapaIatf(0)] });
+
+// Wizard de 4 etapas (T5) para o molde IATF — divisão escolhida:
+//  1. Identificação — nome do molde.
+//  2. Critérios — observação livre (este tipo não tem doença/finalidade; o
+//     texto explicando a regra D0/D7/D9 e o cálculo automático da
+//     inseminação mora aqui, já que é o único "critério" configurável além
+//     do roteiro em si).
+//  3. Roteiro (etapas) — os hormônios por dia, já existente.
+//  4. Revisão — resumo antes de gravar.
 function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfMolde | null; onSalvo: () => void; onCancelar: () => void }) {
-  const [nome, setNome] = useState(molde?.nome || "");
-  const [observacao, setObservacao] = useState(molde?.observacao || "");
-  const [etapas, setEtapas] = useState<EtapaProtocoloIatf[]>(molde?.etapas.length ? molde.etapas : [novaEtapaIatf(0)]);
+  const [form, setForm] = useState<IatfMoldeForm>(() => molde
+    ? { nome: molde.nome || "", observacao: molde.observacao || "", etapas: molde.etapas.length ? molde.etapas : [novaEtapaIatf(0)] }
+    : iatfMoldeFormVazio());
   const [principios, setPrincipios] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -83,89 +95,137 @@ function EditorMoldeIatf({ molde, onSalvo, onCancelar }: { molde: ProtocoloIatfM
   useEffect(() => { fetchPrincipiosAtivos().then((d: any[]) => setPrincipios(d.map((p) => p.nome))).catch(() => {}); }, []);
 
   function atualizar(i: number, patch: Partial<EtapaProtocoloIatf>) {
-    setEtapas((es) => es.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+    setForm((f) => ({ ...f, etapas: f.etapas.map((e, idx) => (idx === i ? { ...e, ...patch } : e)) }));
   }
-  function remover(i: number) { setEtapas((es) => es.filter((_, idx) => idx !== i)); }
-  function adicionar() { setEtapas((es) => [...es, novaEtapaIatf(0)]); }
+  function remover(i: number) { setForm((f) => ({ ...f, etapas: f.etapas.filter((_, idx) => idx !== i) })); }
+  function adicionar() { setForm((f) => ({ ...f, etapas: [...f.etapas, novaEtapaIatf(0)] })); }
 
-  async function salvar() {
+  // Devolve true só quando salvou de verdade — sinal que o wizard usa para
+  // limpar o rascunho do localStorage (ver WizardProtocolo.onConcluir).
+  async function salvar(): Promise<boolean> {
     setErro(null);
-    if (!nome.trim()) { setErro("Informe o nome do protocolo."); return; }
-    if (!etapas.length) { setErro("Informe ao menos uma etapa (D0, D7 ou D9)."); return; }
+    if (!form.nome.trim()) { setErro("Informe o nome do protocolo."); return false; }
+    if (!form.etapas.length) { setErro("Informe ao menos uma etapa (D0, D7 ou D9)."); return false; }
     setSalvando(true);
     try {
-      const payload = { nome: nome.trim(), observacao: observacao || null, ativo: true, etapas };
+      const payload = { nome: form.nome.trim(), observacao: form.observacao || null, ativo: true, etapas: form.etapas };
       if (molde) await atualizarProtocoloIatfCadastrado(molde.id, payload);
       else await criarProtocoloIatfCadastrado(payload);
       onSalvo();
+      return true;
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar o protocolo IATF");
+      return false;
     } finally {
       setSalvando(false);
     }
   }
 
+  const passos: PassoWizard<IatfMoldeForm>[] = [
+    {
+      id: "identificacao", titulo: "Identificação",
+      validar: (f) => (!f.nome.trim() ? "Informe o nome do protocolo." : null),
+      render: ({ form: f, setForm: sf }) => (
+        <div><label style={labelStyle}>Nome</label>
+          <input style={inputStyle} value={f.nome} onChange={(e) => sf({ ...f, nome: e.target.value })} placeholder="ex.: Protocolo IATF Lote A" autoFocus /></div>
+      ),
+    },
+    {
+      id: "criterios", titulo: "Critérios",
+      render: ({ form: f, setForm: sf }) => (
+        <div>
+          <label style={labelStyle}>Observação</label>
+          <input style={inputStyle} value={f.observacao} onChange={(e) => sf({ ...f, observacao: e.target.value })} placeholder="Opcional" />
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            O dia de cada hormônio é livre — o clássico é D0/D7/D9, mas há protocolo com outro espaçamento (ex.: D0/D8/D10/D12).
+            A inseminação nunca entra no molde: ela é sempre 2 dias depois da última etapa cadastrada.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: "roteiro", titulo: "Roteiro",
+      validar: (f) => (!f.etapas.length ? "Informe ao menos uma etapa (D0, D7 ou D9)." : null),
+      render: ({ form: f }) => (
+        <div>
+          {f.etapas.map((e, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto auto auto", gap: "0.4rem", alignItems: "end", marginBottom: "0.5rem" }}>
+              <div><label style={labelStyle}>Dia</label>
+                <div className="flex items-center gap-1">
+                  <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>D</span>
+                  <input type="number" min={0} step={1} style={inputStyle} value={e.dia}
+                         onChange={(ev) => atualizar(i, { dia: Math.max(0, Number(ev.target.value) || 0) })} />
+                </div>
+              </div>
+              <div><label style={labelStyle}>Definir por</label>
+                <select style={inputStyle} value={e.criterio_tipo} onChange={(ev) => atualizar(i, { criterio_tipo: ev.target.value as any, produto: "" })}>
+                  <option value="medicamento">Medicamento</option>
+                  <option value="principio_ativo">Princípio ativo</option>
+                  <option value="classificacao">Classificação</option>
+                </select>
+              </div>
+              <div><label style={labelStyle}>{e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "classificacao" ? "Classificação" : "Medicamento"}</label>
+                {e.criterio_tipo === "principio_ativo" ? (
+                  <select style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })}>
+                    <option value="">Selecione…</option>
+                    {principios.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                ) : (
+                  <input style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })} placeholder="Nome" />
+                )}
+              </div>
+              <div><label style={labelStyle}>Dose / unid.</label>
+                <div style={{ display: "flex", gap: "0.3rem" }}>
+                  <input type="number" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizar(i, { dose: ev.target.value ? Number(ev.target.value) : null })} placeholder="0" />
+                  <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizar(i, { unidade: ev.target.value })}>
+                    <option value="">—</option>
+                    {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
+                    {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
+                    {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => remover(i)} title="Remover etapa"><Trash2 size={15} /></button>
+            </div>
+          ))}
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4 }} onClick={adicionar}>
+            <Plus size={13} /> Adicionar hormônio
+          </button>
+        </div>
+      ),
+    },
+    {
+      id: "revisao", titulo: "Revisão",
+      render: ({ form: f }) => (
+        <div>
+          <p style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}><strong>{f.nome || "(sem nome)"}</strong></p>
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>Hormônio/critério</th><th>Dose</th></tr></thead>
+            <tbody>
+              {f.etapas.map((e, i) => (
+                <tr key={i}><td>D{e.dia}</td><td>{e.produto || "—"}</td><td>{e.dose != null ? `${e.dose} ${e.unidade || ""}` : "—"}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="card mb-3" style={{ background: "var(--surface-2)" }}>
       <div className="card-header mb-2">{molde ? "Editar protocolo IATF" : "Novo protocolo IATF"}</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-        <div><label style={labelStyle}>Nome</label>
-          <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Protocolo IATF Lote A" /></div>
-        <div><label style={labelStyle}>Observação</label>
-          <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="Opcional" /></div>
-      </div>
-      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-        O dia de cada hormônio é livre — o clássico é D0/D7/D9, mas há protocolo com outro espaçamento (ex.: D0/D8/D10/D12).
-        A inseminação nunca entra no molde: ela é sempre 2 dias depois da última etapa cadastrada.
-      </p>
-      {etapas.map((e, i) => (
-        <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr auto auto auto", gap: "0.4rem", alignItems: "end", marginBottom: "0.5rem" }}>
-          <div><label style={labelStyle}>Dia</label>
-            <div className="flex items-center gap-1">
-              <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>D</span>
-              <input type="number" min={0} step={1} style={inputStyle} value={e.dia}
-                     onChange={(ev) => atualizar(i, { dia: Math.max(0, Number(ev.target.value) || 0) })} />
-            </div>
-          </div>
-          <div><label style={labelStyle}>Definir por</label>
-            <select style={inputStyle} value={e.criterio_tipo} onChange={(ev) => atualizar(i, { criterio_tipo: ev.target.value as any, produto: "" })}>
-              <option value="medicamento">Medicamento</option>
-              <option value="principio_ativo">Princípio ativo</option>
-              <option value="classificacao">Classificação</option>
-            </select>
-          </div>
-          <div><label style={labelStyle}>{e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "classificacao" ? "Classificação" : "Medicamento"}</label>
-            {e.criterio_tipo === "principio_ativo" ? (
-              <select style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })}>
-                <option value="">Selecione…</option>
-                {principios.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            ) : (
-              <input style={inputStyle} value={e.produto} onChange={(ev) => atualizar(i, { produto: ev.target.value })} placeholder="Nome" />
-            )}
-          </div>
-          <div><label style={labelStyle}>Dose / unid.</label>
-            <div style={{ display: "flex", gap: "0.3rem" }}>
-              <input type="number" style={inputStyle} value={e.dose ?? ""} onChange={(ev) => atualizar(i, { dose: ev.target.value ? Number(ev.target.value) : null })} placeholder="0" />
-              <select style={inputStyle} value={e.unidade || ""} onChange={(ev) => atualizar(i, { unidade: ev.target.value })}>
-                <option value="">—</option>
-                {/* Unidade fora da lista (protocolo antigo) continua visível para não sumir ao editar. */}
-                {e.unidade && !UNIDADES_PROTOCOLO.includes(e.unidade) && <option value={e.unidade}>{e.unidade}</option>}
-                {UNIDADES_PROTOCOLO.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-          </div>
-          <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => remover(i)} title="Remover etapa"><Trash2 size={15} /></button>
-        </div>
-      ))}
-      <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: 4, marginBottom: "0.8rem" }} onClick={adicionar}>
-        <Plus size={13} /> Adicionar hormônio
-      </button>
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{erro}</p>}
-      <div className="flex items-center gap-3">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-        <button className="btn-ghost" onClick={onCancelar}>Cancelar</button>
-      </div>
+      <WizardProtocolo<IatfMoldeForm>
+        chaveRascunho={molde ? null : "wizard-protocolo:iatf"}
+        form={form} setForm={setForm}
+        ehVazio={(f) => !f.nome.trim() && !f.observacao.trim() && f.etapas.every((e) => !e.produto.trim())}
+        passos={passos}
+        onCancelar={onCancelar}
+        onConcluir={salvar}
+        salvando={salvando}
+        rotuloConcluir="Salvar"
+        erro={erro}
+      />
     </div>
   );
 }
