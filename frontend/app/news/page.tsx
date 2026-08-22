@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight, TrendingUp } from "lucide-react";
+import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight, TrendingUp, Mail, CheckCircle2 } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
 import { imagemMateria } from "@/lib/newsVisual";
 
@@ -86,6 +86,73 @@ function numeroCotacao(n: NoticiaNews): string | null {
   const texto = `${n.manchete} ${n.resumo || ""}`;
   const m = texto.match(REGEX_NUMERO_COTACAO);
   return m ? m[0].trim() : null;
+}
+
+// ── Captura de e-mail (item 5 do DoD, T9) ──────────────────────────────────
+// Não existe endpoint de assinatura de newsletter no back-end (conferido em
+// backend/fazenda/api/routers/ — só há POST/DELETE /push/subscribe, que é
+// notificação push do app instalado, um canal totalmente diferente). Este
+// formulário é SÓ FRONT-END: grava o e-mail no localStorage do navegador de
+// quem preenche, como confirmação visual de "seu pedido ficou registrado
+// aqui" — não envia e-mail nenhum, não avisa ninguém do lado da fazenda, não
+// sincroniza entre aparelhos nem persiste no banco de dados. Quando existir
+// um endpoint de verdade (ex.: POST /news/newsletter), trocar
+// `inscreverLocalmente` por uma chamada a `_rSend` (ver lib/api.ts) e
+// remover este aviso.
+const CHAVE_INSCRICAO_LOCAL = "milknews_inscricoes_email_somente_local";
+function inscreverLocalmente(email: string) {
+  try {
+    const atuais: string[] = JSON.parse(localStorage.getItem(CHAVE_INSCRICAO_LOCAL) || "[]");
+    if (!atuais.includes(email)) atuais.push(email);
+    localStorage.setItem(CHAVE_INSCRICAO_LOCAL, JSON.stringify(atuais));
+  } catch {
+    // localStorage indisponível (modo privado, etc.) — segue sem persistir;
+    // o formulário já deixa claro que não há back-end por trás mesmo.
+  }
+}
+
+function NewsletterForm() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState<"idle" | "ok" | "erro">("idle");
+
+  const enviar = (e: React.FormEvent) => {
+    e.preventDefault();
+    const valido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+    if (!valido) { setStatus("erro"); return; }
+    inscreverLocalmente(email.trim());
+    setStatus("ok");
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: "40rem", margin: "2.5rem auto 0" }}>
+      <div className="card-header mb-2" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+        <Mail size={14} /> Receba as matérias por e-mail
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "1rem" }}>
+        Avise-me quando sair matéria nova de cotação, mercado, genética ou ciência.
+      </p>
+      {status === "ok" ? (
+        <p style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "var(--dourado-light)", fontSize: "0.86rem" }}>
+          <CheckCircle2 size={16} /> Pedido registrado neste navegador. (Ainda não há envio de e-mail de verdade — ver nota no código-fonte.)
+        </p>
+      ) : (
+        <form onSubmit={enviar} style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+          <input
+            type="email" required value={email} placeholder="seuemail@exemplo.com"
+            onChange={(e) => { setEmail(e.target.value); if (status === "erro") setStatus("idle"); }}
+            style={{
+              flex: "1 1 220px", background: "var(--surface-2)", color: "var(--text)",
+              border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", fontSize: "0.9rem",
+            }}
+          />
+          <button type="submit" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
+            <Mail size={14} /> Assinar
+          </button>
+        </form>
+      )}
+      {status === "erro" && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>Digite um e-mail válido.</p>}
+    </div>
+  );
 }
 
 export default function NewsPage() {
@@ -371,6 +438,8 @@ export default function NewsPage() {
             )}
           </section>
         )}
+
+        <NewsletterForm />
       </div>
     </div>
   );
