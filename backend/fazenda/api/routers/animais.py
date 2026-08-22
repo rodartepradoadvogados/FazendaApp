@@ -24,6 +24,8 @@ from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.parto_resumo import resumo_por_parto
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
+from fazenda.rules.lactacao import em_lactacao_por_matriz as lactacoes_abertas_por_matriz
+from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.producao_leiteira import com_fallback_animal, del_dias_ao_vivo, ultimo_controle_por_animal
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
@@ -124,15 +126,31 @@ def listar_animais(
     producao_ao_vivo = ultimo_controle_por_animal(session, numeros, fazenda_id)
 
     hoje = date.today()
+    # FONTE ÚNICA de "está em lactação" para as telas de lançamento (ver
+    # fazenda/rules/lactacao.py): a `Lactacao` aberta hoje. Substitui os dois
+    # critérios divergentes que o frontend usava — "o código do lote é
+    # 01/02/03" (FormControle) e "del_dias > 0" (campo congelado) —, sendo
+    # que o app de campo não filtrava nada e deixava lançar leite de bezerra.
+    lactacoes_abertas = lactacoes_abertas_por_matriz(session, numeros, data=hoje, fazenda_id=fazenda_id)
+
     saida = []
     for a in animais:
         d = a.model_dump()
         sp = ult_pos.get(a.numero)
         pp = ult_parto.get(a.numero)
         sec = ult_secagem.get(a.numero)
+        lact = lactacoes_abertas.get(a.numero)
         d["data_ult_servico_pos"] = sp.isoformat() if sp else None
         d["data_ult_parto"] = pp.isoformat() if pp else None
+        d["em_lactacao"] = lact is not None
+        d["lactacao_inicio"] = lact.data_inicio.isoformat() if lact else None
         d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp, sec, hoje)
+        if lact is not None:
+            # Com lactação materializada, o DEL sai dela — inclusive nos
+            # casos em que `_del_dias_ao_vivo` não tem o que responder
+            # (lactação aberta por aborto ou indução, que não têm parto
+            # produtivo por trás).
+            d["del_dias"] = (hoje - lact.data_inicio).days
         d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp, sec)
         producao_kg, producao_data = com_fallback_animal(a.numero, producao_ao_vivo, a)
         d["producao_kg"] = producao_kg
@@ -351,12 +369,21 @@ def ficha_animal(
     # — o primeiro parto é sempre "1", não fica em branco/zero. Exibida como
     # "X de N" (N = total de partos do animal) para ficar claro de cara quantos
     # partos o animal já teve ao todo.
-    total_partos = len(partos)
+    # Abortos aparecem no histórico (são `Parto` desde o endpoint único de
+    # encerramento de gestação — ver fazenda/rules/parto.py) mas NÃO entram na
+    # contagem "X de N": não são cria. Sem esta separação, uma vaca de 3 crias
+    # com um aborto no meio viraria "4 de 4".
+    total_partos = sum(1 for p in partos if eh_parto_produtivo(p))
     partos_dump = []
-    for idx, p in enumerate(partos):
+    ordem_corrente = 0
+    for p in partos:
         d = p.model_dump()
-        ordem = d.get("ordem_parto") or (idx + 1)
-        d["ordem_parto"] = f"{ordem} de {total_partos}"
+        if eh_parto_produtivo(p):
+            ordem_corrente += 1
+            ordem = d.get("ordem_parto") or ordem_corrente
+            d["ordem_parto"] = f"{ordem} de {total_partos}"
+        else:
+            d["ordem_parto"] = "—"
         partos_dump.append(d)
     query_servicos = select(Servico).where(Servico.numero_matriz == numero)
     if fazenda_id is not None:
@@ -696,8 +723,11 @@ def ficha_animal(
     # Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
     # produção, duração da lactação, tentativas de emprenhar e DEL de
     # concepção, por lactação (ver fazenda.rules.parto_resumo).
+    # Só partos PRODUTIVOS: o quadro numera as lactações por posição na lista
+    # (1ª, 2ª, 3ª…), então incluir um aborto deslocaria a numeração de todas
+    # as lactações seguintes da matriz.
     resumo_partos = resumo_por_parto(
-        [{"data_parto": p.data_parto} for p in partos],
+        [{"data_parto": p.data_parto} for p in partos if eh_parto_produtivo(p)],
         [{"data_controle": c.data_controle, "producao_kg": c.producao_kg} for c in controles_leiteiros],
         [{"data_secagem": s.data_secagem} for s in secagens],
         [{"data_servico": s.data_servico, "diagnostico": s.diagnostico, "ordem_tentativa": s.ordem_tentativa} for s in servicos],

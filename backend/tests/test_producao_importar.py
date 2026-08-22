@@ -6,6 +6,7 @@ leite, atalho embutido na tela de Lançamentos.
 from __future__ import annotations
 
 import io
+from datetime import date, timedelta
 
 import openpyxl
 import pytest
@@ -14,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Lote
+from fazenda.models import Animal, Lactacao, Lote
 
 
 def _xlsx_bytes(header: list[str], rows: list[list]) -> bytes:
@@ -54,6 +55,12 @@ def client():
             s.add(Lote(codigo="01", nome="Alta"))
             s.add(Animal(numero="101", grupo_primario="01 - Alta", raca="Girolando", del_dias=50, ativo=True))
             s.add(Animal(numero="102", grupo_primario="01 - Alta", raca="Holandês", del_dias=80, ativo=True))
+            # Controle leiteiro passou a exigir `Lactacao` ABERTA na data do
+            # controle (ver rules/lactacao.py) — e é dela que sai o DEL, não
+            # mais de `Animal.del_dias`. As datas desta suíte ficam em
+            # julho/2026: basta abrir antes e não fechar.
+            s.add(Lactacao(numero_matriz="101", data_inicio=date(2026, 7, 5) - timedelta(days=50), origem="parto"))
+            s.add(Lactacao(numero_matriz="102", data_inicio=date(2026, 7, 5) - timedelta(days=80), origem="parto"))
             s.commit()
         yield c
 

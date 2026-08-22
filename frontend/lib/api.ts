@@ -43,6 +43,51 @@ export function mensagemErroApi(detail: unknown): string | null {
   return null;
 }
 
+/**
+ * Erro de API que preserva o `detail` estruturado do backend.
+ *
+ * Nasceu para as travas de aptidão (`POST /reproducao/servico` e irmãos) e de
+ * lactação aberta (`POST /producao/controles`): as duas devolvem 409 com um
+ * objeto `{erro, msg, motivo, confirmavel, …}`, e a tela precisa saber se
+ * aquele bloqueio específico admite um "confirmar mesmo assim" (`forcar`) ou
+ * se é definitivo. Um `Error` com só a mensagem obrigaria a tela a adivinhar
+ * isso lendo o texto.
+ *
+ * `message` continua sendo a mensagem legível de sempre, então quem só faz
+ * `catch (e) { setErro(e.message) }` não muda em nada.
+ */
+/** O formato do `detail` que as travas devolvem no 409. */
+type DetalheBloqueio = { motivo?: string | null; confirmavel?: boolean };
+
+export class ErroApi extends Error {
+  status: number;
+  detalhe: unknown;
+  constructor(mensagem: string, status: number, detalhe: unknown) {
+    super(mensagem);
+    this.name = "ErroApi";
+    this.status = status;
+    this.detalhe = detalhe;
+  }
+  /** O `detail` quando ele é o objeto estruturado de bloqueio; senão `null`. */
+  private get bloqueio(): DetalheBloqueio | null {
+    return this.detalhe && typeof this.detalhe === "object" ? (this.detalhe as DetalheBloqueio) : null;
+  }
+  /** Código do motivo do bloqueio (ex.: "idade", "gestante", "sem_pesagem"). */
+  get motivo(): string | null {
+    return this.bloqueio?.motivo ?? null;
+  }
+  /** True quando reenviar com `forcar: true` destrava (bloqueio limítrofe, não erro grave). */
+  get confirmavel(): boolean {
+    return !!this.bloqueio?.confirmavel;
+  }
+}
+
+/** Lê o corpo do erro e devolve um `ErroApi` com o `detail` preservado. */
+export async function erroDaResposta(res: Response, padrao: string): Promise<ErroApi> {
+  const d: { detail?: unknown } = await res.json().catch(() => ({}));
+  return new ErroApi(mensagemErroApi(d?.detail) || padrao, res.status, d?.detail);
+}
+
 // ── Autenticação ──
 export function getToken(): string | null {
   return typeof window === "undefined" ? null : localStorage.getItem("token");
@@ -1574,11 +1619,15 @@ export async function criarServicoLote(dados: {
   animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
   reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;
   tipo_semen?: string | null;
+  // Confirmação manual dos bloqueios de aptidão CONFIRMÁVEIS (novilha sem
+  // pesagem/abaixo do peso, matriz que consta como gestante) — ver
+  // backend/fazenda/rules/aptidao.py. Nunca destrava idade/sexo/baixado.
+  forcar?: boolean;
 }) {
   const res = await authFetch(`${API}/reproducao/servico-lote`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar inseminação"); }
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao registrar inseminação");
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
 }
 
@@ -1761,8 +1810,50 @@ export async function registrarPerdaPrenhez(dados: {
   return res.json();
 }
 
+/**
+ * Encerramento de gestação — o caminho ÚNICO de "esta gestação acabou".
+ *
+ * Substitui, no fluxo de aborto, a dupla incoerente que existia antes:
+ * `registrarPerdaPrenhez` (que NÃO criava Parto nenhum e carimbava a perda no
+ * serviço mais recente por data, nem sempre o certo) seguida de
+ * `abrirLactacao` (que só gravava `del_dias = 0`, sem nem receber a data do
+ * evento). Numa transação só, o backend cria o `Parto`, carimba a perda no
+ * serviço vigente positivo correto, abre a `Lactacao` com a data REAL do
+ * evento e sincroniza o DEL. Ver POST /reproducao/encerramento-gestacao.
+ */
+export async function encerrarGestacao(dados: {
+  numero_matriz: string;
+  data: string;
+  tipo: "parto" | "aborto" | "natimorto";
+  abrir_lactacao?: boolean;
+  motivo?: "aborto" | "natimorto" | "outros";
+  crias?: { numero: string; sexo: string; nasceu_viva?: boolean }[];
+  retencao_placenta?: boolean;
+  gemelar?: boolean;
+  gemelar_sexo?: string;
+  tipo_parto?: string;
+  observacao?: string;
+  forcar?: boolean;
+}) {
+  const res = await authFetch(`${API}/reproducao/encerramento-gestacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao registrar o encerramento da gestação");
+  return res.json() as Promise<{
+    criado: boolean; tipo: string; parto_id: number | null; ordem_parto: number | null;
+    crias_criadas: string[]; crias_baixadas: string[];
+    perda_prenhez_servico_id: number | null;
+    lactacao_id: number | null; lactacao_aberta: boolean; del_dias: number | null;
+    sugerir_lote: boolean;
+  }>;
+}
+
 // Abre lactação de um animal sem parto associado (popup pós-aborto — "deseja
 // abrir lactação para o animal X?").
+//
+// @deprecated Só grava `del_dias = 0` e não recebe a data do evento — use
+// `encerrarGestacao` com `abrir_lactacao: true`, que abre uma `Lactacao` de
+// verdade com a data real. Mantido porque outras telas ainda o chamam.
 export async function abrirLactacao(numeroMatriz: string) {
   const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/abrir-lactacao`, {
     method: "POST",
@@ -4281,7 +4372,9 @@ export async function criarControlesLeiteiros(dados: {
   const res = await authFetch(`${API}/producao/controles`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar controle leiteiro"); }
+  // 409 = animal sem lactação aberta na data (ver POST /producao/controles).
+  // `erroDaResposta` preserva o `detail` para a tela poder dizer QUAL vaca.
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar controle leiteiro");
   return res.json();
 }
 
@@ -4518,11 +4611,11 @@ export type HormonioIatf = { dia: number; produto: string; dose?: number | null;
 // Nome do lançamento é sempre automático (Central de Protocolos) — não se
 // digita mais; protocolo_id é opcional (molde cadastrado, só para
 // pré-preencher os hormônios e citar no nome).
-export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo_id?: number | null; hormonios?: HormonioIatf[] }) {
+export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo_id?: number | null; hormonios?: HormonioIatf[]; forcar?: boolean }) {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao agendar protocolo IATF"); }
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao agendar protocolo IATF");
   return res.json();
 }
 
@@ -4743,11 +4836,12 @@ export async function criarServico(dados: {
   numero_matriz: string; data_servico: string; tipo_servico?: string;
   protocolo?: string; reprodutor?: string; responsavel?: string;
   tipo_semen?: string | null;
+  forcar?: boolean;  // ver criarServicoLote
 }) {
   const res = await authFetch(`${API}/reproducao/servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar serviço/inseminação"); }
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar serviço/inseminação");
   return res.json();
 }
 

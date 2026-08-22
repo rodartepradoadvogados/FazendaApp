@@ -36,6 +36,7 @@ from fazenda.models import (
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
+    Lactacao,
     LancamentoItem,
     Lote,
     MotivoMovimentacao,
@@ -1037,6 +1038,43 @@ def _reverter_perda_prenhez_causada_pelos_alvos(session: Session, alvos: list, f
         session.add(anterior)
 
 
+def _remover_lactacao_dos_partos_excluidos(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """Todo parto (inclusive o aborto) abre uma `Lactacao` — excluir o parto
+    tem que fechar esse ciclo também, senão a matriz fica "em lactação" para
+    sempre por causa de um evento que não existe mais, e o controle leiteiro
+    dela continuaria sendo aceito (ver POST /producao/controles).
+
+    Casa pelo `parto_id` e, para as lactações do backfill que possam não tê-lo,
+    também por (matriz, data de início == data do parto).
+
+    REABRE a lactação anterior quando foi ESTE parto que a fechou: `abrir_
+    lactacao` encerra a anterior na data do novo parto quando não houve
+    secagem no meio (ver rules/lactacao.py). Desfazer o parto tem que desfazer
+    esse fechamento — mas só ele: uma lactação fechada por uma `Secagem` real
+    (`secagem_id` preenchido) continua fechada, porque aquele evento aconteceu
+    de verdade e não depende deste parto."""
+    partos_excluidos = [obj for obj in alvos if isinstance(obj, Parto)]
+    if not partos_excluidos:
+        return
+    for p in partos_excluidos:
+        query = select(Lactacao).where(Lactacao.numero_matriz == p.numero_matriz)
+        if fazenda_id is not None:
+            query = query.where(Lactacao.fazenda_id == fazenda_id)
+        lactacoes = sorted(session.exec(query).all(), key=lambda l: l.data_inicio)
+        for lact in lactacoes:
+            if lact.parto_id != p.id and not (p.data_parto and lact.data_inicio == p.data_parto):
+                continue
+            for anterior in lactacoes:
+                if (
+                    anterior is not lact
+                    and anterior.data_fim == lact.data_inicio
+                    and anterior.secagem_id is None
+                ):
+                    anterior.data_fim = None
+                    session.add(anterior)
+            session.delete(lact)
+
+
 def _reajustar_del_dias_apos_excluir_parto(session: Session, alvos: list, fazenda_id: int | None) -> None:
     """`registrar_parto` zera `Animal.del_dias` da mãe no instante do parto
     (congelado dali em diante, só voltando a bater com a realidade no próximo
@@ -1156,6 +1194,7 @@ def confirmar(
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
+        _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
         _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
         for obj in alvos:
@@ -1205,6 +1244,7 @@ def aprovar_pendente(
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
+    _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
     _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
     avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
     for obj in alvos:

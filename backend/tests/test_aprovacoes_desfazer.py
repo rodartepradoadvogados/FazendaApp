@@ -18,7 +18,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ControleLeiteiro, Estoque, LancamentoPendente, MovimentoEstoque, Sanidade
+from fazenda.models import (
+    Animal, ControleLeiteiro, Estoque, Lactacao, LancamentoPendente, MovimentoEstoque, Sanidade,
+)
 
 
 @pytest.fixture
@@ -149,6 +151,16 @@ class TestDesfazerRejeitado:
 class TestDesfazerAprovadoControleLeiteiro:
     def test_aprovado_controle_leiteiro_desfazer_apaga_e_volta_a_pendente(self, client):
         c, engine = client
+        # Aprovar um controle leiteiro cai no mesmo caminho de gravação do
+        # lançamento direto, que passou a exigir uma `Lactacao` ABERTA na data
+        # do controle (ver rules/lactacao.py) — é dela que sai o DEL. Sem isso
+        # a aprovação é recusada, que é justamente o comportamento desejado:
+        # aprovar não deve ser uma porta dos fundos para gravar leite de uma
+        # matriz que não está lactando.
+        with Session(engine) as s:
+            s.add(Animal(numero="321", ativo=True, sexo="F"))
+            s.add(Lactacao(numero_matriz="321", data_inicio=date(2025, 12, 1), origem="parto"))
+            s.commit()
         pid = _criar_pendente(engine, tipo="controle_leiteiro", dados={
             "numero_matriz": "321", "data_controle": "2026-02-01", "ordenhas": [12, 9],
         })

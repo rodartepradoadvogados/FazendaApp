@@ -13,7 +13,13 @@ import { Trash2 } from "lucide-react";
 
 const PRODUTO_PADRAO = "Cloprostenol";
 
-export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
+export function FormInducaoCio({ animais, estoque, motivosInaptidao }: {
+  animais: AnimalRow[]; estoque: EstoqueItem[];
+  // numero -> motivo de inaptidão a serviço. Aqui é só informativo (a indução
+  // de cio não cria Servico, então o backend não a trava), mas a mesma
+  // marcação em cinza evita mandar hormônio numa bezerra por engano.
+  motivosInaptidao?: Map<string, string>;
+}) {
   const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
@@ -105,6 +111,7 @@ export function FormInducaoCio({ animais, estoque }: { animais: AnimalRow[]; est
             animais={animais}
             selecionados={sel} onToggle={toggle}
             titulo="Escolher matriz(es)"
+            motivosInaptidao={motivosInaptidao}
             colunas={[
               { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
               { header: "Lote", render: (a) => a.grupo_primario || "—" },

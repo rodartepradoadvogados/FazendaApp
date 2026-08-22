@@ -4,6 +4,7 @@ e lançamento de diagnóstico de gestação.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -13,19 +14,24 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ControleLeiteiro, EstoqueSemen, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
+    Animal, ControleLeiteiro, EstoqueSemen, Lactacao, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
     ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     Sanidade, SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_reprodutiva_configuravel import SITUACOES, avaliar_card
 from fazenda.rules.agenda_veterinario import classificar_rebanho
+from fazenda.rules.aptidao import AptidaoResultado, avaliar_aptidao_no_banco, parametros_aptidao
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
 from fazenda.rules.estado_reprodutivo import data_em_que_ficou_apta, estados_ao_vivo
 from fazenda.rules.genetica import calcular_grau_sangue_cria
+from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
+from fazenda.rules.parto import (
+    TIPO_PARTO_ABORTO, TIPO_PARTO_NATIMORTO, TIPO_PARTO_NORMAL, eh_parto_produtivo, proxima_ordem_parto,
+)
 from fazenda.rules.parametros import (
     dias_atraso_apos_aptidao_novilha, get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min,
     pev_dias as pev_dias_param,
@@ -37,6 +43,7 @@ from fazenda.rules.perda_prenhez import (
     detectar_e_registrar_perda_por_reinseminacao,
     fechar_servicos_abertos_por_reinseminacao,
     servico_esta_em_aberto,
+    servico_esta_positivo_vigente,
 )
 from fazenda.rules.programa_reprodutivo import (
     calcular_series,
@@ -50,7 +57,53 @@ from fazenda.rules.protocolo_iatf import (
 )
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
+
+
+# ---------------------------------------------------------------------------
+# Trava de aptidão para serviço reprodutivo (ver fazenda/rules/aptidao.py)
+#
+# Antes desta trava, nenhum dos três pontos de entrada de serviço/IA validava
+# nada além de "o animal existe": dava para inseminar bezerra, macho, animal
+# baixado ou vaca prenhe — e reinseminar uma matriz gestante fazia o sistema
+# INVENTAR sozinho uma perda de prenhez no serviço anterior. Agora esse caso
+# exige uma confirmação explícita (`forcar: true`) de uma pessoa.
+# ---------------------------------------------------------------------------
+def _detalhe_aptidao(resultado: AptidaoResultado, numeros: list[str] | None = None) -> dict:
+    """Corpo do 409. `msg` é a chave que o tratamento genérico de erro do
+    frontend já lê (`mensagemErroApi`); `motivo`/`confirmavel` existem para a
+    tela decidir se oferece o botão "confirmar mesmo assim" sem precisar
+    interpretar o texto da mensagem."""
+    return {
+        "erro": "aptidao",
+        "msg": resultado.mensagem,
+        "motivo": resultado.motivo,
+        "confirmavel": resultado.confirmavel,
+        "animais": numeros or [],
+    }
+
+
+def _exigir_aptidao(
+    session: Session, animal: Animal, *, data: date, fazenda_id: int | None, forcar: bool,
+) -> AptidaoResultado:
+    """Avalia a aptidão e levanta 409 quando o serviço não pode ser gravado.
+
+    Devolve o resultado mesmo quando passa — o chamador usa isso para
+    registrar no log que houve uma confirmação manual (`forcar`)."""
+    resultado = avaliar_aptidao_no_banco(session, animal, data=data, fazenda_id=fazenda_id)
+    if resultado.bloqueia(forcar):
+        raise HTTPException(status_code=409, detail=_detalhe_aptidao(resultado, [animal.numero]))
+    if not resultado.apta and forcar:
+        # Auditoria completa da confirmação manual fica para a rodada da
+        # trilha de eventos (Peça de auditoria de transição de estado); por
+        # ora o registro é este log, que já distingue "o sistema decidiu" de
+        # "uma pessoa confirmou".
+        logger.info(
+            "Aptidão forçada manualmente: matriz=%s motivo=%s data=%s", animal.numero, resultado.motivo, data,
+        )
+    return resultado
 
 
 def carregar_perfis_reprodutivos(
@@ -1293,57 +1346,69 @@ class PartoIn(BaseModel):
     observacao: str | None = None
 
 
-@router.post("/parto")
-def registrar_parto(
-    dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int = Depends(get_fazenda_id_escrita),
-) -> dict:
-    """
-    Registra o parto e cria a ficha de cada cria nascida viva ainda não
-    cadastrada. Não move ninguém de lote sozinho — o front sugere o lote via
-    /producao/sugestao-lote-evento e só move (POST /movimentacoes/mover) com
-    confirmação explícita do usuário.
-    """
-    query_mae = select(Animal).where(Animal.numero == dados.numero_matriz)
+def _partos_da_matriz(session: Session, numero_matriz: str, fazenda_id: int | None) -> list[Parto]:
+    """Todos os partos gravados da matriz — inclusive os abortos, que também
+    são `Parto` desde o endpoint único de encerramento de gestação. Quem
+    precisa só dos produtivos filtra com `rules.parto.eh_parto_produtivo`."""
+    query = select(Parto).where(Parto.numero_matriz == numero_matriz)
     if fazenda_id is not None:
-        query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
-    mae = session.exec(query_mae).first()
-    if not mae:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    return list(session.exec(query).all())
+
+
+def _buscar_matriz(session: Session, numero_matriz: str, fazenda_id: int | None) -> Animal:
+    query = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query).first()
+    if not animal:
         raise HTTPException(status_code=404, detail="Matriz não encontrada")
+    return animal
 
-    query_ultimo_parto = select(Parto).where(Parto.numero_matriz == dados.numero_matriz).order_by(Parto.ordem_parto.desc())
-    if fazenda_id is not None:
-        query_ultimo_parto = query_ultimo_parto.where(Parto.fazenda_id == fazenda_id)
-    ultimo_parto = session.exec(query_ultimo_parto).first()
-    ordem_parto = (ultimo_parto.ordem_parto or 0) + 1 if ultimo_parto else 1
 
-    # Sexo do parto gemelar: usa o informado ou deriva dos sexos das crias.
-    gemelar_sexo = dados.gemelar_sexo
-    if not gemelar_sexo and len(dados.crias) >= 2:
-        combo = "".join(sorted((dados.crias[0].sexo or "").upper() + (dados.crias[1].sexo or "").upper()))
+def _gravar_parto_e_crias(
+    session: Session, mae: Animal, *, data_parto: date, tipo_parto: str | None,
+    crias: list[CriaIn], retencao_placenta: bool | None, gemelar: bool | None,
+    gemelar_sexo: str | None, ordem_parto: int | None, usuario_id: int | None,
+    fazenda_id: int | None,
+) -> tuple[Parto, list[str], list[str]]:
+    """Cria o `Parto`, cadastra as crias nascidas vivas e agenda a avaliação
+    de retenção de placenta — SEM commit.
+
+    Extraído de `registrar_parto` para ser o corpo comum dele e do endpoint
+    único de encerramento de gestação: os dois precisam gravar exatamente o
+    mesmo `Parto`, e ter duas cópias dessa gravação é como o aborto acabou
+    sem `Parto` nenhum em primeiro lugar.
+
+    `ordem_parto=None` marca um fim de gestação NÃO produtivo (aborto) — ver
+    `fazenda.rules.parto`.
+    """
+    if not gemelar_sexo and len(crias) >= 2:
+        combo = "".join(sorted((crias[0].sexo or "").upper() + (crias[1].sexo or "").upper()))
         gemelar_sexo = {"FF": "FF", "FM": "FM", "MM": "MM"}.get(combo)
 
     parto = Parto(
         animal_id=mae.id,
-        numero_matriz=dados.numero_matriz,
-        data_parto=dados.data_parto,
+        numero_matriz=mae.numero,
+        data_parto=data_parto,
         ordem_parto=ordem_parto,
-        tipo_parto=dados.tipo_parto,
-        sexo_cria_1=dados.crias[0].sexo if len(dados.crias) > 0 else None,
-        sexo_cria_2=dados.crias[1].sexo if len(dados.crias) > 1 else None,
-        numero_cria_1=(dados.crias[0].numero or None) if len(dados.crias) > 0 else None,
-        numero_cria_2=(dados.crias[1].numero or None) if len(dados.crias) > 1 else None,
-        gemelar=dados.gemelar if dados.gemelar is not None else len(dados.crias) > 1,
+        tipo_parto=tipo_parto,
+        sexo_cria_1=crias[0].sexo if len(crias) > 0 else None,
+        sexo_cria_2=crias[1].sexo if len(crias) > 1 else None,
+        numero_cria_1=(crias[0].numero or None) if len(crias) > 0 else None,
+        numero_cria_2=(crias[1].numero or None) if len(crias) > 1 else None,
+        gemelar=gemelar if gemelar is not None else len(crias) > 1,
         gemelar_sexo=gemelar_sexo,
-        retencao_placenta=dados.retencao_placenta,
-        usuario_id=usuario_id_seguro(user),
+        retencao_placenta=retencao_placenta,
+        usuario_id=usuario_id,
         fazenda_id=fazenda_id,
     )
     session.add(parto)
+    session.flush()  # precisa do parto.id para vincular a lactação
 
-    crias_criadas = []
-    crias_baixadas = []
-    for cria in dados.crias:
+    crias_criadas: list[str] = []
+    crias_baixadas: list[str] = []
+    for cria in crias:
         # Sem número OU marcada como não-viva → baixa automática (natimorto/não
         # entra no rebanho). Fica registrada no parto (sexo), mas sem ficha.
         if not (cria.numero or "").strip() or not cria.nasceu_viva:
@@ -1354,14 +1419,14 @@ def registrar_parto(
             query_cria_existente = query_cria_existente.where(Animal.fazenda_id == fazenda_id)
         if session.exec(query_cria_existente).first():
             continue  # já cadastrada — não sobrescreve
-        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, dados.data_parto)
+        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, data_parto)
         # Todo animal que nasce entra automaticamente na categoria "bezerra/o
         # mamando" — o próximo upload do GERAL.csv (Ideagri) pode atualizar
         # depois, mas a cria não deve ficar sem categoria até lá.
         categoria_completa_cria = "Bezerra Mamando" if cria.sexo == "F" else "Bezerro Mamando"
         categoria_abrev_cria = "Bezerra" if cria.sexo == "F" else "Bezerro"
         session.add(Animal(
-            numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=dados.data_parto,
+            numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=data_parto,
             mae_numero=mae.numero, mae_nome=mae.nome, ativo=True,
             categoria_completa=categoria_completa_cria, categoria_abrev=categoria_abrev_cria,
             fazenda_id=fazenda_id,
@@ -1370,27 +1435,267 @@ def registrar_parto(
 
     # Retenção de placenta → gera um item na Agenda (avaliação/tratamento) no
     # dia do parto, para não passar despercebido.
-    if dados.retencao_placenta:
+    if retencao_placenta:
         from fazenda.models import AgendaManual
         session.add(AgendaManual(
-            data_evento=dados.data_parto,
+            data_evento=data_parto,
             descricao=f"Retenção de placenta — vaca {mae.numero}: avaliar/tratar",
             categoria="Sanidade",
             numero_animal=mae.numero,
             tipo_evento="Outro",
             observacao="Gerado automaticamente pelo lançamento de parto com retenção de placenta.",
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id,
             fazenda_id=fazenda_id,
         ))
 
-    # DEL reseta ao parir — o resto da ficha (categoria, produção etc.) só é
-    # atualizado de fato no próximo upload do GERAL.csv.
-    mae.del_dias = 0
-    mae.atualizado_em = datetime.utcnow()
-    session.add(mae)
+    return parto, crias_criadas, crias_baixadas
+
+
+@router.post("/parto")
+def registrar_parto(
+    dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """
+    Registra o parto e cria a ficha de cada cria nascida viva ainda não
+    cadastrada. Não move ninguém de lote sozinho — o front sugere o lote via
+    /producao/sugestao-lote-evento e só move (POST /movimentacoes/mover) com
+    confirmação explícita do usuário.
+
+    Continua existindo para não quebrar quem já o chama (app de campo, bot do
+    Telegram, importações); o caminho novo e completo — que também resolve a
+    perda de prenhez e cobre aborto/natimorto — é
+    POST /reproducao/encerramento-gestacao.
+    """
+    mae = _buscar_matriz(session, dados.numero_matriz, fazenda_id)
+
+    # A ordem sai de `rules.parto.proxima_ordem_parto` — não mais de
+    # "`ordem_parto` do mais recente + 1" ordenado por essa mesma coluna.
+    # Agora que o aborto também gera um `Parto` (com `ordem_parto` NULL, ver
+    # fazenda/rules/parto.py), aquela consulta ficaria dependente de como o
+    # banco ordena NULLs: em Postgres eles vêm PRIMEIRO no DESC, e toda matriz
+    # com um aborto no histórico recomeçaria a contagem do 1.
+    ordem_parto = proxima_ordem_parto(_partos_da_matriz(session, dados.numero_matriz, fazenda_id))
+
+    parto, crias_criadas, crias_baixadas = _gravar_parto_e_crias(
+        session, mae, data_parto=dados.data_parto, tipo_parto=dados.tipo_parto, crias=dados.crias,
+        retencao_placenta=dados.retencao_placenta, gemelar=dados.gemelar, gemelar_sexo=dados.gemelar_sexo,
+        ordem_parto=ordem_parto, usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+    )
+
+    # Todo parto abre uma lactação (ver fazenda/rules/lactacao.py) — a
+    # entidade que faltava e sem a qual "esta vaca está em lactação?" era
+    # inferido de forma diferente em cada tela. `data_inicio` é a data REAL
+    # do parto, inclusive retroativa: é dela que sai o DEL ao vivo gravado
+    # em cada controle leiteiro.
+    regras_lactacao.abrir_lactacao(
+        session, numero_matriz=dados.numero_matriz, data_inicio=dados.data_parto,
+        origem=regras_lactacao.ORIGEM_PARTO, parto_id=parto.id, animal_id=mae.id,
+        fazenda_id=fazenda_id, usuario_id=usuario_id_seguro(user),
+    )
+
+    # `Animal.del_dias` é campo CONGELADO, mantido em dia aqui só por
+    # compatibilidade com as telas que ainda o leem (a migração delas para
+    # ler a Lactacao direto é a Peça 1). Note que agora sai do DEL AO VIVO
+    # da lactação recém-aberta, não de um `0` cravado: num parto lançado
+    # retroativamente, `0` era simplesmente falso.
+    regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
 
     session.commit()
     return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas, "crias_baixadas": crias_baixadas}
+
+
+# ---------------------------------------------------------------------------
+# Encerramento de gestação — o caminho ÚNICO de "esta gestação acabou"
+#
+# Antes existiam TRÊS caminhos incoerentes para a mesma coisa:
+#
+#   1. `POST /reproducao/parto` — criava `Parto`, mas só servia para parto
+#      normal e não tocava na perda de prenhez;
+#   2. `POST /reproducao/perda-prenhez` (o que o botão "Aborto" do FormParto
+#      chamava) — NÃO criava `Parto` nenhum, só carimbava dois campos no
+#      serviço MAIS RECENTE POR DATA da matriz, que nem sempre é o serviço
+#      que originou a gestação perdida;
+#   3. `POST /reproducao/animais/{n}/abrir-lactacao` — gravava `del_dias = 0`
+#      e nada mais, sem nem receber a data do evento.
+#
+# O resultado era o bug que originou esta correção: a matriz que abortou
+# ficava sem `Parto` (logo, "novilha gestante, sem parto" na Ficha para
+# sempre), com a perda possivelmente carimbada no serviço errado, e com uma
+# "lactação" que existia só como um zero num campo congelado.
+#
+# Este endpoint faz as quatro coisas numa transação só, para os três tipos de
+# fim de gestação. Os endpoints antigos continuam existindo (há outros
+# chamadores), mas o fluxo de aborto do FormParto passa por aqui.
+# ---------------------------------------------------------------------------
+TIPOS_ENCERRAMENTO = ("parto", "aborto", "natimorto")
+
+# Rótulo gravado em `Parto.tipo_parto` por tipo de encerramento. O do aborto é
+# o mesmo texto que a importação do CSV do Ideagri já traz, de propósito (ver
+# fazenda/rules/parto.py).
+ROTULO_TIPO_PARTO = {
+    "parto": TIPO_PARTO_NORMAL,
+    "aborto": TIPO_PARTO_ABORTO,
+    "natimorto": TIPO_PARTO_NATIMORTO,
+}
+
+# Motivo de perda de prenhez implícito em cada tipo, quando o usuário não
+# informa um. Parto normal não gera perda nenhuma — ver o comentário no corpo.
+MOTIVO_PADRAO_POR_TIPO = {"aborto": "aborto", "natimorto": "natimorto"}
+
+
+class EncerramentoGestacaoIn(BaseModel):
+    numero_matriz: str
+    data: date                      # data REAL do evento — aceita retroativa
+    tipo: str                       # "parto" | "aborto" | "natimorto"
+    abrir_lactacao: bool = False    # resposta do popup "deseja abrir lactação?"
+    motivo: str | None = None       # perda de prenhez: aborto | natimorto | outros
+    crias: list[CriaIn] = []
+    retencao_placenta: bool | None = None
+    gemelar: bool | None = None
+    gemelar_sexo: str | None = None
+    tipo_parto: str | None = None   # rótulo livre do parto (distocia etc.); vazio = o padrão do tipo
+    observacao: str | None = None
+    forcar: bool = False            # reservado: confirmação manual de situações limítrofes
+
+
+@router.post("/encerramento-gestacao")
+def encerrar_gestacao(
+    dados: EncerramentoGestacaoIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """
+    Encerra a gestação de uma matriz — parto, aborto ou natimorto — numa
+    única transação:
+
+    1. cria o `Parto` (nos TRÊS casos; no aborto com `ordem_parto` NULL, que
+       é o que o mantém fora do IEP/ordem de parto — ver rules/parto.py);
+    2. carimba a perda de prenhez no serviço VIGENTE POSITIVO certo (aborto e
+       natimorto), usando `rules.perda_prenhez.servico_esta_positivo_vigente`
+       em vez de "o serviço mais recente por data", que podia carimbar a
+       perda numa inseminação posterior à gestação perdida;
+    3. abre a `Lactacao` com `data_inicio` = a data REAL do evento, se
+       `abrir_lactacao`;
+    4. sincroniza `Animal.del_dias` com o DEL ao vivo recém-calculado, para
+       as telas que ainda leem o campo congelado.
+
+    Não move ninguém de lote: devolve `sugerir_lote` para o front pedir a
+    sugestão em /producao/sugestao-lote-evento e confirmar com o usuário —
+    exatamente o que o parto normal já faz, e que o caminho de aborto pulava
+    inteiro.
+    """
+    if dados.tipo not in TIPOS_ENCERRAMENTO:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido: {dados.tipo}")
+    if dados.motivo is not None and dados.motivo not in MOTIVOS_PERDA_PRENHEZ:
+        raise HTTPException(status_code=400, detail="Motivo de perda de prenhez inválido")
+
+    mae = _buscar_matriz(session, dados.numero_matriz, fazenda_id)
+    usuario_id = usuario_id_seguro(user)
+    partos_anteriores = _partos_da_matriz(session, dados.numero_matriz, fazenda_id)
+
+    # (1) O Parto. Aborto -> ordem_parto NULL: a gestação acabou (e todo o
+    # motor ao vivo que pergunta "existe parto?" passa a enxergar isso), mas
+    # não houve cria e a ordem de parto da matriz não avança.
+    produtivo = dados.tipo != "aborto"
+    ordem_parto = proxima_ordem_parto(partos_anteriores) if produtivo else None
+    parto, crias_criadas, crias_baixadas = _gravar_parto_e_crias(
+        session, mae, data_parto=dados.data, tipo_parto=dados.tipo_parto or ROTULO_TIPO_PARTO[dados.tipo],
+        crias=dados.crias, retencao_placenta=dados.retencao_placenta, gemelar=dados.gemelar,
+        gemelar_sexo=dados.gemelar_sexo, ordem_parto=ordem_parto, usuario_id=usuario_id, fazenda_id=fazenda_id,
+    )
+
+    # (2) A perda de prenhez — só quando de fato houve perda. Um parto normal
+    # NÃO carimba `data_perda_prenhez`: a gestação se resolveu do jeito certo,
+    # e marcar perda ali corromperia as taxas de perda de prenhez do rebanho.
+    servico_perda = None
+    if dados.tipo in MOTIVO_PADRAO_POR_TIPO:
+        servico_perda = _carimbar_perda_no_servico_vigente(
+            session, numero_matriz=dados.numero_matriz, data_perda=dados.data,
+            motivo=dados.motivo or MOTIVO_PADRAO_POR_TIPO[dados.tipo],
+            partos_anteriores=partos_anteriores, fazenda_id=fazenda_id,
+        )
+
+    # (3) A lactação, com a data REAL do evento (retroativa quando for o
+    # caso). É daqui que sai o DEL — não mais de um `del_dias = 0` cravado
+    # no dia do lançamento, que dava DEL 0 a uma vaca que abortou há 40 dias.
+    lactacao = None
+    if dados.abrir_lactacao:
+        lactacao = regras_lactacao.abrir_lactacao(
+            session, numero_matriz=dados.numero_matriz, data_inicio=dados.data,
+            origem=regras_lactacao.ORIGEM_ABORTO if dados.tipo == "aborto" else regras_lactacao.ORIGEM_PARTO,
+            parto_id=parto.id, animal_id=mae.id, fazenda_id=fazenda_id, usuario_id=usuario_id,
+            observacao=dados.observacao,
+        )
+
+    # (4) Compatibilidade com quem ainda lê o campo congelado.
+    del_atual = regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
+
+    session.commit()
+    if lactacao is not None:
+        session.refresh(lactacao)
+    return {
+        "criado": True,
+        "tipo": dados.tipo,
+        "parto_id": parto.id,
+        "ordem_parto": ordem_parto,
+        "crias_criadas": crias_criadas,
+        "crias_baixadas": crias_baixadas,
+        "perda_prenhez_servico_id": servico_perda.id if servico_perda else None,
+        "lactacao_id": lactacao.id if lactacao else None,
+        "lactacao_aberta": lactacao is not None,
+        "del_dias": del_atual,
+        # O front usa isto para rodar o MESMO bloco de sugestão de lote do
+        # parto normal (ver prepararPendenciaLote/alocarSemConfirmar em
+        # FormParto.tsx), que o caminho antigo de aborto pulava.
+        "sugerir_lote": lactacao is not None,
+    }
+
+
+def _carimbar_perda_no_servico_vigente(
+    session: Session, *, numero_matriz: str, data_perda: date, motivo: str,
+    partos_anteriores: list[Parto], fazenda_id: int | None,
+) -> Servico | None:
+    """Grava a perda de prenhez no serviço que ORIGINOU a gestação perdida.
+
+    O caminho antigo (`POST /reproducao/perda-prenhez`) pegava simplesmente o
+    serviço de data mais recente da matriz. Isso carimba no serviço errado
+    sempre que existe uma inseminação POSTERIOR à gestação perdida — e a
+    matriz passa a constar com uma perda numa tentativa que ainda nem foi
+    diagnosticada, enquanto a gestação que realmente se perdeu continua
+    contando como vigente.
+
+    Aqui o alvo é o serviço vigente que ainda vale como prenhez, pelo mesmo
+    critério de `rules.perda_prenhez.servico_esta_positivo_vigente`: o mais
+    recente ATÉ a data do evento, posterior ao último parto anterior, com
+    diagnóstico POSITIVO e sem perda já registrada.
+
+    Devolve `None` (sem erro) quando não há serviço assim — é o caso legítimo
+    da matriz que abortou sem que ninguém tivesse lançado o diagnóstico
+    positivo. O `Parto` do aborto continua sendo criado, que é o que conserta
+    o estado dela.
+    """
+    ultimo_parto = max(
+        (p.data_parto for p in partos_anteriores if p.data_parto and p.data_parto < data_perda), default=None,
+    )
+    query = select(Servico).where(Servico.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    candidatos = [
+        s for s in session.exec(query).all()
+        if s.data_servico and s.data_servico <= data_perda
+        and (ultimo_parto is None or s.data_servico > ultimo_parto)
+    ]
+    vigente = max(candidatos, key=lambda s: s.data_servico, default=None)
+    if vigente is None or not servico_esta_positivo_vigente(vigente):
+        return None
+    vigente.data_perda_prenhez = data_perda
+    vigente.motivo_perda_prenhez = motivo
+    session.add(vigente)
+    return vigente
 
 
 class HormonioIatfIn(BaseModel):
@@ -1412,6 +1717,7 @@ class ProtocoloIatfIn(BaseModel):
     # Medicamentos por dia (ex.: D0 = 1ml SincroCP + 2ml Estron). Opcional —
     # sem eles, o protocolo funciona como antes (sem baixa de estoque).
     hormonios: list[HormonioIatfIn] = []
+    forcar: bool = False  # confirmação manual dos bloqueios confirmáveis de aptidão (ver rules/aptidao.py)
 
 
 @router.post("/protocolo-iatf")
@@ -1429,6 +1735,15 @@ def lancar_protocolo_iatf(
     """
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+
+    # Colocar a matriz num protocolo hormonal é decidir que ela vai ser
+    # inseminada — a mesma trava de aptidão da inseminação vale aqui, e vale
+    # AQUI PRIMEIRO: entre o D0 e a IA passam ~11 dias de hormônio aplicado
+    # em bicho que nunca deveria ter entrado no protocolo. Valida contra a
+    # data do D0 (a idade do animal HOJE, não daqui a 11 dias).
+    _exigir_aptidao_do_lote(
+        session, dados.animais, data=dados.data_d0, fazenda_id=fazenda_id, forcar=dados.forcar,
+    )
 
     nome_base = "Protocolo IATF"
     if dados.protocolo_id is not None:
@@ -2110,6 +2425,11 @@ class ServicoIn(BaseModel):
     reprodutor: str | None = None
     responsavel: str | None = None
     tipo_semen: str | None = None  # convencional | sexado | fazenda
+    # Confirmação explícita de quem lança para os bloqueios CONFIRMÁVEIS de
+    # aptidão (novilha sem pesagem/abaixo do peso, matriz que consta como
+    # gestante) — ver fazenda/rules/aptidao.py. Nunca destrava os bloqueios
+    # duros (sexo, animal baixado, idade abaixo do mínimo).
+    forcar: bool = False
 
 
 @router.post("/servico")
@@ -2129,6 +2449,14 @@ def registrar_servico(
     animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Matriz não encontrada")
+
+    # Trava de aptidão (ver fazenda/rules/aptidao.py) — antes daqui não havia
+    # nenhuma, e a checagem "≥ 13 meses" que existia só no frontend divergia
+    # do parâmetro real da fazenda e não valia para o app de campo nem para o
+    # bot do Telegram, que chamam esta rota direto.
+    _exigir_aptidao(
+        session, animal, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
+    )
 
     query_anteriores = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
     if fazenda_id is not None:
@@ -2257,15 +2585,23 @@ def _nome_auto_iatf(d0: date) -> str:
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
                           tipo_servico: str, protocolo: str | None, reprodutor: str | None,
                           inseminador: str | None = None, usuario_id: int | None = None,
-                          tipo_semen: str | None = None, fazenda_id: int | None = None) -> Servico | None:
+                          tipo_semen: str | None = None, fazenda_id: int | None = None,
+                          forcar: bool = False) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
-    commit) — resolve a inseminação do protocolo IATF vinculado, se houver."""
+    commit) — resolve a inseminação do protocolo IATF vinculado, se houver.
+
+    Aplica a MESMA trava de aptidão de `registrar_servico` (ver
+    fazenda/rules/aptidao.py): este é o caminho do lançamento em lote e do
+    protocolo IATF, e deixá-lo de fora seria manter a porta dos fundos
+    aberta justamente no ponto em que se lançam dezenas de animais de uma
+    vez sem olhar um por um."""
     query_animal = select(Animal).where(Animal.numero == numero_matriz)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     animal = session.exec(query_animal).first()
     if not animal:
         return None
+    _exigir_aptidao(session, animal, data=data_servico, fazenda_id=fazenda_id, forcar=forcar)
     query_anteriores = select(Servico).where(Servico.numero_matriz == numero_matriz)
     if fazenda_id is not None:
         query_anteriores = query_anteriores.where(Servico.fazenda_id == fazenda_id)
@@ -2335,6 +2671,52 @@ class ServicoLoteIn(BaseModel):
     protocolo_lancamento_id: int | None = None  # IATF: vincular a este lançamento
     auto_lancar_iatf: bool = False  # IATF: se não há protocolo, cria um retroativo (D0 = serviço − 11)
     tipo_semen: str | None = None  # convencional | sexado | fazenda
+    forcar: bool = False  # confirmação manual dos bloqueios confirmáveis de aptidão (ver rules/aptidao.py)
+
+
+def _exigir_aptidao_do_lote(
+    session: Session, numeros: list[str], *, data: date, fazenda_id: int | None, forcar: bool,
+) -> None:
+    """Valida a aptidão de TODOS os animais do lote ANTES de gravar qualquer
+    coisa, e recusa o lote inteiro se algum estiver bloqueado.
+
+    Tudo ou nada, de propósito: o lançamento em lote cria protocolos IATF
+    retroativos e baixa dose de sêmen ao longo do laço, e abortar no meio
+    deixaria metade do lote gravada com a outra metade recusada — o pior dos
+    dois mundos para quem está no curral. Animais desconhecidos NÃO entram
+    aqui: eles já têm o caminho `incompativeis`, que a UI sabe tratar.
+    """
+    bloqueados: list[tuple[str, AptidaoResultado]] = []
+    params = parametros_aptidao()
+    for numero in numeros:
+        query = select(Animal).where(Animal.numero == numero)
+        if fazenda_id is not None:
+            query = query.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query).first()
+        if animal is None:
+            continue
+        resultado = avaliar_aptidao_no_banco(session, animal, data=data, fazenda_id=fazenda_id, params=params)
+        if resultado.bloqueia(forcar):
+            bloqueados.append((numero, resultado))
+        elif not resultado.apta and forcar:
+            logger.info(
+                "Aptidão forçada manualmente (lote): matriz=%s motivo=%s data=%s", numero, resultado.motivo, data,
+            )
+    if not bloqueados:
+        return
+    primeiro = bloqueados[0][1]
+    confirmavel = all(r.confirmavel for _, r in bloqueados)
+    detalhes = "; ".join(r.mensagem for _, r in bloqueados if r.mensagem)
+    resumo = AptidaoResultado(
+        apta=False,
+        motivo=primeiro.motivo if len({r.motivo for _, r in bloqueados}) == 1 else "varios",
+        mensagem=(
+            f"{len(bloqueados)} animal(is) do lote não estão aptos a receber serviço: {detalhes}"
+            if len(bloqueados) > 1 else detalhes
+        ),
+        severidade=primeiro.severidade if confirmavel else "duro",
+    )
+    raise HTTPException(status_code=409, detail=_detalhe_aptidao(resumo, [n for n, _ in bloqueados]))
 
 
 @router.post("/servico-lote")
@@ -2356,6 +2738,10 @@ def registrar_servico_lote(
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.tipo not in ("cio_natural", "iatf", "monta_natural"):
         raise HTTPException(status_code=400, detail="Tipo inválido")
+
+    _exigir_aptidao_do_lote(
+        session, dados.animais, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
+    )
 
     tipo_servico = "Monta natural" if dados.tipo == "monta_natural" else "IA"
     lanc_escolhido = session.get(ProtocoloIatfLancamento, dados.protocolo_lancamento_id) if dados.protocolo_lancamento_id else None
@@ -2408,6 +2794,7 @@ def registrar_servico_lote(
         s = _registrar_um_servico(
             session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel,
             usuario_id=usuario_id_seguro(user), tipo_semen=dados.tipo_semen, fazenda_id=fazenda_id,
+            forcar=dados.forcar,
         )
         if s is None:
             incompativeis.append(numero)

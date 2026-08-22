@@ -14,7 +14,7 @@ import { casaBusca } from "@/lib/busca";
  * (como era em Inseminação/Diagnóstico) ou de overlays reimplementados a cada
  * tela. Mesmo visual do `AnimalPicker` (seleção única), com checkboxes.
  */
-export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false, abrirAoMudar }: {
+export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false, abrirAoMudar, motivosInaptidao }: {
   animais: AnimalRow[];
   selecionados: Set<string>;
   onToggle: (numero: string) => void;
@@ -32,6 +32,12 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   // quando a lista de `animais` vem de uma escolha em lote e o usuário precisa
   // confirmar explicitamente se quer todos, nenhum ou só alguns.
   abrirAoMudar?: string | number;
+  // numero -> motivo de inaptidão. Marca o animal EM CINZA, com o motivo ao
+  // lado do número, em vez de escondê-lo da lista (era o que Lançamentos
+  // fazia com as fêmeas abaixo da idade mínima — e ninguém entendia por que a
+  // vaca "sumiu"). Continua selecionável de propósito: a decisão final é do
+  // backend, que aceita uma confirmação explícita nos casos limítrofes.
+  motivosInaptidao?: Map<string, string>;
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
@@ -125,15 +131,24 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
             </div>
             <div style={{ overflowY: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th></th>{colunas.map((c) => <th key={c.header}>{c.header}</th>)}</tr></thead>
+                <thead><tr><th></th>{colunas.map((c) => <th key={c.header}>{c.header}</th>)}{motivosInaptidao ? <th>Aptidão</th> : null}</tr></thead>
                 <tbody>
-                  {filtrados.map((a) => (
-                    <tr key={a.numero} onClick={() => onToggle(a.numero)} style={{ cursor: "pointer" }} className="row-clickable">
+                  {filtrados.map((a) => {
+                    const inapto = motivosInaptidao?.get(a.numero);
+                    return (
+                    <tr key={a.numero} onClick={() => onToggle(a.numero)} title={inapto || undefined}
+                      style={{ cursor: "pointer", opacity: inapto ? 0.55 : undefined }} className="row-clickable">
                       <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => onToggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
-                      {colunas.map((c) => <td key={c.header} style={{ fontSize: "0.8rem" }}>{c.render(a)}</td>)}
+                      {colunas.map((c) => <td key={c.header} style={{ fontSize: "0.8rem", color: inapto ? "var(--text-muted)" : undefined }}>{c.render(a)}</td>)}
+                      {motivosInaptidao ? (
+                        <td style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontStyle: inapto ? "italic" : undefined }}>
+                          {inapto || "—"}
+                        </td>
+                      ) : null}
                     </tr>
-                  ))}
-                  {!filtrados.length && <tr><td colSpan={colunas.length + 1} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
+                    );
+                  })}
+                  {!filtrados.length && <tr><td colSpan={colunas.length + (motivosInaptidao ? 2 : 1)} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
                 </tbody>
               </table>
             </div>

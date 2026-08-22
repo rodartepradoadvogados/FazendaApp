@@ -34,6 +34,7 @@ from fazenda.rules.estoque_baixa import (
 )
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.unidades import unidades_compativeis
 from fazenda.rules.visibilidade import visivel
 
@@ -117,8 +118,11 @@ def listar_aplicacoes(
 ) -> dict:
     """Aplicações achatadas para o dashboard interativo (filtra no cliente)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Aborto não conta como parto na ordem exibida (ver fazenda/rules/parto.py).
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
+        if not eh_parto_produtivo(p):
+            continue
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     # Lote/categoria ATUAIS do animal (a Sanidade não guarda o lote histórico de
     # quando o produto foi aplicado — mesma limitação já aceita para ordem_parto

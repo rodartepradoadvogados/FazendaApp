@@ -94,6 +94,17 @@ class TestModelosCategoriasNovas:
                 ))
                 s.commit()
 
+        if categoria == "controle_leiteiro_simples":
+            # A matriz do modelo precisa estar EM LACTAÇÃO na data do controle
+            # — POST /producao/controles passou a exigir uma `Lactacao` aberta
+            # (ver rules/lactacao.py), e sem ela a linha é pulada e reportada.
+            from datetime import date
+            from fazenda.models import Lactacao
+            with Session(engine) as s:
+                s.add(Animal(numero=cfg["exemplo"][0], ativo=True, sexo="F"))
+                s.add(Lactacao(numero_matriz=cfg["exemplo"][0], data_inicio=date(2026, 3, 1), origem="parto"))
+                s.commit()
+
         content = _csv_de_modelo(cfg["colunas_csv"], cfg["exemplo"])
         extra = {"data_controle": "2026-07-08"} if cfg.get("precisa_data_controle") else {}
         r = c.post(f"/importar/{categoria}", files={"file": ("modelo.csv", content, "text/csv")}, data=extra)
@@ -141,11 +152,18 @@ class TestPlanoContaGerencialReal:
 class TestControleLeiteiroSimplificado:
     def test_calcula_total_e_puxa_del_da_ficha(self, client):
         c, engine = client
-        from datetime import date
-        from fazenda.models import Animal, ControleLeiteiro
+        from datetime import date, timedelta
+        from fazenda.models import Animal, ControleLeiteiro, Lactacao
 
         with Session(engine) as s:
-            s.add(Animal(numero="464", ativo=True, del_dias=120))
+            # O DEL do controle passou a sair da `Lactacao` aberta na data do
+            # controle (ver rules/lactacao.py), não mais do campo congelado
+            # `Animal.del_dias` — que continua aqui, propositalmente com um
+            # valor DIFERENTE, para o teste provar que não é ele quem responde.
+            s.add(Animal(numero="464", ativo=True, del_dias=999))
+            s.add(Lactacao(
+                numero_matriz="464", data_inicio=date(2026, 7, 8) - timedelta(days=120), origem="parto",
+            ))
             s.commit()
 
         content = _csv_de_modelo(["numero_matriz", "ordenha1_kg", "ordenha2_kg"], ["464", "14,5", "13,0"])
@@ -165,7 +183,18 @@ class TestControleLeiteiroSimplificado:
             assert registro.data_controle == date(2026, 7, 8)
 
     def test_linha_sem_numero_da_erro_sem_travar_arquivo(self, client):
-        c, _ = client
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Animal, Lactacao
+
+        with Session(engine) as s:
+            # A 464 precisa estar EM LACTAÇÃO: sem isso o controle dela é
+            # recusado pela trava de POST /producao/controles e o teste deixa
+            # de medir o que quer (uma linha inválida não derruba o arquivo).
+            s.add(Animal(numero="464", ativo=True))
+            s.add(Lactacao(numero_matriz="464", data_inicio=date(2026, 3, 1), origem="parto"))
+            s.commit()
+
         texto = "numero_matriz;ordenha1_kg;ordenha2_kg\r\n;14,5;13,0\r\n464;10,0;9,0\r\n"
         r = c.post(
             "/importar/controle_leiteiro_simples",
