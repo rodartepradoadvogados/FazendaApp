@@ -13,11 +13,14 @@ import logging
 import re
 import unicodedata
 
+from collections import defaultdict
+from datetime import date
 from pathlib import Path
+from typing import Optional
 
 from sqlmodel import Session, select
 
-from fazenda.models import SeedFlag, Touro
+from fazenda.models import EstoqueSemen, SeedFlag, Touro
 from fazenda.parsers.utils import parse_float
 from fazenda.rules.naab import central_por_codigo_naab
 
@@ -355,3 +358,121 @@ def calcular_prova_media(pares: list[tuple["Touro", int]]) -> dict[str, float | 
             soma_pesos += peso
         resultado[campo] = round(soma_ponderada / soma_pesos, 2) if soma_pesos else None
     return resultado
+
+
+def casar_touro(estoque_item: "EstoqueSemen", touro_por_naab: dict, touro_por_nome: dict) -> Optional[Touro]:
+    """Casa um item do estoque de sêmen com o catálogo genético: por NAAB/código
+    do estoque primeiro, senão pelo nome do touro. Usado tanto pela prova
+    média (peso = doses em estoque) quanto pela prova ao vivo (peso = uso
+    real, ver `calcular_prova_ao_vivo`)."""
+    naab = (estoque_item.naab or estoque_item.codigo or "").strip().upper()
+    if naab and naab in touro_por_naab:
+        return touro_por_naab[naab]
+    nome = (estoque_item.touro_nome or "").strip().lower()
+    return touro_por_nome.get(nome)
+
+
+def _touro_por_nome(
+    nome: str, touro_por_naab: dict, touro_por_nome: dict, estoque_por_nome: dict[str, "EstoqueSemen"],
+) -> Optional[Touro]:
+    """Casa um NOME de touro/reprodutor (ex.: `Servico.reprodutor`, que não
+    tem NAAB próprio) com o catálogo genético — via o estoque de sêmen
+    cadastrado com esse nome (que pode ter NAAB) ou, na falta, pelo nome
+    direto no catálogo."""
+    chave = (nome or "").strip().lower()
+    item = estoque_por_nome.get(chave)
+    if item:
+        touro = casar_touro(item, touro_por_naab, touro_por_nome)
+        if touro:
+            return touro
+    return touro_por_nome.get(chave)
+
+
+def eh_touro_fazenda(tipo_semen: str | None, nome: str | None, estoque_por_nome: dict[str, "EstoqueSemen"]) -> bool:
+    """Um touro é "da fazenda" (monta natural, sêmen produzido/usado dentro de
+    casa — não comprado de central de genética) quando `tipo_semen` (gravado
+    no próprio serviço) ou, na falta dele, o `tipo` cadastrado no estoque de
+    sêmen com esse nome, é "fazenda". Registros antigos sem nenhuma das duas
+    informações são tratados como NÃO sendo da fazenda (não há como provar
+    que são)."""
+    if tipo_semen:
+        return tipo_semen == "fazenda"
+    item = estoque_por_nome.get((nome or "").strip().lower())
+    return bool(item and item.tipo == "fazenda")
+
+
+# ---------------------------------------------------------------------------
+# Prova ao vivo — mesmos indicadores GENÉTICOS de `calcular_prova_media`
+# acima (leite, gordura, proteína, TPI, NM$, tipo/úbere/pernas composto, CCS,
+# fertilidade das filhas, facilidade de parto), mas ponderados pelo USO REAL
+# do touro na fazenda (nº de serviços em que ele foi de fato usado), não
+# pelas doses hoje em estoque. É essa ponderação por uso real — e não a
+# métrica calculada — que faz esta prova ser "ao vivo": o mesmo índice
+# genético do catálogo, só que pesado pelo que a fazenda realmente usou.
+#
+# ANTES este endpoint calculava algo bem diferente: taxa de concepção
+# REALIZADA (positivos ÷ serviços com resultado conhecido) por touro — um
+# indicador de RESULTADO REPRODUTIVO do rebanho, não de prova genética do
+# touro. Ver fazenda.rules.reproducao_analise para essa métrica (ainda usada
+# nos dashboards de Análise reprodutiva) — aqui ela foi substituída porque
+# não é o que "prova de touro" significa: a prova é do touro (índice
+# genético), o resultado reprodutivo é do cruzamento inteiro (touro + matriz
+# + manejo), coisas diferentes.
+# ---------------------------------------------------------------------------
+def calcular_prova_ao_vivo(
+    registros: list[dict],
+    touro_por_naab: dict[str, Touro],
+    touro_por_nome: dict[str, Touro],
+    estoque_por_nome: dict[str, "EstoqueSemen"],
+    *,
+    categoria: str | None = None,
+    ano_nascimento: int | None = None,
+    periodo_de: date | None = None,
+    periodo_ate: date | None = None,
+    incluir_fazenda: bool = False,
+) -> dict:
+    """Recebe os registros achatados de `analisar_servicos` e devolve a prova
+    ao vivo: os indicadores genéticos do catálogo, ponderados pelo nº de
+    serviços de cada touro (que passam os filtros opcionais — categoria,
+    ano de nascimento da matriz, período da inseminação — mesmos filtros da
+    tela, só limitam o resultado). Por padrão EXCLUI touros da própria
+    fazenda (`incluir_fazenda=False`): sêmen produzido/usado internamente
+    não tem prova de central de genética para ponderar; ligue a flag para
+    incluir mesmo assim (só conta se esse touro também estiver no catálogo
+    NAAB). Touro sem casamento no catálogo (nenhuma prova genética
+    encontrada) não entra no cálculo — não tem indicador nenhum para
+    ponderar."""
+    usos: dict[str, int] = defaultdict(int)
+    for r in registros:
+        nome = r.get("touro")
+        if not nome or nome == "(sem touro)":
+            continue
+        if categoria and categoria != "todas" and (r.get("categoria") or "").strip().lower() != categoria.strip().lower():
+            continue
+        if ano_nascimento and r.get("ano_nascimento") != ano_nascimento:
+            continue
+        d = r.get("data_servico")
+        if periodo_de and (d is None or d < periodo_de):
+            continue
+        if periodo_ate and (d is None or d > periodo_ate):
+            continue
+        if not incluir_fazenda and eh_touro_fazenda(r.get("tipo_semen"), nome, estoque_por_nome):
+            continue
+        usos[nome] += 1
+
+    pares: list[tuple[Touro, int]] = []
+    touros_saida: list[dict] = []
+    for nome, qtd in usos.items():
+        touro = _touro_por_nome(nome, touro_por_naab, touro_por_nome, estoque_por_nome)
+        if not touro:
+            continue
+        pares.append((touro, qtd))
+        touros_saida.append({"touro": nome, "servicos": qtd})
+    touros_saida.sort(key=lambda t: -t["servicos"])
+
+    return {
+        "prova": calcular_prova_media(pares),
+        "total_servicos": sum(qtd for _, qtd in pares),
+        "touros_considerados": len(pares),
+        "touros": touros_saida,
+    }

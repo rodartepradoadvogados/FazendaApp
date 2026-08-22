@@ -23,8 +23,8 @@ from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
-from fazenda.rules.reproducao_analise import analisar_servicos, prova_ao_vivo_por_touro
-from fazenda.rules.touros import calcular_prova_media
+from fazenda.rules.reproducao_analise import analisar_servicos
+from fazenda.rules.touros import calcular_prova_ao_vivo, calcular_prova_media, casar_touro
 
 router = APIRouter()
 
@@ -292,25 +292,18 @@ def excluir_estoque_semen(
     return {"excluido": True}
 
 
-def _casar_touro(estoque_item: EstoqueSemen, touro_por_naab: dict, touro_por_nome: dict) -> Optional[Touro]:
-    """Mesma lógica de casamento de _baixar_dose_semen (reproducao.py): por
-    NAAB/código do estoque primeiro, senão pelo nome do touro."""
-    naab = (estoque_item.naab or estoque_item.codigo or "").strip().upper()
-    if naab and naab in touro_por_naab:
-        return touro_por_naab[naab]
-    nome = (estoque_item.touro_nome or "").strip().lower()
-    return touro_por_nome.get(nome)
-
-
 @router.get("/estoque-semen/prova-media")
 def prova_media_semen(
+    incluir_fazenda: bool = False,
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Prova média GENÉTICA (índices/PTA do catálogo, não a performance
     realizada no rebanho — para isso ver GET /estoque-semen/prova-ao-vivo)
-    dos touros com sêmen em estoque hoje (doses > 0; sêmen "fazenda"/monta
-    natural não entra, não tem prova). Dois recortes:
+    dos touros com sêmen em estoque hoje (doses > 0). Por padrão, sêmen
+    "fazenda"/monta natural fica de fora (não tem prova de central de
+    genética) — `incluir_fazenda=true` inclui mesmo assim (só entra se esse
+    touro também estiver cadastrado no catálogo NAAB). Dois recortes:
     - "simples": média simples entre os touros com pelo menos 1 dose em
       estoque — cada touro pesa 1, tenha 1 dose ou 20.
     - "ponderada": média ponderada pela quantidade de doses de cada touro —
@@ -329,12 +322,12 @@ def prova_media_semen(
     q_estoque = select(EstoqueSemen)
     if fazenda_id is not None:
         q_estoque = q_estoque.where(EstoqueSemen.fazenda_id == fazenda_id)
-    estoque = [e for e in session.exec(q_estoque).all() if e.ativo and e.tipo != "fazenda"]
+    estoque = [e for e in session.exec(q_estoque).all() if e.ativo and (incluir_fazenda or e.tipo != "fazenda")]
     pares: list[tuple[Touro, int]] = []
     for e in estoque:
         if (e.doses or 0) <= 0:
             continue
-        touro = _casar_touro(e, touro_por_naab, touro_por_nome)
+        touro = casar_touro(e, touro_por_naab, touro_por_nome)
         if touro:
             pares.append((touro, e.doses))
     total_doses = sum(p for _, p in pares)
@@ -355,17 +348,33 @@ def prova_media_semen(
 @router.get("/estoque-semen/prova-ao-vivo")
 def prova_ao_vivo_semen(
     categoria: Optional[str] = None, ano_nascimento: Optional[int] = None,
-    de: Optional[str] = None, ate: Optional[str] = None,
+    de: Optional[str] = None, ate: Optional[str] = None, incluir_fazenda: bool = False,
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
-    "Prova ao vivo" — taxa de concepção REALIZADA no próprio rebanho, por
-    touro/sêmen (não o índice genético do catálogo — para isso ver GET
-    /estoque-semen/prova-media). Filtros opcionais, só limitam o resultado:
-    categoria (vaca/novilha/todas), ano de nascimento da matriz, e período
-    da inseminação (de/ate, sobre a data do serviço).
+    "Prova ao vivo" — os MESMOS indicadores genéticos do catálogo usados na
+    prova média (GET /estoque-semen/prova-media: leite, gordura, proteína,
+    TPI, NM$, tipo/úbere/pernas composto, CCS, fertilidade das filhas,
+    facilidade de parto), só que ponderados pelo USO REAL do touro na
+    fazenda (nº de serviços em que ele foi de fato usado) em vez das doses
+    hoje em estoque — daí "ao vivo". NÃO é taxa de concepção/resultado
+    reprodutivo (isso é do cruzamento touro+matriz+manejo, não prova do
+    touro; ver fazenda.rules.reproducao_analise para essa métrica, usada em
+    Análise reprodutiva). Filtros opcionais, só limitam quais serviços
+    contam como uso: categoria (vaca/novilha/todas), ano de nascimento da
+    matriz, e período da inseminação (de/ate, sobre a data do serviço). Por
+    padrão exclui touros da própria fazenda (`incluir_fazenda=true` inclui).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    touros = session.exec(select(Touro)).all()
+    touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
+    touro_por_nome = {(t.nome or "").strip().lower(): t for t in touros if t.nome}
+
+    q_estoque = select(EstoqueSemen)
+    if fazenda_id is not None:
+        q_estoque = q_estoque.where(EstoqueSemen.fazenda_id == fazenda_id)
+    estoque_por_nome = {(e.touro_nome or "").strip().lower(): e for e in session.exec(q_estoque).all()}
+
     q_servicos = select(Servico)
     if fazenda_id is not None:
         q_servicos = q_servicos.where(Servico.fazenda_id == fazenda_id)
@@ -373,11 +382,12 @@ def prova_ao_vivo_semen(
     registros = analisar_servicos(servicos)
     de_d = parse_date(de) if de else None
     ate_d = parse_date(ate) if ate else None
-    resultado = prova_ao_vivo_por_touro(
-        registros, categoria=categoria, ano_nascimento=ano_nascimento,
-        periodo_de=de_d, periodo_ate=ate_d,
+    resultado = calcular_prova_ao_vivo(
+        registros, touro_por_naab, touro_por_nome, estoque_por_nome,
+        categoria=categoria, ano_nascimento=ano_nascimento,
+        periodo_de=de_d, periodo_ate=ate_d, incluir_fazenda=incluir_fazenda,
     )
-    return {"touros": resultado, "categoria": categoria or "todas", "ano_nascimento": ano_nascimento, "de": de, "ate": ate}
+    return {**resultado, "categoria": categoria or "todas", "ano_nascimento": ano_nascimento, "de": de, "ate": ate}
 
 
 # ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────

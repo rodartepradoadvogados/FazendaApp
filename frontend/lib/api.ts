@@ -6271,18 +6271,28 @@ export type ProvaMediaSemen = {
   simples: ProvaMediaRecorte;
   ponderada: ProvaMediaRecorte & { total_doses: number };
 };
-export const fetchProvaMediaSemen = (): Promise<ProvaMediaSemen> => _rGet(`/cadastro/estoque-semen/prova-media`);
+export const fetchProvaMediaSemen = (opts?: { incluirFazenda?: boolean }): Promise<ProvaMediaSemen> =>
+  _rGet(`/cadastro/estoque-semen/prova-media${opts?.incluirFazenda ? "?incluir_fazenda=true" : ""}`);
 
-// "Prova ao vivo" — taxa de concepção REALIZADA no rebanho por touro (não o
-// índice genético do catálogo, ver ProvaMediaSemen acima).
-export type ProvaAoVivoTouro = { touro: string; servicos: number; elegiveis: number; positivos: number; taxa_concepcao: number | null };
-export type ProvaAoVivoSemen = { touros: ProvaAoVivoTouro[]; categoria: string; ano_nascimento: number | null; de: string | null; ate: string | null };
-export const fetchProvaAoVivoSemen = (filtros?: { categoria?: "todas" | "vaca" | "novilha"; anoNascimento?: number; de?: string; ate?: string }): Promise<ProvaAoVivoSemen> => {
+// "Prova ao vivo" — os MESMOS indicadores genéticos do catálogo (ver
+// ProvaMediaSemen acima: leite, gordura, proteína, TPI, NM$, etc.), só que
+// ponderados pelo USO REAL do touro na fazenda (nº de serviços em que foi
+// de fato usado), não pelas doses hoje em estoque. Não é taxa de concepção
+// nem outro indicador de resultado reprodutivo do rebanho.
+export type ProvaAoVivoTouro = { touro: string; servicos: number };
+export type ProvaAoVivoSemen = {
+  prova: ProvaMediaCampos; total_servicos: number; touros_considerados: number; touros: ProvaAoVivoTouro[];
+  categoria: string; ano_nascimento: number | null; de: string | null; ate: string | null;
+};
+export const fetchProvaAoVivoSemen = (filtros?: {
+  categoria?: "todas" | "vaca" | "novilha"; anoNascimento?: number; de?: string; ate?: string; incluirFazenda?: boolean;
+}): Promise<ProvaAoVivoSemen> => {
   const p = new URLSearchParams();
   if (filtros?.categoria && filtros.categoria !== "todas") p.set("categoria", filtros.categoria);
   if (filtros?.anoNascimento) p.set("ano_nascimento", String(filtros.anoNascimento));
   if (filtros?.de) p.set("de", filtros.de);
   if (filtros?.ate) p.set("ate", filtros.ate);
+  if (filtros?.incluirFazenda) p.set("incluir_fazenda", "true");
   const qs = p.toString();
   return _rGet(`/cadastro/estoque-semen/prova-ao-vivo${qs ? `?${qs}` : ""}`);
 };
