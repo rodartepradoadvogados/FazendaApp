@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Barlow, Barlow_Condensed, Dancing_Script, Sora } from "next/font/google";
+import { Inter, Archivo, Dancing_Script, Sora } from "next/font/google";
 import "./globals.css";
 import { AuthShell } from "@/components/AuthShell";
 import { TabsShell } from "@/components/TabsShell";
@@ -7,17 +7,15 @@ import { SubNavProvider } from "@/components/SubNavContext";
 import { ExportProvider } from "@/components/ExportContext";
 import { COR_TOPO } from "@/lib/themeColorTopo";
 
-// Nenhuma dessas quatro usa .className — só .variable (expõe uma CSS custom
+// Nenhuma dessas usa .className — só .variable (expõe uma CSS custom
 // property, não aplica a fonte sozinha). Quem decide qual fonte cada parte
 // da árvore usa é o globals.css, via --font-body/--font-heading (ver ali):
-// o site (fora de .mob) usa Barlow/Barlow Condensed; o app de campo (dentro
-// de .mob) continua em Inter, sem nenhuma mudança — o redesign visual desta
-// rodada é só do site.
+// o site (fora de .mob) usa Archivo (corpo E títulos, por peso, não por
+// família — redesign "Cooperativa", substitui Barlow/Barlow Condensed); o
+// app de campo (dentro de .mob) continua em Inter, sem mudança nesta rodada.
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-// Corpo do site — proposta de redesign "Institucional".
-const barlow = Barlow({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-barlow" });
-// Títulos, rótulos e números do site — a mesma proposta.
-const barlowCondensed = Barlow_Condensed({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-barlow-condensed" });
+// Corpo + títulos do site — redesign "Cooperativa" (Direção B).
+const archivo = Archivo({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"], variable: "--font-archivo" });
 // Só para o "milk" cursivo da marca d'água da tela de login (ver LoginWatermark).
 const dancingScript = Dancing_Script({ subsets: ["latin"], weight: "700", variable: "--font-script" });
 // Tipografia de marca (manual de identidade CowData) para nome e títulos —
@@ -64,7 +62,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.variable} ${barlow.variable} ${barlowCondensed.variable} ${dancingScript.variable} ${sora.variable}`}>
+      <body className={`${inter.variable} ${archivo.variable} ${dancingScript.variable} ${sora.variable}`}>
         <SubNavProvider>
           <ExportProvider>
             <TabsShell>
