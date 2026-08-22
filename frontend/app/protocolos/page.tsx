@@ -29,6 +29,14 @@ const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/
 const FormProtocoloIatf = dynamic(() => import("@/components/lancamentos/FormProtocoloIatf").then((m) => m.FormProtocoloIatf), { ssr: false });
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
+// Aplicar (não cadastrar) uma regra do calendário sanitário — mesmo formulário
+// já usado em Lançamentos > Sanitário > Preventiva > Calendário sanitário.
+const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormAplicarCalendarioSanitario").then((m) => m.FormAplicarCalendarioSanitario), { ssr: false });
+// Acompanhamento/Histórico do calendário sanitário — MESMOS componentes já
+// usados em Sanidade > Preventiva (Calendário/Cronogramas e Histórico
+// agrupado por vacina/exame). Nada de tabela ou endpoint paralelo.
+const CalendarioSanitarioAcompanhamento = dynamic(() => import("@/app/sanidade/page").then((m) => m.CalendarioSanitarioView), { ssr: false });
+const HistoricoPreventivoView = dynamic(() => import("@/components/sanidade/HistoricoPreventivoView").then((m) => m.HistoricoPreventivoView), { ssr: false });
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
@@ -345,18 +353,35 @@ const TIPOS_LANCAMENTO = [
 ] as const;
 type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 
-function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
+// Sub-abas de lançamento do Sanitário — mesma divisão de Cadastro (ver
+// SUBS_SANITARIO), só que aqui é "aplicar", não "cadastrar": Curativo aplica
+// um protocolo de cronograma (D0/D1/D2…) e Preventivo aplica uma regra já
+// cadastrada no calendário sanitário (FormAplicarCalendarioSanitario — o
+// mesmo formulário de Lançamentos > Sanitário > Preventiva > Calendário
+// sanitário).
+const SUBS_SANITARIO_LANCAMENTO = [
+  { id: "curativo", label: "Curativo", desc: "Aplicar um protocolo cadastrado (cronograma de dias fixos)" },
+  { id: "preventivo", label: "Preventivo", desc: "Aplicar uma vacina/exame do calendário sanitário já cadastrado" },
+] as const;
+
+function LancamentoTab({ animais, estoque, lotes }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[] }) {
   const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
 
   return (
     <div>
       <SeletorTipoProtocolo titulo="Qual protocolo você quer lançar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
 
+      {tipo === "sanitario" && (
+        <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO_LANCAMENTO} tipo={subSanitario} onChange={setSubSanitario} />
+      )}
+
       <div className="card mb-3">
         <div className="card-header mb-2">Lançar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
         {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
-        {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+        {tipo === "sanitario" && subSanitario === "curativo" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+        {tipo === "sanitario" && subSanitario === "preventivo" && <FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
         {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
@@ -846,6 +871,12 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
   const [linhas, setLinhas] = useState<LinhaCentralProtocolos[] | null>(null);
   const [nome, setNome] = useState("");
   const [origem, setOrigem] = useState<OrigemAcompanhamento>(origemFixa ?? "");
+  // Sanitário aqui só cobre o Curativo (lançamentos com etapas — ver
+  // _linhas_sanitario no backend); o Preventivo (calendário sanitário) é um
+  // modelo de dado bem diferente (regra recorrente, não lançamento com
+  // etapas) e mora só na Sanidade — reaproveita-se a MESMA tela de lá
+  // (CalendarioSanitarioView / HistoricoPreventivoView), sem tabela paralela.
+  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -883,8 +914,18 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
     status: LABEL_STATUS[l.status] || l.status,
   })), [linhasFiltradas]);
 
+  const mostrarPreventivo = !origemFixa && origem === "sanitario" && subSanitario === "preventivo";
+
   return (
     <div>
+      {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
+      {!origemFixa && origem === "sanitario" && (
+        <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO} tipo={subSanitario} onChange={setSubSanitario} />
+      )}
+
+      {mostrarPreventivo ? (
+        historico ? <HistoricoPreventivoView /> : <CalendarioSanitarioAcompanhamento modoInicial="calendario" />
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="mb-3">
@@ -894,8 +935,6 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
           {nomesConhecidos.map((n) => <option key={n} value={n} />)}
         </datalist>
       </div>
-
-      {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
 
       {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
       {linhas && (
@@ -950,6 +989,7 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
       )}
       </div>
       </div>
+      )}
 
       {aberto && (
         <DetalheProtocolo origem={aberto.origem} origemId={aberto.id}
@@ -968,6 +1008,18 @@ export default function ProtocolosPage() {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
   }, []);
+  // Lotes existentes (para o lançamento de Calendário sanitário, que aplica
+  // por animal/lote/categoria) — mesma dedução de maiúsculas/minúsculas de
+  // app/lancamentos/page.tsx.
+  const lotes = useMemo(() => {
+    const porChave = new Map<string, string>();
+    (animais.map((a) => a.grupo_primario).filter(Boolean) as string[]).forEach((l) => {
+      const chave = l.toUpperCase();
+      const atual = porChave.get(chave);
+      if (!atual || l === l.toUpperCase()) porChave.set(chave, l === l.toUpperCase() ? l : atual || l);
+    });
+    return Array.from(porChave.values()).sort();
+  }, [animais]);
   // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade,
   // ou no relatório de Exclusão) — só escolhe a aba certa; a Central de
   // Protocolos não permite pular direto para uma regra específica, mesmo
@@ -997,7 +1049,7 @@ export default function ProtocolosPage() {
       />
 
       {aba === "cadastro" && <CadastroTab estoque={estoque} />}
-      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} />}
+      {aba === "lancamento" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} />}
       {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
       {aba === "historico" && <ListaProtocolos historico />}
     </div>
