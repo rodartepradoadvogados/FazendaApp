@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import calendar
 import re
+from dataclasses import asdict
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -29,7 +30,13 @@ from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcular_bonificacao
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules import estoque_baixa
+from fazenda.rules.equivalente_maduro import (
+    AmostraLactacao, FatoresRebanho, calcular_fatores, classe_de_ordem, montar_trio,
+)
 from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.lactacao import montar_janelas
+from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data
+from fazenda.rules.producao_305 import PontoControle, Producao305, producao_305_dias
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
@@ -1847,3 +1854,187 @@ def ajustar_proxima_aplicacao_bst(
         return {"ok": True, "intervalo_bst": intervalo_atual, "proxima_visita_bst": dados.nova_data.isoformat()}
 
     raise HTTPException(status_code=400, detail="modo deve ser 'intervalo' ou 'referencia'")
+
+
+# ---------------------------------------------------------------------------
+# Equivalente maduro (EM) — ver docs/equivalente-maduro-proposta.md.
+#
+# As quatro decisões fechadas no documento (seção 6), que este bloco segue à
+# risca:
+#   1. Classe madura é SEMPRE 3ª parto ou mais — nunca "3ª ou 4ª a escolher".
+#   2. Mínimo de 20 lactações encerradas por classe para publicar um fator
+#      (confiança "baixa" de 20 a 49, "ok" a partir de 50) — ver
+#      `rules/equivalente_maduro.py`.
+#   3. Nenhum backfill/gravação em massa: a ordem de parto de cada lactação
+#      é DERIVADA ao vivo por `ordem_parto_na_data` (existe, é pura, é
+#      mesclada) a partir dos partos do próprio animal — nunca de
+#      `ControleLeiteiro.ordem_parto` (não é escrito por ninguém) nem da
+#      contagem total de partos. Vale tanto para a lactação atual de um
+#      animal quanto para as amostras que calibram os fatores de classe.
+#   4. Sem tabela publicada nenhuma: os fatores nascem só dos dados do
+#      próprio rebanho (`rules/equivalente_maduro.py::calcular_fatores`).
+# ---------------------------------------------------------------------------
+def _partos_ref_por_animal(session: Session, fazenda_id: int | None) -> dict[str, list[PartoRef]]:
+    query = select(Parto).where(Parto.data_parto.is_not(None))
+    if fazenda_id is not None:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    agrupado: dict[str, list[PartoRef]] = {}
+    for p in session.exec(query).all():
+        agrupado.setdefault(p.numero_matriz, []).append(PartoRef(p.data_parto, p.ordem_parto))
+    return agrupado
+
+
+def _secagens_por_animal(session: Session, fazenda_id: int | None) -> dict[str, list[date]]:
+    query = select(Secagem)
+    if fazenda_id is not None:
+        query = query.where(Secagem.fazenda_id == fazenda_id)
+    agrupado: dict[str, list[date]] = {}
+    for s in session.exec(query).all():
+        if s.data_secagem:
+            agrupado.setdefault(s.numero_matriz, []).append(s.data_secagem)
+    return agrupado
+
+
+def _controles_ponto_por_animal(session: Session, fazenda_id: int | None) -> dict[str, list[PontoControle]]:
+    query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    agrupado: dict[str, list[PontoControle]] = {}
+    for c in session.exec(query).all():
+        if c.data_controle and c.producao_kg is not None:
+            agrupado.setdefault(c.numero_matriz, []).append(PontoControle(c.data_controle, c.producao_kg))
+    return agrupado
+
+
+def _amostras_e_atuais_do_rebanho(
+    session: Session, fazenda_id: int | None,
+) -> tuple[list[AmostraLactacao], dict[str, tuple[Producao305, int | None]]]:
+    """Um passe pelo rebanho inteiro: para cada animal, monta as janelas de
+    lactação (`rules/lactacao.py`) e a produção de 305 dias de cada uma
+    (TIM, `rules/producao_305.py`). Lactações ENCERRADAS alimentam a amostra
+    que calibra os fatores por classe; a ÚLTIMA janela de cada animal
+    (fechada ou não) é a lactação atual, usada no trio de apresentação."""
+    partos_por_animal = _partos_ref_por_animal(session, fazenda_id)
+    secagens_por_animal = _secagens_por_animal(session, fazenda_id)
+    controles_por_animal = _controles_ponto_por_animal(session, fazenda_id)
+
+    amostras: list[AmostraLactacao] = []
+    atual_por_animal: dict[str, tuple[Producao305, int | None]] = {}
+
+    for numero, partos_ref in partos_por_animal.items():
+        datas_parto = sorted(p.data_parto for p in partos_ref if p.data_parto is not None)
+        if not datas_parto:
+            continue
+        janelas = montar_janelas(datas_parto, secagens_por_animal.get(numero, []))
+        controles = controles_por_animal.get(numero, [])
+        ultimo_indice = len(janelas) - 1
+        for i, janela in enumerate(janelas):
+            producao = producao_305_dias(controles, janela.data_inicio, janela.data_fim)
+            ordem = ordem_parto_na_data(partos_ref, janela.data_inicio)
+            if janela.encerrada and producao.producao_kg is not None:
+                classe = classe_de_ordem(ordem)
+                if classe is not None:
+                    amostras.append(AmostraLactacao(classe, producao.producao_kg))
+            if i == ultimo_indice:
+                atual_por_animal[numero] = (producao, ordem)
+
+    return amostras, atual_por_animal
+
+
+def _fatores_do_rebanho(session: Session, fazenda_id: int | None) -> FatoresRebanho:
+    amostras, _ = _amostras_e_atuais_do_rebanho(session, fazenda_id)
+    return calcular_fatores(amostras)
+
+
+def _montar_relatorio_equivalente_maduro(
+    session: Session, fazenda_id: int | None, apenas_numero: str | None = None,
+) -> dict:
+    amostras, atual_por_animal = _amostras_e_atuais_do_rebanho(session, fazenda_id)
+    fatores = calcular_fatores(amostras)
+
+    linhas = []
+    for numero, (producao, ordem) in atual_por_animal.items():
+        if apenas_numero is not None and numero != apenas_numero:
+            continue
+        trio = montar_trio(producao, ordem, fatores)
+        linhas.append({"numero_matriz": numero, **asdict(trio)})
+    # Decrescente pela diferença = "quem ainda vai crescer" primeiro; a
+    # mesma lista lida ao contrário é o descarte. Sem base (diferença None)
+    # vai para o fim, não para o topo.
+    linhas.sort(key=lambda l: (l["diferenca_kg"] is None, -(l["diferenca_kg"] or 0.0)))
+
+    return {
+        "fatores": {str(classe): asdict(f) for classe, f in fatores.por_classe.items()},
+        "sem_base_geral": fatores.sem_base_geral,
+        "animais": linhas,
+    }
+
+
+@router.get("/equivalente-maduro")
+def relatorio_equivalente_maduro(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Relatório de equivalente maduro do rebanho: por animal, produz hoje ·
+    produzirá na maturidade · diferença · ordem de parto · nº de controles
+    que sustentam a conta (pontos usados no TIM) · confiança do fator da
+    classe. Ordenado pela diferença decrescente."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    return _montar_relatorio_equivalente_maduro(session, fazenda_id)
+
+
+@router.get("/equivalente-maduro/{numero_matriz}")
+def equivalente_maduro_do_animal(
+    numero_matriz: str,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """O mesmo trio do relatório, para um único animal — alimenta o card na
+    Ficha do Animal, ao lado da curva de lactação."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    resultado = _montar_relatorio_equivalente_maduro(session, fazenda_id, apenas_numero=numero_matriz)
+    linha = next((a for a in resultado["animais"] if a["numero_matriz"] == numero_matriz), None)
+    if linha is None:
+        raise HTTPException(status_code=404, detail="Sem lactação registrada para este animal")
+    return {**linha, "sem_base_geral": resultado["sem_base_geral"]}
+
+
+# Calculadora avulsa — não persiste nada, mesmo padrão de
+# POST /financeiro/calcular-juros com CalculoJurosIn. Serve para avaliar um
+# animal de fora (ex.: compra) sem sujar a base. Os pontos entram por DEL
+# (dias em lactação), não por data de calendário, porque quem avalia uma
+# vaca de fora normalmente não sabe a data exata do parto dela — só "com
+# tantos dias de lactação, produzia tanto".
+class PontoDelIn(BaseModel):
+    del_dias: int
+    producao_kg: float
+
+
+class CalculoEquivalenteMaduroIn(BaseModel):
+    ordem_parto: int
+    pontos: list[PontoDelIn]
+    # DEL em que a lactação sendo avaliada encerrou (secagem) — None quando
+    # ainda está em andamento (a janela usa só os 305 dias padrão).
+    del_secagem: int | None = None
+
+
+_EPOCA_SINTETICA = date(2000, 1, 1)  # data de parto fictícia — só para reaproveitar producao_305_dias em cima de DEL, sem exigir data de calendário real
+
+
+@router.post("/equivalente-maduro/calcular")
+def calcular_equivalente_maduro(
+    dados: CalculoEquivalenteMaduroIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Calculadora avulsa de equivalente maduro: recebe ordem de parto e os
+    pontos de controle (DEL + produção), devolve o trio calibrado nos
+    fatores atuais do próprio rebanho — sem gravar nada."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pontos = [PontoControle(_EPOCA_SINTETICA + timedelta(days=p.del_dias), p.producao_kg) for p in dados.pontos]
+    data_fim = _EPOCA_SINTETICA + timedelta(days=dados.del_secagem) if dados.del_secagem is not None else None
+    producao_hoje = producao_305_dias(pontos, _EPOCA_SINTETICA, data_fim)
+
+    fatores = _fatores_do_rebanho(session, fazenda_id)
+    trio = montar_trio(producao_hoje, dados.ordem_parto, fatores)
+    return asdict(trio)
