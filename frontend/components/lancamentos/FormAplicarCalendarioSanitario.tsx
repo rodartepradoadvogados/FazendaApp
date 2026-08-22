@@ -23,7 +23,7 @@ type RegraCalendario = {
  * e lança-se para os animais/lote/categoria. Uma aplicação sem vínculo com
  * nenhum protocolo cadastrado é o lançamento "Avulso", não este.
  */
-export function FormAplicarCalendarioSanitario({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
+export function FormAplicarCalendarioSanitario({ animais, lotes, estoque, onSalvo }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; onSalvo?: () => void }) {
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [regraId, setRegraId] = useState("");
 
@@ -76,7 +76,7 @@ export function FormAplicarCalendarioSanitario({ animais, lotes, estoque }: { an
 
       {regraSel && (
         <div style={{ marginTop: "1rem" }}>
-          <FormPreventivoAplicacao animais={animais} lotes={lotes} estoque={estoque}
+          <FormPreventivoAplicacao animais={animais} lotes={lotes} estoque={estoque} onSalvo={onSalvo}
             calendarioFixo={{ id: regraSel.id, evento_sanitario_id: regraSel.evento_sanitario_id }} />
         </div>
       )}

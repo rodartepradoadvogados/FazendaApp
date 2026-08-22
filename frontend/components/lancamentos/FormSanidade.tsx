@@ -66,7 +66,7 @@ function BannerSubstitutosDoenca({
   );
 }
 
-export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
+export function FormSanidade({ animais, lotes, estoque, produtos, onSalvo }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[]; onSalvo?: () => void }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState("");
   const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
@@ -215,6 +215,7 @@ export function FormSanidade({ animais, lotes, estoque, produtos }: { animais: A
         ? `Aplicação PROGRAMADA na Agenda (não baixou estoque). Dê baixa quando aplicar.`
         : `${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}${eventoAgenda ? " Baixado da Agenda." : ""}`);
       setItens([itemSanidadeVazio()]); setObservacao("");
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar aplicação de sanidade");
     } finally {

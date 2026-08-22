@@ -17,7 +17,7 @@ const MOVIMENTOS_SOMENTE_ESTOCAVEL = new Set(["Doação", "Entrada de cortesia"]
 const MOVIMENTOS_SAIDA = MOVIMENTOS_ESTOQUE.filter((m) => MOV_BAIXA.has(m));
 const MOVIMENTOS_ENTRADA = MOVIMENTOS_ESTOQUE.filter((m) => !MOV_BAIXA.has(m));
 
-export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; onIrParaFinanceiro?: (leaf: "financeiro_despesa" | "financeiro_receita") => void }) {
+export function FormEstoque({ estoque, onIrParaFinanceiro, onSalvo }: { estoque: EstoqueItem[]; onIrParaFinanceiro?: (leaf: "financeiro_despesa" | "financeiro_receita") => void; onSalvo?: () => void }) {
   const [produto, setProduto] = useState("");
   const [tipo, setTipo] = useState<"entrada" | "saida" | "">("");
   const [mov, setMov] = useState("");
@@ -120,6 +120,11 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
           observacao: observacao || undefined,
         });
         onIrParaFinanceiro?.(tipo === "entrada" ? "financeiro_despesa" : "financeiro_receita");
+      } else {
+        // Só sinaliza "pronto para o próximo" quando o usuário fica na própria
+        // tela — gerarFinanceiro já redireciona pra outra sub-aba (Financeiro),
+        // então a gaveta de Estoque nem continua aberta nesse caso.
+        onSalvo?.();
       }
       setMov(""); setQtd(""); setObservacao(""); setPedidoId(""); setPedidoItemId("");
       setLancarValor(false); setValorUnitario(""); setGerarFinanceiro(false);

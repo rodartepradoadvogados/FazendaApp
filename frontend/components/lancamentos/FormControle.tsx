@@ -158,7 +158,7 @@ function RevisarPlanilhaControleLeiteiro() {
 // Upload de planilha (Excel/.xlsx ou CSV) — usado tanto em Controle leiteiro
 // (por animal ou por lote, um botão de modelo cada) quanto em Qualidade do
 // leite (um modelo só). O parser do backend identifica o formato sozinho.
-export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact: string[] }) {
+export function FormControle({ animais, lotesLact, onSalvo }: { animais: AnimalRow[]; lotesLact: string[]; onSalvo?: () => void }) {
   const [modo, setModo] = useState<"vaca" | "lote" | "planilha">("vaca");
   const [vaca, setVaca] = useState("");
   const [lote, setLote] = useState("");
@@ -233,6 +233,7 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
       const r = await criarControlesLeiteiros({ data_controle: dataControle, entradas });
       setSucesso(`${r.criados} ${r.criados === 1 ? "pesagem" : "pesagens"} lançada${r.criados === 1 ? "" : "s"} com sucesso.`);
       limpar();
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar controle leiteiro");
     } finally {

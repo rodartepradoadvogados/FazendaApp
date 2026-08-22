@@ -39,7 +39,7 @@ const itemExtraVazio = (): ItemExtra => ({ alimento: "", quantidade: "", unidade
 const fmt = (v: number) => Number(v.toFixed(2)).toLocaleString("pt-BR");
 const hoje = () => new Date().toISOString().slice(0, 10);
 
-export function ConsumoAlimento() {
+export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
   const [lotesCadastro, setLotesCadastro] = useState<LoteCadastro[] | null>(null);
   const [alimentosCadastro, setAlimentosCadastro] = useState<{ id: number; nome: string }[]>([]);
   // sobra_alvo_pct/min/max — Configurações > Parâmetros > Alimentação
@@ -149,6 +149,7 @@ export function ConsumoAlimento() {
       setSucesso("Consumo lançado.");
       setNumAnimais(""); setQuantidadesKg({}); setExtras([]);
       setConsumoHoje(await fetchConsumoDoDia(loteSel, data));
+      onSalvo?.();
     } catch (e: any) {
       // Mensagem do backend já vem clara (409 de fora-da-dieta / sem-estoque
       // inclusos) — ver mensagemErroApi em lib/api.ts. É ela que explica a
@@ -180,6 +181,7 @@ export function ConsumoAlimento() {
       setSucessoSobra("Sobra registrada.");
       setKgSobra("");
       setConsumoHoje(await fetchConsumoDoDia(loteSel, data));
+      onSalvo?.();
     } catch (e: any) {
       setErroSobra(e.message || "Erro ao lançar sobra.");
     } finally {

@@ -13,12 +13,13 @@ import { Trash2 } from "lucide-react";
 
 const PRODUTO_PADRAO = "Cloprostenol";
 
-export function FormInducaoCio({ animais, estoque, motivosInaptidao }: {
+export function FormInducaoCio({ animais, estoque, motivosInaptidao, onSalvo }: {
   animais: AnimalRow[]; estoque: EstoqueItem[];
   // numero -> motivo de inaptidão a serviço. Aqui é só informativo (a indução
   // de cio não cria Servico, então o backend não a trava), mas a mesma
   // marcação em cinza evita mandar hormônio numa bezerra por engano.
   motivosInaptidao?: Map<string, string>;
+  onSalvo?: () => void;
 }) {
   const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -75,6 +76,7 @@ export function FormInducaoCio({ animais, estoque, motivosInaptidao }: {
       setSucesso(`${r.aplicados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""} Cio esperado em 2 a 5 dias — a Agenda vai lembrar de observar.`);
       setSel(new Set()); setLotesSelecionados([]); setObservacao("");
       carregarHistorico();
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar indução de cio");
     } finally {

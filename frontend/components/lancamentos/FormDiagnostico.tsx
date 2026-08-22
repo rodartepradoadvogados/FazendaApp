@@ -31,7 +31,7 @@ function resumoUltimoDiagnostico(s: any): string {
   return "Sem diagnóstico anterior registrado.";
 }
 
-export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultServico: Record<string, string> }) {
+export function FormDiagnostico({ animais, ultServico, onSalvo }: { animais: AnimalRow[]; ultServico: Record<string, string>; onSalvo?: () => void }) {
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
   // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar) — estado ao vivo.
   // Enquanto o estado ao vivo não chegou (ou a requisição falhou) cai no texto do
@@ -223,6 +223,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
             : `Diagnóstico salvo para ${salvos.length} animal(is).`
         );
         setSelecionados(new Set()); setLotesSelecionados([]); setCategoriasAgenda([]); setData(""); setMetodo(""); setResultado("");
+        onSalvo?.();
       }
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar diagnóstico");

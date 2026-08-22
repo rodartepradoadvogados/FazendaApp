@@ -12,7 +12,7 @@ import { UNIDADES } from "@/components/lancamentos/_shared";
  * entrada ou saída, reaproveitando os mesmos movimentos "Entrada de ajuste"
  * / "Saída de ajuste" já usados em Entradas/saídas.
  */
-export function FormAjusteSaldoEstoque({ estoque }: { estoque: EstoqueItem[] }) {
+export function FormAjusteSaldoEstoque({ estoque, onSalvo }: { estoque: EstoqueItem[]; onSalvo?: () => void }) {
   const [produto, setProduto] = useState("");
   const [qtdContada, setQtdContada] = useState("");
   const [unidade, setUnidade] = useState("");
@@ -60,6 +60,7 @@ export function FormAjusteSaldoEstoque({ estoque }: { estoque: EstoqueItem[] }) 
       });
       setSucesso(`Estoque de ${produto} ajustado: ${r.quantidade} ${r.unidade || ""}.`);
       setProduto(""); setQtdContada(""); setUnidade(""); setObservacao("");
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar ajuste de saldo");
     } finally {
