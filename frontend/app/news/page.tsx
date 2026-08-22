@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight, TrendingUp } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
 import { imagemMateria } from "@/lib/newsVisual";
 
@@ -65,6 +65,20 @@ function secaoDaMateria(n: NoticiaNews): SecaoNews {
   return SECOES_NEWS[SECOES_NEWS.length - 1];
 }
 
+// Extrai o primeiro número "de cotação" (R$/US$/NZ$ por unidade, ou
+// percentual) do texto da matéria, para a faixa de cotação (item 1 do DoD,
+// T9). Não é uma fonte de dado nova: é só um recorte do que a própria matéria
+// já escreveu (que por sua vez já teve seus números conferidos em duas
+// fontes independentes — ver regra 1 de .claude/skills/milknews/SKILL.md).
+// Quando nada bate no texto, a matéria não entra na faixa (nunca inventa
+// número).
+const REGEX_NUMERO_COTACAO = /(?:R\$|US\$|NZ\$|AU\$|€)\s?[\d.,]+(?:\/\w+)?|[\d.,]+\s?%/;
+function numeroCotacao(n: NoticiaNews): string | null {
+  const texto = `${n.manchete} ${n.resumo || ""}`;
+  const m = texto.match(REGEX_NUMERO_COTACAO);
+  return m ? m[0].trim() : null;
+}
+
 export default function NewsPage() {
   const [materias, setMaterias] = useState<NoticiaNews[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -89,6 +103,14 @@ export default function NewsPage() {
 
   const destaque = materias && materias.length ? materias[0] : null;
   const restantes = materias && materias.length > 1 ? materias.slice(1) : [];
+
+  // Faixa de cotação (item 1 do DoD, T9): as matérias mais recentes já
+  // classificadas como "mercado" (cotação/leilão/preço/GDT/Cepea...) pela
+  // seção derivada acima.
+  const materiasCotacao = useMemo(
+    () => (materias || []).filter((n) => secaoDaMateria(n).chave === "mercado").slice(0, 8),
+    [materias]
+  );
 
   const grupos: { secao: SecaoNews; itens: NoticiaNews[] }[] = [];
   for (const n of restantes) {
@@ -150,6 +172,38 @@ export default function NewsPage() {
           </button>
         </div>
       </div>
+
+      {materiasCotacao.length > 0 && (
+        <div className="card mb-6">
+          <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <TrendingUp size={14} /> Faixa de cotação e mercado
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem", overflowX: "auto", paddingBottom: "0.2rem" }}>
+            {materiasCotacao.map((n) => {
+              const numero = numeroCotacao(n);
+              return (
+                <div key={`cot-${n.id}`} style={{
+                  flex: "0 0 auto", minWidth: "190px", maxWidth: "230px",
+                  border: "1px solid var(--border)", borderRadius: "10px", padding: "0.65rem 0.85rem",
+                  background: "var(--surface-2)",
+                }}>
+                  {numero && (
+                    <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--dourado-light)", marginBottom: "0.2rem" }}>
+                      {numero}
+                    </div>
+                  )}
+                  <div className="line-clamp-2" style={{ fontSize: "0.76rem", color: "var(--text)", lineHeight: 1.35 }}>
+                    {n.manchete}
+                  </div>
+                  <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", marginTop: "0.35rem" }}>
+                    {formatarData(n.data_publicacao)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="card mb-6">
         <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
