@@ -50,6 +50,7 @@ from .producao import (
     QualidadeLeite,
     EntregaLeiteMensal,
     Secagem,
+    Lactacao,
     FaixaBonificacaoQualidade,
 )
 from .financeiro import (
@@ -313,6 +314,7 @@ __all__ = [
     "QualidadeLeite",
     "EntregaLeiteMensal",
     "Secagem",
+    "Lactacao",
     "FaixaBonificacaoQualidade",
     "ContaGerencial",
     "LancamentoItem",
