@@ -212,6 +212,99 @@ class TestFichaAnimal:
             s.commit()
         assert c.get("/animais/702/ficha").json()["precisao_parto"] is None
 
+    def test_ordem_de_parto_e_cronologica_mesmo_com_ordem_parto_gravada_errada(self, client):
+        """Regressão: a vaca 403 tinha dois partos (2023 e 2025) e AMBOS
+        apareciam como "1 de 2" na Ficha porque o campo `Parto.ordem_parto`
+        gravado no banco (vindo de um import de CSV) estava errado/duplicado
+        (1 nos dois). A ordem exibida deve vir SEMPRE da posição cronológica
+        (data_parto), não do campo gravado."""
+        c, engine = client
+        with Session(engine) as s:
+            animal = Animal(numero="403", sexo="F", data_nasc=date(2020, 1, 1))
+            s.add(animal)
+            s.commit()
+            s.refresh(animal)
+            # Ambos gravados com ordem_parto=1 (dado de origem errado/duplicado).
+            s.add(Parto(animal_id=animal.id, numero_matriz="403", data_parto=date(2023, 3, 10), ordem_parto=1))
+            s.add(Parto(animal_id=animal.id, numero_matriz="403", data_parto=date(2025, 4, 20), ordem_parto=1))
+            s.commit()
+
+        corpo = c.get("/animais/403/ficha").json()
+        assert len(corpo["partos"]) == 2
+        partos_por_data = {p["data_parto"]: p["ordem_parto"] for p in corpo["partos"]}
+        assert partos_por_data["2023-03-10"] == "1 de 2"
+        assert partos_por_data["2025-04-20"] == "2 de 2"
+
+    def test_coluna_parto_do_servico_so_aparece_com_diagnostico_positivo_e_parto_ja_ocorrido(self, client):
+        """Cada serviço de IA/diagnóstico deve trazer a data do parto que ele
+        originou (`parto_resultante_data`) apenas quando o diagnóstico foi
+        POSITIVO e esse parto já aconteceu; senão vem None (o frontend decide
+        entre "—" e vazio a partir do campo `diagnostico`)."""
+        c, engine = client
+        with Session(engine) as s:
+            animal = Animal(numero="800", sexo="F", data_nasc=date(2020, 1, 1))
+            s.add(animal)
+            s.commit()
+            s.refresh(animal)
+            # 1ª IA: negativa — não deveria ter parto associado.
+            s.add(Servico(animal_id=animal.id, numero_matriz="800", data_servico=date(2024, 1, 1),
+                           tipo_servico="IA", diagnostico="NEGATIVO"))
+            # 2ª IA: positiva e já pariu — deve trazer a data do parto.
+            s.add(Servico(animal_id=animal.id, numero_matriz="800", data_servico=date(2024, 3, 1),
+                           tipo_servico="IA", diagnostico="POSITIVO"))
+            s.add(Parto(animal_id=animal.id, numero_matriz="800", data_parto=date(2024, 12, 15), ordem_parto=1))
+            # 3ª IA (depois do parto): positiva mas ainda não pariu de novo.
+            s.add(Servico(animal_id=animal.id, numero_matriz="800", data_servico=date(2025, 3, 1),
+                           tipo_servico="IA", diagnostico="POSITIVO"))
+            s.commit()
+
+        corpo = c.get("/animais/800/ficha").json()
+        servicos_por_data = {sv["data_servico"]: sv for sv in corpo["servicos"]}
+        assert servicos_por_data["2024-01-01"]["parto_resultante_data"] is None
+        assert servicos_por_data["2024-03-01"]["diagnostico"] == "POSITIVO"
+        assert servicos_por_data["2024-03-01"]["parto_resultante_data"] == "2024-12-15"
+        assert servicos_por_data["2025-03-01"]["diagnostico"] == "POSITIVO"
+        assert servicos_por_data["2025-03-01"]["parto_resultante_data"] is None
+
+    def test_mae_vem_do_parto_quando_nao_cadastrada_manualmente(self, client):
+        """Regressão: a mãe deve aparecer na ficha mesmo quando ninguém
+        preencheu `Animal.mae_numero` manualmente, desde que exista um Parto
+        que lista este animal como cria de uma matriz."""
+        c, engine = client
+        with Session(engine) as s:
+            mae = Animal(numero="900", nome="Estrela", sexo="F", data_nasc=date(2018, 1, 1))
+            s.add(mae)
+            cria = Animal(numero="901", sexo="F", data_nasc=date(2023, 1, 10))
+            s.add(cria)
+            s.commit()
+            s.refresh(mae)
+            s.refresh(cria)
+            s.add(Parto(animal_id=mae.id, numero_matriz="900", data_parto=date(2023, 1, 10),
+                         ordem_parto=1, numero_cria_1="901"))
+            s.commit()
+
+        corpo = c.get("/animais/901/ficha").json()
+        assert corpo["animal"]["mae_numero"] == "900"
+        assert corpo["animal"]["mae_nome"] == "Estrela"
+
+    def test_mae_cadastrada_manualmente_tem_prioridade_sobre_o_parto(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            mae_parto = Animal(numero="910", nome="Mae do parto", sexo="F", data_nasc=date(2018, 1, 1))
+            s.add(mae_parto)
+            cria = Animal(numero="911", sexo="F", data_nasc=date(2023, 1, 10), mae_numero="999", mae_nome="Mãe manual")
+            s.add(cria)
+            s.commit()
+            s.refresh(mae_parto)
+            s.refresh(cria)
+            s.add(Parto(animal_id=mae_parto.id, numero_matriz="910", data_parto=date(2023, 1, 10),
+                         ordem_parto=1, numero_cria_1="911"))
+            s.commit()
+
+        corpo = c.get("/animais/911/ficha").json()
+        assert corpo["animal"]["mae_numero"] == "999"
+        assert corpo["animal"]["mae_nome"] == "Mãe manual"
+
 
 def test_estratificacao_rebanho():
     from datetime import date, timedelta
