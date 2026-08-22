@@ -6,7 +6,7 @@
 export const COR_TOPO = {
   vinho: { clara: "#3A0F1A", escura: "#1E0F16" },
   verde: { clara: "#1F5C3D", escura: "#16402B" },
-  azul:  { clara: "#0E2A47", escura: "#1B3A5C" },
+  azul:  { clara: "#0B2038", escura: "#0B2038" },
 } as const;
 
 export function corTopo(escuro: boolean, paleta: keyof typeof COR_TOPO): string {

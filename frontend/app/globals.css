@@ -57,15 +57,23 @@
   --border:      color-mix(in srgb, var(--vinho) 22%, #2A1A20);
   --text:        #F0E8EC;
   --text-muted:  #9B8A91;
-  --green:       #2E7D52;
-  --green-light: #4CAF80;
+  /* Redesign "Cooperativa" (Direção B): verde de "feito"/dentro-da-meta
+     unificado na família --pasture (#4E7A5A) — antes --green-light (mint
+     #4CAF80) e --verde-neon (lima #00FF9D) eram dois verdes diferentes
+     competindo pelo mesmo significado. --green fica um tom mais escuro da
+     mesma família, para uso em preenchimento/borda onde --green-light entra
+     como texto/valor. */
+  --green:       color-mix(in srgb, var(--pasture) 80%, black);
+  --green-light: var(--pasture);
   --chumbo:      #37474F;
-  --red:         #C0392B;
+  --red:         #A8341C;
   --amber:       #D97706;
   --blue:        #1E6FA8;
-  /* Verde luminoso/neon — para tendências positivas, "online" e metas batidas. */
-  --verde-neon:  #00FF9D;
-  --verde-glow:  drop-shadow(0 0 5px rgba(0, 255, 157, 0.55));
+  /* Verde neon sai do SITE (vira a mesma --pasture, sem glow — um verde fosco
+     não "brilha"); o app de campo mantém seu neon próprio e independente em
+     --mob-verde-neon (ver bloco .mob mais abaixo), que este bloco não toca. */
+  --verde-neon:  var(--pasture);
+  --verde-glow:  none;
   /* Cromados (cabeçalhos) — vinho no escuro. */
   --card-header-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --card-header-fg: var(--dourado-light);
@@ -109,19 +117,20 @@
   --fin-pagamento-bg: rgba(46, 125, 82, 0.20);
 }
 
-/* ── Tema CLARO — minimalista, fundo cinza claro, painéis brancos ── */
+/* ── Tema CLARO — redesign "Cooperativa" (Direção B): fundo creme no lugar
+   do cinza frio, painéis brancos ── */
 :root[data-theme="claro"] {
   color-scheme: light;
-  --bg:          #F4F6F9;
+  --bg:          #F5F1E8;
   --surface:     #FFFFFF;
-  --surface-2:   #F9FAFB;
-  --border:      #DCE3EA;
+  --surface-2:   #FAF7F0;
+  --border:      #E3DCCD;
   /* Borda mais forte — contorno de campo, botão secundário, moldura de
-     tabela. Só existe no claro (proposta "Institucional"); nos outros temas,
-     todo uso cai no fallback var(--border-strong, var(--border)). */
-  --border-strong: #C3CDD8;
-  --text:        #1F2937;
-  --text-muted:  #6B7280;
+     tabela. Só existe no claro/misto; no escuro, todo uso cai no fallback
+     var(--border-strong, var(--border)). */
+  --border-strong: #D3C9B4;
+  --text:        #1E1B18;
+  --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
   --card-header-fg: var(--vinho);
   --thead-bg:    #F1F4F8;
@@ -165,12 +174,13 @@
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
 :root[data-theme="misto"] {
   color-scheme: light;
-  --bg:          #F3F4F6;
+  --bg:          #F5F1E8;
   --surface:     #FFFFFF;
-  --surface-2:   #F9FAFB;
-  --border:      #E5E7EB;
-  --text:        #1F2937;
-  --text-muted:  #6B7280;
+  --surface-2:   #FAF7F0;
+  --border:      #E3DCCD;
+  --border-strong: #D3C9B4;
+  --text:        #1E1B18;
+  --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
   --card-header-fg: var(--vinho);
   --thead-bg:    #F3F4F6;
@@ -254,47 +264,43 @@
    paleta "Verde"; azul-escuro (navy) como cor de marca, azul claro só nos
    poucos destaques pontuais (--dourado-light), nunca como fundo. */
 :root[data-theme="escuro"][data-paleta="azul"] {
-  /* Mesma direção "Institucional" do claro (ver bloco abaixo), adaptada ao
-     fundo escuro: marinho mais claro que o do claro (precisa se destacar do
-     --bg quase preto, não escurecer ainda mais), azul-aço mais claro para
-     continuar lendo como dado sobre fundo escuro, ouro claro assume o papel
-     de "ouro escurecido" (o par --dourado/--dourado-light do claro existe
-     pelo contraste no CLARO — no escuro o mais claro dos dois já è o que
-     rende contraste suficiente pros dois usos). */
-  --vinho:       #1B3A5C; /* marinho — navegação, títulos, estrutura */
-  --vinho-light: #5B85A8; /* azul-aço — série de dados primária, hovers */
-  --vinho-dark:  #081627; /* marinho profundo — selo da marca, gradientes */
-  --dourado:     #C9A44C; /* ouro — números de destaque, réguas, "salvar" */
-  --dourado-light: #E3C077; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
-  --sidebar-active-bg: rgba(27, 58, 92, 0.4);
-  --pill-active-bg: rgba(27, 58, 92, 0.4);
+  /* Redesign "Cooperativa" (Direção B) — mesmos 5 tons do claro/misto abaixo,
+     usados aqui como PREENCHIMENTO (gradiente de header/sidebar, não texto
+     sobre fundo escuro), por isso funcionam iguais: marinho profundo e
+     dourado claro por cima já são o par de alto contraste do resto do produto. */
+  --vinho:       #0B2038; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #2C4A6B; /* marinho médio — série de dados primária, hovers */
+  --vinho-dark:  #071A2E; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #B9831F; /* dourado — números de destaque, réguas, "salvar" */
+  --dourado-light: #E0A63C; /* dourado claro — sobre fundo marinho (wordmark, aba ativa) */
+  --sidebar-active-bg: rgba(11, 32, 56, 0.4);
+  --pill-active-bg: rgba(11, 32, 56, 0.4);
 }
 :root[data-theme="claro"][data-paleta="azul"] {
-  /* Direção "Institucional" (proposta 1A): cor reservada à estrutura, não ao
-     dado — marinho na navegação/estrutura, uma família de azul-aço nos
-     gráficos, ouro escurecido só em números de destaque e réguas finas. */
-  --vinho:       #0E2A47; /* marinho — navegação, títulos, estrutura */
-  --vinho-light: #416180; /* azul-aço — série de dados primária, hovers */
-  --vinho-dark:  #0A1F36; /* marinho profundo — selo da marca, gradientes */
-  --dourado:     #8A6D2F; /* ouro escurecido — números de destaque, réguas, "salvar" */
-  --dourado-light: #C9A44C; /* ouro claro — sobre fundo marinho (wordmark, aba ativa) */
-  /* BUG corrigido: --sidebar-active-bg escureceu (marinho sólido) mas
-     --sidebar-active-fg continuava herdando var(--vinho) do bloco claro base
-     (linha ~137) — também marinho escuro, texto ilegível sobre o próprio
-     fundo. Aba ativa agora tem texto claro (dourado, mesmo tratamento do
-     tema misto/escuro para pílula ativa sobre fundo marinho sólido). */
-  --sidebar-active-bg: #17385A;
+  /* Redesign "Cooperativa" (Direção B): cor reservada à estrutura, não ao
+     dado — marinho na navegação/estrutura, marinho médio nos gráficos,
+     dourado só em números de destaque, réguas finas e ação de gravar. */
+  --vinho:       #0B2038; /* marinho — navegação, títulos, estrutura */
+  --vinho-light: #2C4A6B; /* marinho médio — série de dados primária, hovers */
+  --vinho-dark:  #071A2E; /* marinho profundo — selo da marca, gradientes */
+  --dourado:     #B9831F; /* dourado — números de destaque, réguas, "salvar" */
+  --dourado-light: #E0A63C; /* dourado claro — sobre fundo marinho (wordmark, aba ativa) */
+  --sidebar-active-bg: #12283F;
   --sidebar-active-fg: var(--dourado-light);
-  --sidebar-subnav-outline-bg: rgba(14, 42, 71, 0.06);
-  --sidebar-subnav-bg: #E4E7EB;
+  --sidebar-subnav-outline-bg: rgba(11, 32, 56, 0.06);
+  --sidebar-subnav-bg: #EDE7D8;
 }
 :root[data-theme="misto"][data-paleta="azul"] {
-  --vinho:       #153A66;
-  --vinho-light: #2563EB;
-  --vinho-dark:  #0D2340;
-  --dourado:     #2563EB;
-  --dourado-light: #7DD3FC;
-  --sidebar-subnav-bg: #E4E7EB;
+  /* Antes um azul-royal saturado (#2563EB), destoando do marinho/dourado do
+     claro/escuro — unificado na mesma identidade "Cooperativa" (a sidebar
+     sólida do misto já é var(--vinho), então vira marinho sólido + dourado
+     claro na aba ativa, coerente com o resto do produto). */
+  --vinho:       #0B2038;
+  --vinho-light: #2C4A6B;
+  --vinho-dark:  #071A2E;
+  --dourado:     #B9831F;
+  --dourado-light: #E0A63C;
+  --sidebar-subnav-bg: #EDE7D8;
   --sidebar-subnav-muted: var(--chumbo);
 }
 
@@ -336,14 +342,15 @@
   box-sizing: border-box;
 }
 
-/* Tipografia — Barlow (corpo) + Barlow Condensed (títulos/rótulos/números)
-   no SITE; o app de campo (/app, ver .mob abaixo) continua em Inter, sem
-   mudança nenhuma — o redesign visual desta rodada é só do site. Exposta
+/* Tipografia — redesign "Cooperativa" (Direção B): família única Archivo
+   (corpo E títulos/rótulos/números, pesos diferentes fazem a hierarquia) no
+   SITE, substituindo Barlow/Barlow Condensed. O app de campo (/app, ver .mob
+   abaixo) continua em Inter, sem mudança nesta rodada — só o site. Exposta
    como token (não hardcoded) para o .mob poder sobrescrever por herança de
    CSS custom property, em vez de precisar de um seletor por elemento. */
 :root {
-  --font-body: var(--font-barlow), 'Inter', sans-serif;
-  --font-heading: var(--font-barlow-condensed), 'Inter', sans-serif;
+  --font-body: var(--font-archivo), 'Inter', sans-serif;
+  --font-heading: var(--font-archivo), 'Inter', sans-serif;
 }
 .mob {
   --font-body: var(--font-inter), sans-serif;
@@ -364,6 +371,13 @@ body {
 
 h1, h2, h3, h4, .card-header, .kpi-value {
   font-family: var(--font-heading);
+}
+/* Escala "Cooperativa": títulos em 700/800 com leve aperto de letras — a
+   única família (Archivo) carrega a hierarquia pelo peso, não por ser uma
+   fonte diferente da do corpo. */
+h1, h2, h3, h4 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 /* Cursivo usado só no "milk" da marca d'água da tela de login (ver
@@ -409,13 +423,14 @@ textarea:focus-visible, [tabindex]:focus-visible {
   --shadow-sm: 0 1px 4px rgba(20, 30, 45, 0.10);
 }
 
-/* ── Cards ── */
+/* ── Cards ──
+   Densidade "Cooperativa" (Direção B): 13px de padding, era 20px (1.25rem). */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-sm);
-  padding: 1.25rem;
+  padding: 13px;
 }
 
 .card-header {
@@ -449,7 +464,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   background: var(--thead-bg);
 }
 .fazenda-table thead th {
-  padding: 0.6rem 0.875rem;
+  padding: 8px 10px;
   text-align: left;
   color: var(--thead-fg);
   font-family: var(--font-heading);
@@ -466,7 +481,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 .fazenda-table tbody tr:hover { background: var(--surface-2); }
 .fazenda-table tbody td {
-  padding: 0.55rem 0.875rem;
+  padding: 8px 10px;
   color: var(--text);
 }
 /* Zebra removida (proposta "Institucional") — a separação entre linhas passa
@@ -579,7 +594,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   border-left: 3px solid var(--vinho);
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-sm);
-  padding: 1.25rem;
+  padding: 13px;
   position: relative;
   overflow: hidden;
 }
