@@ -2,7 +2,7 @@
 // Primitivos de interface do APP MÓVEL (/app) — botões grandes, cartões e
 // rótulos pensados para uso no campo (sol forte, pressa, dedo grosso).
 // As classes .mob-* vivem em globals.css; aqui ficam os componentes React.
-import { Check, ChevronRight, ChevronLeft, Heart, ShieldPlus, Milk, Wheat, Landmark, CheckCheck } from "lucide-react";
+import { Check, ChevronRight, ChevronLeft, Heart, ShieldPlus, Milk, Wheat, Landmark, CheckCheck, X as XIcon } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode, CSSProperties } from "react";
 
@@ -146,10 +146,28 @@ export function MobVoltar({ titulo, onVoltar }: { titulo: string; onVoltar: () =
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.25rem 0 1rem" }}>
       <button type="button" onClick={onVoltar} aria-label="Voltar"
-        style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+        style={{ width: 56, height: 56, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
         <ChevronLeft size={20} />
       </button>
       <h1 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{titulo}</h1>
+    </div>
+  );
+}
+
+/** Barra de progresso genérica ("3 de 8", com preenchimento proporcional) —
+ * usada em sincronização e em qualquer confirmação em lote (ex.: aplicar um
+ * protocolo sanitário/IATF em todas as matrizes de um grupo, na Agenda).
+ * Deliberadamente NÃO é um spinner genérico: mostra quantos itens já foram
+ * resolvidos, não só "processando…". */
+export function MobBarraProgresso({ feitos, total, rotulo }: { feitos: number; total: number; rotulo?: string }) {
+  const pct = total > 0 ? Math.round((feitos / total) * 100) : 100;
+  return (
+    <div style={{ margin: "0.5rem 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.76rem", fontWeight: 700, color: "var(--mob-muted)", marginBottom: "0.3rem" }}>
+        <span>{rotulo || "Progresso"}</span>
+        <span>{feitos} de {total}</span>
+      </div>
+      <div className="mob-progresso"><div className="mob-progresso-preenchido" style={{ width: `${pct}%` }} /></div>
     </div>
   );
 }
@@ -161,6 +179,42 @@ export function MobAviso({ tipo, children }: { tipo: "ok" | "offline" | "erro"; 
     <p style={{ margin: "0.7rem 0 0", padding: "0.7rem 0.8rem", borderRadius: "var(--r-app)", fontSize: "0.88rem", fontWeight: 600, color: cor, background: "color-mix(in srgb, currentColor 10%, transparent)", border: `1px solid ${cor}` }}>
       {children}
     </p>
+  );
+}
+
+/**
+ * Gaveta inferior (bottom sheet) no padrão visual do app — overlay + painel
+ * que sobe do rodapé, com um título e um botão fechar. Usada por Lançar
+ * ("Mais opções": destinos menos frequentes + baixa/exclusão, ver
+ * LancarTela.tsx) para tirar da tela principal o que não está entre os 6
+ * blocos mais usados, sem removê-los do app — só um toque a mais para
+ * chegar neles. Mesmo padrão de overlay do MobConfirmModal (abaixo): fixed
+ * inset, sem portal (o conteúdo do app não usa transform em nenhum
+ * ancestro, então fixed já cobre a tela inteira).
+ */
+export function MobGaveta({ aberto, titulo, onFechar, children }: { aberto: boolean; titulo: string; onFechar: () => void; children: ReactNode }) {
+  if (!aberto) return null;
+  return (
+    <div role="presentation" onClick={onFechar}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 210, display: "flex", alignItems: "flex-end" }}>
+      <div role="dialog" aria-modal="true" aria-label={titulo} onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%", maxHeight: "80vh", overflowY: "auto",
+          background: "var(--mob-surface)", borderRadius: "1.1rem 1.1rem 0 0",
+          padding: "0.9rem 1rem calc(1.2rem + env(safe-area-inset-bottom))",
+          boxShadow: "0 -8px 24px rgba(0,0,0,0.25)",
+        }}>
+        <div style={{ width: 40, height: 4, borderRadius: 999, background: "var(--mob-border)", margin: "0 auto 0.8rem" }} aria-hidden="true" />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.7rem" }}>
+          <h2 style={{ fontSize: "1.02rem", fontWeight: 800, color: "var(--mob-text)" }}>{titulo}</h2>
+          <button type="button" onClick={onFechar} aria-label="Fechar"
+            style={{ width: 56, height: 56, borderRadius: "50%", border: "none", background: "var(--mob-surface-2)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <XIcon size={19} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 

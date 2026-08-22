@@ -1010,9 +1010,10 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .mob-input:focus { outline: 2px solid var(--mob-acao); outline-offset: -1px; }
 :root[data-theme="escuro"] .mob-input { background: var(--mob-surface-2); }
 
-/* Check circular grande da Agenda — vira verde luminoso ao concluir. */
+/* Check circular grande da Agenda — vira verde luminoso ao concluir. 56px:
+   piso de alvo de toque do app (redesign T6 — nunca abaixo disto; era 48px). */
 .mob-check {
-  width: 48px; height: 48px; border-radius: 50%;
+  width: 56px; height: 56px; border-radius: 50%;
   border: 2px solid var(--mob-border);
   background: transparent;
   color: var(--mob-muted);
@@ -1036,7 +1037,8 @@ html, body { max-width: 100%; overflow-x: hidden; }
   padding-bottom: env(safe-area-inset-bottom);
 }
 .mob-nav a {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 56px; /* alvo de toque mínimo do app (ver DoD de redesign — nunca abaixo disto) */
   padding: 0.55rem 0 0.5rem; font-size: 0.8rem; font-weight: 700;
   color: var(--mob-nav-inativa); text-decoration: none;
 }
@@ -1086,27 +1088,29 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 .mob-bloco-grande .icone { width: 32px; height: 32px; }
 
-/* Botão de ação principal, largura total. */
+/* Botão de ação principal, largura total. min-height 56px: piso de alvo de
+   toque do app (redesign T6 — nunca abaixo disto; era ~44-48px pelo padding). */
 .mob-btn {
   width: 100%; border: none; border-radius: var(--r-app); cursor: pointer;
-  padding: 0.95rem 1rem; font-size: 1rem; font-weight: 700;
+  min-height: 56px; padding: 0.95rem 1rem; font-size: 1rem; font-weight: 700;
   background: var(--mob-acao); color: var(--mob-acao-fg);
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 .mob-btn:disabled { opacity: 0.55; }
 .mob-btn-2 {
   width: 100%; border: 1px solid var(--mob-border); border-radius: var(--r-app); cursor: pointer;
-  padding: 0.9rem 1rem; font-size: 0.95rem; font-weight: 600;
+  min-height: 56px; padding: 0.9rem 1rem; font-size: 0.95rem; font-weight: 600;
   background: var(--mob-surface); color: var(--mob-text);
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 .mob-btn.mob-btn-sec { background: var(--mob-surface); color: var(--mob-text); border: 1px solid var(--mob-border); }
 
-/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). Padding vertical
-   calibrado para >= 44px de altura de toque (dedo sujo/com luva no curral). */
+/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). min-height 56px:
+   piso de alvo de toque do app (redesign T6 — era >= 44px/48px antes; dedo
+   sujo/com luva no curral só ficou mais folgado, nunca mais apertado). */
 .mob-pill {
   padding: 0.8rem 1.1rem; border-radius: 999px; cursor: pointer;
-  font-size: 0.9rem; font-weight: 700; min-height: 48px;
+  font-size: 0.9rem; font-weight: 700; min-height: 56px;
   border: 1px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
 }
 .mob-pill.ativa { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #F8E9B0; }
@@ -1129,10 +1133,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   text-transform: uppercase; color: var(--mob-muted); text-align: left;
 }
 
-/* Linha de lista com seta. */
+/* Linha de lista com seta. min-height 56px: piso de alvo de toque do app
+   (redesign T6 — nunca abaixo disto). */
 .mob-linha {
   display: flex; align-items: center; gap: 0.75rem; width: 100%;
-  padding: 0.95rem 1rem; background: var(--mob-surface);
+  min-height: 56px; padding: 0.95rem 1rem; background: var(--mob-surface);
   border: 1px solid var(--mob-border); border-radius: var(--r-app);
   color: var(--mob-text); text-align: left; cursor: pointer;
   box-shadow: var(--mob-sombra); text-decoration: none;
@@ -1149,5 +1154,104 @@ html, body { max-width: 100%; overflow-x: hidden; }
   min-height: 48px;
 }
 .mob-form-embutido button {
-  min-height: 48px;
+  min-height: 56px; /* piso de alvo de toque do app (redesign T6) — era 48px */
 }
+
+/* ── Faixa de conexão (cabeçalho fixo — ver ConexaoFaixa.tsx) ────────────── */
+.mob-faixa-conexao {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.74rem; font-weight: 700;
+  padding: 0.4rem 1.1rem; margin-top: 0.6rem;
+  border-radius: var(--r-app);
+}
+.mob-faixa-offline {
+  background: rgba(220, 38, 38, 0.22); color: #FFD9D9;
+}
+.mob-faixa-pendente {
+  background: rgba(255, 255, 255, 0.14); color: var(--mob-dourado-pale);
+}
+.mob-faixa-sync {
+  flex-direction: column; align-items: stretch; gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.14); color: var(--mob-dourado-pale);
+}
+.mob-faixa-sync-topo { display: flex; align-items: center; justify-content: space-between; }
+/* Lasquinha fina persistente — estado "tudo em dia" (online, fila vazia):
+   nunca desaparece por completo, só recolhe ao mínimo. */
+.mob-faixa-ok {
+  height: 3px; margin-top: 0.5rem; padding: 0;
+  background: var(--mob-verde-neon); opacity: 0.55;
+}
+
+/* Barra de progresso genérica (MobBarraProgresso, em ui.tsx) — sincronização
+   e qualquer operação em lote (ex.: confirmar protocolo em lote na Agenda). */
+.mob-faixa-progresso, .mob-progresso {
+  width: 100%; height: 6px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+/* `.mob-progresso` sozinho (fora da faixa de conexão, que já define sua
+   própria `color`) precisa de uma cor própria pra currentColor não herdar
+   do texto ao redor sem querer. */
+.mob-progresso { color: var(--mob-acao); }
+.mob-faixa-progresso-preenchido, .mob-progresso-preenchido {
+  height: 100%; border-radius: 999px; background: currentColor;
+  transition: width 0.25s ease;
+}
+
+/* ── Modo Curral (components/mobile/ModoCurral.tsx) ───────────────────────
+   Visão ampliada/alto-contraste de "o que fazer agora" para uso dentro do
+   curral: fonte maior que o resto do app, contornos mais grossos (2px, não
+   1px), e alvo de toque de 72px — acima do piso geral de 56px do app —
+   porque aqui a suposição é sol forte + luva + uma mão só, não só "dedo
+   grosso" (`.curral-alvo` sobe o corpo do texto de --mob-fs-body 16px pra
+   ~17px, sem mexer na fonte-família — continua Inter, decisão já registrada
+   em app/layout.tsx). */
+.curral-alvo { font-size: 1.05rem; }
+.curral-secao {
+  font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--mob-muted); margin: 1.3rem 0 0.6rem;
+}
+.curral-card {
+  display: flex; align-items: center; gap: 0.8rem; min-height: 72px;
+  padding: 0.8rem 0.9rem; border-radius: var(--r-app);
+  background: var(--mob-surface); border: 2px solid var(--mob-border); border-left-width: 6px;
+  box-shadow: var(--mob-sombra);
+}
+.curral-card-icone {
+  width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.curral-card-texto { flex: 1; min-width: 0; }
+.curral-card-titulo { display: block; font-weight: 800; font-size: 1.1rem; color: var(--mob-text); }
+.curral-card-sub { display: block; font-size: 0.85rem; color: var(--mob-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curral-check {
+  width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0; cursor: pointer;
+  border: 3px solid var(--mob-verde); background: color-mix(in srgb, var(--mob-verde) 12%, transparent); color: var(--mob-verde);
+  display: flex; align-items: center; justify-content: center;
+}
+.curral-check:active { background: var(--mob-verde); color: var(--mob-verde-fg, #fff); }
+.curral-abrir {
+  width: 72px; height: 72px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--mob-border); background: var(--mob-surface-2); color: var(--mob-text);
+  display: flex; align-items: center; justify-content: center; text-decoration: none;
+}
+.curral-lancar {
+  display: flex; align-items: center; gap: 0.9rem; width: 100%; min-height: 76px;
+  padding: 0 1.2rem; border-radius: var(--r-app); cursor: pointer;
+  border: 2px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
+  font-size: 1.15rem; font-weight: 800; box-shadow: var(--mob-sombra);
+}
+.curral-lancar:active { background: var(--mob-surface-2); }
+.curral-mais {
+  display: flex; align-items: center; justify-content: center; gap: 0.3rem;
+  min-height: 56px; margin-top: 1.2rem; color: var(--mob-muted); font-weight: 700; text-decoration: none;
+}
+.curral-vazio {
+  text-align: center; padding: 2rem 1rem; color: var(--mob-verde);
+  border: 2px dashed color-mix(in srgb, var(--mob-verde) 40%, transparent); border-radius: var(--r-app);
+}
+.curral-vazio p { color: var(--mob-text); font-weight: 800; font-size: 1.05rem; margin-top: 0.5rem; }
+.curral-aviso {
+  padding: 0.8rem 0.9rem; border-radius: var(--r-app); font-weight: 700; font-size: 0.92rem; margin-bottom: 1rem;
+}
+.curral-aviso-offline { background: color-mix(in srgb, var(--mob-ambar) 16%, transparent); border: 2px solid var(--mob-ambar); color: var(--mob-ambar); }
+.curral-aviso-erro { background: color-mix(in srgb, var(--mob-vermelho) 14%, transparent); border: 2px solid var(--mob-vermelho); color: var(--mob-vermelho); }

@@ -9,9 +9,10 @@ import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { fetchAgenda, today } from "@/lib/api";
-import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes } from "@/lib/offline";
+import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes, useSincProgresso } from "@/lib/offline";
 import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
+import { ConexaoFaixa } from "@/components/mobile/ConexaoFaixa";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
@@ -38,6 +39,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // "conectado" mesmo com nosso servidor inalcançável — ver lib/offline.ts).
   const online = useConectividadeReal();
   const fila = usePendentes();
+  const progressoSync = useSincProgresso();
   const [escuro, setEscuro] = useState(false);
   // Cabeçalho FIXO (não some ao rolar). Medimos a altura real — que varia com a
   // faixa de segurança do topo (notch) — para reservar o mesmo espaço abaixo.
@@ -61,7 +63,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     medir();
     window.addEventListener("resize", medir);
     return () => window.removeEventListener("resize", medir);
-  }, [fila.length]);
+    // progressoSync entra na dependência porque a faixa de conexão (dentro do
+    // cabeçalho) muda de altura conforme o estado (lasquinha fina vs. barra
+    // de sincronização com 2 linhas) — sem isso o espaçador ficava com a
+    // altura antiga e o conteúdo passava por baixo do cabeçalho.
+  }, [fila.length, progressoSync]);
 
   // Service worker (abrir offline) + sincronização automática da fila.
   useEffect(() => {
@@ -166,14 +172,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   window.dispatchEvent(new CustomEvent("app-abrir-news"));
                 }
               }}
-              style={{ width: 48, height: 48, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+              style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
               <NewsIcon size={19} color="var(--mob-header-fg)" />
             </Link>
             <button type="button" onClick={alternarTema} aria-label={escuro ? "Mudar para tema claro" : "Mudar para tema escuro"}
-              style={{ width: 48, height: 48, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              style={{ width: 56, height: 56, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {escuro ? <Sun size={17} /> : <Moon size={17} />}
             </button>
           </div>
+        </div>
+
+        {/* Faixa de conexão — DoD T6: indicador persistente do estado
+            online/offline/sincronizando da fila (lib/offline.ts). Fica DENTRO
+            do cabeçalho fixo de propósito: o próprio `alturaHeader` acima já
+            mede a altura total do cabeçalho (ref no <header>), então o
+            espaçador abaixo dele se ajusta sozinho sem nenhuma outra conta de
+            posição fixa. */}
+        <div style={{ maxWidth: 560, margin: "0 auto" }}>
+          <ConexaoFaixa online={online} pendentes={fila.length} progresso={progressoSync} />
         </div>
       </header>
 

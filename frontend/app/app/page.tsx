@@ -10,7 +10,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
-import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
+import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria, MobBarraProgresso } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -891,6 +891,11 @@ export default function AgendaMovel() {
                     {it.numero_animal}
                   </div>
                 ))}
+                {/* Barra de progresso de verdade (não um spinner genérico) —
+                    confirmarSanLote confirma uma matriz de cada vez (loop com
+                    await), então `feitasCount` sobe item a item durante a
+                    confirmação em lote, e esta barra acompanha ao vivo. */}
+                {feitasCount > 0 && <MobBarraProgresso feitos={feitasCount} total={g.itens.length} rotulo="Aplicando" />}
                 <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }} disabled={tudoFeito} onClick={() => confirmarSanLote(g)}>
                   Confirmar todas ({g.itens.length - feitasCount} pendente{g.itens.length - feitasCount !== 1 ? "s" : ""})
                 </button>

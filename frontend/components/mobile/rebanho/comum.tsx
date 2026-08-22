@@ -62,7 +62,7 @@ export function BuscaAnimal({
           {selecionado && <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)" }}>{subtituloAnimal(selecionado)}</span>}
         </span>
         <button type="button" onClick={() => { onEscolher(""); setBusca(""); }} aria-label="Trocar animal"
-          style={{ width: 48, height: 48, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+          style={{ width: 56, height: 56, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
           <X size={18} />
         </button>
       </div>
