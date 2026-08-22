@@ -28,6 +28,7 @@ from fazenda.models import (
     MotivoMovimentacao,
     MovimentoEstoque,
     Parto,
+    PesagemCorporal,
     Pessoa,
     PrincipioAtivo,
     ProtocoloSanitario,
@@ -765,7 +766,11 @@ class TestEstornoDeEstoqueNaExclusao:
     def test_exclui_servico_devolve_dose_de_semen(self, client):
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Animal(numero="700", ativo=True))
+            s.add(Animal(numero="700", ativo=True, sexo="F", data_nasc=date(2024, 1, 1)))
+            # Novilha APTA: a trava de aptidão (rules/aptidao.py) recusa uma
+            # nulípara sem nenhuma pesagem registrada, e este teste é sobre o
+            # estorno de estoque, não sobre aptidão.
+            s.add(PesagemCorporal(numero_matriz="700", data_pesagem=date(2026, 6, 1), peso_kg=400))
             s.add(EstoqueSemen(touro_nome="Coors", tipo="convencional", doses=30))
             s.commit()
 
@@ -794,7 +799,9 @@ class TestEstornoDeEstoqueNaExclusao:
         diagnóstico atual usado pela Agenda Reprodutiva/candidatas a IATF."""
         c, engine = client
         with _sessao(engine) as s:
-            s.add(Animal(numero="700", ativo=True))
+            s.add(Animal(numero="700", ativo=True, sexo="F", data_nasc=date(2024, 1, 1)))
+            # Novilha APTA — ver o comentário no teste da dose de sêmen acima.
+            s.add(PesagemCorporal(numero_matriz="700", data_pesagem=date(2026, 6, 1), peso_kg=400))
             s.commit()
 
         r1 = c.post("/reproducao/servico", json={
