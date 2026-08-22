@@ -21,7 +21,6 @@ export const marcaVars = {
 
 export function PublicHeader({ variant = "institucional" }: { variant?: "login" | "institucional" }) {
   const linkStyle: React.CSSProperties = { color: "rgba(245,238,241,0.8)", textDecoration: "none", fontSize: "0.85rem", fontWeight: 600 };
-  const base = variant === "login" ? "" : "/login";
   return (
     <header style={{
       position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -36,8 +35,10 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
         </div>
       </Link>
       <nav style={{ display: "flex", alignItems: "center", gap: "1.4rem" }}>
-        <a href={`${base}#recursos`} style={linkStyle} className="login-nav-link">Recursos</a>
-        <a href={`${base}#simulador`} style={linkStyle} className="login-nav-link">Simulador</a>
+        {/* "Recursos"/"Simulador" saíram do menu — apontavam para âncoras
+            (#recursos/#simulador) que existiam só na Hero antiga do login;
+            redesign T7 ("Login enxuto", mockup 1h) tirou essas seções de lá
+            (viram a landing pública — T8, ainda não construída). */}
         <Link href="/news" style={{ ...linkStyle, color: "#C9A44C" }} className="login-nav-link">Milk News</Link>
         {variant === "institucional" && (
           <Link href="/login" className="btn-primary" style={{ fontSize: "0.82rem", padding: "0.4rem 0.9rem" }}>Entrar</Link>
@@ -64,13 +65,6 @@ export function PublicPage({ variant = "institucional", children }: { variant?: 
       <style>{`
         .login-nav-link { transition: color 0.15s ease; }
         .login-nav-link:hover { color: #ffffff !important; }
-        @media (max-width: 860px) {
-          /* minmax(0, 1fr), não só 1fr — um "1fr" puro tem mínimo "auto" (o
-             min-content do conteúdo), então a coluna estoura a largura da
-             tela em vez de encolher para caber no mobile. */
-          .login-hero-grid { grid-template-columns: minmax(0, 1fr) !important; }
-          .login-card-offset { transform: none !important; }
-        }
       `}</style>
     </div>
   );

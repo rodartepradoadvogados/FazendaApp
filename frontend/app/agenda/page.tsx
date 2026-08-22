@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
@@ -478,6 +478,11 @@ export default function AgendaPage() {
     () => eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo),
     [eventosBase, hoje, limiteFuturo],
   );
+  // Redesign T3 (mockup 1i): a linha do tempo agora separa Hoje de Próximos
+  // dias (antes "Futuros" misturava os dois sob o mesmo rótulo "Hoje") — só
+  // uma partição por data de `eventosFuturos`, mesma lista/mesmo filtro.
+  const eventosHoje = useMemo(() => eventosFuturos.filter((e: any) => e.data === hoje), [eventosFuturos, hoje]);
+  const eventosProximos = useMemo(() => eventosFuturos.filter((e: any) => e.data > hoje), [eventosFuturos, hoje]);
   const eventosPendentes = useMemo(
     () => eventosBase.filter((e: any) => e.data < hoje),
     [eventosBase, hoje],
@@ -1758,6 +1763,61 @@ export default function AgendaPage() {
     );
   };
 
+  // Painel lateral novo (redesign T3, mockup 1i): mini-calendário do mês,
+  // só leitura — deliberadamente SEM o mecanismo de dia selecionado/painel
+  // lateral do renderCalendario() acima (aquele abre um segundo grid de
+  // 320px que não cabe dentro dos 250px deste painel). Clicar num dia aqui
+  // só filtra a lista principal (reaproveita `de`/`ate`, os mesmos estados
+  // do filtro de período) — nenhum estado novo de seleção de dia.
+  const renderMiniCalendario = () => {
+    const primeiroDiaIso = isoLocal(mesCalendario.ano, mesCalendario.mes, 1);
+    const diasNoMes = new Date(mesCalendario.ano, mesCalendario.mes + 1, 0).getDate();
+    const ultimoDiaIso = isoLocal(mesCalendario.ano, mesCalendario.mes, diasNoMes);
+    const primeiroDiaSemana = new Date(mesCalendario.ano, mesCalendario.mes, 1).getDay();
+    const eventosDoMes = eventosBase.filter((e: any) => e.data >= primeiroDiaIso && e.data <= ultimoDiaIso);
+    const contagemPorDia = new Map<string, number>();
+    eventosDoMes.forEach((e: any) => contagemPorDia.set(e.data, (contagemPorDia.get(e.data) || 0) + 1));
+    const celulas: (string | null)[] = [];
+    for (let i = 0; i < primeiroDiaSemana; i++) celulas.push(null);
+    for (let dia = 1; dia <= diasNoMes; dia++) celulas.push(isoLocal(mesCalendario.ano, mesCalendario.mes, dia));
+
+    return (
+      <div className="card">
+        <div className="flex items-center justify-between mb-2">
+          <button className="btn-ghost" onClick={() => mudarMes(-1)} title="Mês anterior" style={{ padding: "0.2rem" }}><ChevronLeft size={14} /></button>
+          <span style={{ fontWeight: 700, fontSize: "0.8rem" }}>{NOMES_MES[mesCalendario.mes]} {mesCalendario.ano}</span>
+          <button className="btn-ghost" onClick={() => mudarMes(1)} title="Próximo mês" style={{ padding: "0.2rem" }}><ChevronRight size={14} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "2px" }}>
+          {DIAS_SEMANA_ABREV.map((d) => (
+            <div key={d} style={{ textAlign: "center", fontSize: "0.6rem", fontWeight: 700, color: "var(--text-muted)" }}>{d[0]}</div>
+          ))}
+          {celulas.map((iso, i) => {
+            if (!iso) return <div key={`vazio-${i}`} />;
+            const n = contagemPorDia.get(iso) || 0;
+            const atrasado = iso < hoje && n > 0;
+            const ehHoje = iso === hoje;
+            const ehFiltro = de === iso && ate === iso;
+            return (
+              <button key={iso} type="button" title={n ? `${n} evento${n !== 1 ? "s" : ""} — clique para filtrar a lista neste dia` : iso}
+                onClick={() => { if (ehFiltro) { setDe(""); setAte(""); } else { setDe(iso); setAte(iso); } }}
+                style={{
+                  aspectRatio: "1", fontSize: "0.68rem", borderRadius: "4px", cursor: "pointer",
+                  border: "1px solid " + (ehFiltro ? "var(--dourado)" : "transparent"),
+                  background: ehFiltro ? "rgba(184,134,11,0.18)" : ehHoje ? "rgba(184,134,11,0.08)" : "transparent",
+                  color: atrasado ? "var(--red)" : "var(--text)", fontWeight: ehHoje ? 800 : 500,
+                  display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
+                }}>
+                {Number(iso.slice(8, 10))}
+                {n > 0 && <span style={{ position: "absolute", bottom: 2, width: 4, height: 4, borderRadius: "50%", background: atrasado ? "var(--red)" : "var(--dourado-light)" }} />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const candidatas = agenda?.candidatas_iatf || [];
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
@@ -1899,21 +1959,24 @@ export default function AgendaPage() {
           "Data de referência" saiu (C2); o estado `data` continua existindo
           por baixo (ancora `carregar()`), só o controle sumiu — a agenda
           passa a ancorar sempre em hoje. */}
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar agenda</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
-            <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
-            <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-            <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }}>
-              <option value="">Todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
-            </select></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar</label>
-            <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="texto ou nº..." style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+      {/* Redesign T3 (mockup 1i): os mesmos 4 filtros (de/até/categoria/busca),
+          agora numa única linha compacta em vez do cartão empilhado — só
+          reestilizado, nenhum estado/handler mudou. */}
+      <div className="card mb-4 flex items-center flex-wrap" style={{ padding: "0.5rem 0.7rem", gap: "0.6rem" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text-muted)", fontSize: "0.72rem", fontWeight: 600 }}><Filter size={13} /> Período</span>
+        <input type="date" value={de} onChange={e => setDe(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
+        <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>–</span>
+        <input type="date" value={ate} onChange={e => setAte(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }} />
+        <select value={fCat} onChange={e => setFCat(e.target.value)} style={{ background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem", color: "var(--text)", fontSize: "0.78rem" }}>
+          <option value="">Categoria: todas</option>{CATEGORIAS.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <div style={{ flex: 1, minWidth: "160px", display: "flex", alignItems: "center", gap: "0.4rem", border: "1px solid var(--border-strong)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
+          <Search size={13} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+          <input value={filtro} onChange={e => setFiltro(e.target.value)} placeholder="Nº do animal, descrição…"
+            style={{ border: "none", background: "none", outline: "none", color: "var(--text)", fontSize: "0.78rem", width: "100%" }} />
         </div>
-        {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
+        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600 }}>{eventosHoje.length + eventosProximos.length + eventosPendentes.length} eventos</span>
+        {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar</button>}
       </div>
 
       {/* Header */}
@@ -2233,10 +2296,14 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Linha do tempo unificada — Atrasados (antes de hoje) seguido de Hoje/
-          próximos. A grade do mês agora só aparece como overlay dos
-          indicadores (botão "Calendário" do cabeçalho, C3-C5) — este card
-          não tem mais a pílula que trocava entre as duas visões. */}
+      {/* Linha do tempo — Hoje / Próximos dias / Atrasados (redesign T3,
+          mockup 1i: antes "Futuros" misturava hoje com os próximos dias sob
+          o mesmo rótulo "Hoje"). A grade do mês agora só aparece como overlay
+          dos indicadores (botão "Calendário" do cabeçalho, C3-C5) — este card
+          não tem mais a pílula que trocava entre as duas visões. Painel
+          lateral novo (calendário do mês + insumos) ao lado, só leitura —
+          nenhum dos fluxos de confirmação abaixo foi tocado. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_250px] gap-4 items-start">
       <div className="card">
         <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span>Agenda ({eventosPendentes.length + eventosFuturos.length})</span>
@@ -2252,11 +2319,22 @@ export default function AgendaPage() {
         ) : (
           <div style={{ marginTop: "0.75rem" }}>
             <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
-              <Calendar size={14} /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
+              <Calendar size={14} /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })} ({eventosHoje.length})
             </div>
-            {eventosFuturos.length > 0 ? (
-              <div className="space-y-2 mb-3">{renderEventos(eventosFuturos)}</div>
+            {eventosHoje.length > 0 ? (
+              <div className="space-y-2 mb-3">{renderEventos(eventosHoje)}</div>
             ) : (
+              <p style={{ color: "var(--text-muted)", padding: "0.75rem", textAlign: "center", fontSize: "0.82rem" }}>Nada para hoje.</p>
+            )}
+            {eventosProximos.length > 0 && (
+              <>
+                <div className="flex items-center gap-2" style={{ color: "var(--text-muted)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
+                  <Calendar size={14} /> Próximos dias ({eventosProximos.length})
+                </div>
+                <div className="space-y-2 mb-3">{renderEventos(eventosProximos)}</div>
+              </>
+            )}
+            {eventosHoje.length === 0 && eventosProximos.length === 0 && eventosPendentes.length === 0 && (
               <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center" }}>Nenhum evento no filtro atual.</p>
             )}
             {eventosPendentes.length > 0 && (
@@ -2269,6 +2347,25 @@ export default function AgendaPage() {
             )}
           </div>
         )}
+      </div>
+      <div className="flex flex-col gap-3">
+        {renderMiniCalendario()}
+        {agenda?.hormonios_check && agenda.hormonios_check.length > 0 && (
+          <div className="card">
+            <div className="card-header mb-2" style={{ fontSize: "0.72rem" }}>Precisa de insumo</div>
+            <div className="flex flex-col gap-1">
+              {agenda.hormonios_check.map((h: any) => (
+                <div key={h.nome} className="flex items-center justify-between" style={{ fontSize: "0.78rem" }}>
+                  <span>{h.nome}</span>
+                  <strong style={{ color: h.suficiente ? "var(--text)" : "var(--red)" }}>
+                    {h.suficiente ? `${h.estoque_atual} ${h.unidade}` : `faltam ${Math.ceil(h.falta)}`}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
       </div>
 
       {/* Estoque — alertas de saldo negativo/abaixo do mínimo, no final da
