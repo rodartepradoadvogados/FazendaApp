@@ -5602,6 +5602,12 @@ export async function criarBaixaLote(dados: {
 export type BaixaLoteItem = {
   lancamento_id: number; data_pagamento: string; valor_pago: number;
   conta_bancaria?: string; forma_pagamento?: string; data_vencimento_cartao?: string; numero_documento_pagamento?: string;
+  // Mesmo mecanismo/formato de marcarPagoFinanceiro (baixa individual): sem
+  // isto, a diferença entre valor_pago e o valor da nota vira
+  // desconto_acrescimo, perdoada/cobrada de uma vez (comportamento de
+  // sempre). Preenchido, a diferença migra inteira para nova(s) parcela(s)
+  // do mesmo lançamento — ver PUT /financeiro/lancamentos/baixa-lote-detalhada.
+  parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 };
 export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
   const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
@@ -5763,15 +5769,17 @@ export async function anexarArquivoLancamentoPorId(
   return res.json();
 }
 
-// Um comprovante ÚNICO para vários lançamentos pagos na mesma remessa
-// (Financeiro > Pagamento em lote). O arquivo sobe uma vez só e o backend
-// cria o vínculo com cada lançamento, para que todos exibam o comprovante no
+// Um ou mais comprovantes para vários lançamentos pagos na mesma remessa
+// (Financeiro > Pagamento em lote) — o banco às vezes emite mais de um
+// recibo para a mesma remessa (o PDF da remessa inteira + o comprovante de
+// uma linha, por exemplo). Cada arquivo sobe uma vez só e o backend cria o
+// vínculo com cada lançamento, para que todos exibam os comprovantes no
 // relatório de Contas pagas — ver anexar_comprovante_em_lote no backend.
 export async function anexarComprovanteEmLote(
-  lancamentoIds: number[], file: File, categoria?: string | null,
-): Promise<{ anexados: number; nome_arquivo: string; anexo_ids: number[]; numeros_lancamento: string[] }> {
+  lancamentoIds: number[], files: File[], categoria?: string | null,
+): Promise<{ anexados: number; arquivos: string[]; nome_arquivo: string | null; anexo_ids: number[]; numeros_lancamento: string[] }> {
   const form = new FormData();
-  form.append("file", file);
+  files.forEach((f) => form.append("file", f));
   form.append("lancamento_ids", lancamentoIds.join(","));
   if (categoria) form.append("categoria", categoria);
   const res = await authFetch(`${API}/financeiro/lancamentos/anexos-lote`, { method: "POST", body: form });
