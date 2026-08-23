@@ -4365,10 +4365,15 @@ export async function fetchControles() {
   return res.json();
 }
 
-// Equivalente maduro — ver docs/equivalente-maduro-proposta.md. O trio de
+// Equivalente maduro — redesign "padronização por vaca" (ver nota de
+// redesign no topo de `fazenda/rules/equivalente_maduro.py`). O trio de
 // apresentação (produz hoje / produzirá / diferença) nunca aparece sozinho;
-// os três tipos abaixo espelham exatamente o `TrioEquivalenteMaduro` do
-// backend (`fazenda/rules/equivalente_maduro.py`).
+// os tipos abaixo espelham exatamente o `TrioEquivalenteMaduro` do backend.
+// Fatores fixos de tabela (Holandês, sempre — não depende mais de mínimo de
+// lactações do rebanho); confiança é a fração medida/projetada, não mais
+// tamanho de amostra do rebanho.
+export type NivelConfiancaEM = "muito baixa" | "baixa" | "média" | "alta";
+
 export type TrioEquivalenteMaduro = {
   numero_matriz?: string;
   ordem_parto: number | null;
@@ -4378,28 +4383,33 @@ export type TrioEquivalenteMaduro = {
   ja_maduro: boolean;
   producao_maturidade_kg: number | null;
   diferenca_kg: number | null;
-  faixa_diferenca_kg: [number, number] | null;
-  confianca_fator: "baixa" | "ok" | null;
+  confianca_nivel: NivelConfiancaEM | null;
+  confianca_fracao: number | null; // kg medido / kg projetado, 0..1
   sem_base: boolean;
   motivo: string | null;
+  // Presentes só nas linhas do relatório/ficha (não na calculadora avulsa).
+  del_atual?: number;
+  del_ultimo_controle?: number | null;
+  estimada?: boolean;
+  secagem_precoce?: boolean;
+  faltam_partos_maturidade?: number | null;
+  producao_dia_historica_kg?: number | null;
 };
 
-export type FatorClasseEM = {
+// Painel de aferição — fator observado no próprio rebanho × fator fixo de
+// tabela, por classe. Puramente informativo (collapsible no front); nunca
+// altera a conta do trio acima.
+export type LinhaAfericaoEM = {
   classe: number;
   n_lactacoes: number;
-  media_305_kg: number;
-  fator: number;
-  desvio_fator: number;
-  confianca: "baixa" | "ok";
+  fator_observado: number | null;
+  fator_tabela: number;
+  divergencia_pct: number | null;
+  confianca_observado: "baixa" | "ok" | null;
 };
 
 export type RelatorioEquivalenteMaduro = {
-  fatores: Record<string, FatorClasseEM>;
-  sem_base_geral: string | null;
-  // Lactações encerradas por classe (1/2/3) — SEMPRE as 3, mesmo abaixo do
-  // mínimo publicável (`fatores` omite silenciosamente a classe que não
-  // bateu o mínimo). É o "quanto falta" para o usuário ver na tela.
-  amostras_por_classe: Record<string, number>;
+  painel_afericao: LinhaAfericaoEM[];
   animais: TrioEquivalenteMaduro[];
 };
 
@@ -4409,7 +4419,7 @@ export async function fetchEquivalenteMaduro(): Promise<RelatorioEquivalenteMadu
   return res.json();
 }
 
-export async function fetchEquivalenteMaduroDoAnimal(numeroMatriz: string): Promise<TrioEquivalenteMaduro & { sem_base_geral: string | null }> {
+export async function fetchEquivalenteMaduroDoAnimal(numeroMatriz: string): Promise<TrioEquivalenteMaduro> {
   const res = await authFetch(`${API}/producao/equivalente-maduro/${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Equivalente maduro error: ${res.status}`); }
   return res.json();

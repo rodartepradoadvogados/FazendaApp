@@ -1,5 +1,13 @@
 # Equivalente maduro — proposta de cálculo, relatório e calculadora
 
+> **SUPERADO pela seção 8** (redesign "padronização por vaca", aprovado e
+> implementado). As seções 1-7 abaixo continuam valendo como HISTÓRICO da
+> primeira versão (fatores calibrados no rebanho, mínimo de 20 lactações por
+> classe) — é o desenho que estava em produção antes do redesign, e o
+> raciocínio de pesquisa (305-ME aposentado, tabela Embrapa é de Gir) ainda é
+> válido como contexto. Mas o CÓDIGO hoje (`rules/equivalente_maduro.py`,
+> `rules/curva_lactacao_referencia.py`) segue a seção 8, não estas.
+
 Documento de decisão. Não há código nesta entrega: o objetivo é fechar o
 método antes de implementar, porque as duas escolhas centrais (de onde vêm os
 fatores e como se calcula a produção de 305 dias) são difíceis de trocar depois
@@ -261,3 +269,123 @@ Registrar junto, para não virar promessa:
   financeiro.
 - **Não conserta dado ruim.** Rebanho com controle leiteiro esporádico terá
   produção de 305 dias mal estimada, e o ajuste só propaga esse erro.
+
+---
+
+## 8. Redesign aprovado — "padronização por vaca" (o que está implementado hoje)
+
+Depois de rodar em produção com o desenho das seções 1-7, o dono aprovou uma
+mudança de rumo (mockup mostrado e aprovado literalmente: "Implemente
+exatamente assim"). Registro aqui porque é o desenho VIGENTE — as seções
+anteriores ficam como histórico do que existia antes.
+
+### 8.1 O que mudou, e por quê
+
+O desenho anterior calibrava o fator de ajuste no próprio rebanho e exigia um
+mínimo de 20 lactações ENCERRADAS por classe para publicar qualquer número. Na
+prática isso significava: numa fazenda pequena, ou logo depois de trocar o
+jeito de registrar lactação, uma novilha de 1ª cria não recebia EM nenhum
+enquanto o rebanho não acumulasse histórico — mesmo tendo ela mesma 2, 3, 10
+controles próprios perfeitamente utilizáveis.
+
+Decisão: trocar "fator calibrado no rebanho, com mínimo de amostra" por
+"fator fixo de tabela (raça Holandês, sempre), sem mínimo nenhum do
+rebanho". Qualquer animal com produção de 305 dias calculável (≥ 2 controles
+utilizáveis na lactação atual) e ordem de parto conhecida recebe o trio
+completo — inclusive uma primípara de 100 dias em leite num rebanho com zero
+lactação encerrada.
+
+### 8.2 Fatores fixos (raça Holandês)
+
+| Classe | Fator |
+|---|---|
+| 1ª cria | 1,22 |
+| 2ª cria | 1,08 |
+| Madura (3ª+) | 1,00 |
+
+`FATOR_HOLANDES` em `rules/equivalente_maduro.py`. **[risco]** Vêm de
+conhecimento treinado sobre o padrão de maturidade de Holandês, NÃO de
+tabela CDCB/ICAR conferida ao vivo — o ambiente onde isto foi implementado
+bloqueia rede para as fontes primárias, igual ao que a seção 2 já registrava
+para a versão anterior. São constantes editáveis, não normas verificadas.
+Todo animal é tratado como Holandês para este cálculo, independente da
+raça/grau de sangue cadastrado — decisão explícita do dono.
+
+O painel de aferição (§8.5) existe para comparar este número fixo com o que
+o próprio rebanho vem mostrando, e sinalizar se a tabela precisa de ajuste.
+
+### 8.3 Confiança — não mais tamanho de amostra do rebanho
+
+Antes: "confiança" media quantas lactações do REBANHO sustentavam o fator da
+classe (baixa/ok, por tamanho de amostra). Agora: confiança é por VACA —
+
+```
+confiança = kg_medido / kg_projetado
+```
+
+isto é, que fração do total de 305 dias projetado é leite REALMENTE medido
+nesta vaca (`Producao305.producao_medida_kg` — trapézios entre dois
+controles reais, nem a ponta inicial nem a final), contra o total projetado.
+Cai com o DEL (mais lactação pela frente ainda projetada); sobe com o
+controle em dia.
+
+Quatro níveis, cortes redondos calibrados contra os 7 exemplos do mockup
+aprovado (23%→baixa, 7%→muito baixa, 66%→média, 81%→alta, 89%→alta,
+42%→baixa, 58%→média):
+
+| Fração medida | Nível |
+|---|---|
+| < 15% | muito baixa |
+| 15% a 45% | baixa |
+| 45% a 75% | média |
+| ≥ 75% | alta |
+
+### 8.4 Projeção do trecho final: curva, não platô
+
+A lactação ABERTA cujo último controle é anterior ao fim da janela de 305
+dias projetava esse trecho final SEGURANDO o ritmo do último controle
+constante (platô) até o dia 305. Isso superestimava sistematicamente — toda
+vaca declina depois do pico de produção — e o viés crescia quanto menor o
+DEL do último controle (levantamento anterior: até +30% em DEL baixo).
+
+Substituído por uma curva de Wood de referência (`rules/
+curva_lactacao_referencia.py`): `y(t) = a·t^b·e^(−c·t)`, forma FIXA
+(Holandês genérico, não ajustada por animal — poucos controles não sustentam
+ajuste individual), ANCORADA no ritmo real do último controle da vaca. Dali
+em diante, o ritmo projetado segue a forma declinante da curva, não um
+platô. **[risco]** `B_REFERENCIA`/`C_REFERENCIA` — mesmo aviso do §8.2: vêm
+de conhecimento treinado, editáveis, não conferidas ao vivo.
+
+A lactação já ENCERRADA (secagem/próximo parto conhecido) continua usando o
+platô de sempre no trecho final — é um trecho curto e real até uma data que
+de fato aconteceu, não uma projeção para o futuro; o TIM já integra essa
+janela corretamente.
+
+### 8.5 Painel de aferição — a calibração antiga, demovida
+
+`calcular_fatores` (a calibração por rebanho da versão anterior) continua
+existindo, mas não alimenta mais o trio principal — vira um painel
+colapsável de CONFERÊNCIA, informativo: fator observado no próprio rebanho
+× fator fixo de tabela × divergência percentual, por classe. Nunca bloqueia
+nem muda a conta do trio.
+
+### 8.6 `sem_base` — só duas causas agora
+
+Removida a causa mais comum de antes ("classe sem lactações suficientes do
+rebanho"). Sobram:
+
+- produção de 305 dias não calculável (menos de 2 controles utilizáveis);
+- ordem de parto desconhecida (sem parto algum no histórico do animal, ou
+  parto sem `ordem_parto` gravada) — não dá para escolher o fator fixo sem
+  saber a classe.
+
+### 8.7 Nota explicativa permanente no card
+
+Pedido explícito do dono, em nota separada do painel de aferição (esse
+compara método × realidade do rebanho; a nota explica o MÉTODO em si,
+sempre visível, não colapsável): o card do trio (relatório, Ficha do
+Animal, calculadora) traz um texto fixo dizendo que todo animal é
+padronizado como Holandês independente da raça cadastrada, o que
+"confiança" significa (fração medida/projetada, não margem estatística), e
+os três fatores fixos com seus valores. Ver `NotaExplicativaEM` em
+`frontend/components/TrioEquivalenteMaduro.tsx`.

@@ -7,7 +7,7 @@
 // não sabe a data exata do parto dela.
 import { useState } from "react";
 import { calcularEquivalenteMaduro, type TrioEquivalenteMaduro } from "@/lib/api";
-import { TrioEquivalenteMaduroView } from "@/components/TrioEquivalenteMaduro";
+import { TrioEquivalenteMaduroView, NotaExplicativaEM } from "@/components/TrioEquivalenteMaduro";
 
 const estiloInput: React.CSSProperties = {
   border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.85rem", width: "100%",
@@ -115,6 +115,7 @@ export function CalculadoraEquivalenteMaduro() {
       {resultado && (
         <div style={{ marginTop: "1rem" }}>
           <TrioEquivalenteMaduroView trio={resultado} />
+          <NotaExplicativaEM />
         </div>
       )}
     </div>

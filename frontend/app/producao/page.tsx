@@ -8,6 +8,7 @@ import {
   fetchEquivalenteMaduro, type RelatorioEquivalenteMaduro,
 } from "@/lib/api";
 import { CalculadoraEquivalenteMaduro } from "@/components/CalculadoraEquivalenteMaduro";
+import { PilulaConfianca, NotaExplicativaEM } from "@/components/TrioEquivalenteMaduro";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -1496,18 +1497,79 @@ export const ABAS_PRODUCAO = [
 ];
 
 // ---------------------------------------------------------------------------
-// Equivalente maduro — ver docs/equivalente-maduro-proposta.md. Relatório do
-// rebanho (produz hoje / produzirá / diferença / ordem de parto / nº de
-// controles / confiança do fator) + calculadora avulsa. A apresentação do
-// trio (a frase "já está na maturidade", a faixa da 1ª cria, o "sem base")
-// fica toda em components/TrioEquivalenteMaduro.tsx — aqui só a listagem.
+// Equivalente maduro — redesign "padronização por vaca" (ver nota no topo de
+// `fazenda/rules/equivalente_maduro.py`). Fatores fixos de tabela (Holandês,
+// sempre) + confiança por medição — sem mínimo de lactações do rebanho para
+// o trio principal. As 3 colunas do grupo EM (média/dia, projeção 305,
+// diferença) ficam visualmente agrupadas com um tingimento leve, mesmo
+// idioma de `color-mix` que o app já usa para destacar célula/linha (ver
+// severidade em NaoConformidades.tsx). O painel de aferição (fator
+// observado no rebanho × fator de tabela) é colapsável, abaixo da tabela —
+// puramente informativo. A nota explicativa permanente
+// (`NotaExplicativaEM`) fica sempre visível, é outra coisa.
 // ---------------------------------------------------------------------------
+const TINT_GRUPO_EM = "color-mix(in srgb, var(--dourado, var(--amber)) 8%, transparent)";
+
 const COLUNAS_EQUIVALENTE_MADURO = [
   { header: "Vaca", key: "numero_matriz" }, { header: "Ordem parto", key: "ordem_parto" },
-  { header: "Produz hoje (kg)", key: "producao_hoje_kg" }, { header: "Produzirá (kg)", key: "producao_maturidade_kg" },
-  { header: "Diferença (kg)", key: "diferenca_kg" }, { header: "Controles", key: "n_controles" },
-  { header: "Confiança do fator", key: "confianca_fator" },
+  { header: "DEL atual", key: "del_atual" }, { header: "Faltam p/ maturidade", key: "faltam_partos_maturidade" },
+  { header: "Média/dia atual (kg)", key: "media_dia_atual" }, { header: "Média/dia histórica (kg)", key: "producao_dia_historica_kg" },
+  { header: "Projeção 305 (kg)", key: "producao_hoje_kg" }, { header: "Confiança", key: "confianca_nivel" },
+  { header: "EM — Média/dia (kg)", key: "media_dia_em" }, { header: "EM — Projeção 305 (kg)", key: "producao_maturidade_kg" },
+  { header: "EM — Diferença (kg)", key: "diferenca_kg" },
 ];
+
+function BadgeEM({ cor, children, title }: { cor: string; children: React.ReactNode; title?: string }) {
+  return (
+    <span title={title} style={{
+      fontSize: "0.65rem", color: cor, background: `color-mix(in srgb, ${cor} 14%, transparent)`,
+      borderRadius: "999px", padding: "0.05rem 0.45rem", whiteSpace: "nowrap", fontWeight: 600,
+    }}>
+      {children}
+    </span>
+  );
+}
+
+/** Painel de aferição — comparação fator observado no rebanho × fator fixo
+ * de tabela, por classe. Nunca altera o trio principal (esse já usa a
+ * tabela); serve só para o dono decidir se a tabela ainda representa bem
+ * este rebanho. */
+function PainelAfericaoEM({ painel }: { painel: RelatorioEquivalenteMaduro["painel_afericao"] }) {
+  const rotulo: Record<number, string> = { 1: "1ª cria", 2: "2ª cria", 3: "Madura (3ª+)" };
+  return (
+    <SecaoRecolhivel titulo="Painel de aferição — fator observado no rebanho × fator de tabela" defaultAberta={false}>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0 0 0.75rem" }}>
+        Compara o fator FIXO de tabela (Holandês, usado no cálculo acima) com o que as lactações encerradas deste
+        próprio rebanho vêm mostrando — só para conferência. Nunca muda o número do trio principal.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead><tr>
+            <th>Classe</th><th style={{ textAlign: "right" }}>Lactações encerradas</th>
+            <th style={{ textAlign: "right" }}>Fator observado no rebanho</th>
+            <th style={{ textAlign: "right" }}>Fator da tabela (Holandês)</th>
+            <th style={{ textAlign: "right" }}>Divergência</th>
+          </tr></thead>
+          <tbody>
+            {painel.map((l) => (
+              <tr key={l.classe}>
+                <td style={{ fontWeight: 600 }}>{rotulo[l.classe] ?? `Classe ${l.classe}`}</td>
+                <td style={{ textAlign: "right" }}>{l.n_lactacoes}</td>
+                <td style={{ textAlign: "right" }}>
+                  {l.fator_observado != null ? l.fator_observado.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "—"}
+                </td>
+                <td style={{ textAlign: "right", fontWeight: 600 }}>{l.fator_tabela.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: "right", color: l.divergencia_pct == null ? "var(--text-muted)" : Math.abs(l.divergencia_pct) > 10 ? "var(--amber)" : "var(--text-muted)" }}>
+                  {l.divergencia_pct == null ? "—" : `${l.divergencia_pct > 0 ? "+" : ""}${l.divergencia_pct.toLocaleString("pt-BR")}%`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SecaoRecolhivel>
+  );
+}
 
 export function EquivalenteMaduroView() {
   const [dados, setDados] = useState<RelatorioEquivalenteMaduro | null>(null);
@@ -1531,74 +1593,98 @@ export function EquivalenteMaduroView() {
             <ExportarBotoes
               titulo="Equivalente maduro" nomeArquivoBase="equivalente_maduro"
               colunas={COLUNAS_EQUIVALENTE_MADURO}
-              linhas={animais.map((a) => ({ ...a, confianca_fator: a.confianca_fator === "ok" ? "boa" : a.confianca_fator === "baixa" ? "baixa" : "—" }))}
+              linhas={animais.map((a) => ({
+                ...a,
+                media_dia_atual: a.producao_hoje_kg != null ? Math.round((a.producao_hoje_kg / 305) * 10) / 10 : null,
+                media_dia_em: a.sem_base ? null : Math.round(((a.ja_maduro ? a.producao_hoje_kg : a.producao_maturidade_kg) ?? 0) / 305 * 10) / 10,
+                confianca_nivel: a.confianca_nivel ?? "—",
+              }))}
             />
           </span>
         </div>
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
           Ajusta a produção de 305 dias (Test Interval Method) pela ordem de parto DERIVADA na data de cada lactação —
-          não a contagem atual de partos do animal. Os fatores são calibrados nas lactações encerradas deste próprio
-          rebanho (mínimo de 20 por classe; abaixo disso, sem base para ajustar). Ordene por diferença decrescente para
-          ver quem ainda tem mais a crescer — a mesma lista ao contrário é candidata a descarte.
+          não a contagem atual de partos do animal. Qualquer vaca com pelo menos 2 controles utilizáveis na lactação
+          atual recebe o número — inclusive uma primípara de poucos dias em leite. Ordene por diferença decrescente
+          para ver quem ainda tem mais a crescer — a mesma lista ao contrário é candidata a descarte.
         </p>
-        {dados?.sem_base_geral && (
-          <p style={{ fontSize: "0.78rem", color: "var(--amber)", marginBottom: "0.75rem" }}>{dados.sem_base_geral}</p>
-        )}
-        {dados?.amostras_por_classe && (
-          <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: "0.9rem" }}>
-            <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Lactações encerradas por classe:</span>
-            {[["1", "1ª cria"], ["2", "2ª cria"], ["3", "Madura (3ª+)"]].map(([classe, rotulo]) => {
-              const n = dados.amostras_por_classe[classe] ?? 0;
-              const abaixoDoMinimo = n < 20;
-              return (
-                <span key={classe} title={abaixoDoMinimo ? `Faltam ${20 - n} lactação(ões) encerrada(s) para o mínimo de 20 desta classe` : undefined}
-                  style={{
-                    fontSize: "0.72rem", borderRadius: "999px", padding: "0.15rem 0.6rem", whiteSpace: "nowrap",
-                    background: abaixoDoMinimo ? "var(--amber-soft, rgba(184,134,11,0.14))" : "var(--surface-2)",
-                    color: abaixoDoMinimo ? "var(--amber)" : "var(--text-muted)",
-                  }}>
-                  {rotulo}: {n}{abaixoDoMinimo ? " de 20" : ""}
-                </span>
-              );
-            })}
-          </div>
-        )}
         <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr>
-              <ThOrdenavel label="Vaca" campo="numero_matriz" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} />
-              <ThOrdenavel label="Ordem parto" campo="ordem_parto" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} />
-              <ThOrdenavel label="Produz hoje (kg)" campo="producao_hoje_kg" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
-              <ThOrdenavel label="Produzirá (kg)" campo="producao_maturidade_kg" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
-              <ThOrdenavel label="Diferença (kg)" campo="diferenca_kg" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
-              <ThOrdenavel label="Controles" campo="n_controles" coluna={ordEM.coluna} dir={ordEM.dir} ordenar={ordEM.ordenar} alinhar="right" />
-              <th>Confiança</th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th rowSpan={2}>Vaca</th>
+                <th rowSpan={2}>Ordem parto</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>DEL atual</th>
+                <th rowSpan={2}>Faltam p/ maturidade</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>Média/dia atual</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>Média/dia histórica</th>
+                <th rowSpan={2} style={{ textAlign: "right" }}>Projeção 305</th>
+                <th rowSpan={2}>Confiança</th>
+                <th colSpan={3} style={{ textAlign: "center", background: TINT_GRUPO_EM }}>Equivalente maduro</th>
+              </tr>
+              <tr>
+                <th style={{ textAlign: "right", background: TINT_GRUPO_EM }}>Média/dia</th>
+                <th style={{ textAlign: "right", background: TINT_GRUPO_EM }}>Projeção 305</th>
+                <th style={{ textAlign: "right", background: TINT_GRUPO_EM }}>Diferença</th>
+              </tr>
+            </thead>
             <tbody>
-              {ordEM.linhasOrdenadas.map((a, i) => (
-                <tr key={`${a.numero_matriz}-${i}`}>
-                  <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
-                  <td>{a.ordem_parto != null ? `${a.ordem_parto}ª` : "—"}</td>
-                  <td style={{ textAlign: "right" }}>{a.producao_hoje_kg?.toLocaleString("pt-BR") ?? "—"}</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>
-                    {a.sem_base ? "—" : a.ja_maduro ? "já é madura" : a.producao_maturidade_kg?.toLocaleString("pt-BR")}
-                  </td>
-                  <td style={{ textAlign: "right", color: (a.diferenca_kg ?? 0) > 0 ? "var(--amber)" : "var(--text-muted)" }}>
-                    {a.sem_base ? "sem base" : a.ja_maduro ? "já chegou lá" : a.faixa_diferenca_kg
-                      ? `${a.faixa_diferenca_kg[0].toLocaleString("pt-BR")} a +${a.faixa_diferenca_kg[1].toLocaleString("pt-BR")}`
-                      : `${(a.diferenca_kg ?? 0) > 0 ? "+" : ""}${a.diferenca_kg?.toLocaleString("pt-BR")}`}
-                  </td>
-                  <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{a.n_controles}</td>
-                  <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                    {a.confianca_fator === "ok" ? "boa" : a.confianca_fator === "baixa" ? "baixa" : "—"}
-                  </td>
-                </tr>
-              ))}
-              {!animais.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma lactação registrada ainda.</td></tr>}
+              {ordEM.linhasOrdenadas.map((a, i) => {
+                const mediaAtual = a.producao_hoje_kg != null ? a.producao_hoje_kg / 305 : null;
+                const emKg = a.sem_base ? null : a.ja_maduro ? a.producao_hoje_kg : a.producao_maturidade_kg;
+                const mediaEm = emKg != null ? emKg / 305 : null;
+                const ordemDesconhecida = a.sem_base && a.classe == null;
+                return (
+                  <tr key={`${a.numero_matriz}-${i}`}>
+                    <td>
+                      <div style={{ fontWeight: 700 }}>{a.numero_matriz}</div>
+                      <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", marginTop: "0.2rem" }}>
+                        {ordemDesconhecida && <BadgeEM cor="var(--amber)">ordem de parto desconhecida</BadgeEM>}
+                        {a.secagem_precoce && <BadgeEM cor="var(--text-muted)" title="Lactação encerrada bem antes dos 305 dias">encerrada precoce</BadgeEM>}
+                        {a.estimada && a.del_ultimo_controle != null && (
+                          <BadgeEM cor="var(--text-muted)" title="Trecho após este DEL é projeção pela curva de referência, não medição">
+                            último controle DEL {a.del_ultimo_controle}
+                          </BadgeEM>
+                        )}
+                      </div>
+                    </td>
+                    <td>{a.ordem_parto != null ? `${a.ordem_parto}ª` : "—"}</td>
+                    <td style={{ textAlign: "right" }}>{a.del_atual ?? "—"}</td>
+                    <td>{a.faltam_partos_maturidade == null ? "—" : a.faltam_partos_maturidade === 0 ? "madura" : `${a.faltam_partos_maturidade} parto(s)`}</td>
+                    <td style={{ textAlign: "right" }}>{mediaAtual != null ? mediaAtual.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—"}</td>
+                    <td style={{ textAlign: "right", color: "var(--text-muted)" }}>
+                      {a.producao_dia_historica_kg != null ? a.producao_dia_historica_kg.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—"}
+                    </td>
+                    <td style={{ textAlign: "right" }}>{a.producao_hoje_kg?.toLocaleString("pt-BR") ?? "—"}</td>
+                    <td><PilulaConfianca nivel={a.confianca_nivel} fracao={a.confianca_fracao} /></td>
+                    <td style={{ textAlign: "right", background: TINT_GRUPO_EM }}>
+                      {mediaEm != null ? mediaEm.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) : "—"}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 600, background: TINT_GRUPO_EM }}>
+                      {a.sem_base ? "—" : a.ja_maduro ? a.producao_hoje_kg?.toLocaleString("pt-BR") : a.producao_maturidade_kg?.toLocaleString("pt-BR")}
+                    </td>
+                    <td style={{ textAlign: "right", background: TINT_GRUPO_EM, color: (a.diferenca_kg ?? 0) > 0 ? "var(--amber)" : "var(--text-muted)" }}>
+                      {a.sem_base ? (
+                        <span style={{ fontStyle: "italic", fontSize: "0.75rem" }}>
+                          {ordemDesconhecida ? "sem fator — ordem desconhecida" : "sem base para ajustar"}
+                        </span>
+                      ) : a.ja_maduro ? (
+                        <span style={{ fontStyle: "italic", fontSize: "0.75rem", color: "var(--text-muted)" }}>já está na maturidade</span>
+                      ) : (
+                        `${(a.diferenca_kg ?? 0) > 0 ? "+" : ""}${a.diferenca_kg?.toLocaleString("pt-BR")}`
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!animais.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma lactação registrada ainda.</td></tr>}
             </tbody>
           </table>
         </div>
+        <NotaExplicativaEM />
       </div>
+
+      {dados?.painel_afericao && <PainelAfericaoEM painel={dados.painel_afericao} />}
 
       <CalculadoraEquivalenteMaduro />
     </div>
