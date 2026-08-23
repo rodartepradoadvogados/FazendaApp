@@ -1,0 +1,34 @@
+# Pacotes de sistema (não-Python) exigidos pela leitura automática de
+# documentos via OCR — ver fazenda/rules/leitura_documento.py.
+#
+#   tesseract      binário `tesseract` (motor de OCR), usado via pytesseract.
+#                  O pacote nixpkgs "tesseract" (= tesseract5) já empacota o
+#                  MOTOR COM TODOS OS IDIOMAS de tessdata por padrão (ver
+#                  pkgs/applications/graphics/tesseract/wrapper.nix:
+#                  `enableLanguages ? null` ⇒ `languages.all`), incluindo
+#                  "por" (português) — e já vem com TESSDATA_PREFIX
+#                  configurado internamente pelo próprio wrapper (não é
+#                  preciso setar essa env var à mão aqui). Confirmado lendo o
+#                  wrapper.nix do nixpkgs (branch master) e cruzado com vários
+#                  projetos reais no GitHub que usam exatamente
+#                  `nixPkgs = ["tesseract", "poppler_utils"]` pra OCR em
+#                  português/outros idiomas sem configuração adicional.
+#   poppler_utils  fornece `pdftoppm`/`pdfinfo`, usados por `pdf2image` pra
+#                  renderizar cada página do PDF como imagem antes do OCR.
+#
+# IMPORTANTE — isto NÃO foi validado num deploy real do Railway (o sandbox
+# de desenvolvimento não tem os binários `tesseract`/`pdftoppm` instalados,
+# só a pesquisa acima da documentação/derivação do nixpkgs). Se depois do
+# deploy a leitura de documento falhar sempre com "Não foi possível
+# processar este documento com OCR" ou "nenhum texto reconhecido", confira:
+#   1. No shell do container Railway: `tesseract --version` e
+#      `tesseract --list-langs` (tem que listar "por" entre os idiomas).
+#   2. `pdftoppm -v`.
+#   3. Se "por" não aparecer na lista de idiomas, o pacote "tesseract" do
+#      canal nixpkgs usado pelo Nixpacks pode ter mudado de comportamento
+#      desde que isto foi escrito — nesse caso, setar TESSDATA_PREFIX
+#      manualmente (ex.: variável de ambiente no serviço Railway) apontando
+#      pro diretório de tessdata do pacote, ou trocar a estratégia (buildar
+#      um Dockerfile customizado em vez de Nixpacks).
+[phases.setup]
+nixPkgs = ["tesseract", "poppler_utils"]
