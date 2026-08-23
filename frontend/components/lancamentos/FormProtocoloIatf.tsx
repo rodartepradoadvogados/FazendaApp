@@ -1,10 +1,11 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react";
 import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
 import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
@@ -154,6 +155,12 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
   const [emLote, setEmLote] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [um, setUm] = useState("");
+  // Seleção "em lote" pode ser por animal (picker de sempre) ou por lote(s)
+  // inteiro(s) — escolher o(s) lote(s) pré-seleciona seus animais, ainda
+  // ajustável (todos/nenhum/individual) na janela de confirmação abaixo.
+  const [vinculoProtocolo, setVinculoProtocolo] = useState<"animal" | "lote">("animal");
+  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
+  const [selLote, setSelLote] = useState<Set<string>>(new Set());
   const [d0, setD0] = useState("");
   const [hormonios, setHormonios] = useState<HormonioIatf[]>([]);
   // Protocolos já lançados (para "existente").
@@ -171,6 +178,18 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const codigosLotes = useMemo(
+    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
+    [animais]
+  );
+  const animaisDoLote = useMemo(() => {
+    const cods = new Set(lotesSelecionados);
+    return animais.filter((a) => a.grupo_primario && cods.has(a.grupo_primario));
+  }, [animais, lotesSelecionados]);
+  useEffect(() => {
+    setSelLote(new Set(animaisDoLote.map((a) => a.numero)));
+  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const moldeSelecionado = moldes.find((m) => String(m.id) === moldeId) || null;
   const nomeBase = moldeSelecionado?.nome || "Protocolo IATF";
@@ -195,7 +214,7 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
 
   async function salvar(forcar = false) {
     setErro(null); setSucesso(null); setPodeForcar(false);
-    const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
+    const animaisAlvo = emLote ? Array.from(vinculoProtocolo === "lote" ? selLote : sel) : (um ? [um] : []);
     if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
     setSalvando(true);
     try {
@@ -275,17 +294,61 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
 
       <div className="mt-3">
         <label style={lbl}>Matriz (nº)</label>
-        {emLote
-          ? <AnimalPickerModal
-              animais={animais} selecionados={sel} onToggle={toggle}
-              titulo="Escolher animais para o protocolo IATF"
-              motivosInaptidao={motivosInaptidao}
-              colunas={[
-                { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                { header: "Lote", render: (a) => a.grupo_primario || "—" },
+        {emLote ? (
+          <>
+            <TabBar<"animal" | "lote">
+              abas={[
+                { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
+                { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — pré-seleciona os animais de cada um, ajustável" },
               ]}
+              ativa={vinculoProtocolo}
+              onChange={setVinculoProtocolo}
             />
-          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" motivosInaptidao={motivosInaptidao} />}
+            {vinculoProtocolo === "animal" ? (
+              <AnimalPickerModal
+                animais={animais} selecionados={sel} onToggle={toggle}
+                titulo="Escolher animais para o protocolo IATF"
+                motivosInaptidao={motivosInaptidao}
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                ]}
+              />
+            ) : (
+              <div style={{ marginTop: "0.5rem" }}>
+                <LotePicker
+                  opcoes={opcoesLoteDeAnimais(animais, codigosLotes)}
+                  selecionados={lotesSelecionados}
+                  onChange={setLotesSelecionados}
+                  placeholder="Selecionar lote(s)…"
+                />
+                {lotesSelecionados.length > 0 && (
+                  <div style={{ marginTop: "0.6rem" }}>
+                    <AnimalPickerModal
+                      animais={animaisDoLote} selecionados={selLote} onToggle={toggleLote}
+                      titulo="Confirmar animais do(s) lote(s) selecionado(s)"
+                      placeholder="Confirmar animais do(s) lote(s)…"
+                      motivosInaptidao={motivosInaptidao}
+                      // Sem isso, o lote entrava inteiro por padrão e o
+                      // usuário só via quem foi incluído se lembrasse de
+                      // clicar aqui — mesma disciplina de FormInseminacao.tsx.
+                      abrirAoMudar={lotesSelecionados.join("|")}
+                      colunas={[
+                        { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                        { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                      ]}
+                    />
+                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                      {selLote.size} de {animaisDoLote.length} animal(is) no(s) lote(s) selecionado(s) — "Selecionar todos"/"Limpar seleção" ou desmarque um a um na janela acima.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" motivosInaptidao={motivosInaptidao} />
+        )}
       </div>
       <p style={nota}>
         A lista mostra todas as fêmeas — as <strong>inaptas em cinza</strong>, com o motivo (idade mínima de {idadeMinServico} meses,
