@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Heart, Milk } from "lucide-react";
 import { podeModulo } from "@/lib/api";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
@@ -10,10 +10,10 @@ import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
 import { ABAS_VISAO, type AbaVisao } from "@/app/reproducao/page";
 import {
   ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView, RelatoriosPesagemView,
-  HistoricoInducaoLactacao, HistoricoSecagensProducao,
+  HistoricoInducaoLactacao, HistoricoSecagensProducao, EquivalenteMaduroView,
 } from "@/app/producao/page";
 
-type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst";
+type AbaProducao = "leiteira" | "pesagens" | "secagem" | "inducao" | "qualidade" | "entrega" | "bst" | "equivalente-maduro";
 type Aba = "reproducao" | "producao";
 
 export default function HistoricoPage() {
@@ -22,6 +22,13 @@ export default function HistoricoPage() {
   const [aba, setAba] = useState<Aba>(temReproducao ? "reproducao" : "producao");
   const [abaVisao, setAbaVisao] = useState<AbaVisao>("servicos");
   const [abaProducao, setAbaProducao] = useState<AbaProducao>("leiteira");
+  // Seleção de animais persiste entre as sub-abas do MESMO grupo (Serviços/IAS
+  // ↔ Diagnósticos ↔ Perda de prenhez dentro de Reprodução; Controle leiteiro
+  // ↔ Qualidade ↔ ... dentro de Produção), mas reseta ao trocar de grupo —
+  // por isso são dois states independentes, limpos sempre que `aba` muda.
+  const [animaisSelReproducao, setAnimaisSelReproducao] = useState<Set<string>>(new Set());
+  const [animaisSelProducao, setAnimaisSelProducao] = useState<Set<string>>(new Set());
+  useEffect(() => { setAnimaisSelReproducao(new Set()); setAnimaisSelProducao(new Set()); }, [aba]);
 
   const subNavTree: SubNavNode[] = useMemo(() => [
     ...(temReproducao ? [{ id: "reproducao", label: "Reprodução", icon: Heart, children: ABAS_VISAO.map((v) => ({ id: v.id, label: v.label, icon: v.icon })) }] : []),
@@ -42,8 +49,9 @@ export default function HistoricoPage() {
       case "pesagens": return <RelatoriosPesagemView />;
       case "secagem": return <HistoricoSecagensProducao />;
       case "inducao": return <HistoricoInducaoLactacao />;
-      case "qualidade": return <ProducaoLeiteira secao="qualidade" />;
+      case "qualidade": return <ProducaoLeiteira secao="qualidade" animaisSelExterno={animaisSelProducao} setAnimaisSelExterno={setAnimaisSelProducao} />;
       case "entrega": return <ProducaoLeiteira secao="entrega" />;
+      case "equivalente-maduro": return <EquivalenteMaduroView />;
       default: return <ProducaoLeiteira secao="controle" />;
     }
   }
@@ -59,7 +67,8 @@ export default function HistoricoPage() {
         {abaVisao === "partos" ? <HistoricoPartos />
           : abaVisao === "secagens" ? <HistoricoSecagens />
           : abaVisao === "ciclos_iatf" ? <HistoricoCiclosIatf />
-          : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao} />}
+          : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao}
+              animaisSel={animaisSelReproducao} setAnimaisSel={setAnimaisSelReproducao} />}
       </div>
     </div>
   );

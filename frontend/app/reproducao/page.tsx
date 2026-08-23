@@ -1,18 +1,19 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Heart, Baby, Syringe, Droplets, ClipboardList, Stamp, HeartCrack, CalendarRange } from "lucide-react";
+import { Heart, Baby, Droplets, ClipboardList, Stamp, HeartCrack, CalendarRange } from "lucide-react";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import HistoricoServicos, { type Foco } from "@/components/reproducao/HistoricoServicos";
 import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
 import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
 
-export type AbaVisao = "servicos" | "ias" | "diagnosticos" | "perdas" | "partos" | "secagens" | "ciclos_iatf";
+export type AbaVisao = "servicos" | "diagnosticos" | "perdas" | "partos" | "secagens" | "ciclos_iatf";
 export const ABAS_VISAO = [
-  { id: "servicos", label: "Serviços", icon: ClipboardList, foco: "todos" as Foco,
-    titulo: "Histórico de serviços", descricao: "Todo serviço reprodutivo (IA/monta) — filtre por data ou ciclo, ordem de parto/tentativa, método e diagnóstico." },
-  { id: "ias", label: "IAs", icon: Syringe, foco: "ias" as Foco,
-    titulo: "Histórico de IAs", descricao: "Só inseminações artificiais (IATF ou em cio natural) — monta natural fica de fora." },
+  // Antigas abas "Serviços" e "IAs" — a única diferença era o filtro de base
+  // excluindo monta natural. Viraram uma tela só, com o recorte disponível
+  // como toggle "Só IA" dentro da própria tela (ver HistoricoServicos.tsx).
+  { id: "servicos", label: "Serviços/IAS", icon: ClipboardList, foco: "todos" as Foco,
+    titulo: "Histórico de serviços/IAS", descricao: "Todo serviço reprodutivo (IA/monta) — filtre por lote, data ou ciclo, ordem de parto/tentativa, método e diagnóstico; ou marque \"Só IA\" para ver apenas inseminações." },
   { id: "diagnosticos", label: "Diagnósticos", icon: Stamp, foco: "diagnosticos" as Foco,
     titulo: "Histórico de diagnósticos reprodutivos", descricao: "Só serviços já diagnosticados — filtre positivo/negativo." },
   { id: "perdas", label: "Perda de prenhez", icon: HeartCrack, foco: "perdas" as Foco,
@@ -27,6 +28,10 @@ export const ABAS_VISAO = [
 
 export default function ReproducaoPage() {
   const [abaVisao, setAbaVisao] = useState<AbaVisao>("servicos");
+  // Seleção de animais compartilhada entre Serviços/IAS, Diagnósticos e Perda
+  // de prenhez (as 3 sub-abas que usam HistoricoServicos) — sobrevive à troca
+  // entre elas e reseta sozinha ao sair da área Reprodução (esta página desmonta).
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_VISAO.map((v) => ({ id: v.id, label: v.label, icon: v.icon })), []);
   useSubNavRegister(useMemo(() => ({
@@ -45,7 +50,8 @@ export default function ReproducaoPage() {
         {abaVisao === "partos" ? <HistoricoPartos />
           : abaVisao === "secagens" ? <HistoricoSecagens />
           : abaVisao === "ciclos_iatf" ? <HistoricoCiclosIatf />
-          : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao} />}
+          : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao}
+              animaisSel={animaisSel} setAnimaisSel={setAnimaisSel} />}
       </div>
     </div>
   );
