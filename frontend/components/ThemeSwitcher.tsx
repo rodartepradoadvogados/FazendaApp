@@ -38,7 +38,12 @@ export function aplicarPaleta(p: Paleta) {
   salvarPreferenciaPaleta(p).catch(() => { /* offline/erro: fica só local, sincroniza no próximo login */ });
 }
 
-export function ThemeSwitcher() {
+// "padrao": fundo var(--surface-2), para cascas comuns (Capa, fazenda).
+// "header-escuro": o cabeçalho de Insights/Administração é sempre azul-marinho
+// fixo (não segue as variáveis de tema — ver InsightsLayout.tsx), então o
+// botão aqui usa as mesmas cores translúcidas dos outros botões daquele
+// cabeçalho (ExportarCabecalho/"Voltar") em vez de var(--surface-2)/var(--text).
+export function ThemeSwitcher({ variant = "padrao" }: { variant?: "padrao" | "header-escuro" }) {
   const [tema, setTema] = useState<Tema>("claro");
 
   // Sincroniza com o que o script anti-flash já aplicou no <html>.
@@ -60,14 +65,22 @@ export function ThemeSwitcher() {
       onClick={ciclar}
       title={`${label} — clique para ${proxLabel.toLowerCase()}`}
       aria-label={`Alternar tema (atual: ${label})`}
-      className="btn-ghost"
-      style={{
-        display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.7rem", fontSize: "0.78rem",
-        // Fica sobreposto ao conteúdo da página ao rolar — precisa de fundo
-        // opaco (não o transparente padrão do .btn-ghost) para não misturar
-        // com o texto por trás.
-        background: "var(--surface-2)",
-      }}
+      className={variant === "padrao" ? "btn-ghost" : undefined}
+      style={
+        variant === "header-escuro"
+          ? {
+              display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", fontSize: "0.78rem",
+              borderRadius: "var(--r-sm)", border: "1px solid rgba(255,255,255,0.22)", background: "rgba(255,255,255,0.08)",
+              color: "#F5EEF1", fontWeight: 600, cursor: "pointer",
+            }
+          : {
+              display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.7rem", fontSize: "0.78rem",
+              // Fica sobreposto ao conteúdo da página ao rolar — precisa de fundo
+              // opaco (não o transparente padrão do .btn-ghost) para não misturar
+              // com o texto por trás.
+              background: "var(--surface-2)",
+            }
+      }
     >
       <Icon size={15} />
       <span className="hidden sm:inline">{label.replace("Tema ", "")}</span>
