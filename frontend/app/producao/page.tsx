@@ -1544,6 +1544,25 @@ export function EquivalenteMaduroView() {
         {dados?.sem_base_geral && (
           <p style={{ fontSize: "0.78rem", color: "var(--amber)", marginBottom: "0.75rem" }}>{dados.sem_base_geral}</p>
         )}
+        {dados?.amostras_por_classe && (
+          <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: "0.9rem" }}>
+            <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Lactações encerradas por classe:</span>
+            {[["1", "1ª cria"], ["2", "2ª cria"], ["3", "Madura (3ª+)"]].map(([classe, rotulo]) => {
+              const n = dados.amostras_por_classe[classe] ?? 0;
+              const abaixoDoMinimo = n < 20;
+              return (
+                <span key={classe} title={abaixoDoMinimo ? `Faltam ${20 - n} lactação(ões) encerrada(s) para o mínimo de 20 desta classe` : undefined}
+                  style={{
+                    fontSize: "0.72rem", borderRadius: "999px", padding: "0.15rem 0.6rem", whiteSpace: "nowrap",
+                    background: abaixoDoMinimo ? "var(--amber-soft, rgba(184,134,11,0.14))" : "var(--surface-2)",
+                    color: abaixoDoMinimo ? "var(--amber)" : "var(--text-muted)",
+                  }}>
+                  {rotulo}: {n}{abaixoDoMinimo ? " de 20" : ""}
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
             <thead><tr>

@@ -13,6 +13,7 @@ from fazenda.rules.equivalente_maduro import (
     FatoresRebanho,
     calcular_fatores,
     classe_de_ordem,
+    contagem_lactacoes_por_classe,
     montar_trio,
 )
 from fazenda.rules.producao_305 import Producao305
@@ -158,3 +159,23 @@ class TestMontarTrio:
         assert trio.producao_hoje_kg == 22.0
         assert trio.producao_maturidade_kg is None
         assert "20" in trio.motivo
+
+
+class TestContagemLactacoesPorClasse:
+    """Ao contrário de `calcular_fatores` (que omite a classe que não bateu o
+    mínimo), esta contagem sempre devolve as 3 classes — é o "quanto falta"
+    que o relatório expõe na tela."""
+
+    def test_sempre_devolve_as_tres_classes_mesmo_zeradas(self):
+        contagem = contagem_lactacoes_por_classe([])
+        assert contagem == {1: 0, 2: 0, CLASSE_MADURA: 0}
+
+    def test_conta_corretamente_mesmo_com_classe_abaixo_do_minimo_publicavel(self):
+        amostras = _amostras(1, [20.0] * 7) + _amostras(2, [22.0] * 25) + _amostras(CLASSE_MADURA, [30.0] * 50)
+        contagem = contagem_lactacoes_por_classe(amostras)
+        assert contagem == {1: 7, 2: 25, CLASSE_MADURA: 50}
+        # A classe 1 (7 lactações) não aparece em `calcular_fatores().por_classe`
+        # — mas a contagem crua continua visível aqui, é justamente o ponto.
+        fatores = calcular_fatores(amostras)
+        assert 1 not in fatores.por_classe
+        assert contagem[1] == 7

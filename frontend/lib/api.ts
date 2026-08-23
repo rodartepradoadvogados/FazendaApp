@@ -4396,6 +4396,10 @@ export type FatorClasseEM = {
 export type RelatorioEquivalenteMaduro = {
   fatores: Record<string, FatorClasseEM>;
   sem_base_geral: string | null;
+  // Lactações encerradas por classe (1/2/3) — SEMPRE as 3, mesmo abaixo do
+  // mínimo publicável (`fatores` omite silenciosamente a classe que não
+  // bateu o mínimo). É o "quanto falta" para o usuário ver na tela.
+  amostras_por_classe: Record<string, number>;
   animais: TrioEquivalenteMaduro[];
 };
 

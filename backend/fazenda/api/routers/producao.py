@@ -31,7 +31,7 @@ from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcul
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules import estoque_baixa
 from fazenda.rules.equivalente_maduro import (
-    AmostraLactacao, FatoresRebanho, calcular_fatores, classe_de_ordem, montar_trio,
+    AmostraLactacao, FatoresRebanho, calcular_fatores, classe_de_ordem, contagem_lactacoes_por_classe, montar_trio,
 )
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules import lactacao as regras_lactacao
@@ -2081,6 +2081,13 @@ def _montar_relatorio_equivalente_maduro(
     return {
         "fatores": {str(classe): asdict(f) for classe, f in fatores.por_classe.items()},
         "sem_base_geral": fatores.sem_base_geral,
+        # Contagem de lactações encerradas por classe, SEMPRE as 3 (mesmo
+        # abaixo do mínimo publicável) — ao contrário de `fatores`, que omite
+        # silenciosamente a classe que não bateu MINIMO_PUBLICAVEL. É o
+        # "quanto falta" que dá pra mostrar na tela sem o usuário ter que
+        # perguntar (ver MINIMO_PUBLICAVEL/MINIMO_CONFIANCA_ALTA em
+        # equivalente_maduro.py).
+        "amostras_por_classe": {str(classe): n for classe, n in contagem_lactacoes_por_classe(amostras).items()},
         "animais": linhas,
     }
 
