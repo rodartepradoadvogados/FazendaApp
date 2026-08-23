@@ -426,20 +426,24 @@ def test_boleto_parcelado_nao_pergunta_avulso(client, monkeypatch):
     assert "2/6" in ultima["text"]
 
 
-def test_sem_chave_de_api_avisa_usuario_com_mensagem_clara(client, monkeypatch):
+def test_falha_na_leitura_do_documento_avisa_usuario_com_mensagem_clara(client, monkeypatch):
     """Regressão: os outros testes deste arquivo sempre trocam
     `_ler_documento_pendente` por um stub — o que significa que o caminho real
-    (baixar o arquivo do Telegram e chamar `ler_documento`, que depende de
-    ANTHROPIC_API_KEY) nunca era exercitado pela suíte, e um problema de
-    configuração da chave em produção não seria pego pelo CI. Este teste usa a
-    função de verdade (só a chamada de rede ao Telegram é simulada) e confirma
-    que, sem a chave, o usuário recebe o aviso claro (não uma mensagem genérica
-    de erro) e o pendente é descartado — igual ao caminho do Financeiro
-    (ver test_leitura_documento.py::test_sem_chave_de_api_retorna_503)."""
+    (baixar o arquivo do Telegram e chamar `ler_documento`, que faz OCR via
+    Tesseract) nunca era exercitado pela suíte, e uma falha do pipeline de OCR
+    em produção (ex.: nixpacks.toml não instalou o binário `tesseract`) não
+    seria pega pelo CI. Este teste usa a função de verdade (só a chamada de
+    rede ao Telegram e o OCR em si são simulados — mockar `pytesseract` evita
+    precisar do binário instalado neste ambiente de teste) e confirma que,
+    quando a leitura falha, o usuário recebe um aviso claro (não trava, não
+    vaza um erro genérico ilegível) e o pendente é descartado — igual ao
+    caminho do Financeiro (ver
+    test_leitura_documento.py::test_falha_do_binario_tesseract_vira_valueerror_nao_500)."""
     c, engine, enviados = client
     monkeypatch.setattr(telegram, "_ler_documento_pendente", _ler_documento_pendente_real)
     monkeypatch.setattr(telegram, "_baixar_arquivo", lambda file_id: b"%PDF-1.4")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("pdf2image.convert_from_bytes", lambda conteudo: [object()])
+    monkeypatch.setattr("pytesseract.image_to_string", lambda img, lang=None: (_ for _ in ()).throw(OSError("tesseract não encontrado")))
 
     _enviar_documento(c)
     with Session(engine) as s:
@@ -447,6 +451,6 @@ def test_sem_chave_de_api_avisa_usuario_com_mensagem_clara(client, monkeypatch):
     _callback(c, f"lanc:{pid}:despesa")
 
     ultima = enviados[-1]
-    assert "ANTHROPIC_API_KEY" in ultima["text"]
+    assert "Não consegui ler o documento" in ultima["text"]
     with Session(engine) as s:
         assert s.exec(select(TelegramPendente)).first() is None
