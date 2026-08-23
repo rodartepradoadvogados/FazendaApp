@@ -65,9 +65,12 @@ export function GavetaLancamento({
 
   return createPortal(
     <>
+      {/* Scrim clicável de propósito NENHUM — só escurece o fundo e bloqueia
+          interação com ele. Clicar fora NÃO fecha a gaveta (pedido explícito
+          do usuário): só o X do cabeçalho ou Esc fecham, para não perder um
+          lançamento em andamento por um clique sem querer ao lado. */}
       <div
         aria-hidden={!aberto}
-        onClick={aberto ? onFechar : undefined}
         className="gaveta-lancamento-scrim"
         style={{
           position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 65,
@@ -82,8 +85,13 @@ export function GavetaLancamento({
         onClick={(e) => e.stopPropagation()}
         className="gaveta-lancamento-painel"
         style={{
-          position: "fixed", bottom: 0, right: aberto ? 0 : "-360px",
-          width: "min(330px, 100vw)", zIndex: 65,
+          // 65–75% da tela (nunca os ~330px de antes) para caber campos lado
+          // a lado — os grids responsivos dos formulários (md:/lg:grid-cols-N)
+          // reagem à largura da JANELA, não à da gaveta, então precisam de
+          // espaço de verdade para não ficar cramped (ver comentário em
+          // globals.css sobre a força de 1 coluna que existia antes disto).
+          position: "fixed", bottom: 0, right: aberto ? 0 : "-100vw",
+          width: "min(72vw, 1180px)", minWidth: "min(330px, 100vw)", zIndex: 65,
           background: "var(--surface)", borderLeft: "1px solid var(--border)",
           boxShadow: "-6px 0 20px rgba(20,30,45,0.18)",
           display: "flex", flexDirection: "column",
