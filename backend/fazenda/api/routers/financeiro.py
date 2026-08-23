@@ -1065,6 +1065,23 @@ def criar_transferencia_contas(
 class CentroCustoIn(BaseModel):
     nome: str
     ativo: bool = True
+    # Centro de custo padrão do Lançamento simplificado (Lançamentos >
+    # Financeiro) — no máximo 1 por fazenda. False (padrão do payload) nunca
+    # desmarca um padrão já definido por OUTRO request; só True desencadeia a
+    # troca (ver `_desmarcar_outros_centro_custo_padrao` abaixo).
+    padrao: bool = False
+
+
+def _desmarcar_outros_centro_custo_padrao(session: Session, fazenda_id: int | None, manter_id: int | None) -> None:
+    """Regra de negócio: no máximo 1 centro de custo com padrao=True por
+    fazenda. Chamado sempre que um centro é marcado como padrão, ANTES do
+    commit que grava esse centro — fica na mesma transação (atômico)."""
+    query = select(CentroCusto).where(CentroCusto.padrao == True, CentroCusto.fazenda_id == fazenda_id)  # noqa: E712
+    if manter_id is not None:
+        query = query.where(CentroCusto.id != manter_id)
+    for outro in session.exec(query).all():
+        outro.padrao = False
+        session.add(outro)
 
 
 @router.get("/centros-custo")
@@ -1087,7 +1104,9 @@ def criar_centro_custo(
     duplicado = select(CentroCusto).where(CentroCusto.nome == nome, CentroCusto.fazenda_id == fazenda_id)
     if session.exec(duplicado).first():
         raise HTTPException(status_code=409, detail="Já existe um centro de custo com esse nome")
-    c = CentroCusto(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id)
+    if dados.padrao:
+        _desmarcar_outros_centro_custo_padrao(session, fazenda_id, manter_id=None)
+    c = CentroCusto(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id, padrao=dados.padrao)
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -1107,6 +1126,9 @@ def atualizar_centro_custo(
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     c.nome = nome
     c.ativo = dados.ativo
+    if dados.padrao:
+        _desmarcar_outros_centro_custo_padrao(session, fazenda_id, manter_id=c.id)
+    c.padrao = dados.padrao
     session.add(c)
     session.commit()
     session.refresh(c)

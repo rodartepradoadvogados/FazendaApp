@@ -5291,19 +5291,23 @@ export async function criarTransferenciaContas(dados: {
 }
 
 // ── Centros de custo (Configurações > Parâmetros financeiros) ──
-export async function fetchCentrosCusto() {
+// `padrao`: usado automaticamente no Lançamento simplificado (Lançamentos >
+// Financeiro) — no máximo 1 marcado por fazenda (ver ParametrosFinanceiros.tsx
+// e components/FormFinanceiroSimplificado.tsx).
+export type CentroCustoCadastro = { id: number; nome: string; ativo: boolean; padrao: boolean };
+export async function fetchCentrosCusto(): Promise<CentroCustoCadastro[]> {
   const res = await authFetch(`${API}/financeiro/centros-custo`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Centros de custo error: ${res.status}`);
   return res.json();
 }
-export async function criarCentroCusto(dados: { nome: string; ativo?: boolean }) {
+export async function criarCentroCusto(dados: { nome: string; ativo?: boolean; padrao?: boolean }) {
   const res = await authFetch(`${API}/financeiro/centros-custo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar centro de custo"); }
   return res.json();
 }
-export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean }) {
+export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean; padrao?: boolean }) {
   const res = await authFetch(`${API}/financeiro/centros-custo/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

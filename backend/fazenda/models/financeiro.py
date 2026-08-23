@@ -287,6 +287,13 @@ class CentroCusto(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     ativo: bool = True
+    # Centro de custo usado automaticamente no Lançamento simplificado
+    # (Lançamentos > Financeiro > Contas a pagar/receber) — no máximo 1
+    # marcado por fazenda; ao marcar um, os demais da mesma fazenda são
+    # desmarcados na mesma transação (ver `_desmarcar_outros_centro_custo_
+    # padrao` em fazenda/api/routers/financeiro.py). Sem nenhum marcado, o
+    # formulário simplificado bloqueia o salvamento em vez de adivinhar.
+    padrao: bool = Field(default=False)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
