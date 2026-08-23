@@ -125,6 +125,11 @@ class TestRelatorioComBaseSuficiente:
         # de novo e por isso também vira amostra da classe 1.
         assert corpo["fatores"]["1"]["n_lactacoes"] == 26
         assert corpo["fatores"]["1"]["confianca"] == "baixa"  # entre 20 e 49
+        # `amostras_por_classe` bate com `fatores[classe].n_lactacoes` quando a
+        # classe tem fator publicado (aqui, todas as 3 têm).
+        assert corpo["amostras_por_classe"]["1"] == 26
+        assert corpo["amostras_por_classe"]["2"] == corpo["fatores"]["2"]["n_lactacoes"]
+        assert corpo["amostras_por_classe"]["3"] == corpo["fatores"]["3"]["n_lactacoes"]
 
     def test_vaca_madura_de_fundo_ja_chegou_la(self, client_com_base):
         corpo = client_com_base.get("/producao/equivalente-maduro").json()
@@ -204,6 +209,15 @@ class TestRelatorioSemBaseSuficiente:
         primipara_ou_segundipara = [a for a in corpo["animais"] if a["classe"] in (1, 2)]
         assert primipara_ou_segundipara  # o cenário seedou SUJ1/SUJ2
         assert all(a["sem_base"] is True for a in primipara_ou_segundipara)
+
+    def test_amostras_por_classe_mostra_a_contagem_mesmo_com_fatores_vazio(self, client_sem_base):
+        """É exatamente o caso em que `fatores` fica {} (nenhuma classe
+        publicada) — sem esta contagem, o usuário não teria como saber
+        QUANTAS lactações faltam para cada classe, só que "está sem base"."""
+        corpo = client_sem_base.get("/producao/equivalente-maduro").json()
+        assert corpo["fatores"] == {}
+        assert corpo["amostras_por_classe"]["3"] == 5  # client_sem_base = 5 vacas de fundo
+        assert corpo["amostras_por_classe"]["3"] < 20
 
     def test_vaca_madura_ainda_assim_ja_chegou_la(self, client_sem_base):
         """Mesmo com o rebanho inteiro sem base para ajustar 1ª/2ª cria, uma

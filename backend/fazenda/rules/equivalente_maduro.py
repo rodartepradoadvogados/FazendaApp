@@ -18,7 +18,16 @@ maturidade que os dados não sustentam.
 
 Mínimo de 20 lactações encerradas por classe para publicar um fator; entre
 20 e 50, publica mas marca confiança "baixa". Abaixo de 20, a classe (ou o
-sistema inteiro, se for a madura que falha) fica sem fator.
+sistema inteiro, se for a madura que falha) fica sem fator. IMPORTANTE: 20 e
+50 são um guarda-corpo de bom senso contra média de amostra pequena (poucas
+lactações puxam a média para qualquer lado por acaso) — NÃO são números
+derivados de um cálculo estatístico formal (intervalo de confiança, poder de
+teste). Vieram como sugestão de `docs/equivalente-maduro-proposta.md` §6.2 e
+foram adotados como estão; são livremente ajustáveis (`MINIMO_PUBLICAVEL`/
+`MINIMO_CONFIANCA_ALTA` abaixo) se o rebanho em questão justificar outro
+corte. "Lactação encerrada" conta em TODO o histórico do rebanho, de
+qualquer animal (viva, vendida, morta) — a lactação de 1ª cria de uma vaca
+que hoje está na 4ª cria também soma na classe 1, por exemplo.
 
 Camada 3: o trio de apresentação — produz hoje, produzirá, diferença — nunca
 o número do EM sozinho. Vaca já madura: `ja_maduro=True`, diferença zero (o
@@ -79,6 +88,21 @@ class FatoresRebanho:
     # suficientes — `por_classe` fica vazio nesse caso: sem madura confiável,
     # NENHUMA classe recebe fator (não só a que faltou dado).
     sem_base_geral: str | None
+
+
+def contagem_lactacoes_por_classe(amostras: list[AmostraLactacao]) -> dict[int, int]:
+    """Quantas lactações ENCERRADAS (de qualquer animal, todo o histórico)
+    cada classe (1, 2, 3+) já acumulou — sempre as 3 classes presentes, 0
+    quando a classe não tem nenhuma. Ao contrário de `calcular_fatores`
+    (cujo `por_classe` omite silenciosamente a classe que não bateu
+    `MINIMO_PUBLICAVEL`), esta contagem é para o usuário enxergar a distância
+    exata até o mínimo — é o "quanto falta" que a resposta de
+    `calcular_fatores` sozinha não deixa visível."""
+    contagem = {1: 0, 2: 0, CLASSE_MADURA: 0}
+    for a in amostras:
+        if a.classe in contagem:
+            contagem[a.classe] += 1
+    return contagem
 
 
 def calcular_fatores(amostras: list[AmostraLactacao]) -> FatoresRebanho:
