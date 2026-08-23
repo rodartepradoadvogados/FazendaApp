@@ -91,7 +91,7 @@ export function GavetaLancamento({
           // espaço de verdade para não ficar cramped (ver comentário em
           // globals.css sobre a força de 1 coluna que existia antes disto).
           position: "fixed", bottom: 0, right: aberto ? 0 : "-100vw",
-          width: "min(72vw, 1180px)", minWidth: "min(330px, 100vw)", zIndex: 65,
+          width: "min(87vw, 1440px)", minWidth: "min(330px, 100vw)", zIndex: 65,
           background: "var(--surface)", borderLeft: "1px solid var(--border)",
           boxShadow: "-6px 0 20px rgba(20,30,45,0.18)",
           display: "flex", flexDirection: "column",

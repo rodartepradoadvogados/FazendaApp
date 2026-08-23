@@ -7,7 +7,7 @@ import {
   type SugestoesCadastro, type SugestaoCadastroItem, criarTipoDocumento, criarFornecedorApelido, criarClassificacao,
   fetchContextoFornecedor, type ContextoFornecedor as ContextoFornecedorTipo,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
-  type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto,
+  type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto, today,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
@@ -1222,7 +1222,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         <Campo label="Tipo de documento">
           <select style={inputStyle} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)}>
             <option value="">Selecione…</option>
-            {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
+            {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Comprovante", "Folha de pagamento", "Fatura", "Contrato", "Boleto", "Ordem de serviço"]).map((t) => <option key={t}>{t}</option>)}
           </select>
         </Campo>
 
@@ -1712,9 +1712,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <input type="checkbox" checked={jaPago} onChange={(e) => {
               const marcado = e.target.checked;
               setJaPago(marcado);
-              // Ao marcar, pré-preenche com o valor líquido da nota (já
-              // derivado acima) — só se ainda estiver vazio, e continua editável.
-              if (marcado) setValorPago((atual) => atual || (valorLiquido > 0 ? valorLiquido.toFixed(2) : atual));
+              // Ao marcar, pré-preenche com o valor líquido da nota, a data de
+              // hoje e a primeira conta bancária cadastrada — só se ainda
+              // estiverem vazios, e tudo continua editável.
+              if (marcado) {
+                setValorPago((atual) => atual || (valorLiquido > 0 ? valorLiquido.toFixed(2) : atual));
+                setDataPagamento((atual) => atual || today());
+                setContaBancaria((atual) => atual || opcoes.contas_bancarias[0] || atual);
+              }
             }} /> Já foi {tipo === "despesa" ? "pago" : "recebido"}
           </label>
           {jaPago && (
