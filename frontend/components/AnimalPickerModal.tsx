@@ -14,7 +14,7 @@ import { casaBusca } from "@/lib/busca";
  * (como era em Inseminação/Diagnóstico) ou de overlays reimplementados a cada
  * tela. Mesmo visual do `AnimalPicker` (seleção única), com checkboxes.
  */
-export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false, abrirAoMudar, motivosInaptidao }: {
+export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false, abrirAoMudar, motivosInaptidao, ocultarFiltroLote = false }: {
   animais: AnimalRow[];
   selecionados: Set<string>;
   onToggle: (numero: string) => void;
@@ -38,6 +38,10 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   // vaca "sumiu"). Continua selecionável de propósito: a decisão final é do
   // backend, que aceita uma confirmação explícita nos casos limítrofes.
   motivosInaptidao?: Map<string, string>;
+  // Esconde o select "Todos os lotes" de dentro do modal — usado por telas que
+  // já têm um filtro de Lote próprio no topo (ex.: Histórico > Reprodução,
+  // Serviços/IAS unificado) para não duplicar o mesmo filtro em dois lugares.
+  ocultarFiltroLote?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
@@ -92,6 +96,23 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
         <ChevronDown size={15} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
       </button>
 
+      {/* Chips de conferência — quais números exatos foram marcados, sem
+          precisar reabrir o modal. Clicável pra desmarcar um de cada vez,
+          mesmo padrão visual usado em FormInducaoCio.tsx. */}
+      {selecionados.size > 0 && (
+        <div className="mt-2" style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+          {Array.from(selecionados).sort().map((n) => (
+            <span key={n} onClick={() => onToggle(n)} title="Clique para remover da seleção" style={{
+              fontSize: "0.74rem", background: "var(--surface-2)", border: "1px solid var(--border)",
+              borderRadius: "999px", padding: "0.12rem 0.55rem", fontWeight: 600, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: "0.25rem",
+            }}>
+              {n} <X size={10} style={{ opacity: 0.6 }} />
+            </span>
+          ))}
+        </div>
+      )}
+
       {aberto && (
         // Sem fechar ao clicar fora — clique perdido no fundo enquanto se
         // marca vários animais fechava a janela e derrubava a seleção em
@@ -110,7 +131,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
                 <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo, categoria…"
                   style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
               </div>
-              {lotes.length > 1 && (
+              {!ocultarFiltroLote && lotes.length > 1 && (
                 <select value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)} title="Filtrar por lote"
                   style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
                   <option value="">Todos os lotes</option>

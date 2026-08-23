@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { CalendarRange, AlertTriangle, Info } from "lucide-react";
 import { fetchCiclos21Dias, formatDate, type CiclosResposta, type CicloReprodutivo } from "@/lib/api";
-import { SecaoRecolhivel, TabBar, Indicador } from "@/components/ui";
+import { SecaoRecolhivel, Indicador } from "@/components/ui";
+import { FiltroCiclo21Dias } from "@/components/FiltroCiclo21Dias";
 
 /**
  * Risco de prenhez em ciclos de 21 dias — o BREDSUM\E do DairyComp.
@@ -142,42 +143,12 @@ export default function Ciclos21DiasPage() {
 
       {/* ---------------- Controles da simulação ---------------- */}
       <div className="card" style={{ marginBottom: "1rem" }}>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div>
-            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data de referência</label>
-            <input type="date" value={ancora} onChange={(e) => setAncora(e.target.value)}
-              style={{ width: "100%", padding: "0.4rem 0.6rem", borderRadius: 6, fontSize: "0.85rem",
-                background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} />
-          </div>
-          <div>
-            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Nº de ciclos</label>
-            <input type="number" min={1} max={26} value={nCiclos}
-              onChange={(e) => setNCiclos(Math.min(26, Math.max(1, Number(e.target.value) || 1)))}
-              style={{ width: "100%", padding: "0.4rem 0.6rem", borderRadius: 6, fontSize: "0.85rem",
-                background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} />
-          </div>
-          <div>
-            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-            <select value={categoria} onChange={(e) => setCategoria(e.target.value)}
-              style={{ width: "100%", padding: "0.4rem 0.6rem", borderRadius: 6, fontSize: "0.85rem",
-                background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}>
-              <option value="todas">Todas</option>
-              <option value="vaca">Vacas</option>
-              <option value="novilha">Novilhas</option>
-            </select>
-          </div>
-          <div>
-            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>A data é o…</label>
-            <TabBar<"inicio" | "fim">
-              abas={[
-                { id: "inicio", label: "Início", title: "A data escolhida é o primeiro dia do 1º ciclo — conta para frente" },
-                { id: "fim", label: "Fim", title: "A data escolhida é o último dia do último ciclo — conta para trás" },
-              ]}
-              ativa={modo}
-              onChange={setModo}
-            />
-          </div>
-        </div>
+        <FiltroCiclo21Dias
+          ancora={ancora} setAncora={setAncora}
+          modo={modo} setModo={setModo}
+          nCiclos={nCiclos} setNCiclos={setNCiclos}
+          categoria={categoria} setCategoria={setCategoria}
+        />
         {dados && (
           <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
             Período avaliado: {formatDate(dados.periodo.inicio)} a {formatDate(dados.periodo.fim)} ·{" "}

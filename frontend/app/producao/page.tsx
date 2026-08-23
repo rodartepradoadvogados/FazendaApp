@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplet, Droplets, Syringe, ChevronDown, ChevronRight, Pencil, Trash2, Check, X, Table2, Info, Sprout } from "lucide-react";
 import { LineChart as RechartsLineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import {
@@ -145,7 +145,15 @@ type RelatorioControleEntrega = {
 // e por isso "sumiam" — ninguém achava Qualidade do leite fora de dentro da
 // aba Produção leiteira). Continuam no MESMO componente (não em arquivos
 // separados) para não duplicar os hooks/fetches — só o que renderiza muda.
-export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | "qualidade" | "entrega" } = {}) {
+export function ProducaoLeiteira({ secao = "controle", animaisSelExterno, setAnimaisSelExterno }: {
+  secao?: "controle" | "qualidade" | "entrega";
+  // Seleção de animais (relatório de qualidade por vaca) controlada de fora —
+  // Histórico > Produção sobe esse estado pro container das sub-abas pra
+  // sobreviver à troca entre elas. Omitido (uso do módulo Produção autônomo em
+  // app/producao/page.tsx) cai num estado interno, comportamento de sempre.
+  animaisSelExterno?: Set<string>;
+  setAnimaisSelExterno?: Dispatch<SetStateAction<Set<string>>>;
+} = {}) {
   const mostrarControle = secao === "controle";
   const mostrarQualidade = secao === "qualidade";
   const mostrarEntrega = secao === "entrega";
@@ -186,7 +194,9 @@ export function ProducaoLeiteira({ secao = "controle" }: { secao?: "controle" | 
   // amostras individuais, igual ao comportamento de sempre. Selecionar uma ou
   // mais restringe às vacas escolhidas (ex.: acompanhar uma vaca específica
   // com histórico de mastite, sem misturar com o resto do rebanho no gráfico).
-  const [qlAnimaisSel, setQlAnimaisSel] = useState<Set<string>>(new Set());
+  const [qlAnimaisSelInterno, setQlAnimaisSelInterno] = useState<Set<string>>(new Set());
+  const qlAnimaisSel = animaisSelExterno ?? qlAnimaisSelInterno;
+  const setQlAnimaisSel = setAnimaisSelExterno ?? setQlAnimaisSelInterno;
 
   useEffect(() => {
     if (!mostrarQualidade) return;
