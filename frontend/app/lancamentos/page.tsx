@@ -11,6 +11,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
 // o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
 const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then((m) => m.FormFinanceiro), { ssr: false });
+const FormFinanceiroSimplificado = dynamic(() => import("@/components/FormFinanceiroSimplificado").then((m) => m.FormFinanceiroSimplificado), { ssr: false });
 const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 const FormPesagemCorporal = dynamic(() => import("@/components/FormPesagemCorporal").then((m) => m.FormPesagemCorporal), { ssr: false });
 const MovimentarAnimais = dynamic(() => import("@/components/MovimentarAnimais"), { ssr: false });
@@ -204,7 +205,11 @@ export default function LancamentosPage() {
   // Contas a pagar também permite compra de sêmen — em vez de duplicar o
   // fluxo, reusa o mesmo formulário/endpoint de Lançamentos > Animais >
   // Compra/Venda > Comprar sêmen (mesma CompraSemen + baixa/soma de doses).
-  const [despesaCompraSemen, setDespesaCompraSemen] = useState(false);
+  // "Lançamento simplificado" (despesa e receita): fornecedor/cliente + itens
+  // + data única + conta bancária, sem os campos avançados do formulário
+  // completo (ver FormFinanceiroSimplificado.tsx).
+  const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado">("generico");
+  const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
@@ -446,16 +451,20 @@ export default function LancamentosPage() {
           {sel === "financeiro_despesa" && (
             <>
               <div className="flex flex-wrap gap-2 mb-4">
-                <button type="button" className={despesaCompraSemen ? "btn-secondary" : "btn-primary"} style={{ fontSize: "0.8rem" }}
-                  onClick={() => setDespesaCompraSemen(false)}>
+                <button type="button" className={modoDespesa === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("generico")}>
                   Lançamento genérico
                 </button>
-                <button type="button" className={despesaCompraSemen ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
-                  onClick={() => setDespesaCompraSemen(true)}>
+                <button type="button" className={modoDespesa === "simplificado" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("simplificado")}>
+                  Lançamento simplificado
+                </button>
+                <button type="button" className={modoDespesa === "compra_semen" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoDespesa("compra_semen")}>
                   Compra de sêmen
                 </button>
               </div>
-              {despesaCompraSemen ? (
+              {modoDespesa === "compra_semen" ? (
                 <>
                   <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
                     Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
@@ -463,12 +472,46 @@ export default function LancamentosPage() {
                   </p>
                   <CompraSemenForm />
                 </>
+              ) : modoDespesa === "simplificado" ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Fornecedor, item(ns) e valor, uma única data (nasce pago) e a conta bancária — sem desconto/acréscimo,
+                    parcelamento, anexo ou vínculo com Pedido/Patrimônio/vale. Usa o centro de custo padrão configurado em
+                    Parâmetros financeiros.
+                  </p>
+                  <FormFinanceiroSimplificado tipo="despesa" onSujo={setSujo} />
+                </>
               ) : (
                 <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} />
               )}
             </>
           )}
-          {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />}
+          {sel === "financeiro_receita" && (
+            <>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button type="button" className={modoReceita === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoReceita("generico")}>
+                  Lançamento genérico
+                </button>
+                <button type="button" className={modoReceita === "simplificado" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                  onClick={() => setModoReceita("simplificado")}>
+                  Lançamento simplificado
+                </button>
+              </div>
+              {modoReceita === "simplificado" ? (
+                <>
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                    Cliente, item(ns) e valor, uma única data (nasce recebido) e a conta bancária — sem desconto/acréscimo,
+                    parcelamento, anexo ou vínculo com Pedido/Patrimônio/vale. Usa o centro de custo padrão configurado em
+                    Parâmetros financeiros.
+                  </p>
+                  <FormFinanceiroSimplificado tipo="receita" onSujo={setSujo} />
+                </>
+              ) : (
+                <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />
+              )}
+            </>
+          )}
           {sel === "mover_animais" && <MovimentarAnimais />}
           {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
           {sel === "comprar_semen" && <CompraSemenForm />}

@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal, ArrowLeftRight } from "lucide-react";
+import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal, ArrowLeftRight, Star } from "lucide-react";
 import {
   fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
   criarTransferenciaContas,
@@ -267,7 +267,7 @@ function ContasCorrentes() {
 }
 
 // ---------------------------------------------------------------------------
-type CentroCusto = { id: number; nome: string; ativo: boolean };
+type CentroCusto = { id: number; nome: string; ativo: boolean; padrao: boolean };
 
 function CentrosCusto() {
   const [itens, setItens] = useState<CentroCusto[] | null>(null);
@@ -276,6 +276,10 @@ function CentrosCusto() {
   const [form, setForm] = useState<{ nome: string; ativo: boolean }>({ nome: "", ativo: true });
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // Marcar/desmarcar padrão é uma ação isolada (não passa pelo form de
+  // editar) — o PUT já traz `padrao` do registro inteiro, então usa o mesmo
+  // nome/ativo já salvos, só trocando essa flag.
+  const [marcandoPadrao, setMarcandoPadrao] = useState<number | null>(null);
 
   const carregar = () => fetchCentrosCusto().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -290,7 +294,10 @@ function CentrosCusto() {
     setSalvando(true); setMsg(null);
     try {
       if (editando === "novo") await criarCentroCusto(form);
-      else if (typeof editando === "number") await atualizarCentroCusto(editando, form);
+      else if (typeof editando === "number") {
+        const atual = itens?.find((i) => i.id === editando);
+        await atualizarCentroCusto(editando, { ...form, padrao: atual?.padrao ?? false });
+      }
       setEditando(null);
       await carregar();
     } catch (e: any) {
@@ -300,12 +307,28 @@ function CentrosCusto() {
     }
   };
 
+  const marcarPadrao = async (c: CentroCusto) => {
+    setMarcandoPadrao(c.id); setMsg(null);
+    try {
+      await atualizarCentroCusto(c.id, { nome: c.nome, ativo: c.ativo, padrao: true });
+      await carregar();
+    } catch (e: any) {
+      setMsg(e.message || "Erro ao marcar como padrão");
+    } finally {
+      setMarcandoPadrao(null);
+    }
+  };
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
         <span className="flex items-center gap-2"><Tags size={16} /> Centros de custo</span>
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}><Plus size={14} /> Novo</button>
       </div>
+
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+        Este é o centro de custo usado automaticamente nos lançamentos financeiros simplificados. Marque a estrela ao lado do centro de custo que deve valer como padrão — só 1 por vez.
+      </p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -327,18 +350,26 @@ function CentrosCusto() {
 
       {itens && (
         <table className="fazenda-table">
-          <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
+          <thead><tr><th style={{ width: "2.2rem" }}>Padrão</th><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
           <tbody>
             {linhasOrdenadas.map((c) => (
               <Fragment key={c.id}>
                 <tr>
+                  <td style={{ textAlign: "center" }}>
+                    <button type="button" className="btn-ghost" disabled={marcandoPadrao === c.id || c.padrao}
+                      title={c.padrao ? "Centro de custo padrão do lançamento simplificado" : "Marcar como padrão do lançamento simplificado"}
+                      style={{ padding: "0.2rem", opacity: marcandoPadrao === c.id ? 0.5 : 1, cursor: c.padrao ? "default" : "pointer" }}
+                      onClick={() => !c.padrao && marcarPadrao(c)}>
+                      <Star size={16} fill={c.padrao ? "var(--dourado)" : "none"} style={{ color: "var(--dourado)" }} />
+                    </button>
+                  </td>
                   <td style={{ fontWeight: 700 }}>{c.nome}{!c.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                   <td style={{ textAlign: "right" }}>
                     <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /> Editar</button>
                   </td>
                 </tr>
                 {editando === c.id && (
-                  <tr><td colSpan={2} style={{ padding: 0 }}>
+                  <tr><td colSpan={3} style={{ padding: 0 }}>
                     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", margin: "0.5rem 0" }}>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
                         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
@@ -355,7 +386,7 @@ function CentrosCusto() {
                 )}
               </Fragment>
             ))}
-            {!itens.length && !editando && <tr><td colSpan={2} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum centro de custo cadastrado ainda.</td></tr>}
+            {!itens.length && !editando && <tr><td colSpan={3} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum centro de custo cadastrado ainda.</td></tr>}
           </tbody>
         </table>
       )}
