@@ -12,7 +12,7 @@ import {
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
-import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
+import { pedirCadastroDeAlimento, pedirReaberturaDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -195,6 +195,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         const converter = window.confirm(`Deseja também cadastrar "${criado.nome}" como Alimento (Configurações > Cadastro > Alimentação > Alimentos), para uso em dietas?`);
         if (converter) pedirCadastroDeAlimento({ nome: criado.nome, estoqueId: criado.id });
       }
+      // Veio de "Cadastrar novo item de estoque vinculado" (Alimento já
+      // salvo) — volta sozinho pra edição daquele alimento, já mostrando o
+      // vínculo, em vez de deixar o usuário preso na tela de Estoque sem
+      // nenhum jeito de conferir se deu certo.
+      if (prefill?.alimentoId) pedirReaberturaDeAlimento(prefill.alimentoId);
       onCriado(criado);
     } catch (e: any) {
       setErro(e.message || "Erro ao cadastrar item");
