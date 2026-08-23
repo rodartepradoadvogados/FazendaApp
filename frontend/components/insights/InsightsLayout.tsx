@@ -28,6 +28,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, FileSpreadsheet, FileText, Loader2, ChevronDown } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { rotuloDaPagina } from "@/components/Sidebar";
 import { SubNavTree } from "@/components/SubNavTree";
 import { useSubNav } from "@/components/SubNavContext";
@@ -184,6 +185,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <ExportarCabecalho />
+            <ThemeSwitcher variant="header-escuro" />
             <button type="button" onClick={() => router.push("/")} title="Voltar à Capa da fazenda, nesta mesma aba"
               style={{
                 display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "var(--r-sm)",
