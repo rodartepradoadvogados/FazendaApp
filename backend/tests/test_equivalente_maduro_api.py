@@ -4,17 +4,23 @@ animal e calculadora avulsa (`api/routers/producao.py`), em cima do banco de
 verdade — as regras puras já são cobertas por `test_lactacao.py`,
 `test_producao_305.py` e `test_equivalente_maduro.py`; aqui o que importa é
 a MONTAGEM (derivar ordem de parto por data, separar lactação encerrada de
-aberta, agregar por classe) a partir de Parto/Secagem/ControleLeiteiro reais.
+aberta, agregar por classe para o painel de aferição) a partir de
+Parto/Secagem/ControleLeiteiro reais.
 
-Rebanho sintético: 25 vacas "de fundo" (EM0..EM24), cada uma com 4 partos
+Redesign "padronização por vaca": o trio principal usa fatores FIXOS de
+tabela (Holandês) — não depende mais de nenhum mínimo de lactações
+encerradas do rebanho. `client_sem_base` (5 vacas de fundo, bem abaixo do
+mínimo de 20 do painel de aferição) ainda assim produz o trio completo para
+1ª/2ª cria — é exatamente o comportamento que a remoção do mínimo garante.
+
+Rebanho sintético: N vacas "de fundo" (EM0..EMn-1), cada uma com 4 partos
 espaçados 400 dias (> 305, então a janela do TIM nunca é truncada pelo
 parto seguinte) — a 1ª, 2ª e 3ª lactação de cada uma ficam ENCERRADAS (pelo
-parto seguinte) e alimentam a amostra das classes 1, 2 e 3+; a 4ª fica em
-andamento e é a lactação ATUAL dessas vacas (classe madura, ja_maduro).
-Como os dois controles de cada janela (dia 30 e dia 250) têm o MESMO valor,
-a integração trapezoidal colapsa para produção_diária × 305 exatamente —
-o que torna os fatores esperados uma conta de cabeça: fator(classe) =
-produção_madura / produção_da_classe.
+parto seguinte) e alimentam a amostra do painel de aferição das classes 1, 2
+e 3+; a 4ª fica em andamento e é a lactação ATUAL dessas vacas (classe
+madura, ja_maduro). Como os dois controles de cada janela (dia 30 e dia 250)
+têm o MESMO valor, a integração trapezoidal do trecho MEDIDO colapsa para
+produção_diária × 220 exatamente.
 
 Duas vacas "sujeito" (SUJ1: só 1 parto; SUJ2: só 2 partos) têm a lactação
 ATUAL ainda aberta na classe 1 e 2 — são elas que testam o trio de
@@ -31,14 +37,13 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import Animal, ControleLeiteiro, Parto
+from fazenda.rules.equivalente_maduro import FATOR_HOLANDES
 from fazenda.rules.lactacao import backfill_lactacoes
 
 PRODUCAO_CLASSE1 = 18.0
 PRODUCAO_CLASSE2 = 24.0
 PRODUCAO_MADURA = 32.0
 DIAS_ENTRE_PARTOS = 400  # > 305: a janela do TIM nunca é truncada pelo parto seguinte
-FATOR_CLASSE1_ESPERADO = PRODUCAO_MADURA / PRODUCAO_CLASSE1  # 1,7778
-FATOR_CLASSE2_ESPERADO = PRODUCAO_MADURA / PRODUCAO_CLASSE2  # 1,3333
 
 
 def _lanca_lactacao(session: Session, numero: str, ordem: int, inicio: date, producao_dia: float) -> None:
@@ -106,30 +111,48 @@ def client_com_base():
 
 @pytest.fixture
 def client_sem_base():
-    c = _cliente(5)  # menos de 20 lactações encerradas por classe
+    c = _cliente(5)  # bem abaixo do mínimo de 20 do painel de aferição
     yield c
     import main
     main.app.dependency_overrides.clear()
 
 
-class TestRelatorioComBaseSuficiente:
-    def test_fatores_batem_com_a_razao_das_medias(self, client_com_base):
+class TestPainelDeAfericao:
+    def test_painel_traz_fator_observado_e_fator_de_tabela_por_classe(self, client_com_base):
         r = client_com_base.get("/producao/equivalente-maduro")
         assert r.status_code == 200
         corpo = r.json()
-        assert corpo["sem_base_geral"] is None
-        assert corpo["fatores"]["1"]["fator"] == pytest.approx(FATOR_CLASSE1_ESPERADO, abs=1e-3)
-        assert corpo["fatores"]["2"]["fator"] == pytest.approx(FATOR_CLASSE2_ESPERADO, abs=1e-3)
-        assert corpo["fatores"]["3"]["fator"] == 1.0
-        # 25 vacas de fundo + a 1ª lactação (já encerrada) da SUJ2, que pariu
-        # de novo e por isso também vira amostra da classe 1.
-        assert corpo["fatores"]["1"]["n_lactacoes"] == 26
-        assert corpo["fatores"]["1"]["confianca"] == "baixa"  # entre 20 e 49
-        # `amostras_por_classe` bate com `fatores[classe].n_lactacoes` quando a
-        # classe tem fator publicado (aqui, todas as 3 têm).
-        assert corpo["amostras_por_classe"]["1"] == 26
-        assert corpo["amostras_por_classe"]["2"] == corpo["fatores"]["2"]["n_lactacoes"]
-        assert corpo["amostras_por_classe"]["3"] == corpo["fatores"]["3"]["n_lactacoes"]
+        painel = {l["classe"]: l for l in corpo["painel_afericao"]}
+        assert set(painel) == {1, 2, 3}
+        # Fator de tabela é sempre o fixo, independente do que o rebanho mostra.
+        assert painel[1]["fator_tabela"] == FATOR_HOLANDES[1]
+        assert painel[2]["fator_tabela"] == FATOR_HOLANDES[2]
+        assert painel[3]["fator_tabela"] == FATOR_HOLANDES[3]
+        # Com 25 vacas de fundo (+ a 1ª lactação encerrada da SUJ2), todas as
+        # classes batem o mínimo de 20 do painel — fator observado presente.
+        assert painel[1]["fator_observado"] == pytest.approx(PRODUCAO_MADURA / PRODUCAO_CLASSE1, abs=1e-3)
+        assert painel[1]["n_lactacoes"] == 26
+        assert painel[1]["divergencia_pct"] is not None
+
+    def test_painel_nao_afeta_o_trio_principal(self, client_com_base):
+        """O fator observado da classe 1 (32/18 ≈ 1,78) é bem diferente do
+        fixo de tabela (1,22) — o trio usa SEMPRE o de tabela."""
+        corpo = client_com_base.get("/producao/equivalente-maduro").json()
+        linha = next(a for a in corpo["animais"] if a["numero_matriz"] == "SUJ1")
+        assert linha["producao_maturidade_kg"] == pytest.approx(linha["producao_hoje_kg"] * FATOR_HOLANDES[1], abs=0.1)
+
+    def test_sem_base_no_rebanho_ainda_assim_mostra_contagem_no_painel(self, client_sem_base):
+        corpo = client_sem_base.get("/producao/equivalente-maduro").json()
+        painel = {l["classe"]: l for l in corpo["painel_afericao"]}
+        assert painel[3]["n_lactacoes"] == 5  # 5 vacas de fundo, bem abaixo do mínimo de 20
+        assert painel[3]["fator_observado"] is None  # sem base madura confiável para o OBSERVADO
+        assert painel[3]["fator_tabela"] == FATOR_HOLANDES[3]  # a tabela fixa não se importa com isso
+
+
+class TestRelatorioSemMinimoDeLactacoesDoRebanho:
+    """O núcleo do redesign: nenhuma classe fica "sem base" por falta de
+    histórico do rebanho — só por falta de dados DA PRÓPRIA vaca (produção
+    não calculável, ordem de parto desconhecida)."""
 
     def test_vaca_madura_de_fundo_ja_chegou_la(self, client_com_base):
         corpo = client_com_base.get("/producao/equivalente-maduro").json()
@@ -138,26 +161,45 @@ class TestRelatorioComBaseSuficiente:
         assert linha["diferenca_kg"] == 0.0
         assert linha["sem_base"] is False
 
-    def test_primipara_recebe_projecao_de_maturidade(self, client_com_base):
+    def test_primipara_recebe_projecao_de_maturidade_com_fator_fixo(self, client_com_base):
         corpo = client_com_base.get("/producao/equivalente-maduro").json()
         linha = next(a for a in corpo["animais"] if a["numero_matriz"] == "SUJ1")
         assert linha["classe"] == 1
         assert linha["sem_base"] is False
-        assert linha["producao_hoje_kg"] == pytest.approx(PRODUCAO_CLASSE1 * 305, abs=1.0)
-        assert linha["producao_maturidade_kg"] > linha["producao_hoje_kg"]
+        assert linha["producao_maturidade_kg"] == pytest.approx(linha["producao_hoje_kg"] * FATOR_HOLANDES[1], abs=0.1)
         assert linha["diferenca_kg"] > 0
+        assert linha["confianca_nivel"] is not None
 
-    def test_segundipara_recebe_projecao_sem_faixa(self, client_com_base):
+    def test_segundipara_recebe_fator_1_08(self, client_com_base):
         corpo = client_com_base.get("/producao/equivalente-maduro").json()
         linha = next(a for a in corpo["animais"] if a["numero_matriz"] == "SUJ2")
         assert linha["classe"] == 2
         assert linha["sem_base"] is False
-        assert linha["faixa_diferenca_kg"] is None  # faixa é só para 1ª cria
+        assert linha["producao_maturidade_kg"] == pytest.approx(linha["producao_hoje_kg"] * FATOR_HOLANDES[2], abs=0.1)
+
+    def test_primipara_recebe_numero_mesmo_no_rebanho_sem_base_nenhuma(self, client_sem_base):
+        """A mudança central: um rebanho com só 5 lactações encerradas por
+        classe (bem abaixo do antigo mínimo de 20) NÃO impede mais o
+        cálculo — a novilha ainda recebe o trio inteiro."""
+        corpo = client_sem_base.get("/producao/equivalente-maduro").json()
+        linha = next(a for a in corpo["animais"] if a["numero_matriz"] == "SUJ1")
+        assert linha["sem_base"] is False
+        assert linha["producao_maturidade_kg"] is not None
+        assert linha["diferenca_kg"] is not None
 
     def test_lista_vem_ordenada_pela_diferenca_decrescente(self, client_com_base):
         diferencas = [a["diferenca_kg"] for a in client_com_base.get("/producao/equivalente-maduro").json()["animais"]]
         nao_nulas = [d for d in diferencas if d is not None]
         assert nao_nulas == sorted(nao_nulas, reverse=True)
+
+    def test_linha_traz_del_atual_e_faltam_partos_maturidade(self, client_com_base):
+        corpo = client_com_base.get("/producao/equivalente-maduro").json()
+        linha = next(a for a in corpo["animais"] if a["numero_matriz"] == "SUJ1")
+        assert linha["del_atual"] > 0
+        assert linha["faltam_partos_maturidade"] == 2  # 1ª cria: faltam a 2ª e a 3ª
+
+        madura = next(a for a in corpo["animais"] if a["numero_matriz"] == "EM0")
+        assert madura["faltam_partos_maturidade"] == 0
 
     def test_ficha_do_animal_bate_com_a_linha_do_relatorio(self, client_com_base):
         relatorio = client_com_base.get("/producao/equivalente-maduro").json()
@@ -170,7 +212,7 @@ class TestRelatorioComBaseSuficiente:
         r = client_com_base.get("/producao/equivalente-maduro/NAO-EXISTE")
         assert r.status_code == 404
 
-    def test_calculadora_projeta_igual_ao_relatorio_para_o_mesmo_perfil(self, client_com_base):
+    def test_calculadora_usa_o_mesmo_fator_fixo_do_relatorio(self, client_com_base):
         r = client_com_base.post("/producao/equivalente-maduro/calcular", json={
             "ordem_parto": 1,
             "pontos": [{"del_dias": 30, "producao_kg": PRODUCAO_CLASSE1}, {"del_dias": 250, "producao_kg": PRODUCAO_CLASSE1}],
@@ -178,8 +220,18 @@ class TestRelatorioComBaseSuficiente:
         assert r.status_code == 200
         corpo = r.json()
         assert corpo["sem_base"] is False
-        assert corpo["producao_hoje_kg"] == pytest.approx(PRODUCAO_CLASSE1 * 305, abs=1.0)
-        assert corpo["producao_maturidade_kg"] == pytest.approx(PRODUCAO_CLASSE1 * 305 * FATOR_CLASSE1_ESPERADO, abs=1.0)
+        assert corpo["producao_maturidade_kg"] == pytest.approx(corpo["producao_hoje_kg"] * FATOR_HOLANDES[1], abs=0.1)
+
+    def test_calculadora_nao_depende_de_nenhum_historico_do_rebanho(self, client_sem_base):
+        """Mesmo dado exatamente o mesmo perfil, a calculadora não olha para
+        o rebanho — é a mesma conta independente de `client_sem_base` ou
+        `client_com_base`."""
+        r = client_sem_base.post("/producao/equivalente-maduro/calcular", json={
+            "ordem_parto": 1,
+            "pontos": [{"del_dias": 30, "producao_kg": PRODUCAO_CLASSE1}, {"del_dias": 250, "producao_kg": PRODUCAO_CLASSE1}],
+        })
+        assert r.status_code == 200
+        assert r.json()["sem_base"] is False
 
     def test_calculadora_com_um_ponto_so_fica_sem_base(self, client_com_base):
         r = client_com_base.post("/producao/equivalente-maduro/calcular", json={
@@ -199,30 +251,3 @@ class TestRelatorioComBaseSuficiente:
         })
         depois = client_com_base.get("/producao/controles").json()["total"]
         assert antes == depois
-
-
-class TestRelatorioSemBaseSuficiente:
-    def test_sem_20_lactacoes_na_madura_degrada_tudo(self, client_sem_base):
-        corpo = client_sem_base.get("/producao/equivalente-maduro").json()
-        assert corpo["fatores"] == {}
-        assert corpo["sem_base_geral"] is not None
-        primipara_ou_segundipara = [a for a in corpo["animais"] if a["classe"] in (1, 2)]
-        assert primipara_ou_segundipara  # o cenário seedou SUJ1/SUJ2
-        assert all(a["sem_base"] is True for a in primipara_ou_segundipara)
-
-    def test_amostras_por_classe_mostra_a_contagem_mesmo_com_fatores_vazio(self, client_sem_base):
-        """É exatamente o caso em que `fatores` fica {} (nenhuma classe
-        publicada) — sem esta contagem, o usuário não teria como saber
-        QUANTAS lactações faltam para cada classe, só que "está sem base"."""
-        corpo = client_sem_base.get("/producao/equivalente-maduro").json()
-        assert corpo["fatores"] == {}
-        assert corpo["amostras_por_classe"]["3"] == 5  # client_sem_base = 5 vacas de fundo
-        assert corpo["amostras_por_classe"]["3"] < 20
-
-    def test_vaca_madura_ainda_assim_ja_chegou_la(self, client_sem_base):
-        """Mesmo com o rebanho inteiro sem base para ajustar 1ª/2ª cria, uma
-        vaca madura não precisa de fator nenhum — o dela é 1 por definição."""
-        corpo = client_sem_base.get("/producao/equivalente-maduro").json()
-        linha = next(a for a in corpo["animais"] if a["numero_matriz"] == "EM0")
-        assert linha["ja_maduro"] is True
-        assert linha["sem_base"] is False

@@ -1,26 +1,30 @@
-"""Equivalente maduro — fatores calibrados no rebanho e o trio de apresentação
-(`rules/equivalente_maduro.py`). As quatro decisões da seção 6 do documento de
-proposta estão travadas aqui: classe madura é sempre 3ª+, mínimo de 20
-lactações para publicar um fator (50 para confiança alta), degradação total
-quando a própria classe madura não tem base, e nunca um EM sozinho — sempre o
-trio, com a vaca madura dizendo "já está na maturidade" via `ja_maduro`."""
+"""Equivalente maduro — fatores fixos de tabela (Holandês), confiança por
+medição (não mais amostra do rebanho) e o trio de apresentação
+(`rules/equivalente_maduro.py`). A calibração no rebanho (`calcular_fatores`)
+continua existindo, mas só alimenta o painel de aferição — não bloqueia nem
+muda o trio principal."""
 from __future__ import annotations
 
 from fazenda.rules.equivalente_maduro import (
     CLASSE_MADURA,
+    FATOR_HOLANDES,
     AmostraLactacao,
-    FatorClasse,
-    FatoresRebanho,
     calcular_fatores,
     classe_de_ordem,
     contagem_lactacoes_por_classe,
+    montar_painel_afericao,
     montar_trio,
+    nivel_confianca,
 )
 from fazenda.rules.producao_305 import Producao305
 
 
 def _amostras(classe: int, valores: list[float]) -> list[AmostraLactacao]:
     return [AmostraLactacao(classe, v) for v in valores]
+
+
+def _producao(hoje_kg: float, medida_kg: float, n_controles: int = 4, estimada: bool = True) -> Producao305:
+    return Producao305(hoje_kg, n_controles, dias_cobertos=100, estimada=estimada, producao_medida_kg=medida_kg)
 
 
 class TestClasseDeOrdem:
@@ -38,134 +42,164 @@ class TestClasseDeOrdem:
         assert classe_de_ordem(0) is None
 
 
-class TestCalcularFatores:
-    def test_menos_de_20_na_madura_degrada_o_indicador_inteiro(self):
-        """30 lactações de 1ª cria não salvam o indicador se a classe madura
-        (3+) só tem 10 — não se promove a 2ª cria a 'madura' por conveniência."""
+class TestFatoresFixosDeTabela:
+    def test_fatores_sao_exatamente_os_aprovados(self):
+        assert FATOR_HOLANDES[1] == 1.22
+        assert FATOR_HOLANDES[2] == 1.08
+        assert FATOR_HOLANDES[CLASSE_MADURA] == 1.00
+
+
+class TestNivelConfianca:
+    """Pontos de corte calibrados para bater com os 7 exemplos do mockup
+    aprovado: 23%->baixa, 7%->muito baixa, 66%->média, 81%->alta, 89%->alta,
+    42%->baixa, 58%->média."""
+
+    def test_exemplos_do_mockup_aprovado(self):
+        assert nivel_confianca(0.23) == "baixa"
+        assert nivel_confianca(0.07) == "muito baixa"
+        assert nivel_confianca(0.66) == "média"
+        assert nivel_confianca(0.81) == "alta"
+        assert nivel_confianca(0.89) == "alta"
+        assert nivel_confianca(0.42) == "baixa"
+        assert nivel_confianca(0.58) == "média"
+
+    def test_fronteiras_redondas(self):
+        assert nivel_confianca(0.149) == "muito baixa"
+        assert nivel_confianca(0.15) == "baixa"
+        assert nivel_confianca(0.449) == "baixa"
+        assert nivel_confianca(0.45) == "média"
+        assert nivel_confianca(0.749) == "média"
+        assert nivel_confianca(0.75) == "alta"
+
+    def test_none_quando_fracao_nao_calculavel(self):
+        assert nivel_confianca(None) is None
+
+
+class TestMontarTrio:
+    def test_vaca_madura_ja_chegou_la(self):
+        hoje = _producao(28.0, medida_kg=20.0, estimada=False)
+        trio = montar_trio(hoje, ordem_parto=4)
+        assert trio.ja_maduro is True
+        assert trio.producao_maturidade_kg == 28.0
+        assert trio.diferenca_kg == 0.0
+        assert trio.sem_base is False
+        assert trio.confianca_nivel is not None  # madura também recebe confiança
+
+    def test_primeira_cria_recebe_fator_1_22_mesmo_sem_nenhum_historico_de_rebanho(self):
+        """O ponto central da mudança: nenhum mínimo de lactações do rebanho
+        — o fator vem direto da tabela fixa."""
+        hoje = _producao(20.0, medida_kg=5.0)
+        trio = montar_trio(hoje, ordem_parto=1)
+        assert trio.sem_base is False
+        assert trio.producao_maturidade_kg == 24.4  # 20 * 1.22
+        assert trio.diferenca_kg == 4.4
+
+    def test_segunda_cria_recebe_fator_1_08(self):
+        hoje = _producao(20.0, medida_kg=5.0)
+        trio = montar_trio(hoje, ordem_parto=2)
+        assert trio.producao_maturidade_kg == 21.6  # 20 * 1.08
+        assert trio.diferenca_kg == 1.6
+
+    def test_novilha_de_del_alto_sem_base_alguma_de_rebanho_ainda_recebe_numero(self):
+        """Uma primípara de DEL 100 num rebanho que não tem NENHUMA lactação
+        encerrada ainda recebe o trio completo — é exatamente o que a
+        remoção do mínimo de 20 lactações por classe permite."""
+        hoje = _producao(25.0, medida_kg=22.0)
+        trio = montar_trio(hoje, ordem_parto=1)
+        assert trio.sem_base is False
+        assert trio.producao_maturidade_kg is not None
+
+    def test_confianca_e_a_razao_medido_sobre_projetado(self):
+        hoje = _producao(100.0, medida_kg=75.0)
+        trio = montar_trio(hoje, ordem_parto=1)
+        assert trio.confianca_fracao == 0.75
+        assert trio.confianca_nivel == "alta"  # >= 75% é alta
+
+    def test_confianca_baixa_quando_a_maior_parte_e_projecao(self):
+        hoje = _producao(8510.0, medida_kg=596.0)  # ~7% medido, DEL baixo com controle antigo
+        trio = montar_trio(hoje, ordem_parto=1)
+        assert trio.confianca_nivel == "muito baixa"
+
+    def test_sem_producao_de_hoje_calculavel_fica_sem_base(self):
+        hoje = Producao305(None, n_controles=1, dias_cobertos=None, estimada=False, motivo="só um controle")
+        trio = montar_trio(hoje, ordem_parto=1)
+        assert trio.sem_base is True
+        assert trio.motivo == "só um controle"
+        assert trio.producao_maturidade_kg is None
+        assert trio.confianca_nivel is None
+
+    def test_ordem_de_parto_desconhecida_fica_sem_base(self):
+        """Único motivo de 'sem base' que sobrou além da produção não
+        calculável — não é mais 'classe sem lactações suficientes'."""
+        hoje = _producao(20.0, medida_kg=15.0)
+        trio = montar_trio(hoje, ordem_parto=None)
+        assert trio.sem_base is True
+        assert trio.classe is None
+        assert "ordem de parto desconhecida" in trio.motivo
+
+    def test_producao_hoje_continua_disponivel_mesmo_sem_base(self):
+        """Mesmo sem base para projetar (ordem desconhecida), a produção
+        real de hoje continua disponível — o front mostra a produção real,
+        não nada."""
+        hoje = _producao(22.0, medida_kg=18.0)
+        trio = montar_trio(hoje, ordem_parto=None)
+        assert trio.producao_hoje_kg == 22.0
+
+
+class TestCalcularFatoresAgoraSoAlimentaAfericao:
+    def test_menos_de_20_na_madura_deixa_sem_fator_observado(self):
         amostras = _amostras(1, [20.0] * 30) + _amostras(CLASSE_MADURA, [30.0] * 10)
         fatores = calcular_fatores(amostras)
         assert fatores.por_classe == {}
         assert fatores.sem_base_geral is not None
-        assert "20" in fatores.sem_base_geral
-
-    def test_classe_sem_20_fica_sem_fator_mas_nao_derruba_as_outras(self):
-        """Madura e 1ª cria com base suficiente; 2ª cria com só 5 lactações
-        — só a 2ª cria fica de fora."""
-        amostras = _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [20.0] * 25) + _amostras(2, [25.0] * 5)
-        fatores = calcular_fatores(amostras)
-        assert set(fatores.por_classe) == {1, CLASSE_MADURA}
-        assert fatores.sem_base_geral is None
 
     def test_fator_da_madura_e_sempre_1_por_construcao(self):
         amostras = _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [20.0] * 25)
         fatores = calcular_fatores(amostras)
         assert fatores.por_classe[CLASSE_MADURA].fator == 1.0
-        assert fatores.por_classe[CLASSE_MADURA].desvio_fator == 0.0
 
-    def test_fator_e_a_razao_das_medias(self):
-        amostras = _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [20.0] * 25)
-        fatores = calcular_fatores(amostras)
-        assert fatores.por_classe[1].media_305_kg == 20.0
-        assert fatores.por_classe[1].fator == 1.5  # 30/20
-
-    def test_confianca_baixa_entre_20_e_49_lactacoes(self):
-        amostras = _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [20.0] * 25)
-        fatores = calcular_fatores(amostras)
-        assert fatores.por_classe[1].confianca == "baixa"
-        assert fatores.por_classe[CLASSE_MADURA].confianca == "baixa"
-
-    def test_confianca_ok_a_partir_de_50_lactacoes(self):
-        amostras = _amostras(CLASSE_MADURA, [30.0] * 55) + _amostras(1, [20.0] * 55)
-        fatores = calcular_fatores(amostras)
-        assert fatores.por_classe[1].confianca == "ok"
-        assert fatores.por_classe[CLASSE_MADURA].confianca == "ok"
-
-    def test_desvio_fator_e_zero_sem_variacao_e_positivo_com_variacao(self):
-        sem_variacao = _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [20.0] * 25)
-        assert calcular_fatores(sem_variacao).por_classe[1].desvio_fator == 0.0
-
-        com_variacao = _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [18.0] * 12 + [22.0] * 13)
-        assert calcular_fatores(com_variacao).por_classe[1].desvio_fator > 0.0
+    def test_fator_observado_nao_afeta_o_trio(self):
+        """Mesmo com um fator observado no rebanho bem diferente da tabela
+        fixa, o trio usa a tabela — o observado só aparece no painel de
+        aferição."""
+        hoje = _producao(20.0, medida_kg=15.0)
+        trio = montar_trio(hoje, ordem_parto=1)
+        assert trio.producao_maturidade_kg == 20.0 * FATOR_HOLANDES[1]
 
 
-class TestMontarTrio:
-    FATORES_COMPLETOS = calcular_fatores(
-        _amostras(CLASSE_MADURA, [30.0] * 25)
-        + _amostras(1, [20.0] * 25)
-        + _amostras(2, [25.0] * 25)
-    )
-
-    def test_vaca_madura_ja_chegou_la(self):
-        hoje = Producao305(28.0, n_controles=6, dias_cobertos=280, estimada=False)
-        trio = montar_trio(hoje, ordem_parto=4, fatores=self.FATORES_COMPLETOS)
-        assert trio.ja_maduro is True
-        assert trio.producao_maturidade_kg == 28.0
-        assert trio.diferenca_kg == 0.0
-        assert trio.faixa_diferenca_kg is None
-        assert trio.sem_base is False
-
-    def test_vaca_madura_ja_chegou_la_mesmo_sem_fatores_calibrados(self):
-        """Não precisa de fator nenhum para dizer 'já é madura' — o fator da
-        própria classe madura é 1 por definição, então a falta de base no
-        resto do rebanho não impede este caso trivial."""
-        sem_fatores = FatoresRebanho(por_classe={}, sem_base_geral="menos de 20 na madura")
-        hoje = Producao305(28.0, n_controles=6, dias_cobertos=280, estimada=False)
-        trio = montar_trio(hoje, ordem_parto=5, fatores=sem_fatores)
-        assert trio.ja_maduro is True
-        assert trio.diferenca_kg == 0.0
-        assert trio.sem_base is False
-        assert trio.confianca_fator is None
-
-    def test_segunda_cria_recebe_projecao_pontual_sem_faixa(self):
-        hoje = Producao305(20.0, n_controles=5, dias_cobertos=200, estimada=True)
-        trio = montar_trio(hoje, ordem_parto=2, fatores=self.FATORES_COMPLETOS)
-        assert trio.sem_base is False
-        assert trio.producao_maturidade_kg == 24.0  # 20 * (30/25)
-        assert trio.diferenca_kg == 4.0
-        assert trio.faixa_diferenca_kg is None  # faixa é só para 1ª cria
-
-    def test_primeira_cria_recebe_faixa_quando_ha_dispersao(self):
-        fatores_com_dispersao = calcular_fatores(
-            _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [18.0] * 12 + [22.0] * 13)
+class TestPainelDeAfericao:
+    def test_compara_fator_observado_com_fator_de_tabela(self):
+        # Observado: madura 32 (média), 1ª cria 20*... -> fator observado ~1.31 (aprox. mockup)
+        amostras = (
+            _amostras(CLASSE_MADURA, [30.0] * 25)
+            + _amostras(1, [22.9] * 26)  # media_madura/media_classe1 ~ 1.31
+            + _amostras(2, [27.0] * 31)
         )
-        hoje = Producao305(20.0, n_controles=4, dias_cobertos=150, estimada=True)
-        trio = montar_trio(hoje, ordem_parto=1, fatores=fatores_com_dispersao)
-        assert trio.faixa_diferenca_kg is not None
-        baixo, alto = trio.faixa_diferenca_kg
-        assert baixo < trio.diferenca_kg < alto
+        painel = montar_painel_afericao(amostras)
+        linha1 = next(l for l in painel if l.classe == 1)
+        assert linha1.n_lactacoes == 26
+        assert linha1.fator_tabela == 1.22
+        assert linha1.fator_observado is not None
+        assert linha1.divergencia_pct is not None
 
-    def test_sem_producao_de_hoje_calculavel_fica_sem_base(self):
-        hoje = Producao305(None, n_controles=1, dias_cobertos=None, estimada=False, motivo="só um controle")
-        trio = montar_trio(hoje, ordem_parto=1, fatores=self.FATORES_COMPLETOS)
-        assert trio.sem_base is True
-        assert trio.motivo == "só um controle"
-        assert trio.producao_maturidade_kg is None
+    def test_classe_sem_base_observada_mostra_none_mas_nao_trava(self):
+        amostras = _amostras(1, [20.0] * 5)  # bem abaixo do mínimo, madura nem aparece
+        painel = montar_painel_afericao(amostras)
+        linha1 = next(l for l in painel if l.classe == 1)
+        assert linha1.fator_observado is None
+        assert linha1.divergencia_pct is None
+        assert linha1.n_lactacoes == 5
+        assert linha1.fator_tabela == 1.22
 
-    def test_ordem_de_parto_desconhecida_fica_sem_base(self):
-        hoje = Producao305(20.0, n_controles=5, dias_cobertos=150, estimada=False)
-        trio = montar_trio(hoje, ordem_parto=None, fatores=self.FATORES_COMPLETOS)
-        assert trio.sem_base is True
-        assert trio.classe is None
-
-    def test_classe_sem_fator_fica_sem_base_mas_guarda_producao_real(self):
-        """Mesmo sem base para projetar, a produção real de hoje continua
-        disponível — o front mostra 'só a produção real', não nada."""
-        fatores_sem_classe_2 = calcular_fatores(
-            _amostras(CLASSE_MADURA, [30.0] * 25) + _amostras(1, [20.0] * 25) + _amostras(2, [25.0] * 3)
-        )
-        hoje = Producao305(22.0, n_controles=5, dias_cobertos=200, estimada=False)
-        trio = montar_trio(hoje, ordem_parto=2, fatores=fatores_sem_classe_2)
-        assert trio.sem_base is True
-        assert trio.producao_hoje_kg == 22.0
-        assert trio.producao_maturidade_kg is None
-        assert "20" in trio.motivo
+    def test_sempre_devolve_as_tres_classes(self):
+        painel = montar_painel_afericao([])
+        assert {l.classe for l in painel} == {1, 2, CLASSE_MADURA}
+        for l in painel:
+            assert l.n_lactacoes == 0
+            assert l.fator_observado is None
 
 
 class TestContagemLactacoesPorClasse:
-    """Ao contrário de `calcular_fatores` (que omite a classe que não bateu o
-    mínimo), esta contagem sempre devolve as 3 classes — é o "quanto falta"
-    que o relatório expõe na tela."""
-
     def test_sempre_devolve_as_tres_classes_mesmo_zeradas(self):
         contagem = contagem_lactacoes_por_classe([])
         assert contagem == {1: 0, 2: 0, CLASSE_MADURA: 0}
@@ -174,8 +208,3 @@ class TestContagemLactacoesPorClasse:
         amostras = _amostras(1, [20.0] * 7) + _amostras(2, [22.0] * 25) + _amostras(CLASSE_MADURA, [30.0] * 50)
         contagem = contagem_lactacoes_por_classe(amostras)
         assert contagem == {1: 7, 2: 25, CLASSE_MADURA: 50}
-        # A classe 1 (7 lactações) não aparece em `calcular_fatores().por_classe`
-        # — mas a contagem crua continua visível aqui, é justamente o ponto.
-        fatores = calcular_fatores(amostras)
-        assert 1 not in fatores.por_classe
-        assert contagem[1] == 7

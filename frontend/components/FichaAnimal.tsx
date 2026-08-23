@@ -13,7 +13,7 @@ import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { CurvaLactacao, type FaixaReferencia } from "@/components/CurvaLactacao";
-import { TrioEquivalenteMaduroView } from "@/components/TrioEquivalenteMaduro";
+import { TrioEquivalenteMaduroView, NotaExplicativaEM } from "@/components/TrioEquivalenteMaduro";
 
 type PrecisaoParto = {
   data_ultima_ia_positiva: string | null;
@@ -470,6 +470,7 @@ function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCri
         <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.8rem", margin: "0.75rem 0" }}>
           <p style={{ margin: "0 0 0.5rem", fontWeight: 700, fontSize: "0.8rem" }}>Equivalente maduro</p>
           <TrioEquivalenteMaduroView trio={trioEM} />
+          <NotaExplicativaEM />
         </div>
       )}
       {aba === "curva" ? (
