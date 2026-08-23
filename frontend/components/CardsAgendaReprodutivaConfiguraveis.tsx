@@ -170,15 +170,24 @@ function PainelEdicao({
   );
 }
 
+/** Tabela de resultado de um card configurável — usada tanto na área de
+ * tabelas abertas (ver TabelasCardsConfiguraveis) quanto, em tese, em
+ * qualquer outro lugar que precise listar os mesmos itens. Estilo compacto
+ * (classe .tabela-compacta, ver app/globals.css) para caber bem numa coluna
+ * de ~50% da largura da tela quando duas tabelas estão lado a lado —
+ * cabeçalhos abreviados com o nome completo no atributo title. */
 function TabelaResultado({ itens }: { itens: ItemCardAgendaReprodutiva[] }) {
   const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
   if (itens.length === 0) return <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "0.5rem 0" }}>Nenhum animal nesta combinação.</p>;
   return (
     <div style={{ overflowX: "auto" }}>
-      <table className="table-clean" style={{ fontSize: "0.8rem" }}>
+      <table className="tabela-compacta">
         <thead>
           <tr>
-            <th>Matriz</th><th>Categoria</th><th>Lote</th><th>DEL</th><th>Dias gestação</th><th>Dias desde serviço</th><th>Parto previsto</th>
+            <th>Matriz</th><th>Categoria</th><th>Lote</th><th>DEL</th>
+            <th title="Dias de gestação">D. gest.</th>
+            <th title="Dias desde o serviço">D. serviço</th>
+            <th title="Parto previsto">Parto prev.</th>
           </tr>
         </thead>
         <tbody>
@@ -195,11 +204,14 @@ function TabelaResultado({ itens }: { itens: ItemCardAgendaReprodutiva[] }) {
   );
 }
 
-/** Cards 100% configuráveis da Agenda Reprodutiva — vivem ao lado das listas
- * fixas (que continuam com as ações de reconfirmação/toque/lançar, não
- * reproduzidas aqui). Definição de cada card fica em localStorage (por
- * navegador) — sem persistência no servidor nesta primeira entrega. */
-export function CardsAgendaReprodutivaConfiguraveis({ dataRef }: { dataRef?: string }) {
+/** Estado + lógica dos cards 100% configuráveis da Agenda Reprodutiva —
+ * extraído em hook para poder ser controlado a partir de AgendaVeterinario.tsx
+ * e alimentar dois pedaços de UI que ficam em lugares diferentes da página:
+ * a grade de chips (GradeCardsConfiguraveis, perto do topo) e a área de
+ * tabelas abertas (TabelasCardsConfiguraveis, depois de "Outras pendências").
+ * Definição de cada card fica em localStorage (por navegador) — sem
+ * persistência no servidor nesta primeira entrega. */
+export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
   const [cards, setCards] = useState<CardDef[]>(carregarCards);
   const [opcoesLote, setOpcoesLote] = useState<string[]>([]);
   const [contagens, setContagens] = useState<Record<string, number>>({});
@@ -265,6 +277,23 @@ export function CardsAgendaReprodutivaConfiguraveis({ dataRef }: { dataRef?: str
     return cards.find((c) => c.id === editando) ?? null;
   }, [editando, cards]);
 
+  return {
+    cards, opcoesLote, contagens, abertos, itensAbertos, editando, erro,
+    setEditando, toggle, salvarCard, removerCard, cardEditando,
+  };
+}
+
+export type CardsAgendaReprodutivaConfiguraveisState = ReturnType<typeof useCardsAgendaReprodutivaConfiguraveis>;
+
+/** Grade de chips clicáveis dos cards configuráveis + painéis de criar/editar
+ * card. Fica perto do topo da página (onde a grade sempre viveu). A tabela
+ * de resultado de cada card, quando aberta, NÃO renderiza mais aqui dentro —
+ * ver TabelasCardsConfiguraveis, que fica depois de "Outras pendências" e
+ * recebe o mesmo estado (state lifting: quem guarda `abertos`/`itensAbertos`
+ * é o hook acima, chamado uma única vez em AgendaVeterinario.tsx). */
+export function GradeCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodutivaConfiguraveisState }) {
+  const { cards, opcoesLote, contagens, abertos, editando, erro, setEditando, toggle, salvarCard, removerCard, cardEditando } = estado;
+
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-2">
@@ -289,23 +318,47 @@ export function CardsAgendaReprodutivaConfiguraveis({ dataRef }: { dataRef?: str
           const n = contagens[c.id];
           const aberto = abertos.has(c.id);
           return (
-            <div key={c.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", background: "var(--surface-2)" }}>
-              <div className="flex items-center gap-2" style={{ padding: "0.4rem 0.6rem" }}>
-                <button onClick={() => toggle(c.id)} className="flex items-center gap-2" style={{ background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", fontSize: "0.82rem" }}>
-                  {aberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  <span style={{ fontWeight: 700 }}>{n ?? "…"}</span> {c.nome}
-                </button>
-                <button onClick={() => setEditando(c.id)} title="Editar card" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Settings size={13} /></button>
-                <button onClick={() => removerCard(c.id)} title="Remover card" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Trash2 size={13} /></button>
-              </div>
-              {aberto && (
-                <div style={{ borderTop: "1px solid var(--border)", padding: "0.5rem 0.6rem" }}>
-                  <TabelaResultado itens={itensAbertos[c.id] ?? []} />
-                </div>
-              )}
+            <div key={c.id} className="flex items-center gap-2" style={{ border: "1px solid " + (aberto ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", background: "var(--surface-2)", padding: "0.4rem 0.6rem" }}>
+              <button onClick={() => toggle(c.id)} className="flex items-center gap-2" style={{ background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", fontSize: "0.82rem" }}>
+                {aberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span style={{ fontWeight: 700 }}>{n ?? "…"}</span> {c.nome}
+              </button>
+              <button onClick={() => setEditando(c.id)} title="Editar card" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Settings size={13} /></button>
+              <button onClick={() => removerCard(c.id)} title="Remover card" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Trash2 size={13} /></button>
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/** Área com as tabelas dos cards configuráveis que estão abertos no momento
+ * — renderizada depois de "Outras pendências" em AgendaVeterinario.tsx.
+ * Com 2 ou mais tabelas abertas, elas dividem a largura lado a lado (grid de
+ * 2 colunas, caindo para 1 coluna em telas estreitas via `lg:grid-cols-2`).
+ * Decisão minha (avaliar): com só 1 tabela aberta, ela ocupa a largura toda
+ * em vez de ficar numa grid de 2 colunas com metade vazia — pareceu mais
+ * natural que deixar um buraco na tela; se abrirem 3+, a última tabela
+ * "sobra" sozinha numa coluna na última linha (não dá span-2) para manter a
+ * grade simples e regular. */
+export function TabelasCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodutivaConfiguraveisState }) {
+  const { cards, abertos, itensAbertos, toggle } = estado;
+  const cardsAbertos = cards.filter((c) => abertos.has(c.id));
+  if (cardsAbertos.length === 0) return null;
+
+  return (
+    <div className="mb-4">
+      <div className={cardsAbertos.length > 1 ? "grid grid-cols-1 lg:grid-cols-2 gap-3" : ""}>
+        {cardsAbertos.map((c) => (
+          <div key={c.id} className="card">
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{c.nome}</span>
+              <button onClick={() => toggle(c.id)} title="Fechar tabela" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={15} /></button>
+            </div>
+            <TabelaResultado itens={itensAbertos[c.id] ?? []} />
+          </div>
+        ))}
       </div>
     </div>
   );

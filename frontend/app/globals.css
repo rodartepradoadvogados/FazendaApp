@@ -487,6 +487,39 @@ textarea:focus-visible, [tabindex]:focus-visible {
 /* Zebra removida (proposta "Institucional") — a separação entre linhas passa
    a ser só o filete de 1px (.fazenda-table tbody tr já tem border-bottom). */
 
+/* Tabela compacta — usada no resultado dos cards configuráveis da Agenda
+   Reprodutiva (CardsAgendaReprodutivaConfiguraveis.tsx), onde a tabela
+   precisa caber bem numa coluna de ~50% da largura da tela (2 tabelas lado
+   a lado). Mesma lógica visual da .fazenda-table, com padding/fonte menores
+   e cabeçalhos mais estreitos. */
+.tabela-compacta {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+.tabela-compacta thead tr { background: var(--thead-bg); }
+.tabela-compacta thead th {
+  padding: 5px 6px;
+  text-align: left;
+  color: var(--thead-fg);
+  font-family: var(--font-heading);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-strong, var(--border));
+}
+.tabela-compacta tbody tr {
+  border-bottom: 1px solid var(--border);
+}
+.tabela-compacta tbody tr:hover { background: var(--surface-2); }
+.tabela-compacta tbody td {
+  padding: 5px 6px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
 /* ── Botões ──
    Proposta "Institucional" (1A): CTA primário vira marinho sólido com texto
    branco — sem gradiente, sem deslocamento no hover ("lê como relatório de
