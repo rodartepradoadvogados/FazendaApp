@@ -5381,11 +5381,23 @@ export async function atualizarClassificacao(id: number, dados: { nome: string; 
 }
 
 export async function criarLancamentoFinanceiro(dados: any) {
-  const res = await authFetch(`${API}/financeiro/lancamentos`, {
+  // Mesma chave nas duas tentativas: se a 1ª chegou a gravar no servidor mas
+  // a resposta se perdeu no caminho de volta (o "Failed to fetch" que
+  // aparece com o lançamento já salvo), o backend reconhece a chave repetida
+  // e devolve o mesmo lançamento em vez de duplicar (ver Idempotency-Key).
+  const chave = gerarChaveIdempotencia();
+  const post = () => authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
   });
+  let res: Response;
+  try {
+    res = await post();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await post().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     // Preserva `detail`/`status` (padrão `criarVale`) — o 409 de "estourou 40%
