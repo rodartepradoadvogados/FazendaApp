@@ -214,6 +214,14 @@ const DATA_KEYS_EXTRA: Record<string, string[]> = {
   inducao_lactacao: ["data_realizacao"], protocolos_customizados: ["data_realizacao"],
 };
 
+// Ordem visual das seções "de produção/protocolo" entre o card de Controle
+// leiteiro e o card unificado de Rastreabilidade sanitária — sempre as
+// mesmas entradas de SECOES (colunas/PDF não mudam), só a posição na tela.
+const CHAVES_SECOES_PRODUCAO: (keyof Ficha)[] = [
+  "protocolos_iatf", "inducao_lactacao", "protocolos_customizados",
+  "pesagens_corporais", "qualidade_leite", "protocolos_sanitarios", "secagens",
+];
+
 // Coluna "Parto" da tabela de Serviço/IA e diagnóstico: texto curto (não é
 // data formatada nem "—"/vazio padrão) — por isso não segue o padrão
 // "campoFmt" das demais colunas de data, e sim uma função própria,
@@ -326,6 +334,28 @@ function construirSecaoResumoPartos(linhas: Ficha["resumo_partos"]): SecaoFicha 
   };
 }
 
+// Linha do tempo de rastreabilidade sanitária, no formato do exportador —
+// mesmos campos genéricos já mostrados na aba "Linha do tempo" do card
+// unificado de Rastreabilidade sanitária (data, tipo de evento, descrição,
+// GTA, responsável). Antes esta seção não entrava no PDF; agora entra logo
+// antes de "Exames", já que na tela as duas são abas do mesmo card.
+function construirSecaoLinhaTempo(linhaTempo: Ficha["linha_tempo_sanitaria"]): SecaoFicha {
+  return {
+    titulo: "Rastreabilidade sanitária — Linha do tempo",
+    colunas: [
+      { header: "Data", key: "dataFmt" }, { header: "Evento", key: "tipo_evento" },
+      { header: "Descrição", key: "descricao" }, { header: "GTA", key: "gta" }, { header: "Responsável", key: "responsavel" },
+    ],
+    linhas: (linhaTempo || []).map((e) => ({
+      dataFmt: e.data ? formatDate(e.data) : "—",
+      tipo_evento: e.tipo_evento,
+      descricao: e.descricao || "—",
+      gta: e.gta || "—",
+      responsavel: e.responsavel || "—",
+    })),
+  };
+}
+
 const cardStyle: React.CSSProperties = { marginBottom: "1rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 const inpStyle: React.CSSProperties = { width: "100%", padding: "0.35rem 0.5rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" };
@@ -337,46 +367,59 @@ const btnEdit: React.CSSProperties = { fontSize: "0.75rem", display: "inline-fle
 // (chave terminando em "Fmt") ordenam pelo campo bruto correspondente —
 // `formatarLinhas` mantém os dois no mesmo objeto — igual à regra usada no
 // Relatório Personalizado (prefere campo bruto ao formatado).
-function SecaoHistoricoTabela({ chave, titulo, colunas, linhas, onAbrirCria }: {
-  chave: string; titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[]; onAbrirCria: (numero: string) => void;
+// A tabela em si (sem o card/recolhível ao redor) — extraída para ser
+// reaproveitada tanto pelas seções de histórico "padrão" (`SecaoHistoricoTabela`
+// abaixo) quanto pelas abas "Exames" e "Doenças" do card unificado de
+// Rastreabilidade sanitária (`SecaoRastreabilidadeSanitaria`), que já tem seu
+// próprio `SecaoRecolhivel` ao redor das abas.
+function TabelaSecaoDados({ chave, colunas, linhas, onAbrirCria }: {
+  chave: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[]; onAbrirCria: (numero: string) => void;
 }) {
   const ord = useOrdenacao(linhas);
   return (
-    <SecaoRecolhivel titulo={titulo} badge={String(linhas.length)}>
-      <div className="overflow-x-auto">
-        <table className="fazenda-table">
-          <thead>
-            <tr>
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead>
+          <tr>
+            {colunas.map((c) => {
+              const campo = c.key.endsWith("Fmt") ? c.key.slice(0, -3) : c.key;
+              return <ThOrdenavel key={c.key} label={c.header} campo={campo} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />;
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {ord.linhasOrdenadas.map((l, i) => (
+            <tr key={i} style={chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}
+              title={chave === "servicos" && l.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
               {colunas.map((c) => {
-                const campo = c.key.endsWith("Fmt") ? c.key.slice(0, -3) : c.key;
-                return <ThOrdenavel key={c.key} label={c.header} campo={campo} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />;
+                const val = l[c.key];
+                // Número da cria: link para abrir a ficha da própria cria.
+                if ((c.key === "numero_cria_1" || c.key === "numero_cria_2") && val) {
+                  return (
+                    <td key={c.key} style={{ fontSize: "0.78rem" }}>
+                      <button onClick={() => onAbrirCria(String(val))} title={`Abrir a ficha da cria ${val}`}
+                        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dourado-light)", textDecoration: "underline", fontWeight: 600, fontSize: "0.78rem" }}>
+                        {String(val)}
+                      </button>
+                    </td>
+                  );
+                }
+                return <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(val ?? "—")}</td>;
               })}
             </tr>
-          </thead>
-          <tbody>
-            {ord.linhasOrdenadas.map((l, i) => (
-              <tr key={i} style={chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}
-                title={chave === "servicos" && l.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
-                {colunas.map((c) => {
-                  const val = l[c.key];
-                  // Número da cria: link para abrir a ficha da própria cria.
-                  if ((c.key === "numero_cria_1" || c.key === "numero_cria_2") && val) {
-                    return (
-                      <td key={c.key} style={{ fontSize: "0.78rem" }}>
-                        <button onClick={() => onAbrirCria(String(val))} title={`Abrir a ficha da cria ${val}`}
-                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dourado-light)", textDecoration: "underline", fontWeight: 600, fontSize: "0.78rem" }}>
-                          {String(val)}
-                        </button>
-                      </td>
-                    );
-                  }
-                  return <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(val ?? "—")}</td>;
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SecaoHistoricoTabela({ chave, titulo, colunas, linhas, onAbrirCria }: {
+  chave: string; titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[]; onAbrirCria: (numero: string) => void;
+}) {
+  return (
+    <SecaoRecolhivel titulo={titulo} badge={String(linhas.length)}>
+      <TabelaSecaoDados chave={chave} colunas={colunas} linhas={linhas} onAbrirCria={onAbrirCria} />
     </SecaoRecolhivel>
   );
 }
@@ -458,6 +501,81 @@ function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCri
   );
 }
 
+// Rastreabilidade sanitária: um único card com três leituras do mesmo
+// histórico sanitário/de movimentação do animal — "Linha do tempo" (visão
+// cronológica combinada de compra/venda/aplicações/protocolos/exames/doenças/
+// baixa, com campos genéricos), "Exames" (resultados de laboratório, com
+// valor/faixa/veterinário) e "Doenças" (ocorrências clínicas). Antes eram
+// dois blocos soltos na tela (linha do tempo fora do array SECOES, Exames
+// dentro dele) mais um terceiro card de Doenças — unificados aqui por serem
+// a mesma família temática (rastreabilidade sanitária), com abas em vez de
+// três cards separados.
+function SecaoRastreabilidadeSanitaria({
+  linhaTempo, colunasExames, exames, colunasDoencas, doencas, onAbrirCria,
+}: {
+  linhaTempo: Ficha["linha_tempo_sanitaria"];
+  colunasExames: ColunaExport[]; exames: Record<string, unknown>[];
+  colunasDoencas: ColunaExport[]; doencas: Record<string, unknown>[];
+  onAbrirCria: (numero: string) => void;
+}) {
+  const [aba, setAba] = useState<"linha_tempo" | "exames" | "doencas">("linha_tempo");
+  const ordLinhaTempo = useOrdenacao(linhaTempo);
+  const total = linhaTempo.length + exames.length + doencas.length;
+  if (!total) return null;
+
+  return (
+    <SecaoRecolhivel titulo="Rastreabilidade sanitária" badge={String(total)}>
+      <TabBar<"linha_tempo" | "exames" | "doencas">
+        abas={[
+          { id: "linha_tempo", label: "Linha do tempo", title: `Compra, venda, aplicações, protocolos, exames, doenças e baixa, em ordem cronológica (${linhaTempo.length})` },
+          { id: "exames", label: "Exames", title: `Resultados de exames laboratoriais — BLV, brucelose, tuberculose etc. (${exames.length})` },
+          { id: "doencas", label: "Doenças", title: `Ocorrências clínicas registradas para o animal (${doencas.length})` },
+        ]}
+        ativa={aba}
+        onChange={setAba}
+      />
+      {aba === "linha_tempo" && (
+        linhaTempo.length ? (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead>
+                <tr>
+                  <ThOrdenavel label="Data" campo="data" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                  <ThOrdenavel label="Evento" campo="tipo_evento" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                  <ThOrdenavel label="Descrição" campo="descricao" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                  <ThOrdenavel label="GTA" campo="gta" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                  <ThOrdenavel label="Responsável" campo="responsavel" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
+                </tr>
+              </thead>
+              <tbody>
+                {ordLinhaTempo.linhasOrdenadas.map((e, i) => (
+                  <tr key={i}>
+                    <td style={{ fontSize: "0.78rem" }}>{e.data ? formatDate(e.data) : "—"}</td>
+                    <td style={{ fontSize: "0.78rem", fontWeight: 600 }}>{e.tipo_evento}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{e.descricao || "—"}</td>
+                    <td style={{ fontSize: "0.78rem", color: e.gta ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: e.gta ? 700 : 400 }}>{e.gta || "—"}</td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.responsavel || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum evento na linha do tempo.</p>
+      )}
+      {aba === "exames" && (
+        exames.length
+          ? <TabelaSecaoDados chave="exames_resultados" colunas={colunasExames} linhas={exames} onAbrirCria={onAbrirCria} />
+          : <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum exame lançado.</p>
+      )}
+      {aba === "doencas" && (
+        doencas.length
+          ? <TabelaSecaoDados chave="ocorrencias_clinicas" colunas={colunasDoencas} linhas={doencas} onAbrirCria={onAbrirCria} />
+          : <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhuma ocorrência clínica registrada.</p>
+      )}
+    </SecaoRecolhivel>
+  );
+}
+
 // Um campo editável (label + input/select) para os formulários da ficha.
 // `destaque` marca em vermelho o campo que motivou uma pendência da Agenda
 // (colostragem/IgG não lançados no parto) — sinaliza exatamente o que falta,
@@ -488,8 +606,6 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
   // /reproducao/verificar-mae) antes de salvar, mostrando data/parto e
   // eventuais inconsistências.
   const [confirmMae, setConfirmMae] = useState<{ verificacao: VerificacaoMaeParto; payload: Record<string, any> } | null>(null);
-
-  const ordLinhaTempo = useOrdenacao(ficha?.linha_tempo_sanitaria ?? []);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
 
@@ -622,11 +738,16 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
     // em que o usuário lê a ficha na tela (identificação → previsão de parto
     // em aberto → histórico de partos → resumo por lactação) — só depois vem
     // o restante das seções (reprodução, sanidade, produção etc.), na mesma
-    // ordem de sempre (SECOES, sem "partos" — já usado no bloco 3).
+    // ordem de sempre (SECOES, sem "partos" — já usado no bloco 3). A "Linha
+    // do tempo" (que não vem de SECOES — ver `ficha.linha_tempo_sanitaria`)
+    // é inserida logo antes de "Exames", já que na tela as duas viraram abas
+    // do mesmo card de Rastreabilidade sanitária.
     const partosSecao = SECOES.find((s) => s.chave === "partos")!;
-    const demaisSecoes: SecaoFicha[] = SECOES
-      .filter((s) => s.chave !== "partos")
-      .map((s) => ({ titulo: s.titulo, colunas: s.colunas, linhas: formatarLinhas(s.chave, (ficha[s.chave] as Record<string, unknown>[]) || []) }));
+    const demaisSecoes: SecaoFicha[] = [];
+    for (const s of SECOES.filter((s) => s.chave !== "partos")) {
+      if (s.chave === "exames_resultados") demaisSecoes.push(construirSecaoLinhaTempo(ficha.linha_tempo_sanitaria));
+      demaisSecoes.push({ titulo: s.titulo, colunas: s.colunas, linhas: formatarLinhas(s.chave, (ficha[s.chave] as Record<string, unknown>[]) || []) });
+    }
     const secoes: SecaoFicha[] = [
       construirSecaoQuadroResumo(ficha),
       ...(ficha.precisao_parto ? [construirSecaoPrevisaoParto(ficha.precisao_parto)] : []),
@@ -644,6 +765,33 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
     } catch {
       // erro já mostrado ao usuário dentro de exportarFichaPDF (lib/export.ts)
     }
+  }
+
+  // Renderiza uma seção "padrão" (tabela genérica de histórico) de SECOES
+  // pela chave — usado para posicionar cada card na ordem visual desejada
+  // sem depender da ordem de declaração de SECOES (que também alimenta o
+  // PDF e por isso não muda).
+  function renderSecao(chave: keyof Ficha) {
+    if (!ficha) return null;
+    const s = SECOES.find((x) => x.chave === chave);
+    if (!s) return null;
+    const linhasBrutas = (ficha[chave] as Record<string, unknown>[]) || [];
+    if (!linhasBrutas.length) return null;
+    const linhas = formatarLinhas(chave as string, linhasBrutas);
+    return <SecaoHistoricoTabela key={chave as string} chave={chave as string} titulo={s.titulo} colunas={s.colunas} linhas={linhas} onAbrirCria={buscar} />;
+  }
+
+  function renderControleLeiteiro() {
+    if (!ficha) return null;
+    const linhasBrutas = (ficha.controles_leiteiros as Record<string, unknown>[]) || [];
+    if (!linhasBrutas.length) return null;
+    const s = SECOES.find((x) => x.chave === "controles_leiteiros")!;
+    const linhas = formatarLinhas("controles_leiteiros", linhasBrutas);
+    return (
+      <SecaoControleLeiteiro colunas={s.colunas} linhas={linhas} brutas={linhasBrutas}
+        referencia={ficha.curva_referencia_rebanho} onAbrirCria={buscar}
+        numeroMatriz={String(ficha.animal.numero ?? "")} />
+    );
   }
 
   const a = ficha?.animal;
@@ -724,25 +872,6 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             </div>
           </div>
 
-          {ficha.precisao_parto && (
-            <div className="card" style={cardStyle}>
-              <div className="card-header mb-3">Previsão de parto</div>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
-                <div><span style={labelStyle}>Última IA</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
-                <div><span style={labelStyle}>Último diagnóstico positivo</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
-                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
-                <div><span style={labelStyle}>Data da previsão de parto</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
-                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
-              </div>
-            </div>
-          )}
-
-          {!!ficha.partos?.length && (
-            <SecaoHistoricoTabela chave="partos" titulo="Partos" colunas={SECOES[0].colunas} linhas={formatarLinhas("partos", ficha.partos)} onAbrirCria={buscar} />
-          )}
-
-          <QuadroResumoPartos linhas={ficha.resumo_partos} />
-
           <div className="card" style={destacar ? { ...cardStyle, borderColor: "var(--red)" } : cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
               <span>Colostragem e teste de sangue (IgG)</span>
@@ -781,6 +910,25 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Dados de colostragem/IgG ainda não lançados. Clique em <strong>Lançar</strong> para preencher.</p>
             )}
           </div>
+
+          <QuadroResumoPartos linhas={ficha.resumo_partos} />
+
+          {ficha.precisao_parto && (
+            <div className="card" style={cardStyle}>
+              <div className="card-header mb-3">Previsão de parto</div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Última IA</span><br />{ficha.precisao_parto.data_ultima_ia_positiva ? formatDate(ficha.precisao_parto.data_ultima_ia_positiva) : "—"}</div>
+                <div><span style={labelStyle}>Último diagnóstico positivo</span><br />{ficha.precisao_parto.data_confirmacao_prenhez ? formatDate(ficha.precisao_parto.data_confirmacao_prenhez) : "—"}</div>
+                <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto.dias_gestacao ?? "—"}</div>
+                <div><span style={labelStyle}>Data da previsão de parto</span><br />{ficha.precisao_parto.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+                <div><span style={labelStyle}>Faltam</span><br />{ficha.precisao_parto.dias_para_parto != null ? `${ficha.precisao_parto.dias_para_parto} dia(s)` : "—"}</div>
+              </div>
+            </div>
+          )}
+
+          {!!ficha.partos?.length && (
+            <SecaoHistoricoTabela chave="partos" titulo="Partos" colunas={SECOES[0].colunas} linhas={formatarLinhas("partos", ficha.partos)} onAbrirCria={buscar} />
+          )}
 
           {!!ficha.gtas?.length && (
             <div className="card" style={cardStyle}>
@@ -833,54 +981,29 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             </div>
           )}
 
-          {!!ficha.linha_tempo_sanitaria?.length && (
-            <SecaoRecolhivel titulo="Rastreabilidade sanitária — linha do tempo" badge={String(ficha.linha_tempo_sanitaria.length)}>
-              <div className="overflow-x-auto">
-                <table className="fazenda-table">
-                  <thead>
-                    <tr>
-                      <ThOrdenavel label="Data" campo="data" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
-                      <ThOrdenavel label="Evento" campo="tipo_evento" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
-                      <ThOrdenavel label="Descrição" campo="descricao" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
-                      <ThOrdenavel label="GTA" campo="gta" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
-                      <ThOrdenavel label="Responsável" campo="responsavel" coluna={ordLinhaTempo.coluna} dir={ordLinhaTempo.dir} ordenar={ordLinhaTempo.ordenar} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ordLinhaTempo.linhasOrdenadas.map((e, i) => (
-                      <tr key={i}>
-                        <td style={{ fontSize: "0.78rem" }}>{e.data ? formatDate(e.data) : "—"}</td>
-                        <td style={{ fontSize: "0.78rem", fontWeight: 600 }}>{e.tipo_evento}</td>
-                        <td style={{ fontSize: "0.78rem" }}>{e.descricao || "—"}</td>
-                        <td style={{ fontSize: "0.78rem", color: e.gta ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: e.gta ? 700 : 400 }}>{e.gta || "—"}</td>
-                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.responsavel || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </SecaoRecolhivel>
-          )}
+          {renderSecao("servicos")}
 
-          {SECOES.filter((s) => s.chave !== "partos").map((s) => {
-            const linhasBrutas = (ficha[s.chave] as Record<string, unknown>[]) || [];
-            if (!linhasBrutas.length) return null;
-            const linhas = formatarLinhas(s.chave, linhasBrutas);
-            // Controle leiteiro ganha a alternância tabela ↔ curva de lactação.
-            if (s.chave === "controles_leiteiros") {
-              return (
-                <SecaoControleLeiteiro key={s.chave} colunas={s.colunas} linhas={linhas}
-                  brutas={linhasBrutas} referencia={ficha.curva_referencia_rebanho} onAbrirCria={buscar}
-                  numeroMatriz={String(ficha.animal.numero ?? "")} />
-              );
-            }
-            return (
-              <SecaoHistoricoTabela key={s.chave} chave={s.chave} titulo={s.titulo} colunas={s.colunas} linhas={linhas} onAbrirCria={buscar} />
-            );
-          })}
+          {renderControleLeiteiro()}
+
+          {CHAVES_SECOES_PRODUCAO.map((chave) => renderSecao(chave))}
+
+          <SecaoRastreabilidadeSanitaria
+            linhaTempo={ficha.linha_tempo_sanitaria || []}
+            colunasExames={SECOES.find((s) => s.chave === "exames_resultados")!.colunas}
+            exames={formatarLinhas("exames_resultados", ficha.exames_resultados || [])}
+            colunasDoencas={SECOES.find((s) => s.chave === "ocorrencias_clinicas")!.colunas}
+            doencas={formatarLinhas("ocorrencias_clinicas", ficha.ocorrencias_clinicas || [])}
+            onAbrirCria={buscar}
+          />
+
+          {renderSecao("aplicacoes_sanitarias")}
+
+          {renderSecao("movimentos_lote")}
+
+          {renderSecao("eventos_agenda")}
 
           {SECOES.every((s) => !((ficha[s.chave] as unknown[]) || []).length) && !ficha.colostragem && !ficha.compra && !ficha.baixa
-            && !ficha.compras?.length && !ficha.vendas?.length && (
+            && !ficha.compras?.length && !ficha.vendas?.length && !ficha.linha_tempo_sanitaria?.length && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento encontrado para este animal.</p>
           )}
         </>
