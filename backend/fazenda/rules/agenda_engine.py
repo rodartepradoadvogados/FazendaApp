@@ -343,6 +343,20 @@ class AgendaEngine:
         if proxima_visita_bst_real is not None:
             result.proxima_visita_bst = proxima_visita_bst_real
 
+        # Antes `proxima_visita_iatf` só existia como dado de referência (texto
+        # discreto no rodapé da Agenda) — o funcionário não tinha nenhum item
+        # acionável para se organizar. Vira card na lista de eventos igual aos
+        # demais (Pré-parto/Secagem/PEV): sem piso de data, para continuar
+        # aparecendo (e cair em "Atrasados") se a visita não acontecer no dia
+        # previsto — ela só sai da lista quando um novo serviço reprodutivo é
+        # lançado (o que recalcula a data para a próxima rodada, ver acima).
+        if result.proxima_visita_iatf is not None:
+            eventos.append(AgendaItem(
+                data=result.proxima_visita_iatf,
+                categoria="Reprodutivo",
+                descricao=f"Visita reprodutiva — dia de diagnóstico/IATF do rebanho (a cada {intervalo_visita_reprodutiva} dias)",
+            ))
+
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
         # agenda no dia da próxima visita reprodutiva (data do diagnóstico + meta de
         # reinseminação; sem diagnóstico registrado, usa a data do serviço).
