@@ -6,7 +6,7 @@ import { fetchAgendaVeterinario, enviarDiagnosticoEmail, atualizarParametro } fr
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { CardsAgendaReprodutivaConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
+import { useCardsAgendaReprodutivaConfiguraveis, GradeCardsConfiguraveis, TabelasCardsConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
@@ -256,6 +256,14 @@ export default function AgendaVeterinarioPage() {
     }
   }
 
+  // Estado dos cards configuráveis é levantado para cá (state lifting) porque
+  // a grade de chips e a área de tabelas abertas agora vivem em pontos
+  // diferentes da página (ver GradeCardsConfiguraveis/TabelasCardsConfiguraveis
+  // abaixo) mas precisam compartilhar o mesmo `abertos`/`itensAbertos`. Chamado
+  // sempre (regra dos hooks) — dataRef usa optional chaining porque `dados`
+  // ainda pode ser null no primeiro render.
+  const cardsConfiguraveis = useCardsAgendaReprodutivaConfiguraveis(dados?.projetado ? dados.data_referencia : undefined);
+
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
 
@@ -355,7 +363,7 @@ export default function AgendaVeterinarioPage() {
         </div>
       )}
 
-      <CardsAgendaReprodutivaConfiguraveis dataRef={dados.projetado ? dados.data_referencia : undefined} />
+      <GradeCardsConfiguraveis estado={cardsConfiguraveis} />
 
       <p style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.25rem" }}>Outras pendências</p>
       <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginBottom: "0.5rem" }}>
@@ -389,6 +397,11 @@ export default function AgendaVeterinarioPage() {
       {LISTAS.every((l) => (dados.totais[l.key] ?? 0) === 0) && (
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal para classificar no momento.</p>
       )}
+
+      {/* Tabelas dos cards configuráveis (grade lá em cima) abrem aqui embaixo,
+          depois de "Outras pendências" — não mais espremidas dentro do chip
+          pequeno. Ver TabelasCardsConfiguraveis para o layout em grid. */}
+      <TabelasCardsConfiguraveis estado={cardsConfiguraveis} />
 
       {lancandoPendente && (
         <PopupLancarPendente numero={lancandoPendente.numero_matriz} temServico={lancandoPendente.tem_servico} onFechar={() => setLancandoPendente(null)} />
