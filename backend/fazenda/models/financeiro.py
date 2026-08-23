@@ -239,6 +239,39 @@ class ContaCorrente(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Transferência entre contas correntes (Configurações > Parâmetros
+# financeiros > Conta corrente, botão "Transferir entre contas") — move
+# dinheiro de uma conta cadastrada para outra, refletindo no saldo calculado
+# das duas (ver calcular_saldos_contas_correntes em
+# fazenda/api/routers/financeiro.py).
+#
+# Tabela dedicada em vez de reaproveitar ContaGerencial com um novo tipo
+# "transferencia": ContaGerencial carrega dezenas de campos que não fazem
+# sentido aqui (parcela, boleto, patrimônio, pedido...) e o `tipo` do
+# lançamento é assumido "receita"/"despesa" em vários pontos do sistema (DRE
+# — agrupamento por_conta trata qualquer tipo != "receita" como despesa —,
+# validação de POST/PUT /financeiro/lancamentos etc.); um tipo novo ali
+# arriscaria vazar a transferência pros relatórios de despesa/receita sem
+# cada ponto do sistema saber filtrar. Uma linha por transferência já liga
+# as duas pontas (origem e destino) sozinha, sem precisar de um par de
+# registros linkados por um `transferencia_par_id`.
+# ---------------------------------------------------------------------------
+class TransferenciaContas(SQLModel, table=True):
+    __tablename__ = "transferencia_contas"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda — ver ContaCorrente.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    conta_origem_id: int = Field(foreign_key="conta_corrente.id", index=True)
+    conta_destino_id: int = Field(foreign_key="conta_corrente.id", index=True)
+    valor: float
+    data: date
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+# ---------------------------------------------------------------------------
 # Centro de custo (Configurações > Parâmetros financeiros) — antes era só
 # sugestão (distinct dos valores já usados em ContaGerencial.centro_custo).
 # ---------------------------------------------------------------------------

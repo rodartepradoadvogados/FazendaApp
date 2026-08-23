@@ -5242,6 +5242,10 @@ export async function fetchCustoSafra(safraId: number) {
 // devolve rótulos em texto, sem id).
 export type ContaCorrenteCadastro = {
   id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string;
+  // Saldo calculado ("entradas − saídas"), não persistido — ver
+  // calcular_saldos_contas_correntes no backend. Soma lançamentos pagos
+  // vinculados à conta + transferências entre contas.
+  saldo: number;
 };
 export async function fetchContasCorrentes(): Promise<ContaCorrenteCadastro[]> {
   const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
@@ -5260,6 +5264,29 @@ export async function atualizarContaCorrente(id: number, dados: { banco: string;
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar conta corrente"); }
+  return res.json();
+}
+
+// Transferência entre contas correntes — não é despesa nem receita da
+// fazenda (dinheiro sai de uma conta própria e entra em outra), por isso
+// fica fora do DRE/relatórios gerenciais; só ajusta o saldo calculado das
+// duas contas (ver TransferenciaContas no backend).
+export type TransferenciaContas = {
+  id: number; conta_origem_id: number; conta_destino_id: number; valor: number; data: string;
+  observacao: string | null; criado_em: string; usuario_id: number | null;
+};
+export async function fetchTransferenciasContas(): Promise<TransferenciaContas[]> {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/transferencias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Transferências entre contas error: ${res.status}`);
+  return res.json();
+}
+export async function criarTransferenciaContas(dados: {
+  conta_origem_id: number; conta_destino_id: number; valor: number; data: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/transferencias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao transferir entre contas"); }
   return res.json();
 }
 
