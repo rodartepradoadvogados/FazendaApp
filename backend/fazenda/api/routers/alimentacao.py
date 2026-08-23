@@ -262,6 +262,28 @@ def _seed_categorias_alimento(session: Session, fazenda_id: int | None = None) -
     session.commit()
 
 
+SUBCATEGORIAS_CONCENTRADO_PADRAO = ["Concentrado Proteico", "Concentrado Energético"]
+
+
+def _seed_subcategorias_concentrado(session: Session, fazenda_id: int | None = None) -> None:
+    """Subcategorias de "Concentrado" nunca tinham sido semeadas (só existiam
+    como texto solto num módulo de nutrição sem relação com este cadastro) —
+    o select de Subcategoria em Alimentos ficava sempre vazio. Mesma regra de
+    "só semeia a primeira vez" do `_seed_categorias_alimento`: dispara apenas
+    quando "Concentrado" ainda não tem NENHUMA filha, então apagar as duas
+    depois é definitivo, não ressuscita."""
+    query = select(CategoriaAlimento)
+    if fazenda_id is not None:
+        query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
+    categorias = session.exec(query).all()
+    concentrado = next((c for c in categorias if c.nome == "Concentrado" and c.categoria_pai_id is None), None)
+    if concentrado is None or any(c.categoria_pai_id == concentrado.id for c in categorias):
+        return
+    novas = [CategoriaAlimento(nome=nome, categoria_pai_id=concentrado.id, fazenda_id=fazenda_id) for nome in SUBCATEGORIAS_CONCENTRADO_PADRAO]
+    session.add_all(novas)
+    session.commit()
+
+
 def _ordenar_categorias_hierarquia(categorias: list[CategoriaAlimento]) -> list[CategoriaAlimento]:
     """Agrupa cada subcategoria logo abaixo do próprio pai: raízes por nome
     e, dentro de cada raiz, as filhas por nome — em vez da ordem alfabética

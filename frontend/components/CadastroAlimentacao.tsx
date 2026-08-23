@@ -26,7 +26,10 @@ import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { casaBusca } from "@/lib/busca";
 import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
-import { pedirCadastroDeEstoque, onPedidoCadastroDeAlimento, type PrefillNovoAlimento } from "@/lib/alimentoEstoqueBridge";
+import {
+  pedirCadastroDeEstoque, onPedidoCadastroDeAlimento, consumirCadastroDeAlimentoPendente,
+  onPedidoReaberturaDeAlimento, consumirReaberturaDeAlimentoPendente, type PrefillNovoAlimento,
+} from "@/lib/alimentoEstoqueBridge";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Modal } from "@/components/Modal";
 import { listarSimulacoes, obterSimulacao, type SimulacaoResumo } from "@/lib/dietas";
@@ -80,8 +83,22 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 export default function CadastroAlimentacao() {
   const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional" | "bromatologica" | "categorias" | "alimentos">("ver");
   const [prefillAlimento, setPrefillAlimento] = useState<PrefillNovoAlimento | null>(null);
+  const [alimentoIdParaReabrir, setAlimentoIdParaReabrir] = useState<number | null>(null);
 
-  useEffect(() => onPedidoCadastroDeAlimento((dados) => { setPrefillAlimento(dados); setAba("alimentos"); }), []);
+  // As duas pontes (vira-Alimento e reabre-Alimento) guardam o dado em
+  // sessionStorage, não só no evento — esta tela pode montar DEPOIS do
+  // disparo (troca de aba em Cadastro.tsx desmonta/remonta), então lê o
+  // pendente uma vez no próprio mount, além de continuar ouvindo o evento
+  // pro caso raro de já estar montada.
+  useEffect(() => {
+    const pendenteAlimento = consumirCadastroDeAlimentoPendente();
+    if (pendenteAlimento) { setPrefillAlimento(pendenteAlimento); setAba("alimentos"); }
+    const pendenteReabrir = consumirReaberturaDeAlimentoPendente();
+    if (pendenteReabrir != null) { setAlimentoIdParaReabrir(pendenteReabrir); setAba("alimentos"); }
+    const off1 = onPedidoCadastroDeAlimento((dados) => { setPrefillAlimento(dados); setAba("alimentos"); });
+    const off2 = onPedidoReaberturaDeAlimento((id) => { setAlimentoIdParaReabrir(id); setAba("alimentos"); });
+    return () => { off1(); off2(); };
+  }, []);
 
   return (
     <div>
@@ -113,6 +130,8 @@ export default function CadastroAlimentacao() {
           onPrefillConsumido={() => setPrefillAlimento(null)}
           onIrParaTabelaNutricional={() => setAba("tabela-nutricional")}
           onIrParaBromatologica={() => setAba("bromatologica")}
+          abrirEdicaoId={alimentoIdParaReabrir}
+          onAbrirEdicaoConsumido={() => setAlimentoIdParaReabrir(null)}
         />
       )}
     </div>
@@ -268,9 +287,10 @@ function LinhaCategoriaAlimento({ c, subordinada, emEdicao, nome, setNome, salva
 }
 
 // ─────────────────────────── Alimentos (cadastro) ───────────────────────────
-function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, onIrParaBromatologica }: {
+function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, onIrParaBromatologica, abrirEdicaoId, onAbrirEdicaoConsumido }: {
   prefill: PrefillNovoAlimento | null; onPrefillConsumido: () => void;
   onIrParaTabelaNutricional: () => void; onIrParaBromatologica: () => void;
+  abrirEdicaoId: number | null; onAbrirEdicaoConsumido: () => void;
 }) {
   const [itens, setItens] = useState<Alimento[] | null>(null);
   const [categorias, setCategorias] = useState<CategoriaAlimento[]>([]);
@@ -310,6 +330,16 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
     setEditando(a.id); setErro(null);
   };
   const cancelar = () => { setEditando(null); onPrefillConsumido(); };
+
+  // Volta de "Cadastrar novo item de estoque vinculado" (ver alimentoEstoqueBridge)
+  // — reabre este alimento em edição já com o vínculo novo visível.
+  useEffect(() => {
+    if (abrirEdicaoId == null || !itens) return;
+    const alvo = itens.find((a) => a.id === abrirEdicaoId);
+    if (alvo) abrirEdicao(alvo);
+    onAbrirEdicaoConsumido();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abrirEdicaoId, itens]);
 
   const salvar = async () => {
     if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
@@ -439,10 +469,17 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
             })}
             {!estoqueFiltrado.length && <p style={{ padding: "0.6rem", color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhum item de estoque encontrado.</p>}
           </div>
-          <button className="btn-ghost" style={{ fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.9rem" }}
-            onClick={() => pedirCadastroDeEstoque({ nome: nome.trim(), finalidade: "Ração/Alimento", alimentoId: typeof editando === "number" ? editando : undefined })}>
+          <button className="btn-ghost" style={{ fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.2rem" }}
+            disabled={typeof editando !== "number"}
+            title={typeof editando !== "number" ? "Salve o alimento primeiro — sem isso o item de estoque nasceria sem vínculo nenhum" : undefined}
+            onClick={() => pedirCadastroDeEstoque({ nome: nome.trim(), finalidade: "Ração/Alimento", alimentoId: editando as number })}>
             <Plus size={13} /> Cadastrar novo item de estoque vinculado
           </button>
+          {typeof editando !== "number" && (
+            <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+              Salve o alimento primeiro para poder cadastrar um item de estoque já vinculado a ele.
+            </p>
+          )}
 
           <div className="flex items-center gap-2">
             <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>

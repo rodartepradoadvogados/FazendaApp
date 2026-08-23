@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento } from "@/lib/alimentoEstoqueBridge";
+import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento, onPedidoReaberturaDeAlimento } from "@/lib/alimentoEstoqueBridge";
 import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby, Sprout, ClipboardList } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroSafra from "./CadastroSafra";
@@ -84,7 +84,8 @@ export default function Cadastro({
   useEffect(() => {
     const off1 = onPedidoCadastroDeEstoque(() => setAba("estoque"));
     const off2 = onPedidoCadastroDeAlimento(() => setAba("alimentacao"));
-    return () => { off1(); off2(); };
+    const off3 = onPedidoReaberturaDeAlimento(() => setAba("alimentacao"));
+    return () => { off1(); off2(); off3(); };
   }, [setAba]);
 
   return (
