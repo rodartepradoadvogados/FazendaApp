@@ -27,7 +27,7 @@ export default function RelatoriosPage() {
   const ABAS = useMemo(() => [
     { id: "trabalho" as const, label: "Listas de trabalho", icon: ClipboardList },
     { id: "reprodutivo_vivo" as const, label: "Situação reprodutiva (ao vivo)", icon: Activity },
-    { id: "gerenciais" as const, label: "Listas Gerenciais", icon: Combine },
+    { id: "gerenciais" as const, label: "Combinador de Listas", icon: Combine },
     ...(temVet ? [{ id: "vet" as const, label: "Agenda Reprodutiva", icon: Stethoscope }] : []),
   ], [temVet]);
   const abaAtiva = ABAS.some((a) => a.id === aba) ? aba : "trabalho";
