@@ -8,7 +8,7 @@ import calendar
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -395,6 +395,12 @@ class BaixaLoteItemIn(BaseModel):
     forma_pagamento: Optional[str] = None
     data_vencimento_cartao: Optional[date] = None
     numero_documento_pagamento: Optional[str] = None
+    # Mesmo mecanismo/formato de PagamentoIn.parcelas_diferenca (baixa
+    # individual): por padrão a diferença entre valor_pago e valor_total desta
+    # nota vira desconto_acrescimo, perdoada/cobrada de uma vez. Preenchido,
+    # a diferença migra inteira para nova(s) parcela(s) do MESMO
+    # numero_lancamento — esta linha grava desconto_acrescimo=0.
+    parcelas_diferenca: Optional[list[ParcelaDiferencaIn]] = None
 
 
 class BaixaLoteDetalhadaIn(BaseModel):
@@ -2377,6 +2383,52 @@ class LancamentoEditIn(BaseModel):
     produto: Optional[str] = None
 
 
+def _criar_parcelas_diferenca(session: Session, registro: ContaGerencial, parcelas: list["ParcelaDiferencaIn"]) -> list[ContaGerencial]:
+    """Cria a(s) parcela(s) NOVA(s) do MESMO numero_lancamento de `registro`
+    que carregam adiante a diferença entre valor pago e valor_total, em vez
+    de perdoá-la/cobrá-la de uma vez como desconto_acrescimo. Compartilhado
+    por `pagar_lancamento` (baixa individual) e `baixa_lote_detalhada` (baixa
+    em lote, por linha) — mesmo mecanismo dos dois lados. Quem chama já deve
+    ter zerado `registro.desconto_acrescimo` (a diferença INTEIRA migra pra
+    cá) e adicionado `registro` à sessão."""
+    parcela_total_atual = registro.parcela_total or 1
+    novo_total = parcela_total_atual + len(parcelas)
+    # Reabre a contagem de parcelas do lançamento inteiro — todas as linhas
+    # (já existentes e novas) passam a refletir o novo total.
+    query_irmas = select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento)
+    if registro.fazenda_id is not None:
+        query_irmas = query_irmas.where(ContaGerencial.fazenda_id == registro.fazenda_id)
+    for irma in session.exec(query_irmas).all():
+        irma.parcela_total = novo_total
+        session.add(irma)
+    novas: list[ContaGerencial] = []
+    for i, p in enumerate(parcelas, start=parcela_total_atual + 1):
+        nova = ContaGerencial(
+            fazenda_id=registro.fazenda_id,
+            numero_lancamento=registro.numero_lancamento,
+            codigo_conta=registro.codigo_conta,
+            descricao=registro.descricao,
+            data_vencimento=p.data_vencimento,
+            data_competencia=registro.data_competencia,
+            data_emissao=registro.data_emissao,
+            fornecedor_cliente=registro.fornecedor_cliente,
+            numero_nota=registro.numero_nota,
+            tipo_documento=registro.tipo_documento,
+            numero_os_orcamento=registro.numero_os_orcamento,
+            valor_total=p.valor,
+            parcela_num=i,
+            parcela_total=novo_total,
+            responsavel=registro.responsavel,
+            centro_custo=registro.centro_custo,
+            tipo=registro.tipo,
+            origem="manual",
+            usuario_id=registro.usuario_id,
+        )
+        novas.append(nova)
+        session.add(nova)
+    return novas
+
+
 @router.put("/lancamentos/{lancamento_id}/pagar")
 def pagar_lancamento(
     lancamento_id: int, dados: PagamentoIn, session: Session = Depends(get_session),
@@ -2415,40 +2467,7 @@ def pagar_lancamento(
 
     novas: list[ContaGerencial] = []
     if dados.parcelas_diferenca:
-        parcela_total_atual = registro.parcela_total or 1
-        novo_total = parcela_total_atual + len(dados.parcelas_diferenca)
-        # Reabre a contagem de parcelas do lançamento inteiro — todas as
-        # linhas (já existentes e novas) passam a refletir o novo total.
-        query_irmas = select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento)
-        if registro.fazenda_id is not None:
-            query_irmas = query_irmas.where(ContaGerencial.fazenda_id == registro.fazenda_id)
-        for irma in session.exec(query_irmas).all():
-            irma.parcela_total = novo_total
-            session.add(irma)
-        for i, p in enumerate(dados.parcelas_diferenca, start=parcela_total_atual + 1):
-            nova = ContaGerencial(
-                fazenda_id=registro.fazenda_id,
-                numero_lancamento=registro.numero_lancamento,
-                codigo_conta=registro.codigo_conta,
-                descricao=registro.descricao,
-                data_vencimento=p.data_vencimento,
-                data_competencia=registro.data_competencia,
-                data_emissao=registro.data_emissao,
-                fornecedor_cliente=registro.fornecedor_cliente,
-                numero_nota=registro.numero_nota,
-                tipo_documento=registro.tipo_documento,
-                numero_os_orcamento=registro.numero_os_orcamento,
-                valor_total=p.valor,
-                parcela_num=i,
-                parcela_total=novo_total,
-                responsavel=registro.responsavel,
-                centro_custo=registro.centro_custo,
-                tipo=registro.tipo,
-                origem="manual",
-                usuario_id=registro.usuario_id,
-            )
-            novas.append(nova)
-            session.add(nova)
+        novas = _criar_parcelas_diferenca(session, registro, dados.parcelas_diferenca)
 
     session.commit()
     session.refresh(registro)
@@ -2503,8 +2522,11 @@ def baixa_lote_detalhada(
     """
     Dá baixa em várias notas de uma vez, mas cada uma com o SEU próprio
     pagamento (data, valor, conta, forma e comprovante) — permite pagar cada
-    conta de forma diferente numa única operação. Valor diferente do total vira
-    desconto/acréscimo (como na baixa individual).
+    conta de forma diferente numa única operação. Valor diferente do total, por
+    padrão, vira desconto/acréscimo (como na baixa individual) — mas cada item
+    pode opcionalmente informar `parcelas_diferenca` (mesmo formato/mecanismo
+    de PagamentoIn, ver pagar_lancamento) para carregar a diferença adiante
+    como nova(s) parcela(s) do mesmo numero_lancamento, em vez de perdoá-la.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.itens:
@@ -2513,8 +2535,32 @@ def baixa_lote_detalhada(
         if it.forma_pagamento == "credito" and not it.data_vencimento_cartao:
             raise HTTPException(status_code=400, detail=f"Informe o vencimento do cartão do lançamento {it.lancamento_id}")
 
+    # Validação de parcelas_diferenca ANTES de mexer em qualquer registro —
+    # mesmo espírito da validação de cartão acima: um item inválido não pode
+    # deixar os itens processados antes dele já mutados (nada foi commitado
+    # ainda, mas é mais claro falhar cedo do que confiar só nisso).
+    for it in dados.itens:
+        if not it.parcelas_diferenca:
+            continue
+        registro = session.get(ContaGerencial, it.lancamento_id)
+        if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
+            continue  # 404 deste item vira "não encontrado" no loop principal
+        if not registro.numero_lancamento:
+            raise HTTPException(
+                status_code=400,
+                detail=f"O lançamento {it.lancamento_id} não tem um número de lançamento válido para parcelar a diferença — use desconto/acréscimo.",
+            )
+        diferenca_item = round(it.valor_pago - (registro.valor_total or 0), 2)
+        soma_parcelas = round(sum(p.valor for p in it.parcelas_diferenca), 2)
+        if round(soma_parcelas - abs(diferenca_item), 2) != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A soma das parcelas do lançamento {it.lancamento_id} precisa bater com a diferença a parcelar",
+            )
+
     baixados = []
     nao_encontrados = []
+    todas_novas: list[ContaGerencial] = []
     for it in dados.itens:
         registro = session.get(ContaGerencial, it.lancamento_id)
         if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
@@ -2522,16 +2568,26 @@ def baixa_lote_detalhada(
             continue
         registro.data_pagamento = it.data_pagamento
         registro.valor_pago = it.valor_pago
-        registro.desconto_acrescimo = round(it.valor_pago - (registro.valor_total or 0), 2)
+        # Com parcelas_diferenca, a diferença inteira migra para as novas
+        # parcelas abaixo — esta baixa não perdoa nem cobra nada sozinha
+        # (mesma regra de pagar_lancamento).
+        registro.desconto_acrescimo = 0 if it.parcelas_diferenca else round(it.valor_pago - (registro.valor_total or 0), 2)
         registro.conta_bancaria = it.conta_bancaria
         registro.forma_pagamento = it.forma_pagamento
         registro.data_vencimento_cartao = it.data_vencimento_cartao if it.forma_pagamento == "credito" else None
         registro.numero_documento_pagamento = it.numero_documento_pagamento
         session.add(registro)
+        if it.parcelas_diferenca:
+            todas_novas.extend(_criar_parcelas_diferenca(session, registro, it.parcelas_diferenca))
         baixados.append(it.lancamento_id)
 
     session.commit()
-    return {"baixados": len(baixados), "nao_encontrados": nao_encontrados}
+    for nova in todas_novas:
+        session.refresh(nova)
+    return {
+        "baixados": len(baixados), "nao_encontrados": nao_encontrados,
+        "parcelas_diferenca_criadas": [n.model_dump() for n in todas_novas],
+    }
 
 
 # Definido DEPOIS de /baixa-lote de propósito: uma rota de segmento único como
@@ -3048,7 +3104,13 @@ async def anexar_arquivo_lancamento_por_id(
 
 @router.post("/lancamentos/anexos-lote", status_code=201)
 async def anexar_comprovante_em_lote(
-    file: UploadFile,
+    # Lista (não um único UploadFile): o banco às vezes manda mais de um
+    # comprovante para a mesma remessa (o PDF da remessa inteira + o
+    # comprovante individual de uma linha, por exemplo), e o usuário pode
+    # querer anexar os dois de uma vez. Um `<input type="file">` com um só
+    # arquivo selecionado chega aqui exatamente do mesmo jeito de antes (lista
+    # de um item) — nenhum chamador com um arquivo só precisa mudar nada.
+    file: list[UploadFile] = File(...),
     # Default "" em vez de obrigatório: uma lista vazia chega aqui como campo
     # ausente no multipart, e o 422 genérico do FastAPI não diria o que fazer.
     lancamento_ids: str = Form(""),
@@ -3056,16 +3118,19 @@ async def anexar_comprovante_em_lote(
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Um comprovante ÚNICO para vários lançamentos pagos de uma vez (ver a
-    aba "Pagamento em lote" em app/financeiro/page.tsx): o banco emite um
-    comprovante só para a remessa inteira, e cada nota daquela remessa precisa
-    exibi-lo no relatório de Contas pagas.
+    """Um ou mais comprovantes para vários lançamentos pagos de uma vez (ver a
+    aba "Pagamento em lote" em app/financeiro/page.tsx): o banco emite
+    comprovante(s) para a remessa inteira, e cada nota daquela remessa precisa
+    exibi-los no relatório de Contas pagas.
 
-    O arquivo sobe UMA vez para o Storage e as N linhas de LancamentoAnexo
-    apontam para o MESMO `caminho_storage` — anexar por lançamento, um a um,
-    duplicaria o mesmo PDF N vezes no bucket. Quem paga o preço dessa escolha
-    é `excluir_anexo`, que por isso só apaga o objeto do Storage quando a
-    linha excluída é a última que o referencia.
+    CADA arquivo sobe UMA vez para o Storage e as N linhas de LancamentoAnexo
+    daquele arquivo apontam para o MESMO `caminho_storage` — anexar por
+    lançamento, um a um, duplicaria o mesmo PDF N vezes no bucket. Quem paga o
+    preço dessa escolha é `excluir_anexo`, que por isso só apaga o objeto do
+    Storage quando a linha excluída é a última que o referencia. Com vários
+    arquivos, cada um tem seu próprio `caminho_storage` (nunca compartilhado
+    entre arquivos diferentes) e cada um gera N linhas de LancamentoAnexo,
+    uma por lançamento do lote.
 
     `lancamento_ids` vem como CSV porque a requisição é multipart (o mesmo
     motivo de `categoria` ser Form): não dá para mandar JSON junto do arquivo.
@@ -3077,45 +3142,59 @@ async def anexar_comprovante_em_lote(
         raise HTTPException(status_code=400, detail="lancamento_ids inválido — esperado uma lista de ids separados por vírgula")
     if not ids:
         raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento para anexar o comprovante")
+    arquivos = [f for f in file if f.filename]
+    if not arquivos:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um arquivo para anexar")
 
-    conteudo = await file.read()
-    if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
-        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
-    nome_arquivo = file.filename or "comprovante"
-    mime = file.content_type or "application/octet-stream"
-
-    # Emite a numeração de todos ANTES de subir o arquivo: se algum id for de
-    # outra fazenda (404), nada foi enviado ao Storage ainda.
+    # Emite a numeração de todos ANTES de subir qualquer arquivo: se algum id
+    # for de outra fazenda (404), nada foi enviado ao Storage ainda.
     contas = [_garantir_numero_lancamento(session, fazenda_id, lid) for lid in ids]
 
-    # O caminho fica ancorado no primeiro lançamento da remessa, seguindo a
-    # convenção de _caminho_anexo_lancamento; os demais só referenciam.
-    caminho = _caminho_anexo_lancamento(session, fazenda_id, contas[0].numero_lancamento, nome_arquivo)
-    try:
-        enviar_arquivo(caminho, conteudo, mime, bucket=settings.supabase_bucket_financeiro)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    criados: list[LancamentoAnexo] = []
+    nomes_arquivos: list[str] = []
+    for arquivo in arquivos:
+        conteudo = await arquivo.read()
+        if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
+            raise HTTPException(status_code=400, detail=f'Arquivo "{arquivo.filename or "comprovante"}" maior que 15 MB — não é possível anexar')
+        nome_arquivo = arquivo.filename or "comprovante"
+        mime = arquivo.content_type or "application/octet-stream"
 
-    criados = []
-    for conta in contas:
-        anexo = LancamentoAnexo(
-            numero_lancamento=conta.numero_lancamento,
-            nome_arquivo=nome_arquivo,
-            mime_type=mime,
-            tamanho_bytes=len(conteudo),
-            categoria=categoria or conta.tipo_documento,
-            caminho_storage=caminho,
-            usuario_id=user.id if isinstance(user, Usuario) else None,
-            fazenda_id=fazenda_id,
-        )
-        session.add(anexo)
-        criados.append(anexo)
+        # O caminho fica ancorado no primeiro lançamento da remessa, seguindo
+        # a convenção de _caminho_anexo_lancamento; os demais só referenciam.
+        # `session.flush()` depois de cada arquivo garante que o próximo
+        # cálculo de sequência (0001_, 0002_...) já enxergue os anexos deste
+        # arquivo, mesmo sem ter commitado ainda.
+        caminho = _caminho_anexo_lancamento(session, fazenda_id, contas[0].numero_lancamento, nome_arquivo)
+        try:
+            enviar_arquivo(caminho, conteudo, mime, bucket=settings.supabase_bucket_financeiro)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        nomes_arquivos.append(nome_arquivo)
+        for conta in contas:
+            anexo = LancamentoAnexo(
+                numero_lancamento=conta.numero_lancamento,
+                nome_arquivo=nome_arquivo,
+                mime_type=mime,
+                tamanho_bytes=len(conteudo),
+                categoria=categoria or conta.tipo_documento,
+                caminho_storage=caminho,
+                usuario_id=user.id if isinstance(user, Usuario) else None,
+                fazenda_id=fazenda_id,
+            )
+            session.add(anexo)
+            criados.append(anexo)
+        session.flush()
+
     session.commit()
     for anexo in criados:
         session.refresh(anexo)
     return {
         "anexados": len(criados),
-        "nome_arquivo": nome_arquivo,
+        "arquivos": nomes_arquivos,
+        # Mantido por compatibilidade com quem só lia o nome de UM arquivo —
+        # é o primeiro da lista (mesmo valor de antes, quando só havia um).
+        "nome_arquivo": nomes_arquivos[0] if nomes_arquivos else None,
         "anexo_ids": [a.id for a in criados],
         "numeros_lancamento": [c.numero_lancamento for c in contas],
     }

@@ -818,6 +818,64 @@ class TestBaixaLote:
                    files={"file": ("comp.pdf", b"x", "application/pdf")}, data={"lancamento_ids": ""})
         assert r.status_code == 400
 
+    # --- Mais de um comprovante no mesmo lote (o banco às vezes emite mais
+    # de um recibo para a mesma remessa) ---
+    def test_varios_comprovantes_em_lote_ficam_todos_vinculados_a_cada_nota(self, client):
+        c, _ = client
+        id1 = self._criar_lancamento(c, 500.0)
+        id2 = self._criar_lancamento(c, 700.0)
+
+        r = c.post(
+            "/financeiro/lancamentos/anexos-lote",
+            files=[
+                ("file", ("remessa.pdf", b"%PDF-1.4 remessa", "application/pdf")),
+                ("file", ("extrato.png", b"png-bytes", "image/png")),
+            ],
+            data={"lancamento_ids": f"{id1},{id2}"},
+        )
+        assert r.status_code == 201, r.text
+        corpo = r.json()
+        assert corpo["anexados"] == 4  # 2 arquivos x 2 lançamentos
+        assert corpo["arquivos"] == ["remessa.pdf", "extrato.png"]
+        assert corpo["nome_arquivo"] == "remessa.pdf"  # compat: primeiro arquivo
+
+        for lid in (id1, id2):
+            anexos = c.get(f"/financeiro/lancamentos/por-id/{lid}/anexos").json()
+            assert sorted(a["nome_arquivo"] for a in anexos) == ["extrato.png", "remessa.pdf"]
+
+    def test_varios_comprovantes_em_lote_cada_arquivo_sobe_uma_vez_so(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 100.0)
+        id2 = self._criar_lancamento(c, 200.0)
+        c.post(
+            "/financeiro/lancamentos/anexos-lote",
+            files=[
+                ("file", ("a.pdf", b"conteudo-a", "application/pdf")),
+                ("file", ("b.pdf", b"conteudo-b", "application/pdf")),
+            ],
+            data={"lancamento_ids": f"{id1},{id2}"},
+        )
+        from fazenda.models.financeiro import LancamentoAnexo
+        with Session(engine) as s:
+            anexos = s.exec(select(LancamentoAnexo)).all()
+        assert len(anexos) == 4  # 2 arquivos x 2 lançamentos
+        caminhos = {a.caminho_storage for a in anexos}
+        assert len(caminhos) == 2  # um caminho por ARQUIVO, não um por linha
+
+    def test_comprovante_unico_em_lote_continua_funcionando(self, client):
+        """Regressão: quem manda um único arquivo (campo "file" de sempre)
+        continua funcionando exatamente como antes."""
+        c, _ = client
+        id1 = self._criar_lancamento(c, 500.0)
+        r = c.post("/financeiro/lancamentos/anexos-lote",
+                   files={"file": ("comprovante.pdf", b"%PDF-1.4 comprovante", "application/pdf")},
+                   data={"lancamento_ids": str(id1)})
+        assert r.status_code == 201, r.text
+        corpo = r.json()
+        assert corpo["anexados"] == 1
+        assert corpo["arquivos"] == ["comprovante.pdf"]
+        assert corpo["nome_arquivo"] == "comprovante.pdf"
+
     def test_lancamento_com_comprovante_marcado_na_listagem(self, client):
         c, _ = client
         id1 = self._criar_lancamento(c, 100.0)
@@ -1058,6 +1116,66 @@ class TestBaixaLoteDetalhada:
         c, engine = client
         r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": []})
         assert r.status_code == 400
+
+    # --- Diferença de valor por linha: desconto/acréscimo (padrão) x saldo
+    # avulso (parcelas_diferenca, mesmo mecanismo da baixa individual) ---
+    def test_diferenca_por_linha_sem_parcelas_diferenca_continua_virando_desconto(self, client):
+        """Regressão: sem optar por parcelar, o comportamento de sempre
+        (desconto/acréscimo direto na própria nota) continua intacto."""
+        c, engine = client
+        id1 = self._criar(c, 1000.0)
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {"lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix"},
+        ]})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["parcelas_diferenca_criadas"] == []
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["desconto_acrescimo"] == -200.0
+        assert lancs[id1]["parcela_total"] == 1  # nenhuma parcela nova criada
+
+    def test_diferenca_por_linha_com_saldo_avulso_cria_nova_parcela_e_zera_desconto(self, client):
+        c, engine = client
+        id1 = self._criar(c, 1000.0)
+        id2 = self._criar(c, 500.0)  # paga integralmente — não deve gerar nada extra
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {
+                "lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+                "parcelas_diferenca": [{"data_vencimento": "2026-08-08", "valor": 200.0}],
+            },
+            {"lancamento_id": id2, "data_pagamento": "2026-07-08", "valor_pago": 500.0, "forma_pagamento": "pix"},
+        ]})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["baixados"] == 2
+        novas = corpo["parcelas_diferenca_criadas"]
+        assert len(novas) == 1
+        assert novas[0]["valor_total"] == 200.0
+        assert novas[0]["data_vencimento"] == "2026-08-08"
+        assert novas[0]["data_pagamento"] is None  # nasce em aberto
+        assert novas[0]["parcela_num"] == 2 and novas[0]["parcela_total"] == 2
+
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["valor_pago"] == 800.0
+        assert lancs[id1]["desconto_acrescimo"] == 0  # diferença reparcelada, não perdoada
+        assert lancs[id1]["parcela_total"] == 2
+        # A outra nota do mesmo lote, sem diferença, não é afetada.
+        assert lancs[id2]["desconto_acrescimo"] == 0.0
+        assert lancs[id2]["parcela_total"] == 1
+
+    def test_diferenca_por_linha_soma_das_parcelas_precisa_bater(self, client):
+        c, engine = client
+        id1 = self._criar(c, 1000.0)
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {
+                "lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 800.0, "forma_pagamento": "pix",
+                "parcelas_diferenca": [{"data_vencimento": "2026-08-08", "valor": 150.0}],  # deveria ser 200
+            },
+        ]})
+        assert r.status_code == 400
+        # Nada deve ter sido alterado — a validação falhou antes de qualquer commit.
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["valor_pago"] is None
 
 
 class TestReciboLancamento:

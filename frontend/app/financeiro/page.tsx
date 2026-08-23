@@ -1111,17 +1111,29 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
   const [numeroComprovante, setNumeroComprovante] = useState("");
   // "unico" = mesmo pagamento p/ todas; "linha" = data/valor/conta/forma por nota.
   const [modoLote, setModoLote] = useState<"unico" | "linha">("unico");
-  type LinhaPag = { data: string; valor: string; conta: string; forma: string; vencCartao: string; comprovante: string };
+  type LinhaPag = {
+    data: string; valor: string; conta: string; forma: string; vencCartao: string; comprovante: string;
+    // O que fazer com a diferença entre `valor` e o valor_total da nota, no
+    // modo "Ajustar por linha": `null` = ainda não decidido (nunca um
+    // default silencioso — ver darBaixaEmLote, que bloqueia o salvamento
+    // enquanto houver linha com diferença e sem decisão). "desconto" = vira
+    // desconto/acréscimo nesta própria nota (comportamento de sempre).
+    // "saldo" = cria uma nova conta a pagar/receber com o restante (mesmo
+    // mecanismo de "parcelar a diferença" da baixa individual).
+    modoDiferenca: "desconto" | "saldo" | null;
+    vencSaldo: string; // vencimento da nova conta, só quando modoDiferenca === "saldo"
+  };
   const [porLinha, setPorLinha] = useState<Record<number, LinhaPag>>({});
   const patchLinha = (id: number, patch: Partial<LinhaPag>) => setPorLinha((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
-  // Comprovante em ARQUIVO da remessa — o banco emite um só para o lote
-  // inteiro, e ele precisa aparecer em todas as notas daquele pagamento no
+  // Comprovante(s) em ARQUIVO da remessa — o banco às vezes emite mais de um
+  // para o mesmo lote (o PDF da remessa inteira + o comprovante de uma linha,
+  // por exemplo), e todos precisam aparecer em cada nota daquele pagamento no
   // relatório de Contas pagas. Diferente de `numeroComprovante`, que é apenas
-  // o número digitado. Sobe DEPOIS da baixa confirmada: sem baixa não há o
+  // o número digitado. Sobem DEPOIS da baixa confirmada: sem baixa não há o
   // que comprovar, e assim uma falha no upload nunca desfaz o pagamento.
-  const [comprovanteArquivo, setComprovanteArquivo] = useState<File | null>(null);
+  const [comprovantesArquivos, setComprovantesArquivos] = useState<File[]>([]);
   const [anexarAberto, setAnexarAberto] = useState(false);
   const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
@@ -1171,7 +1183,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
     setPorLinha((p) => {
       const n = { ...p };
       for (const r of notasSelecionadas) {
-        if (!n[r.id]) n[r.id] = { data: dataPagamento, valor: String(r.valor), conta: contaBancaria, forma: formaPagamento, vencCartao: "", comprovante: "" };
+        if (!n[r.id]) n[r.id] = { data: dataPagamento, valor: String(r.valor), conta: contaBancaria, forma: formaPagamento, vencCartao: "", comprovante: "", modoDiferenca: null, vencSaldo: "" };
       }
       return n;
     });
@@ -1198,14 +1210,33 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
         for (const n of notasSelecionadas) {
           const l = porLinha[n.id];
           if (l?.forma === "credito" && !l.vencCartao) { setMsg({ tipo: "erro", texto: `Informe o vencimento do cartão da nota ${n.numero_documento || n.numero_lancamento || n.id}.` }); setSalvando(false); return; }
+          // Diferença entre valor pago e valor da nota: nunca um default
+          // silencioso — se ainda não foi decidido o que fazer (radio na
+          // linha de diferença, logo abaixo da nota na tabela), a baixa é
+          // bloqueada aqui em vez de assumir desconto/acréscimo sozinha.
+          const diferencaLinha = Math.round(((Number(l?.valor) || 0) - n.valor) * 100) / 100;
+          if (diferencaLinha !== 0 && !l?.modoDiferenca) {
+            setMsg({ tipo: "erro", texto: `Escolha o que fazer com a diferença de ${formatBRL(Math.abs(diferencaLinha))} da nota ${n.numero_documento || n.numero_lancamento || n.id} antes de dar baixa.` });
+            setSalvando(false);
+            return;
+          }
+          if (diferencaLinha !== 0 && l?.modoDiferenca === "saldo" && !l.vencSaldo) {
+            setMsg({ tipo: "erro", texto: `Informe o vencimento da nova conta com o saldo da nota ${n.numero_documento || n.numero_lancamento || n.id}.` });
+            setSalvando(false);
+            return;
+          }
         }
         r = await criarBaixaLoteDetalhada(notasSelecionadas.map((n) => {
           const l = porLinha[n.id];
+          const diferencaLinha = Math.round(((Number(l?.valor) || 0) - n.valor) * 100) / 100;
           return {
             lancamento_id: n.id, data_pagamento: l?.data || dataPagamento, valor_pago: Number(l?.valor) || 0,
             conta_bancaria: l?.conta || undefined, forma_pagamento: l?.forma || undefined,
             data_vencimento_cartao: l?.forma === "credito" ? l.vencCartao : undefined,
             numero_documento_pagamento: l?.comprovante || undefined,
+            parcelas_diferenca: diferencaLinha !== 0 && l?.modoDiferenca === "saldo"
+              ? [{ data_vencimento: l.vencSaldo, valor: Math.abs(diferencaLinha) }]
+              : undefined,
           };
         }));
       } else {
@@ -1217,23 +1248,24 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           numero_documento_pagamento: numeroComprovante || undefined,
         });
       }
-      // Comprovante do lote: sobe DEPOIS da baixa, sobre os ids que acabaram
-      // de ser baixados. Se o upload falhar, a baixa continua valendo — o
-      // aviso diferencia os dois casos para o usuário saber o que refazer.
+      // Comprovante(s) do lote: sobem DEPOIS da baixa, sobre os ids que
+      // acabaram de ser baixados. Se o upload falhar, a baixa continua
+      // valendo — o aviso diferencia os dois casos para o usuário saber o
+      // que refazer.
       let aviso = `${r.baixados} lançamento(s) baixado(s) com sucesso.`;
-      if (comprovanteArquivo) {
+      if (comprovantesArquivos.length > 0) {
         try {
-          const a = await anexarComprovanteEmLote(Array.from(selecionados), comprovanteArquivo);
-          aviso += ` Comprovante "${a.nome_arquivo}" anexado a ${a.anexados} lançamento(s).`;
+          const a = await anexarComprovanteEmLote(Array.from(selecionados), comprovantesArquivos);
+          aviso += ` ${a.arquivos.length} comprovante(s) anexado(s) a ${a.anexados} lançamento(s) no total.`;
         } catch (e: any) {
-          setMsg({ tipo: "erro", texto: `Baixa concluída, mas o comprovante não foi anexado: ${e.message}. Anexe pela tela de pagamento.` });
-          setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
+          setMsg({ tipo: "erro", texto: `Baixa concluída, mas o(s) comprovante(s) não foram anexados: ${e.message}. Anexe pela tela de pagamento.` });
+          setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovantesArquivos([]);
           carregar(); onFeito?.();
           return;
         }
       }
       setMsg({ tipo: "sucesso", texto: aviso });
-      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovanteArquivo(null);
+      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({}); setComprovantesArquivos([]);
       carregar();
       onFeito?.();
     } catch (e: any) {
@@ -1395,7 +1427,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
           ) : (
             <div className="mb-3">
               <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-                Cada nota com sua própria data, valor, conta e forma. Valor diferente do total vira desconto/acréscimo.
+                Cada nota com sua própria data, valor, conta e forma. Valor diferente do total pede uma decisão
+                (desconto/acréscimo ou nova conta com o saldo) antes de dar baixa.
                 Total a pagar: <strong style={{ color: "var(--text)" }}>{formatBRL(totalPagoLinha)}</strong> (de {formatBRL(totalSelecionado)}).
               </p>
               <div className="overflow-x-auto" style={{ maxHeight: "340px" }}>
@@ -1406,7 +1439,8 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                   </tr></thead>
                   <tbody>
                     {notasSelecionadas.map((n) => {
-                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "" };
+                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "", modoDiferenca: null, vencSaldo: "" };
+                      const diferencaLinha = Math.round(((Number(l.valor) || 0) - n.valor) * 100) / 100;
                       return (
                         <tr key={n.id}>
                           <td style={{ maxWidth: 180 }}>
@@ -1431,32 +1465,74 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
                         </tr>
                       );
                     })}
+                    {/* Linha de decisão — só aparece quando o valor pago desta
+                        nota difere do valor_total dela. Nunca um default
+                        silencioso: modoDiferenca nasce `null` (ver o efeito
+                        que preenche porLinha) e darBaixaEmLote bloqueia o
+                        salvamento enquanto alguma diferença ficar sem
+                        escolha — mesmas duas opções da baixa individual
+                        (Tratar pagamento/recebimento), aqui por linha. */}
+                    {notasSelecionadas.map((n) => {
+                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "", modoDiferenca: null, vencSaldo: "" };
+                      const diferencaLinha = Math.round(((Number(l.valor) || 0) - n.valor) * 100) / 100;
+                      if (diferencaLinha === 0) return null;
+                      return (
+                        <tr key={`dif-${n.id}`}>
+                          <td colSpan={7} style={{ background: "var(--surface-2)", padding: "0.5rem 0.7rem" }}>
+                            <p style={{ margin: "0 0 0.35rem", fontSize: "0.74rem", color: diferencaLinha < 0 ? "var(--green-light)" : "var(--amber)" }}>
+                              {n.numero_documento || n.numero_lancamento || "Nota"}: {diferencaLinha < 0 ? `desconto de ${formatBRL(Math.abs(diferencaLinha))}` : `acréscimo de ${formatBRL(diferencaLinha)}`} em relação ao valor da nota. O que fazer com a diferença?
+                            </p>
+                            <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
+                              <label className="flex items-center gap-2" style={{ fontSize: "0.76rem", cursor: "pointer" }}>
+                                <input type="radio" name={`dif-${n.id}`} checked={l.modoDiferenca === "desconto"} onChange={() => patchLinha(n.id, { modoDiferenca: "desconto" })} />
+                                Lançar {diferencaLinha < 0 ? "desconto" : "acréscimo"} nesta nota
+                              </label>
+                              <label className="flex items-center gap-2" style={{ fontSize: "0.76rem", cursor: "pointer" }}>
+                                <input type="radio" name={`dif-${n.id}`} checked={l.modoDiferenca === "saldo"} onChange={() => patchLinha(n.id, { modoDiferenca: "saldo", vencSaldo: l.vencSaldo || dividirDiferenca(Math.abs(diferencaLinha), 1, l.data)[0].data_vencimento })} />
+                                Criar nova conta com o saldo de {formatBRL(Math.abs(diferencaLinha))}
+                              </label>
+                              {l.modoDiferenca === "saldo" && (
+                                <label className="flex items-center gap-2" style={{ fontSize: "0.76rem" }}>
+                                  Vencimento:
+                                  <input type="date" style={{ ...selStyleLote, minWidth: 130 }} value={l.vencSaldo} onChange={(e) => patchLinha(n.id, { vencSaldo: e.target.value })} />
+                                </label>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
-          {/* Comprovante único da remessa — vale para os dois modos (pagamento
+          {/* Comprovante(s) da remessa — vale para os dois modos (pagamento
               igual para todas ou linha a linha): o que define o lote é a
               seleção, não o modo. Fica fora do card de "pagamento único" por
-              isso. */}
+              isso. Mais de um arquivo é aceito (o banco às vezes emite mais
+              de um recibo pra mesma remessa) — todos ficam vinculados a
+              todas as notas selecionadas. */}
           {selecionados.size > 0 && (
             <div className="card mb-4">
-              <div className="card-header mb-2">Comprovante do lote <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.75rem" }}>(opcional)</span></div>
+              <div className="card-header mb-2">Comprovante(s) do lote <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.75rem" }}>(opcional)</span></div>
               <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>
-                Um arquivo só — o mesmo comprovante fica vinculado às {selecionados.size} nota(s) selecionada(s) e aparece
+                Cada arquivo anexado aqui fica vinculado às {selecionados.size} nota(s) selecionada(s) e aparece
                 no relatório de Contas pagas de cada uma.
               </p>
-              {comprovanteArquivo ? (
-                <div className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
-                  <FileText size={14} style={{ color: "var(--dourado-light)" }} />
-                  <span>{comprovanteArquivo.name}</span>
-                  <button type="button" onClick={() => setComprovanteArquivo(null)} className="btn-ghost" title="Remover comprovante" aria-label="Remover comprovante"><X size={14} /></button>
-                </div>
-              ) : (
-                <Dropzone compact label="Arraste o comprovante do pagamento" hint="PDF ou imagem, até 15 MB"
-                  onFiles={(fs) => setComprovanteArquivo(fs[0] || null)} />
+              {comprovantesArquivos.length > 0 && (
+                <ul style={{ listStyle: "none", padding: 0, margin: "0 0 0.6rem" }}>
+                  {comprovantesArquivos.map((f, i) => (
+                    <li key={`${f.name}-${i}`} className="flex items-center gap-2" style={{ fontSize: "0.8rem", padding: "0.15rem 0" }}>
+                      <FileText size={14} style={{ color: "var(--dourado-light)" }} />
+                      <span>{f.name}</span>
+                      <button type="button" onClick={() => setComprovantesArquivos((p) => p.filter((_, j) => j !== i))} className="btn-ghost" title="Remover este comprovante" aria-label="Remover este comprovante"><X size={14} /></button>
+                    </li>
+                  ))}
+                </ul>
               )}
+              <Dropzone compact multiple label="Arraste o(s) comprovante(s) do pagamento" hint="PDF ou imagem, até 15 MB cada"
+                onFiles={(fs) => setComprovantesArquivos((p) => [...p, ...fs])} />
             </div>
           )}
           {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
