@@ -721,18 +721,14 @@ textarea:focus-visible, [tabindex]:focus-visible {
     top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
   }
 }
-/* Os formulários de components/lancamentos/* foram desenhados pro card cheio
-   de antes (grids Tailwind grid-cols-2/3/4, md:/lg:grid-cols-N lado a lado) —
-   e o breakpoint md:/lg: reage à largura da JANELA, não à da gaveta: numa
-   janela de desktop eles continuam ativos mesmo dentro dos 330px, espremendo
-   cada campo a ponto de cortar o texto (um <select> de opções vira "Sel",
-   "Cor"...). Em vez de editar os ~40 grids espalhados pelos formulários,
-   força 1 coluna só para qualquer grid dentro da gaveta — é só reformatar o
-   container, exatamente o tipo de mudança que este ticket permite (T2: só
-   ordem/densidade/formato, nenhum campo sai do lugar). */
-.gaveta-lancamento-corpo [class*="grid-cols-"] {
-  grid-template-columns: 1fr !important;
-}
+/* Os formulários de components/lancamentos/* usam grids Tailwind
+   (grid-cols-2/3/4, md:/lg:grid-cols-N) que reagem à largura da JANELA, não
+   à da gaveta. Enquanto a gaveta tinha ~330px fixos, isso espremia cada
+   campo (um <select> de opções virava "Sel", "Cor"...) e por isso havia aqui
+   uma força de 1 coluna só. A gaveta agora abre com 65–75% da tela (ver
+   GavetaLancamento.tsx) — largura real o bastante para os mesmos grids
+   md:/lg: caberem lado a lado sem cramping, então a força foi removida: os
+   ~40 grids espalhados pelos formulários voltam a funcionar como desenhados. */
 
 /* Verde luminoso com brilho — para tendências positivas e metas batidas. */
 .glow-verde { color: var(--verde-neon) !important; filter: var(--verde-glow); }
