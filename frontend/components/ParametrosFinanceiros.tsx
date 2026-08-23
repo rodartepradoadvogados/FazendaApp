@@ -1,8 +1,9 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal } from "lucide-react";
+import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal, ArrowLeftRight } from "lucide-react";
 import {
   fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
+  criarTransferenciaContas,
   fetchCentrosCusto, criarCentroCusto, atualizarCentroCusto,
   fetchPlanoContas, criarContaGerencial, atualizarContaGerencial,
   fetchTiposDocumentoCadastro, criarTipoDocumento, atualizarTipoDocumento,
@@ -69,9 +70,17 @@ export default function ParametrosFinanceiros() {
 }
 
 // ---------------------------------------------------------------------------
-type ContaCorrente = { id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string };
+type ContaCorrente = { id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string; saldo: number };
 type FormConta = { banco: string; agencia: string; numero_conta: string; ativo: boolean };
 const formContaVazio: FormConta = { banco: "", agencia: "", numero_conta: "", ativo: true };
+
+function fmtSaldo(v: number): string {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+type FormTransferencia = { conta_origem_id: string; conta_destino_id: string; valor: string; data: string; observacao: string };
+const hoje = () => new Date().toISOString().slice(0, 10);
+const formTransferenciaVazio = (): FormTransferencia => ({ conta_origem_id: "", conta_destino_id: "", valor: "", data: hoje(), observacao: "" });
 
 function ContasCorrentes() {
   const [itens, setItens] = useState<ContaCorrente[] | null>(null);
@@ -80,6 +89,11 @@ function ContasCorrentes() {
   const [form, setForm] = useState<FormConta>(formContaVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  const [transferindo, setTransferindo] = useState(false);
+  const [formTransf, setFormTransf] = useState<FormTransferencia>(formTransferenciaVazio());
+  const [salvandoTransf, setSalvandoTransf] = useState(false);
+  const [msgTransf, setMsgTransf] = useState<string | null>(null);
 
   const carregar = () => fetchContasCorrentes().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -104,17 +118,85 @@ function ContasCorrentes() {
     }
   };
 
+  const abrirTransferencia = () => { setFormTransf(formTransferenciaVazio()); setTransferindo(true); setMsgTransf(null); };
+  const cancelarTransferencia = () => { setTransferindo(false); setMsgTransf(null); };
+
+  const salvarTransferencia = async () => {
+    const valor = parseFloat(formTransf.valor.replace(",", "."));
+    if (!formTransf.conta_origem_id || !formTransf.conta_destino_id) { setMsgTransf("Selecione a conta de origem e a de destino."); return; }
+    if (formTransf.conta_origem_id === formTransf.conta_destino_id) { setMsgTransf("A conta de origem e a de destino precisam ser diferentes."); return; }
+    if (!valor || valor <= 0) { setMsgTransf("Informe um valor maior que zero."); return; }
+    if (!formTransf.data) { setMsgTransf("Informe a data da transferência."); return; }
+    setSalvandoTransf(true); setMsgTransf(null);
+    try {
+      await criarTransferenciaContas({
+        conta_origem_id: Number(formTransf.conta_origem_id),
+        conta_destino_id: Number(formTransf.conta_destino_id),
+        valor,
+        data: formTransf.data,
+        observacao: formTransf.observacao.trim() || undefined,
+      });
+      setTransferindo(false);
+      await carregar();
+    } catch (e: any) {
+      setMsgTransf(e.message || "Erro ao transferir entre contas");
+    } finally {
+      setSalvandoTransf(false);
+    }
+  };
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
         <span className="flex items-center gap-2"><Landmark size={16} /> Contas correntes</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirTransferencia} disabled={!itens || itens.length < 2}>
+            <ArrowLeftRight size={14} /> Transferir entre contas
+          </button>
+          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+            <Plus size={14} /> Novo
+          </button>
+        </div>
       </div>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {transferindo && (
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
+          <p style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.75rem" }}>Transferir entre contas</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div>
+              <label style={labelStyle}>Conta de origem</label>
+              <select style={inputStyle} value={formTransf.conta_origem_id} onChange={(e) => setFormTransf({ ...formTransf, conta_origem_id: e.target.value })}>
+                <option value="">Selecione…</option>
+                {(itens ?? []).map((c) => <option key={c.id} value={c.id}>{c.rotulo} ({fmtSaldo(c.saldo)})</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Conta de destino</label>
+              <select style={inputStyle} value={formTransf.conta_destino_id} onChange={(e) => setFormTransf({ ...formTransf, conta_destino_id: e.target.value })}>
+                <option value="">Selecione…</option>
+                {(itens ?? []).map((c) => <option key={c.id} value={c.id}>{c.rotulo} ({fmtSaldo(c.saldo)})</option>)}
+              </select>
+            </div>
+            <div><label style={labelStyle}>Valor</label>
+              <input style={inputStyle} type="number" step="0.01" min="0.01" value={formTransf.valor} onChange={(e) => setFormTransf({ ...formTransf, valor: e.target.value })} /></div>
+            <div><label style={labelStyle}>Data</label>
+              <input style={inputStyle} type="date" value={formTransf.data} onChange={(e) => setFormTransf({ ...formTransf, data: e.target.value })} /></div>
+            <div className="col-span-2 md:col-span-4"><label style={labelStyle}>Observação (opcional)</label>
+              <input style={inputStyle} value={formTransf.observacao} onChange={(e) => setFormTransf({ ...formTransf, observacao: e.target.value })} /></div>
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: "0.5rem" }}>
+            Movimenta o saldo das duas contas — não entra como despesa nem receita no DRE.
+          </p>
+          {msgTransf && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msgTransf}</p>}
+          <div className="flex items-center gap-2">
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvarTransferencia} disabled={salvandoTransf}><Check size={14} /> {salvandoTransf ? "Transferindo…" : "Transferir"}</button>
+            <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelarTransferencia}><X size={14} /> Cancelar</button>
+          </div>
+        </div>
+      )}
 
       {editando === "novo" && (
         <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
@@ -140,6 +222,7 @@ function ContasCorrentes() {
               <ThOrdenavel label="Banco" campo="banco" coluna={coluna} dir={dir} ordenar={ordenar} />
               <ThOrdenavel label="Agência" campo="agencia" coluna={coluna} dir={dir} ordenar={ordenar} />
               <ThOrdenavel label="Nº da conta" campo="numero_conta" coluna={coluna} dir={dir} ordenar={ordenar} />
+              <ThOrdenavel label="Saldo" campo="saldo" coluna={coluna} dir={dir} ordenar={ordenar} />
               <th></th>
             </tr></thead>
             <tbody>
@@ -149,12 +232,13 @@ function ContasCorrentes() {
                     <td style={{ fontWeight: 700 }}>{c.banco}{!c.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
                     <td style={{ fontSize: "0.78rem" }}>{c.agencia}</td>
                     <td style={{ fontSize: "0.78rem" }}>{c.numero_conta}</td>
+                    <td style={{ fontSize: "0.78rem", color: c.saldo < 0 ? "var(--red)" : "var(--text)" }}>{fmtSaldo(c.saldo)}</td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /> Editar</button>
                     </td>
                   </tr>
                   {editando === c.id && (
-                    <tr><td colSpan={4} style={{ padding: 0 }}>
+                    <tr><td colSpan={5} style={{ padding: 0 }}>
                       <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", margin: "0.5rem 0" }}>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                           <div><label style={labelStyle}>Banco</label><input style={inputStyle} value={form.banco} onChange={(e) => setForm({ ...form, banco: e.target.value })} /></div>
@@ -173,7 +257,7 @@ function ContasCorrentes() {
                   )}
                 </Fragment>
               ))}
-              {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma conta corrente cadastrada ainda.</td></tr>}
+              {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma conta corrente cadastrada ainda.</td></tr>}
             </tbody>
           </table>
         </div>

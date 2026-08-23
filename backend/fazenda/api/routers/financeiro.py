@@ -20,7 +20,7 @@ from fazenda.models import (
     CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
     FornecedorClienteApelido,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
-    SeedFlag, Servico, TipoDocumento, Usuario, ValeAvulso, ValeFuncionario,
+    SeedFlag, Servico, TipoDocumento, TransferenciaContas, Usuario, ValeAvulso, ValeFuncionario,
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -66,6 +66,52 @@ SEED_CONTAS_CORRENTES = [
 
 def rotulo_conta_corrente(c: ContaCorrente) -> str:
     return f"{c.banco} · Agência {c.agencia} · Conta corrente {c.numero_conta}"
+
+
+def calcular_saldos_contas_correntes(
+    session: Session, contas: list[ContaCorrente], fazenda_id: int | None,
+) -> dict[int, float]:
+    """
+    Saldo "entradas − saídas" de cada conta corrente — nunca persistido,
+    sempre calculado (mesmo padrão do resto do sistema, ex. saldo de estoque
+    em fazenda/rules/estoque.py), a partir de duas fontes:
+
+    1. ContaGerencial já pago (valor_pago) cujo `conta_bancaria` (string
+       livre, preenchida na baixa — ver pagar_lancamento/criar_lancamento)
+       bate com o rótulo da conta: despesa subtrai, receita soma.
+    2. TransferenciaContas onde a conta é origem (subtrai) ou destino (soma).
+    """
+    if not contas:
+        return {}
+    saldos: dict[int, float] = {c.id: 0.0 for c in contas}
+    rotulo_por_id = {c.id: rotulo_conta_corrente(c) for c in contas}
+    ids_por_rotulo: dict[str, list[int]] = {}
+    for cid, rotulo in rotulo_por_id.items():
+        ids_por_rotulo.setdefault(rotulo, []).append(cid)
+
+    query = select(ContaGerencial.conta_bancaria, ContaGerencial.tipo, ContaGerencial.valor_pago).where(
+        ContaGerencial.conta_bancaria.in_(list(ids_por_rotulo.keys())),
+        ContaGerencial.data_pagamento != None,  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    for rotulo, tipo, valor_pago in session.exec(query).all():
+        if not valor_pago:
+            continue
+        sinal = 1.0 if tipo == "receita" else -1.0
+        for cid in ids_por_rotulo.get(rotulo, []):
+            saldos[cid] += sinal * valor_pago
+
+    query_transf = select(TransferenciaContas)
+    if fazenda_id is not None:
+        query_transf = query_transf.where(TransferenciaContas.fazenda_id == fazenda_id)
+    for t in session.exec(query_transf).all():
+        if t.conta_origem_id in saldos:
+            saldos[t.conta_origem_id] -= t.valor
+        if t.conta_destino_id in saldos:
+            saldos[t.conta_destino_id] += t.valor
+
+    return {cid: round(v, 2) for cid, v in saldos.items()}
 
 
 def seed_parametros_financeiros(session: Session) -> None:
@@ -924,7 +970,8 @@ def listar_contas_correntes(
     if fazenda_id is not None:
         query = query.where(ContaCorrente.fazenda_id == fazenda_id)
     contas = session.exec(query.order_by(ContaCorrente.banco, ContaCorrente.agencia)).all()
-    return [{**c.model_dump(), "rotulo": rotulo_conta_corrente(c)} for c in contas]
+    saldos = calcular_saldos_contas_correntes(session, contas, fazenda_id)
+    return [{**c.model_dump(), "rotulo": rotulo_conta_corrente(c), "saldo": saldos.get(c.id, 0.0)} for c in contas]
 
 
 @router.post("/contas-correntes")
@@ -935,7 +982,7 @@ def criar_conta_corrente(
     session.add(c)
     session.commit()
     session.refresh(c)
-    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c)}
+    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c), "saldo": 0.0}
 
 
 @router.put("/contas-correntes/{conta_id}")
@@ -951,7 +998,68 @@ def atualizar_conta_corrente(
     session.add(c)
     session.commit()
     session.refresh(c)
-    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c)}
+    saldo = calcular_saldos_contas_correntes(session, [c], fazenda_id).get(c.id, 0.0)
+    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c), "saldo": saldo}
+
+
+class TransferenciaContasIn(BaseModel):
+    conta_origem_id: int
+    conta_destino_id: int
+    valor: float
+    data: date
+    observacao: Optional[str] = None
+
+
+@router.get("/contas-correntes/transferencias")
+def listar_transferencias_contas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    query = select(TransferenciaContas)
+    if fazenda_id is not None:
+        query = query.where(TransferenciaContas.fazenda_id == fazenda_id)
+    itens = session.exec(query.order_by(TransferenciaContas.data.desc(), TransferenciaContas.id.desc())).all()
+    return [t.model_dump() for t in itens]
+
+
+@router.post("/contas-correntes/transferencias", status_code=201)
+def criar_transferencia_contas(
+    dados: TransferenciaContasIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """
+    Transferência entre contas correntes cadastradas (Configurações >
+    Parâmetros financeiros > Conta corrente > "Transferir entre contas") —
+    dinheiro sai de uma conta própria e entra em outra, não é despesa nem
+    receita da fazenda: não gera ContaGerencial nenhum, então fica fora do
+    DRE e dos relatórios gerenciais; só ajusta o saldo calculado das duas
+    contas (ver calcular_saldos_contas_correntes).
+    """
+    if dados.conta_origem_id == dados.conta_destino_id:
+        raise HTTPException(status_code=400, detail="Conta de origem e destino precisam ser diferentes")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="O valor da transferência deve ser positivo")
+
+    origem = session.get(ContaCorrente, dados.conta_origem_id)
+    destino = session.get(ContaCorrente, dados.conta_destino_id)
+    if not origem or (fazenda_id is not None and origem.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Conta de origem não encontrada")
+    if not destino or (fazenda_id is not None and destino.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Conta de destino não encontrada")
+
+    t = TransferenciaContas(
+        conta_origem_id=dados.conta_origem_id,
+        conta_destino_id=dados.conta_destino_id,
+        valor=round(dados.valor, 2),
+        data=dados.data,
+        observacao=(dados.observacao or None),
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+        fazenda_id=fazenda_id,
+    )
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+    return t.model_dump()
 
 
 class CentroCustoIn(BaseModel):
