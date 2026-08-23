@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope } from "lucide-react";
+import { Wallet, Landmark, Tags, BookOpen, FileText, CreditCard, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown, Stethoscope, SlidersHorizontal } from "lucide-react";
 import {
   fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
   fetchCentrosCusto, criarCentroCusto, atualizarCentroCusto,
@@ -11,8 +11,10 @@ import {
 } from "@/lib/api";
 import { nivelDaConta, estiloNivel, filhosDiretos } from "@/lib/contaGerencial";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { GruposParametrosCards } from "@/components/GruposParametrosCards";
 
 const ABAS = [
+  ["parametros", "Parâmetros", SlidersHorizontal],
   ["contas", "Conta corrente", Landmark],
   ["centros", "Centro de custo", Tags],
   ["gerenciais", "Conta gerencial", BookOpen],
@@ -25,7 +27,7 @@ const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surf
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 export default function ParametrosFinanceiros() {
-  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("contas");
+  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("parametros");
 
   return (
     <div className="p-6 animate-in">
@@ -48,6 +50,14 @@ export default function ParametrosFinanceiros() {
         ))}
       </div>
 
+      {aba === "parametros" && (
+        <div className="mb-2">
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+            RMCA mínimo aceitável, nome do laticínio (para a receita de leite reconhecer o RMCA) e os parâmetros de folha de pagamento/RH.
+          </p>
+          <GruposParametrosCards filtro={(id) => id === "financeiro" || id === "folha_rh"} />
+        </div>
+      )}
       {aba === "contas" && <ContasCorrentes />}
       {aba === "centros" && <CentrosCusto />}
       {aba === "gerenciais" && <ContasGerenciais />}
