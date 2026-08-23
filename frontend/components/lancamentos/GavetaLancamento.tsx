@@ -91,10 +91,13 @@ export function GavetaLancamento({
           // espaço de verdade para não ficar cramped (ver comentário em
           // globals.css sobre a força de 1 coluna que existia antes disto).
           position: "fixed", bottom: 0, right: aberto ? 0 : "-100vw",
-          width: "min(87vw, 1440px)", minWidth: "min(330px, 100vw)", zIndex: 65,
+          width: "min(80vw, 1320px)", minWidth: "min(330px, 100vw)", zIndex: 65,
           background: "var(--surface)", borderLeft: "1px solid var(--border)",
           boxShadow: "-6px 0 20px rgba(20,30,45,0.18)",
           display: "flex", flexDirection: "column",
+          // Desliza entrando da direita pra esquerda (abrir) e saindo da
+          // esquerda pra direita (fechar) — mesma curva do scrim.
+          transition: "right 0.28s cubic-bezier(0.4, 0, 0.2, 1)",
         }}
       >
         <header style={{
