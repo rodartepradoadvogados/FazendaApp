@@ -2,6 +2,33 @@
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 
+const DURACAO_SLIDE_MS = 280;
+
+/** Anima a troca de etapa: a etapa anterior arrasta pra fora (esquerda ao
+ * avançar, direita ao voltar) enquanto a nova entra do lado oposto, uma
+ * dando lugar à outra — em vez da troca instantânea de antes. `direcao`
+ * é 1 ao avançar (Continuar) e -1 ao voltar (Voltar). */
+function useTransicaoDeEtapa(passoAtual: number) {
+  const [saindo, setSaindo] = useState<{ idx: number; direcao: 1 | -1 } | null>(null);
+  const [ativo, setAtivo] = useState(false);
+  const anteriorRef = useRef(passoAtual);
+
+  useEffect(() => {
+    if (passoAtual === anteriorRef.current) return;
+    const direcao: 1 | -1 = passoAtual > anteriorRef.current ? 1 : -1;
+    setSaindo({ idx: anteriorRef.current, direcao });
+    setAtivo(false);
+    anteriorRef.current = passoAtual;
+    // Monta no offset inicial primeiro, só ativa a transição no frame seguinte
+    // (senão o navegador não anima — já nasceria na posição final).
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setAtivo(true)));
+    const t = setTimeout(() => setSaindo(null), DURACAO_SLIDE_MS);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); };
+  }, [passoAtual]);
+
+  return { saindo, ativo };
+}
+
 /**
  * Formato "wizard" do Cadastro de protocolos (redesign "Cooperativa", T5) —
  * componente ÚNICO reaproveitado pelos 6 tipos de molde da Central de
@@ -151,6 +178,7 @@ export function WizardProtocolo<F>({
 
   const ultimo = passoAtual === passos.length - 1;
   const passoAtualDef = passos[passoAtual];
+  const { saindo, ativo } = useTransicaoDeEtapa(passoAtual);
 
   return (
     <div>
@@ -198,8 +226,22 @@ export function WizardProtocolo<F>({
         </div>
       </div>
 
-      <div style={{ minHeight: "12rem" }}>
-        {passoAtualDef.render({ form, setForm })}
+      <div style={{ position: "relative", overflow: "hidden", minHeight: "12rem" }}>
+        {saindo && (
+          <div style={{
+            position: "absolute", inset: 0,
+            transform: `translateX(${ativo ? -100 * saindo.direcao : 0}%)`,
+            transition: `transform ${DURACAO_SLIDE_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+          }}>
+            {passos[saindo.idx].render({ form, setForm })}
+          </div>
+        )}
+        <div style={{
+          transform: saindo ? `translateX(${ativo ? 0 : 100 * saindo.direcao}%)` : undefined,
+          transition: saindo ? `transform ${DURACAO_SLIDE_MS}ms cubic-bezier(0.4, 0, 0.2, 1)` : undefined,
+        }}>
+          {passoAtualDef.render({ form, setForm })}
+        </div>
       </div>
 
       {(erroPasso || erro) && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.8rem" }}>{erroPasso || erro}</p>}
