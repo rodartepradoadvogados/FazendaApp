@@ -13,7 +13,7 @@
 //     fazenda (MS, PB, FDN, FDA, NDT, EE, cinzas, Ca, P) — diferente da
 //     Tabela Nutricional (referência padrão) e da Matéria seca (só %MS).
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical, Tag, Wheat, Pencil, Check, X, AlertTriangle, Import } from "lucide-react";
+import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical, Tag, Wheat, Pencil, Check, X, AlertTriangle, Import, SearchCheck, CheckCircle2, GitMerge } from "lucide-react";
 import {
   fetchLotes, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta, fetchEstoque,
   criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin, moduloFormulacaoDietasAtivo,
@@ -21,6 +21,7 @@ import {
   type ContextoDieta, type ApresentacaoDieta,
   fetchCategoriasAlimento, criarCategoriaAlimento, atualizarCategoriaAlimento, excluirCategoriaAlimento, type CategoriaAlimento,
   fetchAlimentos, criarAlimento, atualizarAlimento, excluirAlimento, type Alimento,
+  fetchRelatorioMigracaoAlimentacao, type RelatorioMigracao,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { casaBusca } from "@/lib/busca";
@@ -32,6 +33,7 @@ import {
 } from "@/lib/alimentoEstoqueBridge";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Modal } from "@/components/Modal";
+import { SecaoRecolhivel } from "@/components/ui";
 import { listarSimulacoes, obterSimulacao, type SimulacaoResumo } from "@/lib/dietas";
 
 const NUM_TRATOS = 2;
@@ -81,7 +83,7 @@ const input: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
 export default function CadastroAlimentacao() {
-  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional" | "bromatologica" | "categorias" | "alimentos">("ver");
+  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional" | "bromatologica" | "categorias" | "alimentos" | "conferencia">("ver");
   const [prefillAlimento, setPrefillAlimento] = useState<PrefillNovoAlimento | null>(null);
   const [alimentoIdParaReabrir, setAlimentoIdParaReabrir] = useState<number | null>(null);
 
@@ -104,7 +106,7 @@ export default function CadastroAlimentacao() {
     <div>
       <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "% Matéria seca", Percent], ["tabela-nutricional", "Cadastro de tabela nutricional", Table2], ["bromatologica", "Análise bromatológica", FlaskConical], ["categorias", "Categorias", Tag], ["alimentos", "Alimentos", Wheat]] as const).map(([id, label, Icon]) => (
+          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "% Matéria seca", Percent], ["tabela-nutricional", "Cadastro de tabela nutricional", Table2], ["bromatologica", "Análise bromatológica", FlaskConical], ["categorias", "Categorias", Tag], ["alimentos", "Alimentos", Wheat], ["conferencia", "Conferência", SearchCheck]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setAba(id)}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.35rem 0.85rem", borderRadius: 999, cursor: "pointer",
                 // Tokens de pílula ativa (globals.css) em vez de literal fixo: no
@@ -134,6 +136,7 @@ export default function CadastroAlimentacao() {
           onAbrirEdicaoConsumido={() => setAlimentoIdParaReabrir(null)}
         />
       )}
+      {aba === "conferencia" && <ConferenciaMigracaoTab />}
     </div>
   );
 }
@@ -692,6 +695,320 @@ function AnaliseBromatologicaTab() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────── Conferência (Fase P0-B, só leitura) ───────────────────────
+// Retrato dos dados de Alimento/Estoque antes do refactor que vai eliminar a
+// camada `Alimento` da interface — GET /alimentacao/migracao/relatorio NÃO
+// escreve nada; esta aba só lê e mostra. Nenhum botão de ação aqui de
+// propósito (mesclar/manter/excluir vem numa fase futura, com o próprio
+// endpoint de escrita) — um botão desabilitado sugeriria uma função que
+// ainda não existe.
+function VazioPositivo({ texto }: { texto: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--green-light)", fontSize: "0.82rem", padding: "0.5rem 0.1rem" }}>
+      <CheckCircle2 size={15} /> {texto}
+    </div>
+  );
+}
+
+function ChipContagem({ n }: { n: number }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: "1.4rem", padding: "0.05rem 0.4rem",
+      borderRadius: 999, fontSize: "0.72rem", fontWeight: 700,
+      background: n > 0 ? "var(--pill-active-bg)" : "var(--surface-2)",
+      color: n > 0 ? "var(--pill-active-fg)" : "var(--text-muted)",
+      border: "1px solid " + (n > 0 ? "var(--pill-active-border)" : "var(--border)"),
+    }}>
+      {n}
+    </span>
+  );
+}
+
+function ListaCandidatos({ candidatos }: { candidatos: { id: number; nome: string }[] }) {
+  if (!candidatos.length) return <span style={{ color: "var(--text-muted)" }}>—</span>;
+  return <span style={{ fontSize: "0.78rem" }}>{candidatos.map((c) => c.nome).join(", ")}</span>;
+}
+
+function TabelaItensFantasma({ itens }: { itens: RelatorioMigracao["fantasmas_importacao"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead><tr>
+          <th>Nome</th><th style={{ textAlign: "right" }}>Qtd.</th><th>Unid.</th><th>Finalidade</th>
+          <th>Fontes (dieta / curva ABC / lançamento / sanidade)</th><th>Movimentos</th><th>Candidatos a mesclagem</th>
+        </tr></thead>
+        <tbody>
+          {itens.map((it) => (
+            <tr key={it.id}>
+              <td style={{ fontWeight: 700 }}>{it.nome}</td>
+              <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{num(it.quantidade)}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.unidade || "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.finalidade || "—"}</td>
+              <td>
+                <div style={{ display: "flex", gap: "0.3rem" }}>
+                  <ChipContagem n={it.fontes.dieta} /><ChipContagem n={it.fontes.curva_abc} />
+                  <ChipContagem n={it.fontes.lancamento_item} /><ChipContagem n={it.fontes.sanidade} />
+                </div>
+              </td>
+              <td style={{ fontSize: "0.78rem" }}>
+                {it.quantidade_movimentos === 0
+                  ? <span style={{ color: "var(--text-muted)" }}>nenhum</span>
+                  : <>{it.quantidade_movimentos} · {formatDate(it.primeiro_movimento)} – {formatDate(it.ultimo_movimento)}</>}
+              </td>
+              <td><ListaCandidatos candidatos={it.candidatos_mesclagem} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produtos_sem_categoria"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead><tr><th>Nome</th><th style={{ textAlign: "right" }}>Qtd.</th><th>Unid.</th><th>Finalidade</th><th>Motivo</th></tr></thead>
+        <tbody>
+          {itens.map((it) => (
+            <tr key={it.id}>
+              <td style={{ fontWeight: 700 }}>{it.nome}</td>
+              <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{num(it.quantidade)}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.unidade || "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.finalidade || "—"}</td>
+              <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.motivo}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembramentos"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead><tr><th>Alimento</th><th>Produtos de Estoque vinculados</th><th>Tem composição (AlimentoNutricional)</th></tr></thead>
+        <tbody>
+          {itens.map((it) => (
+            <tr key={it.alimento_id}>
+              <td style={{ fontWeight: 700 }}>{it.alimento_nome || `#${it.alimento_id}`}</td>
+              <td style={{ fontSize: "0.78rem" }}>
+                {it.produtos.map((p) => `${p.nome} (${num(p.quantidade)} ${p.unidade || ""})`).join(" · ")}
+              </td>
+              <td style={{ fontSize: "0.78rem" }}>
+                {it.tem_alimento_nutricional
+                  ? <span style={{ color: "var(--amber, #c99a2e)" }}>Sim — só um produto poderá herdar a composição ao desmembrar</span>
+                  : <span style={{ color: "var(--text-muted)" }}>Não</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TabelaDivergenciaNome({ itens }: { itens: RelatorioMigracao["divergencia_nome"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead><tr><th>Nome do Alimento (atual)</th><th>Nome no item de Estoque</th><th style={{ textAlign: "right" }}>Laudos pelo nome atual</th></tr></thead>
+        <tbody>
+          {itens.map((it) => (
+            <tr key={`${it.alimento_id}-${it.estoque_id}`}>
+              <td style={{ fontWeight: 700 }}>{it.alimento_nome}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.estoque_nome}</td>
+              <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
+                {it.quantidade_laudos_pelo_nome_atual > 0
+                  ? <span style={{ color: "var(--amber, #c99a2e)", fontWeight: 700 }}>{it.quantidade_laudos_pelo_nome_atual}</span>
+                  : 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TabelaIngredientesNaoResolviveis({ itens }: { itens: RelatorioMigracao["ingredientes_nao_resolviveis"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead><tr><th>Ingrediente da dieta</th><th>Classificação</th><th>Motivo</th><th>Candidatos encontrados</th></tr></thead>
+        <tbody>
+          {itens.map((it) => (
+            <tr key={it.ingrediente}>
+              <td style={{ fontWeight: 700 }}>{it.ingrediente}</td>
+              <td>
+                <span style={{
+                  fontSize: "0.72rem", fontWeight: 700, padding: "0.1rem 0.5rem", borderRadius: 999,
+                  background: it.classificacao === "ambiguo" ? "color-mix(in srgb, var(--amber, #c99a2e) 20%, transparent)" : "var(--surface-2)",
+                  color: it.classificacao === "ambiguo" ? "var(--amber, #c99a2e)" : "var(--text-muted)",
+                  border: "1px solid " + (it.classificacao === "ambiguo" ? "var(--amber, #c99a2e)" : "var(--border)"),
+                }}>
+                  {it.classificacao === "ambiguo" ? "Ambíguo" : "Não resolve"}
+                </span>
+              </td>
+              <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.motivo}</td>
+              <td><ListaCandidatos candidatos={it.candidatos} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TabelaRmca({ itens }: { itens: RelatorioMigracao["rmca"]["so_pela_conta"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="fazenda-table">
+        <thead><tr><th>Nome</th><th>Conta gerencial de despesa</th><th>Finalidade</th></tr></thead>
+        <tbody>
+          {itens.map((it) => (
+            <tr key={it.id}>
+              <td style={{ fontWeight: 700 }}>{it.nome}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.conta_gerencial_despesa_padrao || "—"}</td>
+              <td style={{ fontSize: "0.78rem" }}>{it.finalidade || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConferenciaMigracaoTab() {
+  const [dados, setDados] = useState<RelatorioMigracao | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(true);
+
+  useEffect(() => {
+    setCarregando(true);
+    fetchRelatorioMigracaoAlimentacao()
+      .then(setDados)
+      .catch((e: any) => setErro(e.message || "Erro ao carregar o relatório"))
+      .finally(() => setCarregando(false));
+  }, []);
+
+  return (
+    <div>
+      <div style={{
+        display: "flex", alignItems: "flex-start", gap: "0.6rem", padding: "0.7rem 0.9rem", borderRadius: 8,
+        background: "var(--surface-2)", border: "1px solid var(--border)", marginBottom: "1rem", fontSize: "0.82rem",
+      }}>
+        <SearchCheck size={16} style={{ flexShrink: 0, marginTop: "0.1rem", color: "var(--accent-icon)" }} />
+        <div>
+          <strong>Este relatório não altera nada. É um retrato dos dados para conferência.</strong>
+          <div style={{ color: "var(--text-muted)", marginTop: "0.15rem" }}>
+            Nenhum item é mesclado, renomeado ou excluído aqui — as ações vêm numa fase futura, depois que você conferir este retrato.
+          </div>
+        </div>
+      </div>
+
+      {carregando && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+
+      {dados && (
+        <>
+          <SecaoRecolhivel
+            titulo="Fantasmas da importação" icon={GitMerge} defaultAberta={dados.fantasmas_importacao.length > 0}
+            badge={String(dados.fantasmas_importacao.length)}
+            descricao='Itens de Estoque criados pela importação antiga a partir de nomes de ingrediente/produto (sem finalidade, sem Alimento vinculado, quantidade 0) — ficaram só com o nome.'
+          >
+            {dados.fantasmas_importacao.length
+              ? <TabelaItensFantasma itens={dados.fantasmas_importacao} />
+              : <VazioPositivo texto="Nenhuma ocorrência — nenhum item fantasma da importação encontrado." />}
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="Fantasmas ponte (Ração/Alimento sem movimento)" icon={GitMerge}
+            defaultAberta={dados.fantasmas_ponte.length > 0} badge={String(dados.fantasmas_ponte.length)}
+            descricao="Itens com finalidade Ração/Alimento e Alimento vinculado, mas ZERO movimentos de estoque — nunca chegaram a ser usados."
+          >
+            {dados.fantasmas_ponte.length
+              ? <TabelaItensFantasma itens={dados.fantasmas_ponte} />
+              : <VazioPositivo texto="Nenhuma ocorrência — toda ponte Alimento → Estoque tem pelo menos um movimento." />}
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="Produtos de alimento sem categoria" icon={Tag}
+            defaultAberta={dados.produtos_sem_categoria.length > 0} badge={String(dados.produtos_sem_categoria.length)}
+            descricao="Itens que são alimento (por vínculo ou pela finalidade), mas sem classificação completa hoje."
+          >
+            {dados.produtos_sem_categoria.length
+              ? <TabelaProdutosSemCategoria itens={dados.produtos_sem_categoria} />
+              : <VazioPositivo texto="Nenhuma ocorrência — todo produto de alimento está classificado." />}
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="Alimentos com mais de um produto (desmembramento futuro)" icon={GitMerge}
+            defaultAberta={dados.desmembramentos.length > 0} badge={String(dados.desmembramentos.length)}
+            descricao="Um Alimento com 2+ itens de Estoque vinculados — quando a camada Alimento sair da interface, cada produto vira uma linha independente."
+          >
+            {dados.desmembramentos.length
+              ? <TabelaDesmembramentos itens={dados.desmembramentos} />
+              : <VazioPositivo texto="Nenhuma ocorrência — nenhum Alimento tem mais de um produto vinculado." />}
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="Nome do Alimento diverge do produto de Estoque" icon={FlaskConical}
+            defaultAberta={dados.divergencia_nome.length > 0} badge={String(dados.divergencia_nome.length)}
+            descricao="Análises bromatológicas se ligam ao alimento por igualdade EXATA de string com o nome atual — renomear custaria os laudos contados aqui."
+          >
+            {dados.divergencia_nome.length
+              ? <TabelaDivergenciaNome itens={dados.divergencia_nome} />
+              : <VazioPositivo texto="Nenhuma ocorrência — nome do Alimento e do produto de Estoque coincidem em todos os vínculos." />}
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="Ingredientes de dieta que não resolvem" icon={AlertTriangle}
+            defaultAberta={dados.ingredientes_nao_resolviveis.length > 0} badge={String(dados.ingredientes_nao_resolviveis.length)}
+            descricao="Ingrediente de Dieta que a resolução de hoje (nome exato de Estoque, depois via Alimento) não casa com exatamente um item."
+          >
+            {dados.ingredientes_nao_resolviveis.length
+              ? <TabelaIngredientesNaoResolviveis itens={dados.ingredientes_nao_resolviveis} />
+              : <VazioPositivo texto="Nenhuma ocorrência — todo ingrediente de dieta resolve para exatamente um item de Estoque." />}
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="RMCA: regra atual × regra futura" icon={Percent}
+            defaultAberta={
+              dados.rmca.so_pela_conta.length + dados.rmca.so_pela_finalidade.length + dados.rmca.por_ambas.length > 0
+            }
+            badge={String(dados.rmca.so_pela_conta.length + dados.rmca.so_pela_finalidade.length + dados.rmca.por_ambas.length)}
+            descricao='Hoje o custo físico do RMCA entra só pela conta gerencial de despesa ("3.01.01..."). A regra futura é finalidade OU conta — a conta fica como rede de segurança justamente para que NENHUM item saia do indicador: só podem entrar itens novos, listados aqui antes de qualquer mudança.'
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+              <div>
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>
+                  Só pela conta gerencial (continua entrando — é a rede de segurança) <ChipContagem n={dados.rmca.so_pela_conta.length} />
+                </div>
+                {dados.rmca.so_pela_conta.length ? <TabelaRmca itens={dados.rmca.so_pela_conta} /> : <VazioPositivo texto="Nenhuma ocorrência." />}
+              </div>
+              <div>
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>
+                  Só pela finalidade (passa a entrar no RMCA — são os itens que a regra nova acrescenta) <ChipContagem n={dados.rmca.so_pela_finalidade.length} />
+                </div>
+                {dados.rmca.so_pela_finalidade.length ? <TabelaRmca itens={dados.rmca.so_pela_finalidade} /> : <VazioPositivo texto="Nenhuma ocorrência." />}
+              </div>
+              <div>
+                <div style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>
+                  Por ambas as regras (sem mudança) <ChipContagem n={dados.rmca.por_ambas.length} />
+                </div>
+                {dados.rmca.por_ambas.length ? <TabelaRmca itens={dados.rmca.por_ambas} /> : <VazioPositivo texto="Nenhuma ocorrência." />}
+              </div>
+            </div>
+          </SecaoRecolhivel>
+        </>
+      )}
     </div>
   );
 }

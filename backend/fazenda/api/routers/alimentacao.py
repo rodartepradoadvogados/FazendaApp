@@ -19,11 +19,13 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, ConsumoAlimento, ConsumoSobra, Dieta,
-    DietaItemProgramado, DietaLancamento, DietaRegistroReal, Estoque, IngredienteMS, Lote, Usuario,
+    AlimentacaoEstado, Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, CategoriaAlimento,
+    ConsumoAlimento, ConsumoSobra, CurvaABC, Dieta, DietaItemProgramado, DietaLancamento, DietaRegistroReal,
+    Estoque, IngredienteMS, LancamentoItem, Lote, MovimentoEstoque, Sanidade, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, resolver_kg_por_unidade, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.dieta_lancamento import criar_lancamento_programado
 from fazenda.rules.producao_leiteira import ultimo_controle_por_animal, com_fallback_animal
 from fazenda.rules import estoque_baixa
@@ -601,6 +603,270 @@ def excluir_alimento(
     session.delete(alimento)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Fase P0-B do refactor Alimento/Estoque — relatório de conferência SOMENTE
+# LEITURA (nenhum session.add/commit/delete nesta seção), o retrato que o
+# usuário confere antes de autorizar as fases seguintes (que vão eliminar a
+# camada `Alimento` da interface). Sete seções, cada uma carregando sua(s)
+# tabela(s) de origem em UMA consulta e cruzando em Python — nunca query
+# dentro de laço (mesmo padrão de `_estoque_por_alimento` acima).
+# ---------------------------------------------------------------------------
+def _contagem_por_nome_normalizado(valores: list) -> dict[str, int]:
+    """Conta ocorrências de cada texto normalizado numa lista (nomes de
+    ingrediente/produto vindos de uma fonte) — usado para explicar de onde
+    veio cada item fantasma da importação (seção `fantasmas_importacao`)."""
+    contagem: dict[str, int] = {}
+    for v in valores:
+        chave = normalizar_busca(v)
+        if not chave:
+            continue
+        contagem[chave] = contagem.get(chave, 0) + 1
+    return contagem
+
+
+def _candidatos_mesclagem(item: Estoque, todos: list[tuple[int, str, str]]) -> list[dict]:
+    """Outros itens de Estoque da mesma fazenda cujo nome normalizado seja
+    igual, contenha, ou esteja contido no nome deste item — candidatos a
+    mesclagem manual numa fase futura (aqui só identificados, nunca
+    mesclados). `todos` é a lista (id, nome, nome_normalizado) de TODO o
+    estoque da fazenda, montada uma única vez fora do laço de chamada."""
+    nome_norm = normalizar_busca(item.nome)
+    if not nome_norm:
+        return []
+    candidatos = []
+    for outro_id, outro_nome, outro_norm in todos:
+        if outro_id == item.id or not outro_norm:
+            continue
+        if nome_norm == outro_norm or nome_norm in outro_norm or outro_norm in nome_norm:
+            candidatos.append({"id": outro_id, "nome": outro_nome})
+    return candidatos
+
+
+def _finalidade_indica_alimento(finalidade: str | None) -> bool:
+    """"Ração/Alimento" é a finalidade explícita de hoje; qualquer outra cujo
+    nome normalizado contenha "aliment", "nutri" ou "racao" também conta —
+    cobre finalidades customizadas por fazenda com o mesmo sentido."""
+    if not finalidade:
+        return False
+    norm = normalizar_busca(finalidade)
+    return any(termo in norm for termo in ("aliment", "nutri", "racao"))
+
+
+@router.get("/migracao/relatorio")
+def relatorio_migracao(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Relatório de conferência (Fase P0-B) — NUNCA escreve no banco. Mostra
+    o estado real dos dados de Alimento/Estoque/Dieta antes do refactor que
+    vai eliminar a camada `Alimento` da interface: itens fantasma deixados
+    pela importação antiga, "pontes" nunca usadas, alimentos sem categoria,
+    agrupamentos que precisarão ser desmembrados, nomes que divergem entre
+    Alimento e Estoque (com o custo em laudos que isso implicaria), ingredientes
+    de dieta que a resolução de hoje não casa (ou casa com ambiguidade), e o
+    impacto exato da futura regra de elegibilidade ao RMCA."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+
+    def _f(query, modelo):
+        return query.where(modelo.fazenda_id == fazenda_id) if fazenda_id is not None else query
+
+    estoques = session.exec(_f(select(Estoque), Estoque)).all()
+    movimentos = session.exec(_f(select(MovimentoEstoque), MovimentoEstoque)).all()
+    alimentos = session.exec(_f(select(Alimento), Alimento)).all()
+    alimentos_por_id = {a.id: a for a in alimentos}
+    dieta_ingredientes = session.exec(_f(select(Dieta.ingrediente), Dieta)).all()
+    curva_abc_produtos = session.exec(_f(select(CurvaABC.produto), CurvaABC)).all()
+    lancamento_item_produtos = session.exec(_f(select(LancamentoItem.produto), LancamentoItem)).all()
+    sanidade_produtos = session.exec(_f(select(Sanidade.produto), Sanidade)).all()
+    analises = session.exec(_f(select(AnaliseBromatologica), AnaliseBromatologica)).all()
+
+    # ── índices montados uma vez, cruzados em Python (nunca query em laço) ──
+    contagem_dieta = _contagem_por_nome_normalizado(dieta_ingredientes)
+    contagem_curva_abc = _contagem_por_nome_normalizado(curva_abc_produtos)
+    contagem_lancamento_item = _contagem_por_nome_normalizado(lancamento_item_produtos)
+    contagem_sanidade = _contagem_por_nome_normalizado(sanidade_produtos)
+
+    mov_por_estoque_id: dict[int, list[MovimentoEstoque]] = {}
+    mov_sem_vinculo_por_nome: dict[str, list[MovimentoEstoque]] = {}
+    for m in movimentos:
+        if m.estoque_id is not None:
+            mov_por_estoque_id.setdefault(m.estoque_id, []).append(m)
+        else:
+            mov_sem_vinculo_por_nome.setdefault(normalizar_busca(m.nome_item), []).append(m)
+
+    def _resumo_movimentos(item: Estoque) -> dict:
+        relacionados = mov_por_estoque_id.get(item.id, []) + mov_sem_vinculo_por_nome.get(normalizar_busca(item.nome), [])
+        if not relacionados:
+            return {"quantidade_movimentos": 0, "primeiro_movimento": None, "ultimo_movimento": None}
+        datas = sorted(m.data_movimento for m in relacionados if m.data_movimento)
+        return {
+            "quantidade_movimentos": len(relacionados),
+            "primeiro_movimento": datas[0].isoformat() if datas else None,
+            "ultimo_movimento": datas[-1].isoformat() if datas else None,
+        }
+
+    todos_estoque_norm = [(e.id, e.nome, normalizar_busca(e.nome)) for e in estoques]
+
+    def _linha_fantasma(item: Estoque) -> dict:
+        chave = normalizar_busca(item.nome)
+        return {
+            "id": item.id, "nome": item.nome, "quantidade": item.quantidade, "unidade": item.unidade,
+            "finalidade": item.finalidade,
+            "fontes": {
+                "dieta": contagem_dieta.get(chave, 0), "curva_abc": contagem_curva_abc.get(chave, 0),
+                "lancamento_item": contagem_lancamento_item.get(chave, 0), "sanidade": contagem_sanidade.get(chave, 0),
+            },
+            **_resumo_movimentos(item),
+            "candidatos_mesclagem": _candidatos_mesclagem(item, todos_estoque_norm),
+        }
+
+    # ── 1) fantasmas da importação: finalidade/alimento_id nulos, quantidade 0 ──
+    fantasmas_importacao = [
+        _linha_fantasma(e) for e in estoques
+        if e.finalidade is None and e.alimento_id is None and (e.quantidade or 0) == 0
+    ]
+
+    # ── 2) "pontes" (finalidade Ração/Alimento + alimento_id) sem NENHUM movimento ──
+    # DE PROPÓSITO estrito no literal, ao contrário das seções 3 e 7: a ponte é
+    # criada em código com exatamente esse valor (alimentoEstoqueBridge). Alargar
+    # para `_finalidade_indica_alimento` varreria para cá todo produto REAL
+    # recém-cadastrado que ainda não teve movimento — o próprio "Caroço de
+    # Algodão" — e o relatório o ofereceria como fantasma candidato a exclusão.
+    fantasmas_ponte = [
+        _linha_fantasma(e) for e in estoques
+        if e.finalidade == "Ração/Alimento" and e.alimento_id is not None
+        and _resumo_movimentos(e)["quantidade_movimentos"] == 0
+    ]
+
+    # ── 3) produtos que são alimento mas não têm classificação ──
+    produtos_sem_categoria = []
+    for e in estoques:
+        if e.alimento_id is not None:
+            alimento = alimentos_por_id.get(e.alimento_id)
+            if alimento is not None and alimento.categoria_alimento_id is None:
+                produtos_sem_categoria.append({
+                    "id": e.id, "nome": e.nome, "quantidade": e.quantidade, "unidade": e.unidade,
+                    "finalidade": e.finalidade,
+                    "motivo": f'Vinculado ao alimento "{alimento.nome}", que não tem categoria cadastrada',
+                })
+        elif _finalidade_indica_alimento(e.finalidade):
+            produtos_sem_categoria.append({
+                "id": e.id, "nome": e.nome, "quantidade": e.quantidade, "unidade": e.unidade,
+                "finalidade": e.finalidade,
+                "motivo": f'Finalidade "{e.finalidade}" indica alimento, mas o item não está vinculado a nenhum Alimento cadastrado',
+            })
+
+    # ── 4) Alimento com 2+ itens de Estoque vinculados (desmembramento futuro) ──
+    estoque_por_alimento_id: dict[int, list[Estoque]] = {}
+    for e in estoques:
+        if e.alimento_id is not None:
+            estoque_por_alimento_id.setdefault(e.alimento_id, []).append(e)
+    alimento_ids_desmembrar = [aid for aid, itens in estoque_por_alimento_id.items() if len(itens) >= 2]
+    alimento_ids_com_nutricional: set[int] = set()
+    if alimento_ids_desmembrar:
+        query_nutri = select(AlimentoNutricional.alimento_id).where(
+            AlimentoNutricional.alimento_id.in_(alimento_ids_desmembrar)
+        )
+        alimento_ids_com_nutricional = {aid for aid in session.exec(query_nutri).all() if aid is not None}
+    desmembramentos = [
+        {
+            "alimento_id": aid,
+            "alimento_nome": alimentos_por_id[aid].nome if aid in alimentos_por_id else None,
+            "produtos": [
+                {"id": e.id, "nome": e.nome, "quantidade": e.quantidade, "unidade": e.unidade}
+                for e in estoque_por_alimento_id[aid]
+            ],
+            "tem_alimento_nutricional": aid in alimento_ids_com_nutricional,
+        }
+        for aid in sorted(alimento_ids_desmembrar)
+    ]
+
+    # ── 5) Alimento.nome != Estoque.nome do produto vinculado ──
+    contagem_laudos_por_nome_exato: dict[str, int] = {}
+    for a in analises:
+        if a.alimento:
+            contagem_laudos_por_nome_exato[a.alimento] = contagem_laudos_por_nome_exato.get(a.alimento, 0) + 1
+    divergencia_nome = []
+    for e in estoques:
+        if e.alimento_id is None:
+            continue
+        alimento = alimentos_por_id.get(e.alimento_id)
+        if alimento is not None and alimento.nome != e.nome:
+            divergencia_nome.append({
+                "alimento_id": alimento.id, "alimento_nome": alimento.nome,
+                "estoque_id": e.id, "estoque_nome": e.nome,
+                # Crítico: AnaliseBromatologica.alimento_id nunca é preenchido hoje —
+                # o vínculo real é por igualdade exata de string com o nome ATUAL do
+                # alimento. Renomear custaria exatamente esta quantidade de laudos.
+                "quantidade_laudos_pelo_nome_atual": contagem_laudos_por_nome_exato.get(alimento.nome, 0),
+            })
+
+    # ── 6) Dieta.ingrediente que a cascata de resolução de hoje não resolve ──
+    # (nome exato de Estoque; senão, via Alimento.nome — ver `_estoque_por_alimento`
+    # e `calcular_necessidade_mensal`, ambos usados como referência aqui). Usa
+    # `.strip().lower()` (não `normalizar_busca`, usado no resto desta seção)
+    # DE PROPÓSITO — é a MESMA normalização exata que `calcular_necessidade_mensal`
+    # aplica em produção; usar `normalizar_busca` aqui faria este relatório
+    # "resolver" ingredientes que a rotina real de hoje não resolve.
+    estoque_por_nome_exato = {e.nome: e for e in estoques}
+    estoque_por_alimento, alimentos_cadastrados = _estoque_por_alimento(session, fazenda_id)
+    ingredientes_nao_resolviveis = []
+    for ingrediente in sorted({i for i in dieta_ingredientes if i}):
+        if ingrediente in estoque_por_nome_exato:
+            continue  # resolve_1 — não entra no relatório
+        nome_norm = ingrediente.strip().lower()
+        candidatos = estoque_por_alimento.get(nome_norm, [])
+        if len(candidatos) == 1:
+            continue  # resolve_1 — não entra no relatório
+        if len(candidatos) > 1:
+            classificacao, motivo = "ambiguo", "Vários itens de Estoque vinculados ao mesmo Alimento — a rotina de hoje usa o primeiro em silêncio"
+        elif nome_norm in alimentos_cadastrados:
+            classificacao, motivo = "resolve_0", "Alimento cadastrado, mas sem nenhum item de Estoque vinculado"
+        else:
+            classificacao, motivo = "resolve_0", "Nenhum item de Estoque nem Alimento com este nome"
+        ingredientes_nao_resolviveis.append({
+            "ingrediente": ingrediente, "classificacao": classificacao, "motivo": motivo,
+            "candidatos": [{"id": c["id"], "nome": c["nome"]} for c in candidatos],
+        })
+
+    # ── 7) RMCA: regra atual (conta gerencial) × regra futura (finalidade) ──
+    # "Nutrição" NÃO está em FINALIDADES_ESTOQUE (ver rules/categorias.py) — mas
+    # isso não a torna irrelevante: a lista é só a semente, e o cadastro de
+    # finalidade é livre (routers/cadastro/estoque.py), então a fazenda já criou
+    # "Nutrição" à mão. Foi exatamente esse valor que sumiu o "Caroço de Algodão"
+    # dos seletores e originou este refactor. Testar aqui pelo literal
+    # "Ração/Alimento" faria a seção mais importante do relatório — a que diz
+    # quais itens entram no indicador de custo — ignorar justamente os itens
+    # reais da fazenda. Por isso usa `_finalidade_indica_alimento`, o mesmo
+    # predicado da seção 3, que casa "aliment"/"nutri"/"racao" normalizados.
+    def _elegivel_conta(e: Estoque) -> bool:
+        return bool(e.conta_gerencial_despesa_padrao and e.conta_gerencial_despesa_padrao.startswith("3.01.01"))
+
+    def _elegivel_finalidade(e: Estoque) -> bool:
+        return _finalidade_indica_alimento(e.finalidade)
+
+    def _linha_rmca(e: Estoque) -> dict:
+        return {
+            "id": e.id, "nome": e.nome,
+            "conta_gerencial_despesa_padrao": e.conta_gerencial_despesa_padrao, "finalidade": e.finalidade,
+        }
+
+    rmca = {
+        "so_pela_conta": [_linha_rmca(e) for e in estoques if _elegivel_conta(e) and not _elegivel_finalidade(e)],
+        "so_pela_finalidade": [_linha_rmca(e) for e in estoques if _elegivel_finalidade(e) and not _elegivel_conta(e)],
+        "por_ambas": [_linha_rmca(e) for e in estoques if _elegivel_conta(e) and _elegivel_finalidade(e)],
+    }
+
+    return {
+        "fantasmas_importacao": fantasmas_importacao,
+        "fantasmas_ponte": fantasmas_ponte,
+        "produtos_sem_categoria": produtos_sem_categoria,
+        "desmembramentos": desmembramentos,
+        "divergencia_nome": divergencia_nome,
+        "ingredientes_nao_resolviveis": ingredientes_nao_resolviveis,
+        "rmca": rmca,
+    }
 
 
 # ---------------------------------------------------------------------------

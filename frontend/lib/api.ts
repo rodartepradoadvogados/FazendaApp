@@ -4040,6 +4040,49 @@ export async function excluirAlimento(id: number) {
   return res.json();
 }
 
+// ── Fase P0-B: relatório de conferência (SOMENTE LEITURA) do refactor
+// Alimento/Estoque — aba "Conferência" de Configurações > Cadastro >
+// Alimentação. Ver backend/fazenda/api/routers/alimentacao.py::relatorio_migracao.
+export type RelatorioMigracaoItem = {
+  id: number; nome: string; quantidade: number | null; unidade: string | null; finalidade: string | null;
+  fontes: { dieta: number; curva_abc: number; lancamento_item: number; sanidade: number };
+  quantidade_movimentos: number; primeiro_movimento: string | null; ultimo_movimento: string | null;
+  candidatos_mesclagem: { id: number; nome: string }[];
+};
+export type RelatorioMigracaoProdutoSemCategoria = {
+  id: number; nome: string; quantidade: number | null; unidade: string | null; finalidade: string | null; motivo: string;
+};
+export type RelatorioMigracaoDesmembramento = {
+  alimento_id: number; alimento_nome: string | null;
+  produtos: { id: number; nome: string; quantidade: number | null; unidade: string | null }[];
+  tem_alimento_nutricional: boolean;
+};
+export type RelatorioMigracaoDivergenciaNome = {
+  alimento_id: number; alimento_nome: string; estoque_id: number; estoque_nome: string;
+  quantidade_laudos_pelo_nome_atual: number;
+};
+export type RelatorioMigracaoIngredienteNaoResolvivel = {
+  ingrediente: string; classificacao: "resolve_0" | "ambiguo"; motivo: string;
+  candidatos: { id: number; nome: string }[];
+};
+export type RelatorioMigracaoItemRmca = { id: number; nome: string; conta_gerencial_despesa_padrao: string | null; finalidade: string | null };
+export type RelatorioMigracao = {
+  fantasmas_importacao: RelatorioMigracaoItem[];
+  fantasmas_ponte: RelatorioMigracaoItem[];
+  produtos_sem_categoria: RelatorioMigracaoProdutoSemCategoria[];
+  desmembramentos: RelatorioMigracaoDesmembramento[];
+  divergencia_nome: RelatorioMigracaoDivergenciaNome[];
+  ingredientes_nao_resolviveis: RelatorioMigracaoIngredienteNaoResolvivel[];
+  rmca: {
+    so_pela_conta: RelatorioMigracaoItemRmca[]; so_pela_finalidade: RelatorioMigracaoItemRmca[]; por_ambas: RelatorioMigracaoItemRmca[];
+  };
+};
+export async function fetchRelatorioMigracaoAlimentacao(): Promise<RelatorioMigracao> {
+  const res = await authFetch(`${API}/alimentacao/migracao/relatorio`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de conferência error: ${res.status}`);
+  return res.json();
+}
+
 // ── Lançamento de dieta (Lançamentos > Alimentação) ──
 export async function fetchAlimentosPadrao() {
   const res = await authFetch(`${API}/alimentacao/alimentos-padrao`, { cache: "no-store" });
