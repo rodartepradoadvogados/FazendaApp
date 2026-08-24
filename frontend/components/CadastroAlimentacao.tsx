@@ -394,10 +394,13 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
   const subcategoriasDaCategoria = categoriaId ? categorias.filter((c) => c.categoria_pai_id === Number(categoriaId)) : [];
 
   // Só alimentos de verdade (rações, silagens...) — finalidade "Ração/Alimento",
-  // nunca medicamento/material/equipamento. Item sem finalidade definida (legado)
-  // ainda aparece, mesma regra tolerante do EstoquePicker.
+  // nunca medicamento/material/equipamento. Item sem finalidade definida (legado
+  // ou cadastrado sem escolher nada no select) ainda aparece — `!e.finalidade`
+  // cobre tanto null/undefined quanto string vazia (o formulário de novo item
+  // manda "" quando o campo fica em branco), mesma regra tolerante do
+  // EstoquePicker.
   const estoqueFiltrado = estoqueItens.filter((e) =>
-    (e.finalidade == null || e.finalidade === "Ração/Alimento") && casaBusca(e.nome, buscaEstoque)
+    (!e.finalidade || e.finalidade === "Ração/Alimento") && casaBusca(e.nome, buscaEstoque)
   );
 
   // Colunas derivadas (categoria/subcategoria/estoque vinculado) só para

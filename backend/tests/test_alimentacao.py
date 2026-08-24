@@ -733,9 +733,16 @@ class TestSubcategoriasAlimento:
 
     def test_lista_categorias_agrupa_filha_logo_apos_o_pai(self, client):
         c, engine = client
-        # Zera as categorias padrão semeadas pra não interferir na ordem esperada.
-        for cat in c.get("/alimentacao/categorias").json():
-            c.delete(f"/alimentacao/categorias/{cat['id']}")
+        # Zera as categorias padrão semeadas pra não interferir na ordem esperada —
+        # filhas primeiro (a API recusa apagar uma categoria com subcategoria,
+        # e agora "Concentrado" já nasce com duas semeadas por padrão).
+        categorias_iniciais = c.get("/alimentacao/categorias").json()
+        for cat in categorias_iniciais:
+            if cat["categoria_pai_id"] is not None:
+                c.delete(f"/alimentacao/categorias/{cat['id']}")
+        for cat in categorias_iniciais:
+            if cat["categoria_pai_id"] is None:
+                c.delete(f"/alimentacao/categorias/{cat['id']}")
         volumoso_id = c.post("/alimentacao/categorias", json={"nome": "Volumoso"}).json()["id"]
         concentrado_id = c.post("/alimentacao/categorias", json={"nome": "Concentrado"}).json()["id"]
         c.post("/alimentacao/categorias", json={"nome": "Energético", "categoria_pai_id": concentrado_id})

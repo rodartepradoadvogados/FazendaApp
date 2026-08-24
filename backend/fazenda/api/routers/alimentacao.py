@@ -359,6 +359,7 @@ def seed_alimentos(session: Session, fazenda_id: int | None = None) -> None:
     a lista `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
     produtos comerciais específicos já usados por essa fazenda."""
     _seed_categorias_alimento(session, fazenda_id=fazenda_id)
+    _seed_subcategorias_concentrado(session, fazenda_id=fazenda_id)
     categoria_query = select(CategoriaAlimento)
     alimento_query = select(Alimento)
     estoque_query = select(Estoque)
@@ -393,6 +394,7 @@ def listar_categorias_alimento(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _seed_categorias_alimento(session, fazenda_id=fazenda_id)
+    _seed_subcategorias_concentrado(session, fazenda_id=fazenda_id)
     query = select(CategoriaAlimento)
     if fazenda_id is not None:
         query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
