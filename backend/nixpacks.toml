@@ -16,19 +16,25 @@
 #   poppler_utils  fornece `pdftoppm`/`pdfinfo`, usados por `pdf2image` pra
 #                  renderizar cada página do PDF como imagem antes do OCR.
 #
-# IMPORTANTE — isto NÃO foi validado num deploy real do Railway (o sandbox
-# de desenvolvimento não tem os binários `tesseract`/`pdftoppm` instalados,
-# só a pesquisa acima da documentação/derivação do nixpkgs). Se depois do
-# deploy a leitura de documento falhar sempre com "Não foi possível
-# processar este documento com OCR" ou "nenhum texto reconhecido", confira:
-#   1. No shell do container Railway: `tesseract --version` e
-#      `tesseract --list-langs` (tem que listar "por" entre os idiomas).
-#   2. `pdftoppm -v`.
-#   3. Se "por" não aparecer na lista de idiomas, o pacote "tesseract" do
-#      canal nixpkgs usado pelo Nixpacks pode ter mudado de comportamento
-#      desde que isto foi escrito — nesse caso, setar TESSDATA_PREFIX
-#      manualmente (ex.: variável de ambiente no serviço Railway) apontando
-#      pro diretório de tessdata do pacote, ou trocar a estratégia (buildar
-#      um Dockerfile customizado em vez de Nixpacks).
+# CORRIGIDO (regressão real, derrubou todo deploy desde o PR #577): a
+# primeira versão deste arquivo declarava `[phases.setup] nixPkgs = [...]`
+# — e isso SUBSTITUI por completo a lista de pacotes Nix daquela fase, em
+# vez de somar à lista que o provider Python do Nixpacks gera sozinho
+# (que inclui o próprio `python`, pip, etc.). Resultado: `python` sumiu do
+# container de build e todo `pip install -r requirements.txt` passou a
+# falhar com "python: command not found" — confirmado nos logs de build do
+# Railway (todo deploy de #577 em diante ficou FAILED).
+#
+# Fix: usar `aptPkgs` em vez de `nixPkgs`. `aptPkgs` instala via apt-get
+# DEPOIS que o provider já montou a fase de setup normal — não substitui
+# nada, só soma. tesseract-ocr-por já inclui os dados de português.
+#
+# IMPORTANTE — ainda não validado num deploy real (o sandbox de
+# desenvolvimento não tem os binários `tesseract`/`pdftoppm` instalados, só
+# a pesquisa da documentação/pacotes). Se depois do deploy a leitura de
+# documento falhar sempre com "Não foi possível processar este documento
+# com OCR" ou "nenhum texto reconhecido", confira no shell do container
+# Railway: `tesseract --version`, `tesseract --list-langs` (tem que listar
+# "por") e `pdftoppm -v`.
 [phases.setup]
-nixPkgs = ["tesseract", "poppler_utils"]
+aptPkgs = ["tesseract-ocr", "tesseract-ocr-por", "poppler-utils"]
