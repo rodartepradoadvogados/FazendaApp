@@ -393,14 +393,25 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
   const categoriasRaiz = categorias.filter((c) => c.categoria_pai_id == null);
   const subcategoriasDaCategoria = categoriaId ? categorias.filter((c) => c.categoria_pai_id === Number(categoriaId)) : [];
 
-  // Só alimentos de verdade (rações, silagens...) — finalidade "Ração/Alimento",
-  // nunca medicamento/material/equipamento. Item sem finalidade definida (legado
-  // ou cadastrado sem escolher nada no select) ainda aparece — `!e.finalidade`
-  // cobre tanto null/undefined quanto string vazia (o formulário de novo item
-  // manda "" quando o campo fica em branco), mesma regra tolerante do
-  // EstoquePicker.
+  // Só alimentos de verdade (rações, silagens...) — nunca medicamento,
+  // equipamento ou material.
+  //
+  // Antes isto era uma LISTA DE PERMISSÃO por texto fixo (`finalidade` vazia ou
+  // exatamente "Ração/Alimento"), e isso escondia item legítimo: a finalidade é
+  // cadastro livre e extensível (Configurações > Cadastro > Estoque >
+  // Finalidade — ver SEED_FINALIDADES_ESTOQUE no backend), então quem cadastrou
+  // um alimento com finalidade própria (o caso real: "Nutrição") via o produto
+  // sumir da busca mesmo existindo e batendo o nome. O `EstoquePicker` já tinha
+  // topado com o mesmo bug e resolveu com um escape (`todasFinalidades`, ver o
+  // comentário lá).
+  //
+  // Vira LISTA DE EXCLUSÃO: passa qualquer finalidade — inclusive as
+  // personalizadas da fazenda e a vazia (legado, ou item salvo sem escolher
+  // nada) — menos as que comprovadamente não são alimento. Preferir deixar
+  // passar um item a mais do que esconder um que o usuário precisa vincular.
+  const FINALIDADES_NAO_ALIMENTO = ["Medicamento", "Equipamento", "Material/Insumo"];
   const estoqueFiltrado = estoqueItens.filter((e) =>
-    (!e.finalidade || e.finalidade === "Ração/Alimento") && casaBusca(e.nome, buscaEstoque)
+    !FINALIDADES_NAO_ALIMENTO.includes(e.finalidade || "") && casaBusca(e.nome, buscaEstoque)
   );
 
   // Colunas derivadas (categoria/subcategoria/estoque vinculado) só para
