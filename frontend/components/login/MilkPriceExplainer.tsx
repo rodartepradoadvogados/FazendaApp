@@ -9,6 +9,15 @@ import { formatBRL } from "@/lib/api";
 // simulador de preço do leite"). A rotina reescreve FONTES_BONIFICACAO e
 // FONTES_ATUALIZADO_EM automaticamente ao validar; nunca edite os links aqui
 // sem checar as duas fontes de novo.
+//
+// Checagem de 24/08/2026: a IN 76/2018 CONTINUA vigente como regulamento
+// técnico de identidade e qualidade do leite cru refrigerado — nenhuma norma
+// a revogou. Achado da rodada: a IN 55/2020 alterou pontos da IN 76/2018, mas
+// só os parâmetros de TEMPERATURA de conservação/expedição (para 5 °C); não
+// mexeu nos limites de CCS/CBT nem nos critérios de bonificação que este card
+// explica, por isso o rótulo visível segue citando só a IN 76/2018. Se numa
+// próxima rodada aparecer alteração que toque CCS/CBT/gordura/proteína, aí sim
+// o rótulo precisa passar a citar a norma alteradora.
 const FONTES_BONIFICACAO = [
   {
     nome: "MAPA — Instrução Normativa nº 76/2018",
@@ -19,7 +28,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.atermaisdigital.cnptia.embrapa.br/web/bovino-de-leite/indicadores-de-qualidade-do-leite",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "17/08/2026";
+const FONTES_ATUALIZADO_EM = "24/08/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
