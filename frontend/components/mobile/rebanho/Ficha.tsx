@@ -186,7 +186,12 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
       litros_colostro: c.litros_colostro != null ? String(c.litros_colostro) : "",
       brix_colostro: c.brix_colostro != null ? String(c.brix_colostro) : "",
       data_colostro: c.data_colostro != null ? String(c.data_colostro) : "",
+      hora_parto: c.hora_parto != null ? String(c.hora_parto) : "",
+      hora_colostro: c.hora_colostro != null ? String(c.hora_colostro) : "",
+      peso_nascer_kg: c.peso_nascer_kg != null ? String(c.peso_nascer_kg) : "",
       brix_soro: c.brix_soro != null ? String(c.brix_soro) : "",
+      proteina_serica: c.proteina_serica != null ? String(c.proteina_serica) : "",
+      apenas_colostro_po: c.apenas_colostro_po == null ? "" : String(c.apenas_colostro_po),
       data_teste_sangue: c.data_teste_sangue != null ? String(c.data_teste_sangue) : "",
       observacao: c.observacao != null ? String(c.observacao) : "",
     });
@@ -218,7 +223,12 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
           litros_colostro: f.litros_colostro === "" ? undefined : Number(f.litros_colostro),
           brix_colostro: f.brix_colostro === "" ? undefined : Number(f.brix_colostro),
           data_colostro: f.data_colostro || undefined,
+          hora_parto: f.hora_parto || undefined,
+          hora_colostro: f.hora_colostro || undefined,
+          peso_nascer_kg: f.peso_nascer_kg === "" ? undefined : Number(f.peso_nascer_kg),
           brix_soro: f.brix_soro === "" ? undefined : Number(f.brix_soro),
+          proteina_serica: f.proteina_serica === "" ? undefined : Number(f.proteina_serica),
+          apenas_colostro_po: f.apenas_colostro_po === "" ? undefined : f.apenas_colostro_po === "true",
           data_teste_sangue: f.data_teste_sangue || undefined,
           observacao: f.observacao || undefined,
         },
@@ -318,13 +328,27 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
 
               {!editColostro ? (
                 <Grade>
+                  <ParDado label="Peso ao nascer (kg)" valor={mostrarValor(colostragem?.peso_nascer_kg)} />
                   <ParDado label="Tomou colostro?" valor={mostrarValor(colostragem?.tomou_colostro)} />
                   <ParDado label="Litros" valor={mostrarValor(colostragem?.litros_colostro)} />
                   <ParDado label="Brix colostro" valor={mostrarValor(colostragem?.brix_colostro)} />
                   <ParDado label="Brix soro" valor={mostrarValor(colostragem?.brix_soro)} />
+                  <ParDado label="Proteína sérica" valor={mostrarValor(colostragem?.proteina_serica)} />
+                  <ParDado label="Só colostro em pó?" valor={mostrarValor(colostragem?.apenas_colostro_po)} />
                 </Grade>
               ) : (
                 <div style={{ marginTop: "0.3rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 0.8rem" }}>
+                    <MobCampo label="Hora do parto">
+                      <input type="time" className="mob-input" value={formColostro.hora_parto || ""} onChange={(e) => setFormColostro((p) => ({ ...p, hora_parto: e.target.value }))} />
+                    </MobCampo>
+                    <MobCampo label="Hora do colostro">
+                      <input type="time" className="mob-input" value={formColostro.hora_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, hora_colostro: e.target.value }))} />
+                    </MobCampo>
+                  </div>
+                  <MobCampo label="Peso ao nascer (kg)">
+                    <input type="number" step="0.1" inputMode="decimal" className="mob-input" value={formColostro.peso_nascer_kg || ""} onChange={(e) => setFormColostro((p) => ({ ...p, peso_nascer_kg: e.target.value }))} placeholder="ex.: 38" />
+                  </MobCampo>
                   <MobCampo label="Tomou colostro?">
                     <select className="mob-input" value={formColostro.tomou_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, tomou_colostro: e.target.value }))}>
                       <option value="">—</option>
@@ -345,12 +369,24 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
                   <MobCampo label="Data do colostro">
                     <input type="date" className="mob-input" value={formColostro.data_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, data_colostro: e.target.value }))} />
                   </MobCampo>
-                  <MobCampo label={destacar === "igg" ? "Brix do soro / IgG (pendente)" : "Brix do soro / IgG"}>
-                    <input type="number" inputMode="decimal" className="mob-input" style={destacar === "igg" ? { borderColor: "var(--mob-vermelho)" } : undefined}
-                      value={formColostro.brix_soro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, brix_soro: e.target.value }))} />
-                  </MobCampo>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 0.8rem" }}>
+                    <MobCampo label={destacar === "igg" ? "Brix do soro / IgG (pendente)" : "Brix do soro / IgG"}>
+                      <input type="number" inputMode="decimal" className="mob-input" style={destacar === "igg" ? { borderColor: "var(--mob-vermelho)" } : undefined}
+                        value={formColostro.brix_soro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, brix_soro: e.target.value }))} />
+                    </MobCampo>
+                    <MobCampo label="Proteína sérica (g/dL)">
+                      <input type="number" step="0.1" inputMode="decimal" className="mob-input" value={formColostro.proteina_serica || ""} onChange={(e) => setFormColostro((p) => ({ ...p, proteina_serica: e.target.value }))} placeholder="ex.: 6,0" />
+                    </MobCampo>
+                  </div>
                   <MobCampo label="Data do teste de sangue">
                     <input type="date" className="mob-input" value={formColostro.data_teste_sangue || ""} onChange={(e) => setFormColostro((p) => ({ ...p, data_teste_sangue: e.target.value }))} />
+                  </MobCampo>
+                  <MobCampo label="Recebeu somente colostro em pó?">
+                    <select className="mob-input" value={formColostro.apenas_colostro_po || ""} onChange={(e) => setFormColostro((p) => ({ ...p, apenas_colostro_po: e.target.value }))}>
+                      <option value="">—</option>
+                      <option value="true">Sim (sem colostro materno)</option>
+                      <option value="false">Não</option>
+                    </select>
                   </MobCampo>
                   <MobCampo label="Observação">
                     <input className="mob-input" value={formColostro.observacao || ""} onChange={(e) => setFormColostro((p) => ({ ...p, observacao: e.target.value }))} />
