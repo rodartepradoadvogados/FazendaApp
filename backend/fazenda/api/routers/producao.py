@@ -126,20 +126,25 @@ def listar_controles(
     # Raça sempre a do cadastro do animal (nunca a copiada/congelada no controle
     # leiteiro, que pode estar desatualizada ou vir de texto livre de CSV antigo).
     raca_por_numero = {a.numero: a.raca for a in animais_cadastro}
-    # Ordem de parto por animal derivada do nº de partos PRODUTIVOS (aborto
-    # não conta — ver fazenda/rules/parto.py), para preencher os controles
-    # cuja ordem veio vazia (o primeiro parto é sempre "1").
-    partos_por_numero: dict[str, int] = {}
+    # Ordem de parto NA DATA DO CONTROLE (não a ordem atual do animal — ver
+    # rules/ordem_parto_historica.py::ordem_parto_na_data). Substituiu o atalho
+    # antigo — contagem TOTAL de partos aplicada a todo o histórico do animal
+    # — que rotulava até os controles da primeira cria com a ordem de hoje.
+    # Só entram partos PRODUTIVOS (aborto não conta — ver rules/parto.py).
+    partos_por_numero: dict[str, list[PartoRef]] = {}
     for p in session.exec(partos_query).all():
         if not eh_parto_produtivo(p):
             continue
-        partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
+        partos_por_numero.setdefault(p.numero_matriz, []).append(PartoRef(p.data_parto, p.ordem_parto))
     controles = session.exec(controles_query).all()
     nomes = mapa_usuarios(session, {c.usuario_id for c in controles})
     registros = []
     for c in controles:
         d = c.data_controle
-        ordem = c.ordem_parto or partos_por_numero.get(c.numero_matriz) or None
+        # Sem atalho/palpite: `None` quando não dá para saber é mais honesto
+        # que uma ordem que não corresponde a nada (mesma filosofia de
+        # scripts/reconstruir_ordem_parto.py::gravar).
+        ordem = ordem_parto_na_data(partos_por_numero.get(c.numero_matriz, []), d)
         registros.append({
             "id": c.id,  # G13 — sustenta editar/excluir na lista "últimos lançados"
             "numero": c.numero_matriz,
@@ -2168,6 +2173,51 @@ def equivalente_maduro_do_animal(
     if linha is None:
         raise HTTPException(status_code=404, detail="Sem lactação registrada para este animal")
     return linha
+
+
+@router.get("/ordem-parto/relatorio")
+def relatorio_ordem_parto(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Versão HTTP, somente leitura, de `scripts/reconstruir_ordem_parto.py
+    levantar()` — existe porque este ambiente de desenvolvimento não alcança
+    o Postgres de produção diretamente (mesmo bloqueio de rede que atinge o
+    Milknews), então o script de linha de comando não roda daqui. Esta rota
+    deixa o mesmo relatório acessível de qualquer lugar que já fale com a API
+    (inclusive o próprio navegador do dono da fazenda).
+
+    NÃO grava nada — é o mesmo levantamento que decide, por comparação, quais
+    `ControleLeiteiro.ordem_parto` mudariam se a reconstrução fosse aplicada.
+    A gravação em si continua exigindo o script com `--gravar`, rodado por
+    alguém olhando o relatório antes — ver o próprio script para o porquê."""
+    # Import local, de propósito: mantém o script como fonte única do
+    # levantamento (nada duplicado aqui), e evita import de `scripts.*` no
+    # carregamento do módulo do router — só paga esse custo quem chama a rota.
+    from scripts.reconstruir_ordem_parto import levantar
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = levantar(session, fazenda_id, exemplos=40)
+    return {
+        "partos": r["partos"],
+        "controles": r["controles"],
+        "animais_com_parto": r["animais_com_parto"],
+        "lactacoes_por_ordem": r["lactacoes_por_ordem"],
+        "idade_ao_parto": r["idade_ao_parto"],
+        "muda": r["muda"],
+        "vira_desconhecido": r["vira_desconhecido"],
+        "periodo_partos": [d.isoformat() for d in r["periodo_partos"]] if r["periodo_partos"] else None,
+        "periodo_controles": [d.isoformat() for d in r["periodo_controles"]] if r["periodo_controles"] else None,
+        "amostra": [
+            {
+                "numero_matriz": numero,
+                "data_controle": data.isoformat() if data else None,
+                "ordem_hoje": hoje,
+                "ordem_correta": correta,
+            }
+            for numero, data, hoje, correta in r["amostra"]
+        ],
+    }
 
 
 # Calculadora avulsa — não persiste nada, mesmo padrão de
