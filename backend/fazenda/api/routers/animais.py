@@ -819,7 +819,98 @@ def ficha_animal(
         # Reusa `rules.producao.calcular_producao`, o mesmo cálculo da tela de
         # Produção, em vez de inventar um modelo teórico à parte.
         "curva_referencia_rebanho": _curva_referencia_rebanho(session, fazenda_id),
+        # Curva de Wood ajustada aos pontos REAIS deste animal (ver
+        # fazenda.rules.curva_wood) — trajetória esperada da lactação DELE,
+        # e projeção da cauda quando a lactação ainda está em aberto. None
+        # quando não há controle leiteiro suficiente para um ajuste com
+        # sentido (ver PONTOS_MINIMOS_AJUSTE no módulo).
+        "curva_wood": _curva_wood_do_animal(controles_leiteiros),
+        # Referência mais fina que `curva_referencia_rebanho`: só vacas na
+        # MESMA ordem de parto do animal (ex.: só outras de 3ª cria), não o
+        # rebanho inteiro. None quando o próprio animal nunca pariu ou não
+        # há outras vacas no mesmo grupo com controle suficiente.
+        "curva_referencia_grupo_ordem_parto": _curva_referencia_grupo_ordem_parto(
+            session, fazenda_id, total_partos,
+        ),
     }
+
+
+def _curva_wood_do_animal(controles_leiteiros) -> list[dict] | None:
+    """Extrai (DEL, kg) dos controles leiteiros do animal e ajusta a curva de
+    Wood (ver fazenda.rules.curva_wood.ajustar_curva_wood). Devolve só a
+    série de pontos prontos para desenhar — a/b/c ficam internos ao módulo de
+    regras, não fazem parte do contrato da ficha."""
+    from fazenda.rules.curva_wood import ajustar_curva_wood
+
+    pontos = [
+        (c.del_no_controle, c.producao_kg) for c in controles_leiteiros
+        if c.del_no_controle is not None and c.producao_kg is not None
+    ]
+    ajuste = ajustar_curva_wood(pontos)
+    return ajuste["pontos"] if ajuste else None
+
+
+def _curva_referencia_grupo_ordem_parto(
+    session: Session, fazenda_id: int | None, ordem_parto_animal: int,
+) -> list[dict] | None:
+    """Produção média por faixa de DEL, só de vacas na MESMA ordem de parto
+    do animal em questão — recorte mais fino que `_curva_referencia_rebanho`,
+    que mistura primípara com vaca de 5ª cria. Mesmo cálculo de
+    `rules.producao.calcular_producao`, aplicado a um subconjunto de
+    controles.
+
+    A ordem de parto de CADA controle é a posição cronológica (1º, 2º, 3º…)
+    do parto produtivo mais recente até a data daquele controle — mesmo
+    critério de `total_partos`/`ordem_parto` usado no resto desta ficha (ver
+    docstring de `ficha_animal`), não o campo `Parto.ordem_parto` gravado no
+    banco (pode vir errado do CSV). Um controle anterior a qualquer parto do
+    seu animal (ordem 0) fica sem ordem de parto conhecida e é EXCLUÍDO do
+    agrupamento — não entra por engano no grupo de primípara.
+
+    None quando o próprio animal nunca teve parto produtivo (sem ordem_parto
+    para comparar) ou quando não sobra nenhum controle de outra vaca no
+    mesmo grupo.
+    """
+    if not ordem_parto_animal:
+        return None
+
+    from fazenda.rules.parto import eh_parto_produtivo
+    from fazenda.rules.producao import calcular_producao
+
+    query_partos = select(Parto)
+    query_controles = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+
+    partos_produtivos_por_matriz: dict[str, list[date]] = {}
+    for p in session.exec(query_partos).all():
+        if eh_parto_produtivo(p) and p.data_parto:
+            partos_produtivos_por_matriz.setdefault(p.numero_matriz, []).append(p.data_parto)
+    for datas in partos_produtivos_por_matriz.values():
+        datas.sort()
+
+    controles_do_grupo = []
+    for c in session.exec(query_controles).all():
+        if not c.data_controle:
+            continue
+        datas_parto = partos_produtivos_por_matriz.get(c.numero_matriz)
+        if not datas_parto:
+            continue  # animal sem ordem de parto conhecida — fora do agrupamento
+        ordem_no_controle = sum(1 for d in datas_parto if d <= c.data_controle)
+        if ordem_no_controle == 0 or ordem_no_controle != ordem_parto_animal:
+            continue
+        controles_do_grupo.append({
+            "numero_matriz": c.numero_matriz,
+            "data_controle": c.data_controle,
+            "producao_kg": c.producao_kg,
+            "del_no_controle": c.del_no_controle,
+        })
+
+    if not controles_do_grupo:
+        return None
+    curva = calcular_producao(controles_do_grupo)["curva_lactacao"]
+    return curva or None
 
 
 def _curva_referencia_rebanho(session: Session, fazenda_id: int | None) -> list[dict]:
