@@ -36,6 +36,7 @@ export function SecaoResumo({ ficha }: { ficha: Ficha }) {
           <ParDado label="Ordem de parto" valor={maisRecente ? `${maisRecente.ordem_parto}ª cria` : "—"} />
           <ParDado label="Dias de gestação" valor={ficha.precisao_parto?.dias_gestacao ?? "—"} />
           <ParDado label="Previsão de parto" valor={ficha.previsao_parto ? formatDate(ficha.previsao_parto) : "—"} />
+          <ParDado label="Última cria" valor={ficha.ultima_cria || "—"} />
         </Grade>
       </MobCard>
 
@@ -64,6 +65,7 @@ export function SecaoResumo({ ficha }: { ficha: Ficha }) {
                 <ParDado label="305 dias" valor={<>{fmtKg(l.producao_305_dias_kg)}{l.producao_305_dias_kg != null && l.producao_305_dias_estimada && <span style={{ fontSize: "0.68rem", color: "var(--mob-muted)", fontWeight: 500 }}> (estim.)</span>}</>} />
                 <ParDado label="Tentativas p/ emprenhar" valor={l.tentativas_emprenhar ?? "—"} />
                 <ParDado label="DEL na concepção" valor={l.del_concepcao ?? "—"} />
+                <ParDado label="Cria" valor={l.cria || "—"} />
               </Grade>
             </MobCard>
           ))}

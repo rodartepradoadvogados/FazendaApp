@@ -31,7 +31,30 @@ from __future__ import annotations
 
 from datetime import date
 
+from fazenda.rules.parto import eh_natimorto
+
 DIAS_LACTACAO_PADRAO = 305
+
+
+def _cria_do_parto(p: dict) -> str:
+    """Número da cria daquele parto, para o campo `cria` do quadro por parto
+    (e, via o último item da lista, para "Última cria" da Ficha).
+
+    - Natimorto (`eh_natimorto`) -> vazio: pariu, mas não há cria nenhuma —
+      não confundir com "S/N", que é "nasceu mas não foi numerada". Aborto
+      nem chega aqui: já é filtrado antes de `resumo_por_parto` (só partos
+      produtivos entram na lista de entrada, ver `eh_parto_produtivo`).
+    - Gemelar -> "cria1 / cria2", cada lado "S/N" se aquela cria específica
+      não tiver número lançado.
+    - Caso comum -> o número da cria 1, ou "S/N" se não foi lançado.
+    """
+    if eh_natimorto(p):
+        return ""
+    if p.get("gemelar"):
+        c1 = p.get("numero_cria_1") or "S/N"
+        c2 = p.get("numero_cria_2") or "S/N"
+        return f"{c1} / {c2}"
+    return p.get("numero_cria_1") or "S/N"
 
 
 def resumo_por_parto(
@@ -40,9 +63,10 @@ def resumo_por_parto(
 ) -> list[dict]:
     """Um dict por parto do animal (mais antigo primeiro — mesma ordem de
     `partos`). Cada `dict` de entrada precisa ter as datas já como `date`
-    (não string) — `partos`: `data_parto`; `controles`: `data_controle`,
-    `producao_kg`; `secagens`: `data_secagem`; `servicos`: `data_servico`,
-    `diagnostico`, `ordem_tentativa`.
+    (não string) — `partos`: `data_parto`, `tipo_parto`, `numero_cria_1`,
+    `numero_cria_2`, `gemelar`; `controles`: `data_controle`, `producao_kg`;
+    `secagens`: `data_secagem`; `servicos`: `data_servico`, `diagnostico`,
+    `ordem_tentativa`.
     """
     hoje = hoje or date.today()
     n = len(partos)
@@ -116,5 +140,6 @@ def resumo_por_parto(
             "producao_305_dias_estimada": producao_305_dias_estimada,
             "tentativas_emprenhar": tentativas_emprenhar,
             "del_concepcao": del_concepcao,
+            "cria": _cria_do_parto(p),
         })
     return saida

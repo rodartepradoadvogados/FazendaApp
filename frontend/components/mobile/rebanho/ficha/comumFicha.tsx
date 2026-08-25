@@ -23,6 +23,9 @@ export type ResumoParto = {
   producao_total_kg: number | null; producao_media_dia_kg: number | null;
   producao_305_dias_kg: number | null; producao_305_dias_estimada: boolean;
   tentativas_emprenhar: number | null; del_concepcao: number | null;
+  // Número da cria DAQUELE parto — "S/N" se pariu mas não numerou, vazio se
+  // natimorto (não confundir os dois). Mesma paridade da mesa (FichaAnimal.tsx).
+  cria: string;
 };
 export type PrecisaoParto = {
   data_ultima_ia_positiva: string | null;
@@ -46,6 +49,9 @@ export type Ficha = {
   previsao_secagem: string | null;
   precisao_parto: PrecisaoParto | null;
   resumo_partos: ResumoParto[];
+  // Número da cria do ÚLTIMO parto do animal — mesma regra de `ResumoParto.cria`
+  // aplicada ao último item de `resumo_partos`. Ver fazenda.rules.parto_resumo.
+  ultima_cria: string;
   linha_tempo_sanitaria: { data: string | null; tipo_evento: string; descricao: string | null; gta: string | null; responsavel: string | null }[];
 } & Record<string, Record<string, unknown>[] | Record<string, unknown> | null>;
 

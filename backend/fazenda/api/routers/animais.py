@@ -762,11 +762,25 @@ def ficha_animal(
     # (1ª, 2ª, 3ª…), então incluir um aborto deslocaria a numeração de todas
     # as lactações seguintes da matriz.
     resumo_partos = resumo_por_parto(
-        [{"data_parto": p.data_parto} for p in partos if eh_parto_produtivo(p)],
+        [
+            {
+                "data_parto": p.data_parto,
+                "tipo_parto": p.tipo_parto,
+                "numero_cria_1": p.numero_cria_1,
+                "numero_cria_2": p.numero_cria_2,
+                "gemelar": p.gemelar,
+            }
+            for p in partos if eh_parto_produtivo(p)
+        ],
         [{"data_controle": c.data_controle, "producao_kg": c.producao_kg} for c in controles_leiteiros],
         [{"data_secagem": s.data_secagem} for s in secagens],
         [{"data_servico": s.data_servico, "diagnostico": s.diagnostico, "ordem_tentativa": s.ordem_tentativa} for s in servicos],
     )
+    # "Última cria" da Ficha (área de identificação) — o campo `cria` do
+    # último parto produtivo, mesma regra do quadro (S/N sem número lançado,
+    # vazio se natimorto). Derivado daqui em vez de recalculado no frontend
+    # para não duplicar a lógica em dois lugares (desktop e mobile).
+    ultima_cria = resumo_partos[-1]["cria"] if resumo_partos else ""
 
     return {
         "animal": animal_dump,
@@ -776,6 +790,7 @@ def ficha_animal(
         "precisao_parto": precisao_parto,
         "partos": partos_dump,
         "resumo_partos": resumo_partos,
+        "ultima_cria": ultima_cria,
         "servicos": servicos_dump,
         # Já vem agrupado por protocolo (dicts prontos), não passa por _dump.
         "protocolos_iatf": protocolos_iatf,
