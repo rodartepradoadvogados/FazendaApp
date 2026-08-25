@@ -366,6 +366,17 @@ def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
     return user
 
 
+def exigir_admin_ou_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
+    """Igual a `exigir_admin`, mas também deixa passar o dono-equivalente
+    (ver `eh_email_dono_equivalente`) mesmo que o `papel` gravado não seja
+    literalmente "admin" — usado por ferramentas administrativas pontuais
+    (ex.: reconstrução de ordem de parto) onde bloquear o próprio dono da
+    fazenda por causa de um `papel` divergente seria o bug, não a proteção."""
+    if user.papel != "admin" and not eh_email_dono_equivalente(user.email):
+        raise HTTPException(status_code=403, detail="Requer administrador")
+    return user
+
+
 def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
     """Restringe a quem tem acesso equivalente ao do proprietário (ver
     EMAILS_DONO_EQUIVALENTE), por e-mail cadastrado. Independente de

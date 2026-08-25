@@ -131,6 +131,46 @@ class TestDivergenciasOrdemParto:
         assert r2.json()["muda"] == 1
 
 
+class TestPermissaoReconstruirOrdemParto:
+    """Regressão: a tela ficou invisível para o próprio dono da fazenda
+    porque a rota exigia `papel == "admin"` literal — o dono pode ter
+    `papel` divergente disso. `exigir_admin_ou_dono` deixa passar também o
+    e-mail dono-equivalente (ver EMAILS_DONO_EQUIVALENTE em
+    fazenda/auth.py), independente do `papel` gravado."""
+
+    def test_dono_equivalente_com_papel_nao_admin_consegue_gravar(self, client):
+        c, _ = client
+        import main
+        from fazenda.auth import EMAIL_DONO, get_current_user
+
+        class _FakeDono:
+            id = 2
+            papel = "operador"
+            ativo = True
+            username = "dono"
+            email = EMAIL_DONO
+
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeDono()
+        r = c.post("/producao/ordem-parto/reconstruir", json={"confirmar": True})
+        assert r.status_code == 200, r.text
+
+    def test_usuario_comum_sem_papel_admin_e_403(self, client):
+        c, _ = client
+        import main
+        from fazenda.auth import get_current_user
+
+        class _FakeOperador:
+            id = 3
+            papel = "operador"
+            ativo = True
+            username = "operador"
+            email = "operador@exemplo.com"
+
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
+        r = c.post("/producao/ordem-parto/reconstruir", json={"confirmar": True})
+        assert r.status_code == 403
+
+
 class TestReconstruirOrdemParto:
     def test_sem_confirmar_e_400_e_nao_grava_nada(self, client):
         c, engine = client
