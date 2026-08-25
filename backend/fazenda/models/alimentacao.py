@@ -65,6 +65,17 @@ class Alimento(SQLModel, table=True):
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fase P1 do refactor Alimento/Estoque — quando este Alimento tem 2+
+    # itens de Estoque vinculados (`Estoque.alimento_id`), toda resolução por
+    # nome (`_estoque_por_alimento`, usada pela baixa automática diária, pelo
+    # lançamento manual de consumo e pela necessidade mensal) hoje pega o
+    # primeiro candidato que a query devolve, em ordem arbitrária — ver
+    # TestEscolhaArbitrariaDeCandidato (T11) em tests/test_migracao_alimento.py.
+    # Este campo deixa a fazenda ESCOLHER deliberadamente qual item recebe a
+    # baixa (ver PUT /alimentacao/alimentos/{alimento_id}/estoque-preferido);
+    # NULL preserva a ordem arbitrária de hoje exatamente como está — nenhum
+    # comportamento muda pra quem não usar o mecanismo novo.
+    estoque_preferido_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
 
 
 class Dieta(SQLModel, table=True):
