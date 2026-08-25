@@ -36,6 +36,9 @@ type Ficha = {
     producao_total_kg: number | null; producao_media_dia_kg: number | null;
     producao_305_dias_kg: number | null; producao_305_dias_estimada: boolean;
     tentativas_emprenhar: number | null; del_concepcao: number | null;
+    // Número da cria DAQUELE parto — "S/N" se pariu mas não numerou, vazio
+    // se natimorto (não confundir os dois). Ver fazenda.rules.parto_resumo.
+    cria: string;
   }[];
   servicos: Record<string, unknown>[];
   protocolos_iatf: Record<string, unknown>[];
@@ -61,6 +64,11 @@ type Ficha = {
   // Média do rebanho por faixa de DEL — a linha de referência que a curva de
   // lactação desenha por trás dos pontos deste animal.
   curva_referencia_rebanho?: FaixaReferencia[];
+  // Número da cria do ÚLTIMO parto do animal — "S/N" se pariu sem numerar a
+  // cria, vazio ("") se o último parto foi natimorto (aborto nunca vira o
+  // "último parto" aqui, já é filtrado antes). Ver fazenda.rules.parto_resumo
+  // e o campo `cria` de cada linha de `resumo_partos`.
+  ultima_cria: string;
 };
 
 /**
@@ -88,6 +96,7 @@ function QuadroResumoPartos({ linhas }: { linhas: Ficha["resumo_partos"] }) {
             <th style={{ textAlign: "right" }}>305 dias</th>
             <th style={{ textAlign: "right" }}>Tentativas p/ emprenhar</th>
             <th style={{ textAlign: "right" }}>DEL na concepção</th>
+            <th>Cria</th>
           </tr></thead>
           <tbody>
             {linhas.map((l) => (
@@ -107,6 +116,7 @@ function QuadroResumoPartos({ linhas }: { linhas: Ficha["resumo_partos"] }) {
                 </td>
                 <td style={{ textAlign: "right" }}>{l.tentativas_emprenhar ?? "—"}</td>
                 <td style={{ textAlign: "right" }}>{l.del_concepcao ?? "—"}</td>
+                <td>{l.cria || "—"}</td>
               </tr>
             ))}
           </tbody>
@@ -277,6 +287,9 @@ function construirSecaoQuadroResumo(ficha: Ficha): SecaoFicha {
     dias_gestacao: ficha.precisao_parto?.dias_gestacao ?? "—",
     del_atual: a.del_dias != null ? String(a.del_dias) : "—",
     previsao_parto: ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—",
+    // Cria do último parto — "S/N" se pariu sem numerar, vazio (aqui "—")
+    // se o último parto foi natimorto. Ver fazenda.rules.parto_resumo.
+    ultima_cria: ficha.ultima_cria || "—",
   };
   return {
     titulo: "Quadro resumo",
@@ -286,7 +299,7 @@ function construirSecaoQuadroResumo(ficha: Ficha): SecaoFicha {
       { header: "Raça", key: "raca" }, { header: "Grau de sangue", key: "grau_sangue" }, { header: "Situação", key: "situacao" },
       { header: "Data de entrada", key: "data_entrada" }, { header: "Valor", key: "valor" },
       { header: "Dias de gestação", key: "dias_gestacao" }, { header: "DEL atual", key: "del_atual" },
-      { header: "Previsão de parto", key: "previsao_parto" },
+      { header: "Previsão de parto", key: "previsao_parto" }, { header: "Última cria", key: "ultima_cria" },
     ],
     linhas: [linha],
   };
@@ -320,6 +333,7 @@ function construirSecaoResumoPartos(linhas: Ficha["resumo_partos"]): SecaoFicha 
       { header: "DEL", key: "dias_em_lactacao" }, { header: "Produção total", key: "producao_total" },
       { header: "Média/dia", key: "producao_media_dia" }, { header: "305 dias", key: "producao_305_dias" },
       { header: "Tentativas p/ emprenhar", key: "tentativas_emprenhar" }, { header: "DEL na concepção", key: "del_concepcao" },
+      { header: "Cria", key: "cria" },
     ],
     linhas: linhas.map((l) => ({
       parto: `${l.ordem_parto}º — ${formatDate(l.data_parto)}`,
@@ -330,6 +344,7 @@ function construirSecaoResumoPartos(linhas: Ficha["resumo_partos"]): SecaoFicha 
       producao_305_dias: fmtKg(l.producao_305_dias_kg),
       tentativas_emprenhar: l.tentativas_emprenhar ?? "—",
       del_concepcao: l.del_concepcao ?? "—",
+      cria: l.cria || "—",
     })),
   };
 }
@@ -866,10 +881,11 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                 <div><span style={labelStyle}>Valor</span><br />{a.valor != null ? `R$ ${a.valor}` : "—"}</div>
               </div>
             )}
-            <div style={{ marginTop: "0.85rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)", display: "grid", gridTemplateColumns: "repeat(3, minmax(120px, 1fr))", gap: "0.75rem", fontSize: "0.8rem" }}>
+            <div style={{ marginTop: "0.85rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)", display: "grid", gridTemplateColumns: "repeat(4, minmax(120px, 1fr))", gap: "0.75rem", fontSize: "0.8rem" }}>
               <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto?.dias_gestacao ?? "—"}</div>
               <div><span style={labelStyle}>DEL atual</span><br />{a.del_dias != null ? String(a.del_dias) : "—"}</div>
               <div><span style={labelStyle}>Previsão de parto</span><br />{ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
+              <div><span style={labelStyle}>Última cria</span><br />{ficha.ultima_cria || "—"}</div>
             </div>
           </div>
 

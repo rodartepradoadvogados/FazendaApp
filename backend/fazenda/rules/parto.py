@@ -85,6 +85,16 @@ def eh_aborto(parto: Any) -> bool:
     return _normalizar(_get(parto, "tipo_parto")) == _normalizar(TIPO_PARTO_ABORTO)
 
 
+def eh_natimorto(parto: Any) -> bool:
+    """True quando este `Parto` representa um natimorto: a vaca pariu de
+    verdade (conta como parto produtivo — ver `eh_parto_produtivo`), mas a
+    cria não sobreviveu. Usado por quem precisa distinguir "pariu sem cria
+    viva" de "pariu com cria numerada/S-N" (ex.: campo `cria` do quadro por
+    parto e "Última cria" da Ficha) — não compare `tipo_parto` na mão fora
+    daqui, mesmo critério do resto do módulo."""
+    return _normalizar(_get(parto, "tipo_parto")) == _normalizar(TIPO_PARTO_NATIMORTO)
+
+
 def eh_parto_produtivo(parto: Any) -> bool:
     """True quando este `Parto` conta como uma cria/lactação na vida
     produtiva da matriz — ou seja, tudo que NÃO é aborto.
