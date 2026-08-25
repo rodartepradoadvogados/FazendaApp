@@ -414,6 +414,7 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
   const [dataPrevista, setDataPrevista] = useState(pedido?.data_prevista ?? "");
   const [observacao, setObservacao] = useState(pedido?.observacao ?? "");
   const [responsavel, setResponsavel] = useState(pedido?.responsavel ?? "");
+  const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [itens, setItens] = useState<PedidoItemPayload[]>(
     pedido?.itens.map((i) => ({
       tipo_item: i.tipo_item, produto_servico: i.produto_servico, codigo_conta_gerencial: i.codigo_conta_gerencial,
@@ -529,7 +530,13 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
       <div className="flex flex-wrap gap-3">
         <div><label style={labelStyle}>Data do pedido</label><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></div>
         <div><label style={labelStyle}>Data prevista (opcional)</label><input type="date" style={inputStyle} value={dataPrevista} onChange={(e) => setDataPrevista(e.target.value)} /></div>
-        <div><label style={labelStyle}>Responsável (opcional)</label><input style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)} /></div>
+        <div><label style={labelStyle}>Responsável (opcional)</label>
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+            <option value="">Opcional</option>
+            {responsavel && !nomesResponsaveis.includes(responsavel) && <option value={responsavel}>{responsavel}</option>}
+            {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
       </div>
 
       <div>
