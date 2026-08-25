@@ -16,12 +16,21 @@ import { SuporteBanner } from "@/components/SuporteBanner";
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
 // são as páginas institucionais linkadas pelos banners da própria /login.
-const ROTA_PUBLICA = (p: string) => p === "/login" || p === "/news" || p.startsWith("/sobre/");
+// "/" (T8): visitante sem login vê a landing pública, não é mais empurrado
+// para /login — ver bypass de casca dedicado logo abaixo (path === "/" &&
+// estado === "deslogado"), que faz o mesmo papel do bypass de /login/sobre
+// para essa rota específica (que, ao contrário delas, também é válida
+// LOGADA — por isso não pode ganhar o mesmo `return <>{children}</>}`
+// incondicional daquelas duas, só o condicional a seguir).
+const ROTA_PUBLICA = (p: string) => p === "/" || p === "/login" || p === "/news" || p.startsWith("/sobre/");
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
- * A rota /login é aberta; /news também é pública (leitura sem login);
- * qualquer outra sem token redireciona para o login.
+ * A rota /login é aberta; /news também é pública (leitura sem login); "/"
+ * é pública também (T8: landing para quem chega sem sessão, Capa para quem
+ * já está logado — a própria app/page.tsx decide qual das duas mostrar,
+ * consultando getToken()); qualquer outra rota sem token redireciona para
+ * o login.
  */
 export function AuthShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
@@ -144,6 +153,17 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // /sobre/* já vem com a própria casca pública (PublicPage) — igual /login,
   // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
   if (path === "/login" || path.startsWith("/sobre/")) return <>{children}</>;
+
+  // "/" pública (T8): visitante SEM login não é redirecionado para /login
+  // (ver ROTA_PUBLICA acima) — em vez disso vê a landing pública, com a
+  // própria casca (PublicPage), sem a Sidebar/farm-shell abaixo. app/page.tsx
+  // decide sozinha landing-vs-Capa (mesmo getToken() que este componente já
+  // usa, sem contexto novo); aqui só liberamos a passagem, do mesmo jeito que
+  // /login e /sobre/* acima. Só entra nesse bypass quando `estado` já
+  // resolveu para "deslogado" (não durante "checando", que ainda cai no
+  // "Carregando…" abaixo) — quando `estado` vira "logado", a raiz volta a
+  // cair na Sidebar/farm-shell normal, exatamente como sempre foi.
+  if (path === "/" && estado === "deslogado") return <>{children}</>;
 
   // Milk News tem casca visual PRÓPRIA e FIXA (branca, mesmo logo do site/app)
   // — igual para qualquer visitante, logado ou não, independente do tema
