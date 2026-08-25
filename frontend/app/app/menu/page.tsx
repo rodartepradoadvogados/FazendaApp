@@ -68,7 +68,7 @@ type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.R
 // 26) porque agora ilustra uma linha de lista, não mais um quadrado grande.
 const GRUPOS: Grupo[] = [
   { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
-    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={20} /> },
+    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho + busca por parâmetro", rota: "/relatorios", icone: <Stethoscope size={20} /> },
     { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={20} /> },
     // Entra em Reprodução, primeiro nível, e não pendurado dentro de Gestão >
     // Indicadores: é a medida de eficiência reprodutiva do padrão da área

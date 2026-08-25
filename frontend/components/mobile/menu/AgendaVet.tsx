@@ -14,6 +14,7 @@ import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao } from "@/components/Ordenavel";
 import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+import { FiltroAgendaReprodutiva } from "@/components/mobile/menu/FiltroAgendaReprodutiva";
 
 // Campos ordenáveis das listas da Agenda — nem toda lista preenche todos
 // (ex.: só as "inseminadas" têm dias_inseminada), mas useOrdenacao já joga os
@@ -170,6 +171,12 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
           {sucesso}
         </div>
       )}
+
+      {/* Busca por parâmetro (situação/período/categoria) — mesma capacidade
+          dos cards configuráveis do site, num formulário simples que devolve
+          uma lista; independente das 10 listas fixas abaixo, então não
+          depende de `dados` ter carregado. */}
+      <FiltroAgendaReprodutiva onFichaAberta={setFichaAberta} />
 
       {carregando && !dados ? (
         <Carregando />
