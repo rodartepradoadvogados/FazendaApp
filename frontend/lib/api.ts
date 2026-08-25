@@ -5621,11 +5621,26 @@ export async function marcarPagoFinanceiro(id: number, dados: {
   // PUT /financeiro/lancamentos/{id}/pagar.
   parcelas_diferenca?: { data_vencimento: string; valor: number }[];
 }) {
-  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
+  // Mesma chave nas duas tentativas: se a 1ª chegou a gravar a baixa no
+  // servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // fetch" que aparece em "Ações > Pagamento" com o lançamento já baixado —
+  // conexão rural instável costuma cair bem no meio do PUT), o middleware de
+  // idempotência (main.py::_idempotencia) reconhece a chave repetida e
+  // devolve a mesma resposta em vez de baixar de novo. Mesmo padrão de
+  // criarLancamentoFinanceiro, acima.
+  const chave = gerarChaveIdempotencia();
+  const pagar = () => authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", "Idempotency-Key": gerarChaveIdempotencia() },
+    headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
   });
+  let res: Response;
+  try {
+    res = await pagar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await pagar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao dar baixa"); }
   return res.json();
 }
@@ -5778,12 +5793,29 @@ export async function anexarArquivoLancamento(
   numeroLancamento: string, file: File, categoria?: string | null,
   numeroDocumento?: string | null, dataDocumento?: string | null,
 ): Promise<AnexoLancamento> {
-  const form = new FormData();
-  form.append("file", file);
-  if (categoria) form.append("categoria", categoria);
-  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
-  if (dataDocumento) form.append("data_documento", dataDocumento);
-  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
+  // Mesma chave nas duas tentativas: upload de foto/comprovante é o request
+  // mais exposto a "Failed to fetch" com sucesso no servidor (arquivo maior,
+  // conexão rural instável derruba no meio da volta da resposta) — mesmo
+  // padrão de criarLancamentoFinanceiro/marcarPagoFinanceiro, acima. A key
+  // vai por fora do FormData (o middleware de idempotência só olha o header).
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    form.append("file", file);
+    if (categoria) form.append("categoria", categoria);
+    if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+    if (dataDocumento) form.append("data_documento", dataDocumento);
+    return authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  let res: Response;
+  try {
+    res = await enviar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await enviar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
@@ -5802,12 +5834,28 @@ export async function anexarArquivoLancamentoPorId(
   lancamentoId: number, file: File, categoria?: string | null,
   numeroDocumento?: string | null, dataDocumento?: string | null,
 ): Promise<AnexoLancamento> {
-  const form = new FormData();
-  form.append("file", file);
-  if (categoria) form.append("categoria", categoria);
-  if (numeroDocumento) form.append("numero_documento", numeroDocumento);
-  if (dataDocumento) form.append("data_documento", dataDocumento);
-  const res = await authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, { method: "POST", body: form });
+  // Usado pelo comprovante em "Ações > Pagamento" (PagamentoIndividualView) —
+  // mesma chave nas duas tentativas, mesmo motivo de anexarArquivoLancamento
+  // acima: foto de comprovante em conexão rural instável é o caso mais
+  // exposto a "Failed to fetch" com o upload já salvo no servidor.
+  const chave = gerarChaveIdempotencia();
+  const enviar = () => {
+    const form = new FormData();
+    form.append("file", file);
+    if (categoria) form.append("categoria", categoria);
+    if (numeroDocumento) form.append("numero_documento", numeroDocumento);
+    if (dataDocumento) form.append("data_documento", dataDocumento);
+    return authFetch(`${API}/financeiro/lancamentos/por-id/${lancamentoId}/anexos`, {
+      method: "POST", headers: { "Idempotency-Key": chave }, body: form,
+    });
+  };
+  let res: Response;
+  try {
+    res = await enviar();
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw netError(e);
+    res = await enviar().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao anexar o arquivo"); }
   return res.json();
 }
