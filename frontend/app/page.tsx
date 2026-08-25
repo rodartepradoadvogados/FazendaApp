@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search, CheckCircle2, ArrowRight, Plus } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, podeModulo, today, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
+  fetchNotaCapa, podeModulo, today, getToken, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
 } from "@/lib/api";
 import { cartao } from "@/lib/cartaoDrillDown";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
@@ -15,6 +15,7 @@ import { NewsButton } from "@/components/NewsButton";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ManualFazendaButton } from "@/components/ManualFazendaModal";
+import { LandingPublica } from "@/components/landing/LandingPublica";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -32,7 +33,11 @@ const LABEL_MOTIVO_BAIXA: Record<string, string> = {
   venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença", macho: "Macho", outros: "Outros",
 };
 
-export default function Home() {
+// A Capa (dashboard) propriamente dita — só renderizada para quem está
+// logado. Ver Home() no fim do arquivo, que decide entre esta e a landing
+// pública (T8); a divisão em dois componentes existe só por isso, nenhuma
+// lógica interna da Capa mudou.
+function Capa() {
   const [d, setD] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
@@ -470,4 +475,15 @@ export default function Home() {
       )}
     </div>
   );
+}
+
+// Porta de entrada "/" (T8): visitante sem login vê a landing pública, quem
+// já está logado vai direto para a Capa — exatamente como antes. AuthShell
+// (ver components/AuthShell.tsx::ROTA_PUBLICA) já garante que esta função só
+// é chamada depois que a sessão foi checada (nunca durante o "Carregando…"
+// nem no servidor) — então getToken() aqui é seguro e não repete a checagem
+// de auth: reaproveita o mesmo helper que o próprio AuthShell usa, sem
+// contexto/hook novo.
+export default function Home() {
+  return getToken() ? <Capa /> : <LandingPublica />;
 }
