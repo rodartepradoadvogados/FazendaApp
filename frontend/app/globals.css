@@ -29,6 +29,11 @@
   --cat-estoque:     #C98A2A;
   --cat-recria:      #B0894A;
   --cat-acesso:      #9A5560;
+  /* Mesmo azul já usado para "Produção" fora deste bloco (--blue, Agenda,
+     badge-producao) — nomeado aqui como token de categoria para completar o
+     conjunto --cat-* (Produção não tinha um até então) sem introduzir uma
+     cor nova à identidade. */
+  --cat-producao:    #1E6FA8;
 }
 
 /* ── Design system tokens ──
