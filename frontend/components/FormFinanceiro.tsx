@@ -417,8 +417,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // "arrastar o documento" também GUARDAR o arquivo, não só ler os dados.
   // Cada arquivo carrega sua PRÓPRIA categoria/número/data (um lançamento
   // pode reunir vários tipos de documento — ver Central de Documentos).
-  type AnexoStaged = { file: File; categoria: string; numero_documento: string; data_documento: string };
+  // `decidido`: false enquanto o usuário ainda não passou pelo popup "Deseja
+  // importar os dados desse documento?" (ver `resolverImportacaoAnexos`) —
+  // é o que torna a leitura automática uma ESCOLHA explícita depois de
+  // "Salvar" em vez de disparar sozinha ao anexar (ver stageArquivo).
+  type AnexoStaged = { file: File; categoria: string; numero_documento: string; data_documento: string; decidido: boolean };
   const [anexosStaged, setAnexosStaged] = useState<AnexoStaged[]>([]);
+  // Popup "Deseja importar os dados desse documento?" (ou, com mais de um
+  // pendente, "de qual documento?") — aberto pelo botão "Salvar" da área de
+  // anexo. Só existem enquanto há algum anexo com `decidido: false`.
+  const [importarPopupAberto, setImportarPopupAberto] = useState(false);
+  const anexosPendentesImportacao = anexosStaged.filter((a) => !a.decidido);
   const anexoInputRef = useRef<HTMLInputElement>(null);
   const fotoAnexoInputRef = useRef<HTMLInputElement>(null);
   // Popup "miniatura + tipo de documento" que abre logo depois de anexar —
@@ -832,7 +841,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // adivinhar pelo próprio documento; senão usa o Tipo de documento já
   // escolhido no lançamento (se houver) ou deixa em branco pro usuário decidir.
   function stageArquivo(file: File, categoriaSugerida?: string) {
-    setAnexosStaged((arr) => [...arr, { file, categoria: categoriaSugerida || tipoDocumento || "", numero_documento: "", data_documento: "" }]);
+    setAnexosStaged((arr) => [...arr, { file, categoria: categoriaSugerida || tipoDocumento || "", numero_documento: "", data_documento: "", decidido: false }]);
     setCategoriaPopupFile(file);
   }
 
@@ -928,42 +937,37 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     }
   }
 
-  // Processa UM arquivo: anexa (staged) + tenta ler/extrair dados dele. Os
-  // dois sempre andam juntos agora — antes, o arquivo usado na leitura
-  // automática NUNCA ficava anexado (só os dados extraídos), e era preciso
-  // arrastar de novo num dropzone separado só pra guardar o arquivo. `await`
-  // até o fim (mesmo quando a leitura falha) — quem chama processa vários
-  // arquivos em sequência, nunca em paralelo, pra "campo já preenchido por
-  // este documento, o próximo diverge" (ver aplicarXml) comparar direito.
-  async function tratarArquivo(file: File) {
-    // Antes, só passava pela leitura automática (IA) quando file.type fosse
-    // EXATAMENTE "application/pdf"/"image/jpeg"/"image/png" — qualquer outra
-    // coisa (foto salva como "image/jpg" por câmera/app mais antigo, WEBP,
-    // HEIC/HEIF de iPhone, ou MIME vazio, comum em drag-and-drop de alguns
-    // gerenciadores de arquivo) caía no ramo de XML: o binário da imagem era
-    // lido como texto e mandado pro parser de NF-e, que sempre falhava com
-    // 400 "Não foi possível ler o XML" — daí o erro 400 ao anexar/arrastar
-    // documento normal em Contas a pagar. O backend (/financeiro/ler-documento)
-    // já tolera esses formatos (ver MIME_ACEITOS em leitura_documento.py); a
-    // checagem aqui só precisa distinguir XML (rota de texto) do resto
-    // (rota de leitura de documento/imagem via IA).
-    const ehXml = file.type === "text/xml" || file.type === "application/xml" || /\.xml$/i.test(file.name);
-    stageArquivo(file, ehXml ? "Nota fiscal" : undefined);
-    if (ehXml) {
-      const texto = await file.text();
-      await importarXml(texto, file);
-    } else {
-      onArquivoParaLeitura?.(file);
-      await lerDocumentoAnexado(file);
-    }
+  // Antes, só passava pela leitura automática (IA) quando file.type fosse
+  // EXATAMENTE "application/pdf"/"image/jpeg"/"image/png" — qualquer outra
+  // coisa (foto salva como "image/jpg" por câmera/app mais antigo, WEBP,
+  // HEIC/HEIF de iPhone, ou MIME vazio, comum em drag-and-drop de alguns
+  // gerenciadores de arquivo) caía no ramo de XML: o binário da imagem era
+  // lido como texto e mandado pro parser de NF-e, que sempre falhava com
+  // 400 "Não foi possível ler o XML" — daí o erro 400 ao anexar/arrastar
+  // documento normal em Contas a pagar. O backend (/financeiro/ler-documento)
+  // já tolera esses formatos (ver MIME_ACEITOS em leitura_documento.py); a
+  // checagem aqui só precisa distinguir XML (rota de texto) do resto
+  // (rota de leitura de documento/imagem via IA).
+  function ehArquivoXml(file: File) {
+    return file.type === "text/xml" || file.type === "application/xml" || /\.xml$/i.test(file.name);
   }
-  async function processarArquivos(files: File[]) {
-    // Sequencial, não Promise.all — cada leitura precisa ver o resultado da
-    // anterior já aplicado pros campos (preenchidos/divergências) fazerem
-    // sentido (ver aplicarXml).
-    for (const file of files) {
-      await tratarArquivo(file);
-    }
+
+  // Processa UM arquivo: só anexa (staged) — NUNCA dispara leitura automática
+  // sozinho. Antes, anexar E ler eram a mesma ação implícita: qualquer PDF/
+  // imagem solto aqui já saía chamando a API de leitura na hora, então um
+  // documento grande (OCR demorado, ver run_in_threadpool no backend) ou uma
+  // instabilidade de rede naquele instante fazia o anexo inteiro falhar —
+  // mesmo o arquivo já estando só localmente "staged", sem depender de rede
+  // nenhuma pra isso. Agora anexar é sempre local (nunca falha por causa da
+  // API); ler os dados é uma escolha explícita do usuário depois de "Salvar"
+  // (ver `resolverImportacaoAnexos`, disparado pelo popup "Deseja importar os
+  // dados desse documento?").
+  function tratarArquivo(file: File) {
+    stageArquivo(file, ehArquivoXml(file) ? "Nota fiscal" : undefined);
+    if (!ehArquivoXml(file)) onArquivoParaLeitura?.(file);
+  }
+  function processarArquivos(files: File[]) {
+    files.forEach(tratarArquivo);
   }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -974,6 +978,25 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     const files = Array.from(e.target.files || []);
     if (files.length) processarArquivos(files);
     e.target.value = "";
+  }
+
+  // Chamado pelo popup "Deseja importar os dados desse documento?" (botão
+  // "Salvar" da área de anexo — ver JSX abaixo). `arquivoEscolhido`: o
+  // documento cujos dados o usuário quer usar pra pré-preencher o
+  // formulário, ou null se a resposta foi "Não"/"Não importar". TODOS os
+  // anexos que estavam pendentes de decisão (não só o escolhido) saem
+  // marcados como `decidido` — o usuário só importa de UM documento por vez;
+  // os outros ficam anexados normalmente, sem leitura.
+  async function resolverImportacaoAnexos(arquivoEscolhido: File | null) {
+    const pendentes = anexosPendentesImportacao.map((a) => a.file);
+    setAnexosStaged((arr) => arr.map((a) => (pendentes.includes(a.file) ? { ...a, decidido: true } : a)));
+    setImportarPopupAberto(false);
+    if (!arquivoEscolhido) return;
+    if (ehArquivoXml(arquivoEscolhido)) {
+      await importarXml(await arquivoEscolhido.text(), arquivoEscolhido);
+    } else {
+      await lerDocumentoAnexado(arquivoEscolhido);
+    }
   }
 
   function montarPayload() {
@@ -1447,9 +1470,21 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             })}
           </ul>
         )}
+        {anexosStaged.length > 0 && (
+          <div className="flex items-center justify-center gap-2" style={{ marginTop: "0.5rem" }}>
+            <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }}
+              title={anexosPendentesImportacao.length > 0 ? "Salvar o(s) anexo(s) e decidir se importa os dados de algum deles" : "Todos os anexos já foram salvos"}
+              disabled={anexosPendentesImportacao.length === 0}
+              onClick={() => setImportarPopupAberto(true)}>
+              <Check size={13} /> {anexosPendentesImportacao.length > 0 ? "Salvar" : "Anexo(s) salvo(s)"}
+            </button>
+          </div>
+        )}
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-          XML/PDF/JPEG/PNG reconhecem vários produtos/serviços da mesma nota. A partir do 2º documento, tenta identificar mais
-          dados (com aviso do que foi acrescentado) e avisa se algum dado divergir do que já está preenchido.
+          Anexar aqui só guarda o(s) documento(s) neste lançamento — não lê nada sozinho. Clique em &ldquo;Salvar&rdquo; pra
+          decidir se importa os dados de algum deles (XML/PDF/JPEG/PNG reconhecem vários produtos/serviços da mesma nota). A
+          partir do 2º documento importado, tenta identificar mais dados (com aviso do que foi acrescentado) e avisa se algum
+          dado divergir do que já está preenchido.
         </p>
       </div>
 
@@ -1808,6 +1843,60 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           </button>
         </div>
       </div>
+
+      {importarPopupAberto && anexosPendentesImportacao.length > 0 && (
+        <Modal
+          title={anexosPendentesImportacao.length === 1 ? "Importar dados do documento?" : "Importar dados de qual documento?"}
+          onClose={() => resolverImportacaoAnexos(null)}
+          width="440px" zIndex={96}
+        >
+          {anexosPendentesImportacao.length === 1 ? (
+            <>
+              <div className="flex items-center gap-3 mb-3">
+                {anexosPendentesImportacao[0].file.type.startsWith("image/") ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={URL.createObjectURL(anexosPendentesImportacao[0].file)} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: "var(--r-sm)", flexShrink: 0 }} />
+                ) : (
+                  <FileText size={36} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />
+                )}
+                <span style={{ fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{anexosPendentesImportacao[0].file.name}</span>
+              </div>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+                Deseja importar os dados desse documento? A leitura automática pré-preenche os campos do lançamento — tudo
+                fica editável antes de salvar.
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" className="btn-ghost" onClick={() => resolverImportacaoAnexos(null)}>Não</button>
+                <button type="button" className="btn-primary" onClick={() => resolverImportacaoAnexos(anexosPendentesImportacao[0].file)}>Sim, importar</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                Você anexou mais de um documento. Escolha qual deles usar pra pré-preencher os campos do lançamento (só dá
+                pra importar de um por vez) — ou não importar nenhum.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                {anexosPendentesImportacao.map((a, i) => (
+                  <button key={i} type="button" className="btn-secondary" style={{ fontSize: "0.78rem", justifyContent: "flex-start", gap: "0.5rem" }}
+                    onClick={() => resolverImportacaoAnexos(a.file)}>
+                    {a.file.type.startsWith("image/") ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={URL.createObjectURL(a.file)} alt="" style={{ width: 24, height: 24, objectFit: "cover", borderRadius: "var(--r-sm)", flexShrink: 0 }} />
+                    ) : (
+                      <FileText size={16} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />
+                    )}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-end mt-3">
+                <button type="button" className="btn-ghost" onClick={() => resolverImportacaoAnexos(null)}>Não importar</button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
 
       {categoriaPopupFile && (() => {
         const entrada = anexosStaged.find((a) => a.file === categoriaPopupFile);

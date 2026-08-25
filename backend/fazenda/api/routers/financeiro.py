@@ -9,6 +9,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -2933,12 +2934,27 @@ async def ler_documento_anexado(
 ) -> dict:
     """Lê um PDF/JPEG/PNG anexado (nota fiscal ou recibo) via IA e devolve os
     campos extraídos para pré-preencher o lançamento — tudo editável no front
-    — junto das mesmas sugestões de cadastro de `importar_xml` acima."""
+    — junto das mesmas sugestões de cadastro de `importar_xml` acima.
+
+    `ler_documento` é 100% síncrono e pesado (renderiza cada página do PDF em
+    imagem via poppler + roda Tesseract OCR por página) — chamado direto
+    dentro de uma rota `async def`, ele TRAVA o event loop inteiro pela
+    duração do OCR (o processo em produção roda com um único worker uvicorn,
+    ver Procfile/railway.toml). Num documento com várias páginas isso
+    facilmente passa de dezenas de segundos, período em que o processo não
+    responde a MAIS NADA — nem `/health`, nem qualquer outra requisição
+    concorrente — até estourar o timeout do proxy/gateway na frente do
+    Railway; o navegador então vê a conexão cair no meio (fetch rejeita com
+    TypeError) e mostra o erro genérico de "sem conexão com a API", mascarando
+    que o backend estava vivo, só ocupado. `run_in_threadpool` roda o OCR
+    numa thread separada, liberando o event loop nesse meio tempo — não
+    encurta o OCR em si, mas evita que ele derrube a capacidade de resposta
+    do processo (e, por extensão, a conexão desta própria requisição)."""
     if file.content_type not in MIME_ACEITOS:
         raise HTTPException(status_code=400, detail=f"Tipo de arquivo não suportado: {file.content_type} (aceitos: PDF, JPEG, PNG)")
     conteudo = await file.read()
     try:
-        extraido = ler_documento(conteudo, file.content_type)
+        extraido = await run_in_threadpool(ler_documento, conteudo, file.content_type)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
