@@ -5763,17 +5763,36 @@ export async function criarFornecedorApelido(nomeBruto: string, nomeCanonico: st
 }
 
 export async function importarXmlFinanceiro(xml: string) {
-  const res = await authFetch(`${API}/financeiro/importar-xml`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
-  });
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/financeiro/importar-xml`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
+    });
+  } catch (e) {
+    throw netError(e); // "Failed to fetch" cru vira uma mensagem acionável (backend fora do ar/CORS) em vez de aparecer sem contexto.
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o XML"); }
   return res.json();
 }
 
+// Leitura automática (OCR) de PDF/JPEG/PNG — pode demorar bastante num
+// documento com várias páginas (ver comentário em run_in_threadpool no
+// backend); se a conexão cair no meio (proxy/gateway derrubando por
+// demora, Wi-Fi instável etc.), `fetch` lança um TypeError cru ("Failed to
+// fetch") — sem o try/catch abaixo, essa falha de REDE ficava indistinguível
+// de qualquer outro erro de NEGÓCIO (documento ilegível, tipo não
+// suportado...) pro usuário, que via só o texto bruto do navegador. `netError`
+// traduz isso numa mensagem clara e acionável, igual já acontece em
+// criarLancamentoFinanceiro/uploadCSV.
 export async function lerDocumentoFinanceiro(file: File) {
   const form = new FormData();
   form.append("file", file);
-  const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  let res: Response;
+  try {
+    res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  } catch (e) {
+    throw netError(e);
+  }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o documento"); }
   return res.json();
 }
