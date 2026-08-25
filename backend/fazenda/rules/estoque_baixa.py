@@ -239,6 +239,7 @@ def movimentar(
     fazenda_id: int | None, movimento: str, observacao: str, usuario_id: int | None = None,
     origem_tipo: str | None = None, origem_id: int | None = None, sinal: int = -1,
     produto: str | None = None,
+    pedido_id: int | None = None, pedido_item_id: int | None = None,
 ) -> list[str]:
     """Aplica `sinal * quantidade` a `item`, grava o MovimentoEstoque
     correspondente (com `fazenda_id`, `estoque_id` e origem) e devolve a lista
@@ -274,6 +275,11 @@ def movimentar(
         nome_item=item.nome, movimento=movimento, quantidade=abs(quantidade), unidade=item.unidade,
         data_movimento=data, observacao=observacao, usuario_id=usuario_id, fazenda_id=fazenda_id,
         estoque_id=item.id, origem_tipo=origem_tipo, origem_id=origem_id, valor_unitario=item.valor_unitario,
+        # Vínculo dedicado com Pedido (colunas próprias em MovimentoEstoque)
+        # — usado só pela entrada automática de "marcar entrega" de item de
+        # Pedido (ver pedidos.py::marcar_entrega_item_pedido); os demais
+        # chamadores nunca passam isso e as colunas seguem None, como hoje.
+        pedido_id=pedido_id, pedido_item_id=pedido_item_id,
     ))
 
     # Item espelhado de sêmen (Estoque.estoque_semen_id) — mantém EstoqueSemen

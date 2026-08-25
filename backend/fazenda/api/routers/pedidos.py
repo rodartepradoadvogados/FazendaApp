@@ -22,8 +22,10 @@ from fazenda.database import get_session
 from fazenda.models import (
     CATEGORIAS_PEDIDO_ANEXO, ContaGerencial, Fornecedor, MovimentoEstoque, Pedido, PedidoAnexo, PedidoItem, ServicoCadastro, Usuario,
 )
+from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
+from fazenda.rules.pedido_status import STATUS_CANCELADO, calcular_status_pedido
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
@@ -350,6 +352,114 @@ def atualizar_rastreio_pedido(
     session.add(pedido)
     session.commit()
     return {"id": pedido.id, "enviado": pedido.enviado, "codigo_rastreio": pedido.codigo_rastreio, "link_rastreio": pedido.link_rastreio}
+
+
+class PedidoItemEntregaIn(BaseModel):
+    quantidade_entregue: float  # valor ABSOLUTO novo do item (replace, não delta) — mesmo padrão de PUT /cadastro/diarias/{id}/dias
+
+
+def _pendencias_fechamento_pedido(session: Session, pedido_id: int) -> list[str]:
+    """O que falta para este pedido estar "fechado de verdade" no Financeiro,
+    reaproveitando a mesma consulta de `GET /pedidos/{id}` (ContaGerencial
+    vinculado por `pedido_id`).
+
+    Sem NENHUM lançamento vinculado ainda, faltam os dois dados que fecham a
+    ponta financeira de uma nota (ver `criar_lancamento`/`FormFinanceiro.tsx`):
+    quando/quanto foi pago (`data_pagamento`) e a data de emissão do documento
+    (`data_emissao`). Com pelo menos um lançamento já vinculado, cada campo só
+    conta como pendente se NENHUMA parcela o tiver preenchido — parcelado em
+    3x com a 1ª já paga não deve pedir "pagamento" de novo."""
+    lancamentos = session.exec(select(ContaGerencial).where(ContaGerencial.pedido_id == pedido_id)).all()
+    if not lancamentos:
+        return ["pagamento", "data_emissao"]
+    pendencias = []
+    if not any(l.data_pagamento for l in lancamentos):
+        pendencias.append("pagamento")
+    if not any(l.data_emissao for l in lancamentos):
+        pendencias.append("data_emissao")
+    return pendencias
+
+
+@router.put("/{pedido_id}/itens/{item_id}/entrega")
+def marcar_entrega_item_pedido(
+    pedido_id: int,
+    item_id: int,
+    dados: PedidoItemEntregaIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Marca quanto de um item do Pedido já foi FISICAMENTE entregue —
+    escreve `PedidoItem.quantidade_entregue` (substitui, não soma; ver
+    `PedidoItemEntregaIn`) e é o ÚNICO escritor deste campo: dinheiro lançado
+    (`atualizar_status_por_lancamento`) ou estoque baixado por outro caminho
+    (`atualizar_status_por_movimento_estoque`) nunca mexem aqui, e vice-versa
+    — ver comentário em `PedidoItem.quantidade_entregue`.
+
+    Depois de gravar, `Pedido.status` deixa de ser lido/escrito diretamente e
+    passa a ser CALCULADO por `calcular_status_pedido` a partir da entrega de
+    todos os itens do pedido — não só deste.
+
+    Decisão de produto: pedido `cancelado` é terminal (mesma regra de
+    `calcular_status_pedido`) e não aceita marcação de entrega nenhuma — nem
+    para o status "voltar" a refletir entrega. Permitir mexeria em estoque e
+    devolveria pendências financeiras de um pedido que o usuário já decidiu
+    encerrar; se a entrega foi um engano de fato, o caminho é reabrir o
+    pedido explicitamente (fora do escopo desta ação), não marcar entrega por
+    cima de um cancelamento.
+    """
+    pedido = session.get(Pedido, pedido_id)
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    item = session.get(PedidoItem, item_id)
+    if not item or item.pedido_id != pedido_id or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item do pedido não encontrado")
+    if pedido.status == STATUS_CANCELADO:
+        raise HTTPException(status_code=400, detail="Pedido cancelado não aceita marcação de entrega")
+    if dados.quantidade_entregue < 0:
+        raise HTTPException(status_code=400, detail="quantidade_entregue não pode ser negativa")
+
+    anterior = item.quantidade_entregue or 0.0
+    delta = dados.quantidade_entregue - anterior
+    item.quantidade_entregue = dados.quantidade_entregue
+    session.add(item)
+    session.flush()
+
+    # Item estocável (tipo_item == "produto") com AUMENTO na entrega: dá
+    # entrada automática no estoque, na mesma transação (Decisão A1 da
+    # proposta) — mesmo padrão atômico de compra_semen.py (nota + estoque +
+    # registro de domínio juntos, um único commit). Uma correção para baixo
+    # (usuário exagerou e está ajustando) ou item de serviço nunca mexem em
+    # estoque: não há "desfazer entrada" automático aqui, de propósito — é
+    # ajuste raro o bastante para não valer o risco de estornar estoque
+    # errado sozinho.
+    avisos_estoque: list[str] = []
+    if item.tipo_item == "produto" and delta > 0:
+        estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item.produto_servico)
+        avisos_estoque = estoque_baixa.movimentar(
+            session, item=estoque_item, quantidade=delta,
+            unidade=estoque_item.unidade if estoque_item else None,
+            data=date.today(), fazenda_id=fazenda_id, movimento="Entrada de compra",
+            observacao=f"Entrega de {pedido.numero_pedido} — {item.produto_servico}",
+            usuario_id=user.id if isinstance(user, Usuario) else None, sinal=+1,
+            produto=item.produto_servico, pedido_id=pedido_id, pedido_item_id=item.id,
+        )
+
+    itens_pedido = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id)).all()
+    pedido.status = calcular_status_pedido(itens_pedido, pedido.status)
+    pedido.atualizado_em = datetime.utcnow()
+    session.add(pedido)
+    session.commit()
+    session.refresh(pedido)
+    session.refresh(item)
+
+    return {
+        "id": pedido.id,
+        "status": pedido.status,
+        "pendencias": _pendencias_fechamento_pedido(session, pedido_id),
+        "avisos_estoque": avisos_estoque,
+        "item": {"id": item.id, "quantidade_entregue": item.quantidade_entregue},
+    }
 
 
 # Tamanho máximo por anexo — mesmo limite de LancamentoAnexo (ver financeiro.py).
