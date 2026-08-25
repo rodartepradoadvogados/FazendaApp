@@ -1274,13 +1274,63 @@ html, body { max-width: 100%; overflow-x: hidden; }
   border: 2px solid var(--mob-border); background: var(--mob-surface-2); color: var(--mob-text);
   display: flex; align-items: center; justify-content: center; text-decoration: none;
 }
-.curral-lancar {
-  display: flex; align-items: center; gap: 0.9rem; width: 100%; min-height: 76px;
-  padding: 0 1.2rem; border-radius: var(--r-app); cursor: pointer;
+/* "Fazer agora" — quadrado grande e único (maior que qualquer outro bloco
+   desta tela) que ABRE a lista de pendências de hoje numa sub-tela, em vez
+   de expô-la sempre aberta na tela principal (redesign pedido pelo
+   usuário — a lista sempre visível competia com "Lançar rápido" e a tela
+   inteira virava rolagem). Sem abrir, o quadrado já precisa dizer o que
+   importa: quantas pendências há hoje, e — o dado que mais pesa pra quem
+   está no curral decidir se toca aqui primeiro — se alguma está atrasada
+   (`data-estado="atrasado"`, acento --mob-vermelho na borda/ícone/contador).
+   Sem pendência nenhuma, cai no mesmo verde de "tudo em dia" que
+   `.curral-vazio` já usa alhures. */
+.curral-fazer {
+  display: flex; align-items: center; gap: 1.1rem; width: 100%; min-height: 132px;
+  padding: 1.2rem 1.3rem; border-radius: var(--r-app); cursor: pointer;
   border: 2px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
-  font-size: 1.15rem; font-weight: 800; box-shadow: var(--mob-sombra);
+  box-shadow: var(--mob-sombra); text-align: left;
 }
-.curral-lancar:active { background: var(--mob-surface-2); }
+.curral-fazer-icone {
+  width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--mob-dourado-2) 16%, transparent); color: var(--mob-dourado-2);
+}
+.curral-fazer-texto { flex: 1; min-width: 0; }
+.curral-fazer-titulo { display: block; font-weight: 800; font-size: 1.2rem; }
+.curral-fazer-contador { display: block; font-size: 0.95rem; font-weight: 700; margin-top: 0.25rem; color: var(--mob-muted); }
+.curral-fazer[data-estado="vazio"] .curral-fazer-icone { background: color-mix(in srgb, var(--mob-verde) 16%, transparent); color: var(--mob-verde); }
+.curral-fazer[data-estado="vazio"] .curral-fazer-contador { color: var(--mob-verde); }
+.curral-fazer[data-estado="atrasado"] {
+  border-color: var(--mob-vermelho);
+  background: color-mix(in srgb, var(--mob-vermelho) 8%, var(--mob-surface));
+}
+.curral-fazer[data-estado="atrasado"] .curral-fazer-icone { background: color-mix(in srgb, var(--mob-vermelho) 18%, transparent); color: var(--mob-vermelho); }
+.curral-fazer[data-estado="atrasado"] .curral-fazer-contador { color: var(--mob-vermelho); font-weight: 800; }
+.curral-fazer:active { background: var(--mob-surface-2); }
+
+/* "Lançar rápido" — 3 quadrados coloridos por módulo (Reprodução/Produção/
+   Sanitário), mesma "identidade por cor de módulo" já usada este mês em
+   outras telas do app (ex.: grade do Menu, app/app/menu/page.tsx) — reusa a
+   técnica de tingimento --tint-cor/.mob-tint em vez de inventar paleta
+   própria. Cada um abre um formulário restrito às opções de maior uso no
+   curral (ver ModoCurral.tsx) — a versão completa continua em Lançar. */
+.curral-modulos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.7rem; }
+.curral-modulo {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem;
+  aspect-ratio: 1; border-radius: var(--r-app); cursor: pointer; padding: 0.6rem 0.4rem;
+  border: 2px solid color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 45%, var(--mob-border));
+  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 14%, var(--mob-surface));
+  box-shadow: var(--mob-sombra); color: var(--mob-text); font-weight: 800; font-size: 0.92rem; text-align: center;
+}
+.curral-modulo-icone {
+  width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 26%, transparent); color: var(--tint-cor, var(--mob-muted));
+}
+.curral-modulo:active { background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 24%, var(--mob-surface)); }
+:root[data-theme="escuro"] .curral-modulo {
+  background: var(--mob-surface); border: 2px solid var(--tint-cor, var(--mob-muted));
+}
 .curral-mais {
   display: flex; align-items: center; justify-content: center; gap: 0.3rem;
   min-height: 56px; margin-top: 1.2rem; color: var(--mob-muted); font-weight: 700; text-decoration: none;

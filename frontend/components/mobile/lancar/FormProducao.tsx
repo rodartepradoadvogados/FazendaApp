@@ -68,7 +68,7 @@ const TITULOS_SUB: Record<Sub, string> = {
   inducao: "Indução de lactação", qualidade: "Qualidade do leite", entrega: "Venda mensal do leite", bst: "BST",
 };
 
-export function FormProducao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+export function FormProducao({ animais, animalFixado, restringirA }: { animais: Animal[]; animalFixado: string | null; restringirA?: Sub[] }) {
   const [sub, setSub] = useState<Sub | null>(null);
   const [agenda, setAgenda] = useState<any>(null);
   const carregarAgenda = () => {
@@ -93,20 +93,19 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
   }, [sub, estoqueCarregado]);
 
   if (!sub) {
-    return (
-      <GradeAcoes
-        opcoes={[
-          { id: "controle", label: "Controle leiteiro", icone: <Milk size={28} />, cor: "var(--mob-azul)" },
-          { id: "pesagem", label: "Pesagem corporal", icone: <Scale size={28} />, cor: "var(--mob-roxo)" },
-          { id: "secagem", label: "Secagem", icone: <Moon size={28} />, cor: "var(--mob-amarelo)" },
-          { id: "inducao", label: "Indução de lactação", icone: <Pill size={28} />, cor: "var(--mob-verde)" },
-          { id: "qualidade", label: "Qualidade do leite", icone: <TestTube size={28} />, cor: "var(--mob-laranja)" },
-          { id: "entrega", label: "Venda mensal do leite", icone: <Truck size={28} />, cor: "var(--mob-vermelho)" },
-          { id: "bst", label: "BST", icone: <Zap size={28} />, cor: "var(--mob-dourado-2)" },
-        ]}
-        onEscolher={(id) => setSub(id as Sub)}
-      />
-    );
+    // `restringirA` (opcional): usado pelo Modo Curral para mostrar só
+    // controle/pesagem/secagem/BST — sem o prop (undefined), comportamento
+    // idêntico ao de hoje, as 7 opções completas usadas por Lançar (LancarTela.tsx).
+    const opcoes = [
+      { id: "controle", label: "Controle leiteiro", icone: <Milk size={28} />, cor: "var(--mob-azul)" },
+      { id: "pesagem", label: "Pesagem corporal", icone: <Scale size={28} />, cor: "var(--mob-roxo)" },
+      { id: "secagem", label: "Secagem", icone: <Moon size={28} />, cor: "var(--mob-amarelo)" },
+      { id: "inducao", label: "Indução de lactação", icone: <Pill size={28} />, cor: "var(--mob-verde)" },
+      { id: "qualidade", label: "Qualidade do leite", icone: <TestTube size={28} />, cor: "var(--mob-laranja)" },
+      { id: "entrega", label: "Venda mensal do leite", icone: <Truck size={28} />, cor: "var(--mob-vermelho)" },
+      { id: "bst", label: "BST", icone: <Zap size={28} />, cor: "var(--mob-dourado-2)" },
+    ].filter((o) => !restringirA || restringirA.includes(o.id as Sub));
+    return <GradeAcoes opcoes={opcoes} onEscolher={(id) => setSub(id as Sub)} />;
   }
 
   return (
