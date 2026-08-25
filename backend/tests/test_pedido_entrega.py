@@ -237,3 +237,93 @@ class TestIsolamentoPorFazenda:
         _como_fazenda(1)
         r = c.get(f"/pedidos/{pedido_id}")
         assert r.json()["itens"][0]["quantidade_entregue"] == 0
+
+
+class TestEditarPedidoPreservaEntrega:
+    """Regressão: `PUT /pedidos/{id}` recriava os itens sem preservar
+    `quantidade_entregue` (só `quantidade_atendida`/`valor_atendido`), o que
+    apagava a entrega já marcada e o status voltava para "aberto" a cada
+    edição do pedido — mesmo que a edição fosse só corrigir um valor."""
+
+    def test_editar_pedido_preserva_quantidade_entregue_do_item_que_bate_por_produto(self, client):
+        c, _ = client
+        pedido_id = _criar_pedido(c, [
+            {"tipo_item": "produto", "produto_servico": "Sal mineral", "quantidade": 10, "valor_total_estimado": 500.0},
+            {"tipo_item": "servico", "produto_servico": "Frete", "quantidade": 1, "valor_total_estimado": 100.0},
+        ])
+        item_id = _itens_do_pedido(c, pedido_id)["Sal mineral"]["id"]
+        c.put(f"/pedidos/{pedido_id}/itens/{item_id}/entrega", json={"quantidade_entregue": 4})
+        assert c.get(f"/pedidos/{pedido_id}").json()["status"] == "parcialmente_atendido"
+
+        # Edita o pedido (ex.: corrige o valor estimado) mantendo o mesmo
+        # produto_servico — a entrega já marcada deve sobreviver à edição.
+        r = c.put(f"/pedidos/{pedido_id}", json={
+            "tipo": "compra",
+            "fornecedor_cliente": "Fornecedor Teste",
+            "data_pedido": "2026-08-01",
+            "itens": [
+                {"tipo_item": "produto", "produto_servico": "Sal mineral", "quantidade": 10, "valor_total_estimado": 550.0},
+                {"tipo_item": "servico", "produto_servico": "Frete", "quantidade": 1, "valor_total_estimado": 100.0},
+            ],
+        })
+        assert r.status_code == 200, r.text
+
+        itens = _itens_do_pedido(c, pedido_id)
+        assert itens["Sal mineral"]["quantidade_entregue"] == 4
+        assert itens["Sal mineral"]["valor_total_estimado"] == 550.0
+
+        # Status não é revertido para "aberto" por causa da edição.
+        detalhe = c.get(f"/pedidos/{pedido_id}").json()
+        assert detalhe["status"] == "parcialmente_atendido"
+
+    def test_editar_pedido_ja_atendido_permanece_atendido(self, client):
+        c, _ = client
+        pedido_id = _criar_pedido(c, [
+            {"tipo_item": "servico", "produto_servico": "Frete", "quantidade": 1, "valor_total_estimado": 100.0},
+        ])
+        item_id = _itens_do_pedido(c, pedido_id)["Frete"]["id"]
+        c.put(f"/pedidos/{pedido_id}/itens/{item_id}/entrega", json={"quantidade_entregue": 1})
+        assert c.get(f"/pedidos/{pedido_id}").json()["status"] == "atendido"
+
+        r = c.put(f"/pedidos/{pedido_id}", json={
+            "tipo": "compra",
+            "fornecedor_cliente": "Fornecedor Teste",
+            "data_pedido": "2026-08-01",
+            "observacao": "corrigindo observação",
+            "itens": [
+                {"tipo_item": "servico", "produto_servico": "Frete", "quantidade": 1, "valor_total_estimado": 100.0},
+            ],
+        })
+        assert r.status_code == 200
+
+        detalhe = c.get(f"/pedidos/{pedido_id}").json()
+        assert detalhe["status"] == "atendido"
+        assert detalhe["itens"][0]["quantidade_entregue"] == 1
+
+
+class TestStatusEndpointSoAceitaCancelado:
+    """Regressão: `PUT /pedidos/{id}/status` aceitava qualquer um dos quatro
+    status e escrevia direto em `Pedido.status`, sem nenhuma validação
+    contra a entrega real — o único caller de verdade no frontend (botão
+    "Cancelar pedido") só manda "cancelado"."""
+
+    def test_status_diferente_de_cancelado_e_rejeitado(self, client):
+        c, _ = client
+        pedido_id = _criar_pedido(c, [
+            {"tipo_item": "produto", "produto_servico": "Sal mineral", "quantidade": 10, "valor_total_estimado": 500.0},
+        ])
+        for status_invalido in ("aberto", "parcialmente_atendido", "atendido"):
+            r = c.put(f"/pedidos/{pedido_id}/status", json={"status": status_invalido})
+            assert r.status_code == 400, status_invalido
+
+        assert c.get(f"/pedidos/{pedido_id}").json()["status"] == "aberto"
+
+    def test_status_cancelado_continua_funcionando(self, client):
+        c, _ = client
+        pedido_id = _criar_pedido(c, [
+            {"tipo_item": "produto", "produto_servico": "Sal mineral", "quantidade": 10, "valor_total_estimado": 500.0},
+        ])
+        r = c.put(f"/pedidos/{pedido_id}/status", json={"status": "cancelado"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "cancelado"
+        assert c.get(f"/pedidos/{pedido_id}").json()["status"] == "cancelado"
