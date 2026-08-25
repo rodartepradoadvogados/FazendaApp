@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import calendar
 import re
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
@@ -35,7 +36,7 @@ from fazenda.rules.equivalente_maduro import (
 )
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules import lactacao as regras_lactacao
-from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data
+from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data, ordem_parto_pelo_atalho_atual
 from fazenda.rules.producao_305 import PontoControle, Producao305, producao_305_dias
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
 from fazenda.rules.parto import eh_parto_produtivo
@@ -2175,29 +2176,147 @@ def equivalente_maduro_do_animal(
     return linha
 
 
-@router.get("/ordem-parto/relatorio")
-def relatorio_ordem_parto(
+# ---------------------------------------------------------------------------
+# Reconstrução de ControleLeiteiro.ordem_parto — ver rules/ordem_parto_historica.py
+# para o "porquê" completo do problema. O campo nunca é gravado por nenhuma
+# das quatro vias de entrada do controle leiteiro; a tela caía num atalho (a
+# contagem TOTAL de partos do animal, aplicada a todo o histórico dele).
+#
+# As duas rotas abaixo são a versão HTTP, autenticada e escopada por
+# fazenda_id, do script de linha de comando `scripts/reconstruir_ordem_parto.py`
+# (mantido de pé, inalterado, para quem tiver acesso direto ao banco) — mesmo
+# padrão report-first dele: GET .../divergencias nunca escreve nada, e só
+# GRAVA com confirmação explícita em POST .../reconstruir (ver docstring do
+# script para o porquê de não ser migração automática).
+#
+# `levantar`/`gravar` são PORTADOS aqui, não importados do script: o script
+# faz `sys.path.insert` e resolve a própria engine a partir de
+# `fazenda.database.engine` no escopo do módulo — desenhado para uma
+# invocação avulsa de CLI, não para import de dentro do processo do servidor
+# já rodando. A lógica é a mesma, linha a linha; só a fonte da Session muda
+# (aqui vem da injeção de dependência do FastAPI, como todo outro endpoint
+# deste router) — ver scripts/reconstruir_ordem_parto.py::levantar/gravar
+# para o original.
+# ---------------------------------------------------------------------------
+def _meses_ate_o_parto(inicio: date | None, fim: date | None) -> int | None:
+    """Idade em meses inteiros — mesmo cálculo de
+    scripts/reconstruir_ordem_parto.py::_meses (aproximação por 30,44 dias
+    seria pior: o padrão de idade ao parto é lido em meses de calendário)."""
+    if inicio is None or fim is None:
+        return None
+    m = (fim.year - inicio.year) * 12 + (fim.month - inicio.month)
+    if fim.day < inicio.day:
+        m -= 1
+    return m if m >= 0 else None
+
+
+def _faixa_idade_ao_parto(m: int | None) -> str:
+    if m is None:
+        return "sem idade"
+    for lim in (24, 30, 36, 48, 60, 72, 86):
+        if m < lim:
+            return f"< {lim}"
+    return ">= 86"
+
+
+def _levantar_ordem_parto(session: Session, fazenda_id: int | None, exemplos: int) -> dict:
+    """Mesma lógica de scripts/reconstruir_ordem_parto.py::levantar — ver
+    nota acima do porquê de portar em vez de importar."""
+    q_partos = select(Parto)
+    q_cl = select(ControleLeiteiro)
+    q_an = select(Animal)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        q_an = q_an.where(Animal.fazenda_id == fazenda_id)
+
+    partos = session.exec(q_partos).all()
+    controles = session.exec(q_cl).all()
+    nascimento = {a.numero: getattr(a, "data_nasc", None) for a in session.exec(q_an).all()}
+
+    por_animal: dict[str, list[PartoRef]] = defaultdict(list)
+    for p in partos:
+        por_animal[p.numero_matriz].append(PartoRef(p.data_parto, p.ordem_parto))
+
+    # Lactações por ordem de parto — o denominador de cada classe do fator.
+    lactacoes_por_ordem = Counter(p.ordem_parto for p in partos if p.ordem_parto is not None)
+
+    # Idade ao parto: é assim que o padrão internacional define maturidade
+    # (faixa de 61 a 86 meses, por raça), não pelo número da cria.
+    idades = Counter()
+    for p in partos:
+        idades[_faixa_idade_ao_parto(_meses_ate_o_parto(nascimento.get(p.numero_matriz), p.data_parto))] += 1
+
+    muda = 0
+    vira_desconhecido = 0
+    amostra = []
+    for c in controles:
+        ps = por_animal.get(c.numero_matriz, [])
+        hoje = c.ordem_parto or ordem_parto_pelo_atalho_atual(ps)
+        correta = ordem_parto_na_data(ps, c.data_controle)
+        if correta == hoje:
+            continue
+        muda += 1
+        if correta is None:
+            vira_desconhecido += 1
+        if len(amostra) < exemplos:
+            amostra.append((c.numero_matriz, c.data_controle, hoje, correta))
+
+    datas_p = [p.data_parto for p in partos if p.data_parto]
+    datas_c = [c.data_controle for c in controles if c.data_controle]
+    return {
+        "partos": len(partos),
+        "controles": len(controles),
+        "animais_com_parto": len(por_animal),
+        "lactacoes_por_ordem": dict(sorted(lactacoes_por_ordem.items())),
+        "idade_ao_parto": dict(idades),
+        "muda": muda,
+        "vira_desconhecido": vira_desconhecido,
+        "amostra": amostra,
+        "periodo_partos": (min(datas_p), max(datas_p)) if datas_p else None,
+        "periodo_controles": (min(datas_c), max(datas_c)) if datas_c else None,
+    }
+
+
+def _gravar_ordem_parto(session: Session, fazenda_id: int | None) -> int:
+    """Mesma lógica de scripts/reconstruir_ordem_parto.py::gravar. Só grava
+    quando `ordem_parto_na_data` devolve resposta NÃO-None e diferente do que
+    já está gravado — nunca inventa, nunca zera um valor existente a troco de
+    palpite (deixar nulo é melhor que gravar o palpite que a tela já dava:
+    nulo é honesto, o palpite parece dado)."""
+    q_partos = select(Parto)
+    q_cl = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    por_animal: dict[str, list[PartoRef]] = defaultdict(list)
+    for p in session.exec(q_partos).all():
+        por_animal[p.numero_matriz].append(PartoRef(p.data_parto, p.ordem_parto))
+
+    n = 0
+    for c in session.exec(q_cl).all():
+        correta = ordem_parto_na_data(por_animal.get(c.numero_matriz, []), c.data_controle)
+        if correta is not None and c.ordem_parto != correta:
+            c.ordem_parto = correta
+            session.add(c)
+            n += 1
+    session.commit()
+    return n
+
+
+@router.get("/ordem-parto/divergencias")
+def divergencias_ordem_parto(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Versão HTTP, somente leitura, de `scripts/reconstruir_ordem_parto.py
-    levantar()` — existe porque este ambiente de desenvolvimento não alcança
-    o Postgres de produção diretamente (mesmo bloqueio de rede que atinge o
-    Milknews), então o script de linha de comando não roda daqui. Esta rota
-    deixa o mesmo relatório acessível de qualquer lugar que já fale com a API
-    (inclusive o próprio navegador do dono da fazenda).
-
-    NÃO grava nada — é o mesmo levantamento que decide, por comparação, quais
-    `ControleLeiteiro.ordem_parto` mudariam se a reconstrução fosse aplicada.
-    A gravação em si continua exigindo o script com `--gravar`, rodado por
-    alguém olhando o relatório antes — ver o próprio script para o porquê."""
-    # Import local, de propósito: mantém o script como fonte única do
-    # levantamento (nada duplicado aqui), e evita import de `scripts.*` no
-    # carregamento do módulo do router — só paga esse custo quem chama a rota.
-    from scripts.reconstruir_ordem_parto import levantar
-
+    """Relatório somente leitura: quantos `ControleLeiteiro.ordem_parto`
+    mudariam se a reconstrução (POST .../reconstruir) fosse aplicada, e
+    quantos, entre esses, virariam "sem ordem" (não dá para saber — controle
+    anterior ao primeiro parto conhecido, ou parto sem ordem gravada) em vez
+    de um número que hoje não corresponde a nada. Traz também uma amostra de
+    casos concretos. NÃO grava nada — ver nota no topo desta seção."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    r = levantar(session, fazenda_id, exemplos=40)
+    r = _levantar_ordem_parto(session, fazenda_id, exemplos=40)
     return {
         "partos": r["partos"],
         "controles": r["controles"],
@@ -2218,6 +2337,37 @@ def relatorio_ordem_parto(
             for numero, data, hoje, correta in r["amostra"]
         ],
     }
+
+
+class ReconstruirOrdemPartoIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/ordem-parto/reconstruir")
+def reconstruir_ordem_parto(
+    dados: ReconstruirOrdemPartoIn,
+    session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_admin),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava a ordem de parto correta em `ControleLeiteiro` — mesmo efeito de
+    `scripts/reconstruir_ordem_parto.py --gravar`, restrito a administrador e
+    escopado à fazenda de quem chama.
+
+    Sem `confirmar: true` é NO-OP de propósito, com 400 explicando o porquê:
+    mesma trava do script (report-first — ver a docstring dele). Reescrita de
+    dado histórico merece alguém olhando o relatório (GET .../divergencias)
+    antes de aplicar."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /producao/ordem-parto/divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    n = _gravar_ordem_parto(session, fazenda_id)
+    return {"gravados": n}
 
 
 # Calculadora avulsa — não persiste nada, mesmo padrão de

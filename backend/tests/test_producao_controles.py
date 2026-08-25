@@ -213,13 +213,16 @@ class TestOrdemPartoNaListagem:
 
 
 class TestRelatorioOrdemParto:
-    """GET /producao/ordem-parto/relatorio — versão HTTP, somente leitura, do
-    script (existe porque este ambiente não alcança o Postgres de produção
-    diretamente para rodar o script de linha de comando)."""
+    """GET /producao/ordem-parto/divergencias — versão HTTP, somente leitura,
+    do script scripts/reconstruir_ordem_parto.py (`levantar`/`gravar` foram
+    portados para dentro do router — ver a seção "Reconstrução de
+    ControleLeiteiro.ordem_parto" em fazenda/api/routers/producao.py). Testes
+    focados no endpoint de ESCRITA (POST .../reconstruir) e no isolamento por
+    fazenda ficam em test_ordem_parto_reconstrucao_endpoint.py."""
 
     def test_relatorio_reflete_o_mesmo_cenario_do_endpoint_de_listagem(self, client_com_dois_partos):
         c, engine = client_com_dois_partos
-        r = c.get("/producao/ordem-parto/relatorio")
+        r = c.get("/producao/ordem-parto/divergencias")
         assert r.status_code == 200
         corpo = r.json()
         assert corpo["partos"] == 2
@@ -239,8 +242,8 @@ class TestRelatorioOrdemParto:
         # Chamar a rota duas vezes não pode ter efeito colateral nenhum —
         # é leitura pura, igual ao script sem --gravar.
         c, engine = client_com_dois_partos
-        c.get("/producao/ordem-parto/relatorio")
-        r2 = c.get("/producao/ordem-parto/relatorio")
+        c.get("/producao/ordem-parto/divergencias")
+        r2 = c.get("/producao/ordem-parto/divergencias")
         assert r2.json()["muda"] == 2
         with Session(engine) as s:
             controles = s.exec(select(ControleLeiteiro)).all()
