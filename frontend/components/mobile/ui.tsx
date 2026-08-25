@@ -146,15 +146,21 @@ export function MobCampo({ label, children }: { label: string; children: ReactNo
   );
 }
 
-/** Cabeçalho de sub-tela com botão voltar. */
-export function MobVoltar({ titulo, onVoltar }: { titulo: string; onVoltar: () => void }) {
+/** Cabeçalho de sub-tela com botão voltar. `subtitulo` (opcional) fica abaixo
+ * do título, em texto discreto — usado pelas seções da Ficha do Animal para
+ * lembrar de qual animal se trata ("Nº 4521 — Estrela") sem repetir o cartão
+ * de identidade inteiro em toda seção. */
+export function MobVoltar({ titulo, subtitulo, onVoltar }: { titulo: string; subtitulo?: string; onVoltar: () => void }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.25rem 0 1rem" }}>
       <button type="button" onClick={onVoltar} aria-label="Voltar"
         style={{ width: 56, height: 56, borderRadius: "var(--r-app)", border: "1px solid var(--mob-border)", background: "var(--mob-surface)", color: "var(--mob-text)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
         <ChevronLeft size={20} />
       </button>
-      <h1 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{titulo}</h1>
+      <div style={{ minWidth: 0 }}>
+        <h1 style={{ fontSize: "1.1rem", fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titulo}</h1>
+        {subtitulo && <div style={{ fontSize: "0.74rem", color: "var(--mob-muted)", fontWeight: 600, marginTop: "0.1rem" }}>{subtitulo}</div>}
+      </div>
     </div>
   );
 }
