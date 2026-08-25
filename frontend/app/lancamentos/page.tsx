@@ -26,6 +26,8 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { inaptidaoServico, useIdadeMinServico } from "@/components/lancamentos/_shared";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
+import { PedidosEmAbertoCard } from "@/components/lancamentos/PedidosEmAbertoCard";
+import { type PrefillPedido } from "@/components/FormFinanceiro";
 // Formulários por tipo de lançamento (reprodutivo/produção/sanidade/dieta/
 // estoque) — extraídos para components/lancamentos/*, mesmo motivo do bloco
 // de dynamic() acima (code-splitting: só baixa o formulário da sub-aba aberta).
@@ -196,9 +198,17 @@ export default function LancamentosPage() {
   const [gavetaAberta, setGavetaAberta] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [mensagemSalva, setMensagemSalva] = useState<string | null>(null);
+  // Pré-preenchimento vindo do card "Pedidos em aberto" (Financeiro > Lançar)
+  // — mesmo mecanismo/shape que app/pedidos/page.tsx já usa no ícone "$
+  // Lançar em Financeiro" (ver PrefillPedido em components/FormFinanceiro.tsx).
+  // Trocar de sub-aba sempre limpa (mesmo raciocínio de `mensagemSalva`
+  // acima): nunca deixa o pré-preenchimento de despesa vazar pra receita ou
+  // vice-versa.
+  const [prefillPedido, setPrefillPedido] = useState<PrefillPedido | null>(null);
   useEffect(() => {
     setGavetaAberta(false);
     setMensagemSalva(null);
+    setPrefillPedido(null);
   }, [sel]);
   const fecharGaveta = useCallback(() => {
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
@@ -214,6 +224,17 @@ export default function LancamentosPage() {
   // completo (ver FormFinanceiroSimplificado.tsx).
   const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado">("generico");
   const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
+  // "Finalizar pedido" (card "Pedidos em aberto") força o modo de volta pra
+  // "genérico" — só ele aceita a prop `prefillPedido` — antes de guardar o
+  // pré-preenchimento.
+  const finalizarPedidoDespesa = useCallback((p: PrefillPedido) => {
+    setModoDespesa("generico");
+    setPrefillPedido(p);
+  }, [setModoDespesa, setPrefillPedido]);
+  const finalizarPedidoReceita = useCallback((p: PrefillPedido) => {
+    setModoReceita("generico");
+    setPrefillPedido(p);
+  }, [setModoReceita, setPrefillPedido]);
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
@@ -454,6 +475,7 @@ export default function LancamentosPage() {
           {sel === "entrega_leite" && <FormEntregaLeite />}
           {sel === "financeiro_despesa" && (
             <>
+              <PedidosEmAbertoCard tipo="despesa" onFinalizar={finalizarPedidoDespesa} />
               <div className="flex flex-wrap gap-2 mb-4">
                 <button type="button" className={modoDespesa === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoDespesa("generico")}>
@@ -486,12 +508,13 @@ export default function LancamentosPage() {
                   <FormFinanceiroSimplificado tipo="despesa" onSujo={setSujo} />
                 </>
               ) : (
-                <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} />
+                <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={prefillPedido} />
               )}
             </>
           )}
           {sel === "financeiro_receita" && (
             <>
+              <PedidosEmAbertoCard tipo="receita" onFinalizar={finalizarPedidoReceita} />
               <div className="flex flex-wrap gap-2 mb-4">
                 <button type="button" className={modoReceita === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoReceita("generico")}>
@@ -512,7 +535,7 @@ export default function LancamentosPage() {
                   <FormFinanceiroSimplificado tipo="receita" onSujo={setSujo} />
                 </>
               ) : (
-                <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />
+                <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={prefillPedido} />
               )}
             </>
           )}
