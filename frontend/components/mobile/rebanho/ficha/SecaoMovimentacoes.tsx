@@ -3,7 +3,7 @@
 // documento (GTA, compra, venda, baixa, movimentação de lote, agenda), não
 // dado clínico ou produtivo. GTA/Compra/Venda/Baixa já existiam no mobile
 // como cards soltos — só mudaram de arquivo, sem reescrever a lógica.
-import { formatDate } from "@/lib/api";
+import { formatDate, formatBRL } from "@/lib/api";
 import { MobCard } from "@/components/mobile/ui";
 import { Grade, ParDado, Secao, secaoPorChave, mostrarValor, tituloCartao, type Ficha } from "./comumFicha";
 
@@ -47,7 +47,7 @@ export function SecaoMovimentacoes({ ficha }: { ficha: Ficha }) {
           <Grade>
             <ParDado label="Data" valor={mostrarValor(c.data_compra, true)} />
             <ParDado label="Vendedor" valor={mostrarValor(c.vendedor)} />
-            <ParDado label="Valor" valor={c.valor != null ? `R$ ${c.valor}` : "—"} />
+            <ParDado label="Valor" valor={c.valor != null ? formatBRL(Number(c.valor)) : "—"} />
             <ParDado label="GTA" valor={mostrarValor(c.gta)} />
             <ParDado label="Responsável" valor={mostrarValor(c.responsavel)} />
           </Grade>
@@ -60,7 +60,7 @@ export function SecaoMovimentacoes({ ficha }: { ficha: Ficha }) {
           <Grade>
             <ParDado label="Data" valor={mostrarValor(v.data_venda, true)} />
             <ParDado label="Comprador" valor={mostrarValor(v.comprador)} />
-            <ParDado label="Valor" valor={v.valor != null ? `R$ ${v.valor}` : "—"} />
+            <ParDado label="Valor" valor={v.valor != null ? formatBRL(Number(v.valor)) : "—"} />
             <ParDado label="GTA" valor={mostrarValor(v.gta)} />
             <ParDado label="Responsável" valor={mostrarValor(v.responsavel)} />
           </Grade>
@@ -74,7 +74,7 @@ export function SecaoMovimentacoes({ ficha }: { ficha: Ficha }) {
             <ParDado label="Data" valor={mostrarValor(baixa.data_baixa, true)} />
             <ParDado label="Tipo" valor={mostrarValor(baixa.tipo_baixa)} />
             <ParDado label="Motivo" valor={mostrarValor(baixa.motivo)} />
-            <ParDado label="Valor" valor={baixa.valor != null ? `R$ ${baixa.valor}` : "—"} />
+            <ParDado label="Valor" valor={baixa.valor != null ? formatBRL(Number(baixa.valor)) : "—"} />
           </Grade>
         </MobCard>
       )}

@@ -2,7 +2,7 @@
 // Seção DADOS GERAIS — identificação, origem/cadastro e genealogia.
 // "Idade" é calculada aqui (não existe em nenhuma das duas fichas hoje —
 // melhoria nova sobre o desktop, ver plano de redesenho).
-import { formatDate } from "@/lib/api";
+import { formatDate, formatBRL } from "@/lib/api";
 import { MobCard } from "@/components/mobile/ui";
 import { Grade, ParDado, mostrarValor, criarAlternador, tituloCartao, type Ficha } from "./comumFicha";
 
@@ -51,7 +51,7 @@ export function SecaoDadosGerais({ ficha }: { ficha: Ficha }) {
         <p style={tituloCartao}>Origem &amp; cadastro</p>
         <Grade>
           <ParDado label="Proprietário" valor={mostrarValor(a.proprietario)} />
-          <ParDado label="Valor" valor={a.valor != null ? `R$ ${a.valor}` : "—"} />
+          <ParDado label="Valor" valor={a.valor != null ? formatBRL(Number(a.valor)) : "—"} />
           <div style={{ gridColumn: "1 / -1" }}>
             <ParDado label="Observações" valor={mostrarValor(a.observacoes)} />
           </div>
