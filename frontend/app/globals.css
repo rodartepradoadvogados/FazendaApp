@@ -16,7 +16,13 @@
   --gold:      #E0A63C;
   --gold-deep: #B9831F;
   --gold-pale: #F0C874;
-  --cream:     #F3E7D3;
+  /* Era o creme quente #F3E7D3 da paleta "vinho" original — a área pública
+     (institucional/PublicShell) e o resto do produto migraram para o visual
+     marinho/dourado (redesign "Direção B") e não usam mais essa cor; o token
+     virou um neutro claro (sem tingimento) para quem ainda referenciar
+     var(--cream) não herdar creme por engano. dietas/DietasLayout.tsx
+     redefine este token localmente para o mesmo tom, à parte deste bloco. */
+  --cream:     #F5F6F4;
   --pasture:   #4E7A5A;
 
   /* Cores de categoria — fixas por módulo em TODO o produto (Agenda,

@@ -9,7 +9,7 @@ import { CowDataWordmark } from "@/components/CowDataWordmark";
 // aqui os tokens de cor da árvore são sobrescritos localmente, do mesmo
 // jeito que a área pública (institucional/PublicShell) fixa o visual marinho
 // — mas o blog é a exceção clara: fundo branco, detalhes em azul (nunca o
-// creme/palha do resto da área pública).
+// marinho escuro do resto da área pública).
 const NEWS_VARS = {
   "--bg": "#FFFFFF",
   "--surface": "#FFFFFF",
