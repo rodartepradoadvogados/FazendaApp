@@ -70,36 +70,20 @@ class PedidoIn(BaseModel):
     origem_item_id: Optional[int] = None
 
 
-def _recalcular_status(session: Session, pedido: Pedido) -> None:
-    """Recalcula o status do pedido a partir do quanto já foi atendido pelos
-    itens (por sua vez atualizados quando um lançamento financeiro ou um
-    movimento de estoque é vinculado a este pedido)."""
-    itens = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido.id)).all()
-    if not itens:
-        return
-    total_estimado = sum(i.valor_total_estimado for i in itens)
-    total_atendido = sum(i.valor_atendido for i in itens)
-    if pedido.status == "cancelado":
-        return
-    if total_atendido <= 0:
-        pedido.status = "aberto"
-    elif total_atendido >= total_estimado:
-        pedido.status = "atendido"
-    else:
-        pedido.status = "parcialmente_atendido"
-    pedido.atualizado_em = datetime.utcnow()
-    session.add(pedido)
-
-
 def atualizar_status_por_lancamento(
     session: Session, pedido_id: int, valor_lancamento: float, fazenda_id: int | None = None,
 ) -> None:
     """Chamado por `financeiro.py` quando um lançamento é vinculado a um
     pedido — soma o valor lançado distribuído pelos itens em aberto (por
-    ordem de cadastro) e recalcula o status do pedido. `fazenda_id` (já a
-    da fazenda do lançamento que está sendo criado) precisa bater com a do
-    pedido — senão um pedido de outra fazenda poderia ser atualizado só por
-    quem soubesse o id dele."""
+    ordem de cadastro). `fazenda_id` (já a da fazenda do lançamento que está
+    sendo criado) precisa bater com a do pedido — senão um pedido de outra
+    fazenda poderia ser atualizado só por quem soubesse o id dele.
+
+    NÃO mexe mais em `Pedido.status` — dinheiro lançado é informativo
+    (`valor_atendido`, usado por ex. em `GET /pedidos`), quem decide o
+    status é só entrega física (`quantidade_entregue`, ver
+    `marcar_entrega_item_pedido` e o docstring de
+    `fazenda.rules.pedido_status`)."""
     pedido = session.get(Pedido, pedido_id)
     if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         return
@@ -115,21 +99,19 @@ def atualizar_status_por_lancamento(
         it.valor_atendido = round(it.valor_atendido + aplicar, 2)
         restante = round(restante - aplicar, 2)
         session.add(it)
-    _recalcular_status(session, pedido)
     session.commit()
 
 
 def atualizar_status_por_movimento_estoque(session: Session, pedido_item_id: int, quantidade: float) -> None:
     """Chamado por `estoque.py` quando uma entrada de estoque é vinculada a
-    um item de pedido — soma a quantidade recebida e recalcula o status."""
+    um item de pedido — soma a quantidade recebida em `quantidade_atendida`
+    (informativo). NÃO mexe em `Pedido.status` — mesmo motivo de
+    `atualizar_status_por_lancamento` acima."""
     item = session.get(PedidoItem, pedido_item_id)
     if not item:
         return
     item.quantidade_atendida = round((item.quantidade_atendida or 0) + quantidade, 2)
     session.add(item)
-    pedido = session.get(Pedido, item.pedido_id)
-    if pedido:
-        _recalcular_status(session, pedido)
     session.commit()
 
 
@@ -273,14 +255,19 @@ def atualizar_pedido(
     session.add(pedido)
 
     # Substitui os itens — mais simples e seguro do que tentar casar item a
-    # item; o "atendido" já registrado fica preservado nos itens que baterem
-    # por produto/serviço (heurística simples, suficiente para edição manual).
+    # item; o "atendido" (financeiro/estoque) E o "entregue" (físico) já
+    # registrados ficam preservados nos itens que baterem por produto/
+    # serviço (heurística simples, suficiente para edição manual). Sem isso,
+    # editar um pedido (ex.: corrigir um valor) apagaria a entrega já
+    # marcada e o status voltaria a "aberto" por baixo do usuário.
     antigos = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id)).all()
-    atendido_por_produto = {i.produto_servico: (i.quantidade_atendida, i.valor_atendido) for i in antigos}
+    atendido_por_produto = {
+        i.produto_servico: (i.quantidade_atendida, i.valor_atendido, i.quantidade_entregue) for i in antigos
+    }
     for i in antigos:
         session.delete(i)
     for item in dados.itens:
-        qtd_atendida, val_atendido = atendido_por_produto.get(item.produto_servico, (0, 0))
+        qtd_atendida, val_atendido, qtd_entregue = atendido_por_produto.get(item.produto_servico, (0, 0, 0))
         session.add(PedidoItem(
             pedido_id=pedido_id,
             tipo_item=item.tipo_item,
@@ -292,16 +279,31 @@ def atualizar_pedido(
             valor_total_estimado=item.valor_total_estimado,
             quantidade_atendida=qtd_atendida,
             valor_atendido=val_atendido,
+            quantidade_entregue=qtd_entregue,
             fazenda_id=fazenda_id,
         ))
     session.commit()
-    _recalcular_status(session, pedido)
+
+    # Status é CALCULADO a partir da entrega dos itens recriados acima —
+    # mesma função usada por `marcar_entrega_item_pedido`, único outro
+    # escritor de `Pedido.status` (ver fazenda.rules.pedido_status).
+    itens_atuais = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id)).all()
+    pedido.status = calcular_status_pedido(itens_atuais, pedido.status)
+    pedido.atualizado_em = datetime.utcnow()
+    session.add(pedido)
     session.commit()
     return {"id": pedido.id}
 
 
 class StatusIn(BaseModel):
-    status: str  # "aberto" | "parcialmente_atendido" | "atendido" | "cancelado"
+    # Único valor aceito hoje é "cancelado" — os demais status ("aberto",
+    # "parcialmente_atendido", "atendido") são CALCULADOS a partir da
+    # entrega física dos itens (ver `calcular_status_pedido` e
+    # `PUT /{pedido_id}/itens/{item_id}/entrega`) e não podem mais ser
+    # escritos manualmente. Cancelamento continua sendo a única transição
+    # manual porque não há "quanto foi entregue" que o descreva — é uma
+    # decisão do usuário, não um fato de estoque.
+    status: str
 
 
 @router.put("/{pedido_id}/status")
@@ -311,13 +313,24 @@ def atualizar_status_pedido(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    """Hoje só cancela o pedido (ver `StatusIn`) — único caller no frontend é
+    o botão "Cancelar pedido" da tela de Pedidos. Cancelamento é terminal
+    (mesma regra de `calcular_status_pedido`): mesmo um pedido já
+    "atendido" pode ser cancelado aqui, e depois disso a entrega física
+    marcada não volta a mexer no status."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
     if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
-    if dados.status not in ("aberto", "parcialmente_atendido", "atendido", "cancelado"):
-        raise HTTPException(status_code=400, detail="Status inválido")
-    pedido.status = dados.status
+    if dados.status != STATUS_CANCELADO:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Status é calculado a partir da entrega física dos itens "
+                "(ver PUT /{pedido_id}/itens/{item_id}/entrega) — este endpoint só aceita 'cancelado'"
+            ),
+        )
+    pedido.status = STATUS_CANCELADO
     pedido.atualizado_em = datetime.utcnow()
     session.add(pedido)
     session.commit()
