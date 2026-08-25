@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight, TrendingUp, Mail, CheckCircle2 } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
-import { imagemMateria } from "@/lib/newsVisual";
+import { imagemMateria, categoriaVisual } from "@/lib/newsVisual";
 
 function formatarData(iso?: string | null): string {
   if (!iso) return "";
@@ -48,30 +48,14 @@ const SECOES_NEWS: SecaoNews[] = [
   { chave: "tecnico", label: "Genética e técnica", cor: "var(--cat-gestao)" },
   { chave: "geral", label: "Notícia setorial", cor: "var(--cat-estoque)" },
 ];
-const REGRAS_SECAO: [RegExp, string][] = [
-  [/cota[çc][ãa]o|leil[ãa]o|gdt|cepea|pre[çc]o|mercado|export|import|d[óo]lar|commodit/i, "mercado"],
-  [/\blei\b|\bpl\b|proje[t]?o de lei|tarifa|imposto|camex|c[âa]mara dos deputados|senado|decreto|regula/i, "regulacao"],
-  [/calor|clima|estresse t[ée]rmico|ver[ãa]o|inverno|chuva|seca\b/i, "manejo"],
-  [/vacina|doen[çc]a|sanit[áa]rio|mastite|surto/i, "manejo"],
-  [/gen[ée]tica|reprodu[çc][ãa]o|nutri[çc][ãa]o|manejo|compost barn|free stall|ci[êe]ncia|journal/i, "tecnico"],
-];
+// A classificação em si (regras de regex sobre categoria/manchete/resumo)
+// mora em lib/newsVisual.ts (`categoriaVisual`) — é a mesma usada para
+// escolher a imagem de fundo de cada matéria, para as duas nunca ficarem
+// dessincronizadas (uma matéria de "mercado" tem que cair no mesmo balde
+// aqui e na foto). Aqui só resolve a chave para o SecaoNews (label/cor).
 function secaoDaMateria(n: NoticiaNews): SecaoNews {
-  const alvo = n.categoria?.trim();
-  if (alvo) {
-    const chave = alvo.toLowerCase();
-    // Rótulos reais gravados pela skill /milknews: "Mercado", "Mercado
-    // Internacional" e "Custo de Produção" caem no mesmo balde de
-    // cotação/mercado do filtro; "Genética" no de genética/técnica.
-    if (/mercado|custo de produ[çc][ãa]o/.test(chave)) return SECOES_NEWS[0];
-    if (/gen[ée]tica|ci[êe]ncia/.test(chave)) return SECOES_NEWS[3];
-    const conhecida = SECOES_NEWS.find((s) => s.chave === chave || s.label.toLowerCase() === chave);
-    if (conhecida) return conhecida;
-  }
-  const texto = `${n.manchete} ${n.resumo || n.materia || ""}`;
-  for (const [regex, chave] of REGRAS_SECAO) {
-    if (regex.test(texto)) return SECOES_NEWS.find((s) => s.chave === chave)!;
-  }
-  return SECOES_NEWS[SECOES_NEWS.length - 1];
+  const chave = categoriaVisual(n);
+  return SECOES_NEWS.find((s) => s.chave === chave)!;
 }
 
 // Extrai o primeiro número "de cotação" (R$/US$/NZ$ por unidade, ou
@@ -288,8 +272,18 @@ export default function NewsPage() {
                   <div className="line-clamp-2" style={{ fontSize: "0.76rem", color: "var(--text)", lineHeight: 1.35 }}>
                     {n.manchete}
                   </div>
-                  <div style={{ fontSize: "0.64rem", color: "var(--text-muted)", marginTop: "0.35rem" }}>
-                    {formatarData(n.data_publicacao)}
+                  <div className="flex items-center justify-between" style={{ marginTop: "0.35rem", gap: "0.4rem" }}>
+                    <span style={{ fontSize: "0.64rem", color: "var(--text-muted)" }}>
+                      {formatarData(n.data_publicacao)}
+                    </span>
+                    {!!(n.fontes || []).length && (
+                      <a href={n.fontes![0]} target="_blank" rel="noopener noreferrer" style={{
+                        display: "flex", alignItems: "center", gap: "0.2rem", fontSize: "0.62rem",
+                        color: "var(--text-muted)", textDecoration: "none", flexShrink: 0,
+                      }}>
+                        <LinkIcon size={9} /> {dominio(n.fontes![0])}
+                      </a>
+                    )}
                   </div>
                 </div>
               );
@@ -329,7 +323,7 @@ export default function NewsPage() {
         <p style={{ color: "var(--text-muted)" }}>Nenhuma matéria publicada ainda.</p>
       )}
 
-      <div className="max-w-6xl mx-auto flex flex-col gap-6">
+      <div className="max-w-[1400px] mx-auto flex flex-col gap-6">
         {destaque && (
           <article
             className="rounded-2xl overflow-hidden flex flex-col md:flex-row"
@@ -432,7 +426,7 @@ export default function NewsPage() {
             {restantesFiltradas.length === 0 ? (
               <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma matéria neste assunto ainda.</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                 {restantesFiltradas.map((n, i) => cardGrade(n, i))}
               </div>
             )}
