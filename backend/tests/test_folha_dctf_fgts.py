@@ -20,6 +20,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.api.routers.cadastro import _calcular_encargo_projetado
+from fazenda.api.routers.cadastro.rh_folha import CODIGO_CONTA_GUIA_DCTF, CODIGO_CONTA_GUIA_FGTS
 from fazenda.models import ContaGerencial, FolhaPagamento, Pessoa
 
 
@@ -163,6 +164,7 @@ def test_lancar_guia_fgts_cria_conta_a_pagar_e_registro_estruturado(client):
         conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
         assert conta is not None
         assert conta.tipo_documento == "Guia FGTS"
+        assert conta.codigo_conta == CODIGO_CONTA_GUIA_FGTS == "3.03.01.07"
         assert conta.valor_total == 1240.0
         assert conta.data_vencimento == date(2026, 8, 20)
         assert conta.numero_boleto == "858700000012400123456789012345678901234567"
@@ -185,6 +187,7 @@ def test_lancar_guia_dctf_soma_principal_multa_juros_no_valor_total(client):
     with Session(engine) as s:
         conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados["numero_lancamento"])).first()
         assert conta.tipo_documento == "Guia DCTF"
+        assert conta.codigo_conta == CODIGO_CONTA_GUIA_DCTF == "3.03.01.06"
         assert conta.valor_total == 892.5
 
 
@@ -216,3 +219,65 @@ def test_listar_guias_traz_as_mais_recentes_primeiro(client):
     assert r.status_code == 200, r.text
     competencias = [g["competencia"] for g in r.json()]
     assert competencias == ["2026-07", "2026-06"]
+
+
+# ---------------------------------------------------------------------------
+# Contas a Pagar de verdade: lançar a guia (FGTS ou DCTF) tem que criar uma
+# ContaGerencial com o codigo_conta certo do plano de contas (finalidade
+# administrativa, categoria folha de pagamento — já vinculado ao produto de
+# estoque correspondente no plano de contas de cada fazenda), com
+# valor/vencimento batendo com o que foi lançado, e rastreável de volta ao
+# registro de origem (GuiaFolhaEncargo) pelo numero_lancamento compartilhado
+# — mesmo padrão já usado por Folha/Férias/13º (`numero_lancamento_gerado` no
+# registro de origem == `numero_lancamento` na ContaGerencial).
+# ---------------------------------------------------------------------------
+def test_lancar_guia_fgts_gera_conta_a_pagar_com_codigo_de_conta_correto(client):
+    c, engine = client
+    r = c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "fgts", "competencia": "2026-07", "valor_principal": 1234.56,
+        "data_vencimento": "2026-08-07",
+    })
+    assert r.status_code == 200, r.text
+    guia = r.json()
+    assert guia["tipo"] == "fgts"
+
+    with Session(engine) as s:
+        conta = s.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == guia["numero_lancamento"])
+        ).first()
+        assert conta is not None
+        # Código da conta gerencial de FGTS no plano de contas.
+        assert conta.codigo_conta == "3.03.01.07"
+        # Valor e vencimento batem com o que foi lançado na guia.
+        assert conta.valor_total == 1234.56
+        assert conta.data_vencimento == date(2026, 8, 7)
+        assert conta.tipo == "despesa"
+        # Rastreabilidade de volta ao registro de origem na Folha.
+        assert conta.numero_lancamento == guia["numero_lancamento"]
+
+
+def test_lancar_guia_dctf_gera_conta_a_pagar_com_codigo_de_conta_correto(client):
+    c, engine = client
+    r = c.post("/cadastro/folha-pagamento/guias", json={
+        "tipo": "dctf", "competencia": "2026-07", "codigo_receita": "1017",
+        "valor_principal": 900.0, "valor_multa": 30.0, "valor_juros": 5.5,
+        "data_vencimento": "2026-08-20",
+    })
+    assert r.status_code == 200, r.text
+    guia = r.json()
+    assert guia["tipo"] == "dctf"
+    assert guia["valor_total"] == 935.5
+
+    with Session(engine) as s:
+        conta = s.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == guia["numero_lancamento"])
+        ).first()
+        assert conta is not None
+        # Código da conta gerencial de DCTF no plano de contas.
+        assert conta.codigo_conta == "3.03.01.06"
+        # Valor (principal + multa + juros) e vencimento batem com a guia.
+        assert conta.valor_total == 935.5
+        assert conta.data_vencimento == date(2026, 8, 20)
+        assert conta.tipo == "despesa"
+        # Rastreabilidade de volta ao registro de origem na Folha.
+        assert conta.numero_lancamento == guia["numero_lancamento"]
