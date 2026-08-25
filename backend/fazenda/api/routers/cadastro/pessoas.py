@@ -44,7 +44,16 @@ router = APIRouter()
 # validação de tipos passou a consultar a tabela TipoPessoa (ver
 # seed_tipos_pessoa/_validar_tipos), que é editável em tempo de execução pelo
 # botão "+" do Cadastro de Pessoas.
-TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Diarista", "Prestador de serviços", "Inseminador"]
+TIPOS_PESSOA = [
+    "Funcionário", "Veterinário", "Zootecnista", "Diarista", "Prestador de serviços", "Inseminador",
+    # Administrador/Contador (ago/2026): não são cargo de RH no sentido usual,
+    # mas entram no mesmo vocabulário de TipoPessoa para poder marcar quem
+    # exerce esse papel na fazenda — usePessoasAtivas (frontend) usa isso para
+    # decidir quem aparece nas listas de "Responsável" de um lançamento
+    # (só entra quem tiver ao menos um papel funcional: Funcionário,
+    # Veterinário, Zootecnista, Administrador ou Contador).
+    "Administrador", "Contador",
+]
 
 # "Empreiteiro" já nasce cadastrado — usado pelo módulo de Empreita (Financeiro
 # > Ações > Folha de Pagamento).
