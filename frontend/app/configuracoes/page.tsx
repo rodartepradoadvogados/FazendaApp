@@ -50,7 +50,11 @@ export default function ConfiguracoesPage() {
     // OrdemPartoReconstrucaoView. Restrita a administrador, mesmo critério de
     // Aprovações acima (rewrite de dado de produção, não é autoatendimento
     // de qualquer operador).
-    if (ehAdmin()) abas.push({ id: "ordem-parto", label: "Ordem de Parto", icon: History, title: "Corrige a ordem de parto histórica do controle leiteiro" });
+    // Mesmo critério de "Auditoria CowData" acima — não `ehAdmin()` puro:
+    // travar essa ferramenta pro próprio dono da fazenda por causa de um
+    // `papel` divergente do literal "admin" seria o bug, não a proteção
+    // (ver `exigir_admin_ou_dono` no backend, mesmo raciocínio).
+    if (ehContratanteAdministrador()) abas.push({ id: "ordem-parto", label: "Ordem de Parto", icon: History, title: "Corrige a ordem de parto histórica do controle leiteiro" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);

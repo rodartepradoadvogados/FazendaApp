@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin, exigir_admin_ou_dono, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
@@ -2347,7 +2347,7 @@ class ReconstruirOrdemPartoIn(BaseModel):
 def reconstruir_ordem_parto(
     dados: ReconstruirOrdemPartoIn,
     session: Session = Depends(get_session),
-    _: Usuario = Depends(exigir_admin),
+    _: Usuario = Depends(exigir_admin_ou_dono),
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Grava a ordem de parto correta em `ControleLeiteiro` — mesmo efeito de
