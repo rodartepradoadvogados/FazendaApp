@@ -23,6 +23,16 @@ class Estoque(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     categoria: Optional[str] = None
+    # Vínculo direto com CategoriaAlimento (Configurações > Cadastro >
+    # Alimentação > Categorias) — Fase P1 do refactor Alimento/Estoque.
+    # Distinto de `categoria` acima (texto livre, sem FK) e de
+    # `Alimento.categoria_alimento_id` (categoria do CONCEITO nutricional):
+    # este campo deixa um item de Estoque ser categorizado sem precisar
+    # primeiro passar pelo cadastro de Alimento — ver PUT
+    # /alimentacao/estoque/{estoque_id}/categoria. Puramente aditivo: a
+    # categorização indireta via Alimento continua funcionando do mesmo
+    # jeito (ver seção `produtos_sem_categoria` do relatório de conferência).
+    categoria_alimento_id: Optional[int] = Field(default=None, foreign_key="categoria_alimento.id")
     # Finalidade de uso do item — distinta de `categoria` (texto livre): um
     # enum fechado (ver rules.categorias.FINALIDADES_ESTOQUE) que decide se o
     # item pode aparecer nos seletores de "aplicação de medicamento"/hormônio

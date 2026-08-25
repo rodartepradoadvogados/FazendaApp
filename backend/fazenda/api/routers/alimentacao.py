@@ -86,6 +86,24 @@ def _estoque_por_alimento(session: Session, fazenda_id: int | None) -> tuple[dic
             continue
         chave = alimento.nome.strip().lower()
         por_alimento.setdefault(chave, []).append(e.model_dump())
+    # Move o item preferido (`Alimento.estoque_preferido_id`, Fase P1) para o
+    # INÍCIO da lista de candidatos — nunca remove os outros. Todo call site
+    # que pega `candidatos[0]` (`_dar_baixa_automatica`, `_resolver_estoque_item`,
+    # `calcular_necessidade_mensal`) passa a usar a escolha deliberada sem
+    # precisar mudar uma linha. Sem preferência (o padrão, None), a ordem
+    # continua EXATAMENTE a da query acima — ver TestEscolhaArbitrariaDeCandidato
+    # (T11) em tests/test_migracao_alimento.py, que trava esse comportamento.
+    for alimento in alimentos.values():
+        if alimento.estoque_preferido_id is None:
+            continue
+        candidatos = por_alimento.get(alimento.nome.strip().lower())
+        if not candidatos:
+            continue
+        for i, c in enumerate(candidatos):
+            if c["id"] == alimento.estoque_preferido_id:
+                if i != 0:
+                    candidatos.insert(0, candidatos.pop(i))
+                break
     cadastrados = {a.nome.strip().lower() for a in alimentos.values()}
     return por_alimento, cadastrados
 
@@ -605,6 +623,76 @@ def excluir_alimento(
     return {"ok": True}
 
 
+class EstoquePreferidoIn(BaseModel):
+    # None limpa a preferência (volta a ordem arbitrária de hoje).
+    estoque_id: int | None = None
+
+
+@router.put("/alimentos/{alimento_id}/estoque-preferido")
+def atualizar_estoque_preferido(
+    alimento_id: int, dados: EstoquePreferidoIn,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Fase P1 do refactor Alimento/Estoque — escolhe QUAL item de Estoque
+    vinculado a este Alimento recebe a baixa automática/consumo manual
+    quando há 2+ candidatos (ver `Alimento.estoque_preferido_id` e
+    `_estoque_por_alimento`). O item escolhido precisa já estar vinculado a
+    ESTE alimento (`Estoque.alimento_id == alimento_id`) — escolher um
+    candidato que nem é candidato não faz sentido, daí o 400 (e não 404: o
+    alimento existe, o problema é a combinação)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    alimento = session.get(Alimento, alimento_id)
+    if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Alimento não encontrado")
+    if dados.estoque_id is not None:
+        query = select(Estoque).where(Estoque.id == dados.estoque_id, Estoque.alimento_id == alimento_id)
+        if fazenda_id is not None:
+            query = query.where(Estoque.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            raise HTTPException(
+                status_code=400,
+                detail="O item de estoque informado não está vinculado a este alimento",
+            )
+    alimento.estoque_preferido_id = dados.estoque_id
+    alimento.atualizado_em = datetime.utcnow()
+    session.add(alimento)
+    session.commit()
+    return _serializar_alimento(session, alimento, fazenda_id)
+
+
+class EstoqueCategoriaIn(BaseModel):
+    # None desvincula (o item volta a depender só da categoria indireta via
+    # Alimento, quando houver).
+    categoria_alimento_id: int | None = None
+
+
+@router.put("/estoque/{estoque_id}/categoria")
+def atualizar_categoria_estoque(
+    estoque_id: int, dados: EstoqueCategoriaIn,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Fase P1 do refactor Alimento/Estoque — vincula um item de Estoque
+    DIRETO a uma CategoriaAlimento (`Estoque.categoria_alimento_id`), sem
+    precisar passar pelo cadastro de Alimento (a única via até aqui — ver
+    seção `produtos_sem_categoria` do relatório de conferência). Puramente
+    aditivo: não mexe em `Estoque.categoria` (texto livre) nem na
+    categorização indireta via `Alimento.categoria_alimento_id`, que
+    continua valendo do mesmo jeito para quem não usar este endpoint."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, estoque_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    if dados.categoria_alimento_id is not None:
+        cat = session.get(CategoriaAlimento, dados.categoria_alimento_id)
+        if not cat or (fazenda_id is not None and cat.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Categoria de alimento não encontrada")
+    item.categoria_alimento_id = dados.categoria_alimento_id
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
 # ---------------------------------------------------------------------------
 # Fase P0-B do refactor Alimento/Estoque — relatório de conferência SOMENTE
 # LEITURA (nenhum session.add/commit/delete nesta seção), o retrato que o
@@ -740,8 +828,14 @@ def relatorio_migracao(
     ]
 
     # ── 3) produtos que são alimento mas não têm classificação ──
+    # Aditivo (Fase P1): um item com `categoria_alimento_id` PRÓPRIO (ver
+    # `Estoque.categoria_alimento_id`) já tem categoria por si só, mesmo sem
+    # nenhum vínculo de Alimento — qualquer um dos dois caminhos (direto ou
+    # indireto via Alimento) satisfaz "tem categoria", então sai desta lista.
     produtos_sem_categoria = []
     for e in estoques:
+        if e.categoria_alimento_id is not None:
+            continue
         if e.alimento_id is not None:
             alimento = alimentos_por_id.get(e.alimento_id)
             if alimento is not None and alimento.categoria_alimento_id is None:
@@ -773,6 +867,11 @@ def relatorio_migracao(
         {
             "alimento_id": aid,
             "alimento_nome": alimentos_por_id[aid].nome if aid in alimentos_por_id else None,
+            # Fase P1: qual dos candidatos (se algum) já foi escolhido
+            # deliberadamente como o item preferido — ver
+            # `Alimento.estoque_preferido_id` e PUT
+            # /alimentacao/alimentos/{alimento_id}/estoque-preferido.
+            "estoque_preferido_id": alimentos_por_id[aid].estoque_preferido_id if aid in alimentos_por_id else None,
             "produtos": [
                 {"id": e.id, "nome": e.nome, "quantidade": e.quantidade, "unidade": e.unidade}
                 for e in estoque_por_alimento_id[aid]
@@ -784,9 +883,12 @@ def relatorio_migracao(
 
     # ── 5) Alimento.nome != Estoque.nome do produto vinculado ──
     contagem_laudos_por_nome_exato: dict[str, int] = {}
+    contagem_laudos_por_alimento_id: dict[int, int] = {}
     for a in analises:
         if a.alimento:
             contagem_laudos_por_nome_exato[a.alimento] = contagem_laudos_por_nome_exato.get(a.alimento, 0) + 1
+        if a.alimento_id is not None:
+            contagem_laudos_por_alimento_id[a.alimento_id] = contagem_laudos_por_alimento_id.get(a.alimento_id, 0) + 1
     divergencia_nome = []
     for e in estoques:
         if e.alimento_id is None:
@@ -796,10 +898,17 @@ def relatorio_migracao(
             divergencia_nome.append({
                 "alimento_id": alimento.id, "alimento_nome": alimento.nome,
                 "estoque_id": e.id, "estoque_nome": e.nome,
-                # Crítico: AnaliseBromatologica.alimento_id nunca é preenchido hoje —
-                # o vínculo real é por igualdade exata de string com o nome ATUAL do
-                # alimento. Renomear custaria exatamente esta quantidade de laudos.
+                # Histórico: até a Fase P1, AnaliseBromatologica.alimento_id nunca
+                # era preenchido — o vínculo real era só por igualdade exata de
+                # string com o nome ATUAL do alimento. Renomear custaria exatamente
+                # esta quantidade de laudos. Mantido como está (a API agora escreve
+                # `alimento_id` na criação e um backfill cobriu os já existentes,
+                # mas nomes podem ter divergido de novo desde então).
                 "quantidade_laudos_pelo_nome_atual": contagem_laudos_por_nome_exato.get(alimento.nome, 0),
+                # Fase P1: quantos laudos já estão ligados por id (imunes a um
+                # futuro rename) — quanto maior, menor o risco que a linha acima
+                # descreve. Informativo apenas; não muda nenhuma resolução.
+                "quantidade_laudos_pelo_id": contagem_laudos_por_alimento_id.get(alimento.id, 0),
             })
 
     # ── 6) Dieta.ingrediente que a cascata de resolução de hoje não resolve ──
@@ -1206,6 +1315,12 @@ async def importar_tabela_nutricional(
 class AnaliseBromatologicaIn(BaseModel):
     data: date
     alimento: str
+    # Fase P1 do refactor Alimento/Estoque — vínculo explícito com o cadastro
+    # de Alimento. Quando omitido, `criar_analise_bromatologica` tenta
+    # resolver sozinho por igualdade exata de nome (ver docstring do
+    # endpoint); passar aqui é só para quando o usuário já escolheu o
+    # Alimento num seletor, em vez de digitar o nome livre.
+    alimento_id: int | None = None
     ms_pct: float | None = None
     pb_pct: float | None = None
     fdn_pct: float | None = None
@@ -1242,10 +1357,37 @@ def criar_analise_bromatologica(
     dados: AnaliseBromatologicaIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
+    """Grava um laudo. Gap 1 da Fase P1 (ver relatório de conferência §
+    divergência de nome): até aqui `AnaliseBromatologica.alimento_id` nunca
+    era escrito, e o vínculo real com o Alimento era só por igualdade exata
+    de string — renomear o Alimento "perdia" o laudo em silêncio (ver
+    `/formulacao/alimentos/{id}/resolver`, que já prioriza `alimento_id`
+    quando presente). Se `dados.alimento_id` vier explícito (usuário
+    escolheu num seletor), valida que pertence a esta fazenda e usa direto;
+    senão, tenta resolver sozinho por nome exato — melhor esforço, não
+    bloqueia a criação do laudo se não achar."""
     from fazenda.models import AnaliseBromatologica
     if not dados.alimento.strip():
         raise HTTPException(status_code=400, detail="Alimento é obrigatório")
-    registro = AnaliseBromatologica(**dados.model_dump(), usuario_id=user.id, fazenda_id=fazenda_id)
+
+    alimento_id = dados.alimento_id
+    if alimento_id is not None:
+        query = select(Alimento).where(Alimento.id == alimento_id)
+        if fazenda_id is not None:
+            query = query.where(Alimento.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            raise HTTPException(status_code=404, detail="Alimento não encontrado")
+    else:
+        query = select(Alimento).where(Alimento.nome == dados.alimento)
+        if fazenda_id is not None:
+            query = query.where(Alimento.fazenda_id == fazenda_id)
+        encontrado = session.exec(query).first()
+        alimento_id = encontrado.id if encontrado else None
+
+    registro = AnaliseBromatologica(
+        **dados.model_dump(exclude={"alimento_id"}), alimento_id=alimento_id,
+        usuario_id=user.id, fazenda_id=fazenda_id,
+    )
     session.add(registro)
     session.commit()
     session.refresh(registro)

@@ -282,6 +282,117 @@ class TestBaixaAutomatica:
             assert len(movimentos) == 1
 
 
+class TestEstoquePreferidoResolucao:
+    """Fase P1, Gap 3 — `Alimento.estoque_preferido_id` move o item
+    escolhido para o INÍCIO da lista de candidatos de `_estoque_por_alimento`
+    (nunca remove os outros), e todo call site que pega `candidatos[0]`
+    passa a debitar/consumir esse item sem precisar mudar."""
+
+    def _cenario(self, engine):
+        from fazenda.models import DietaItemProgramado, DietaLancamento
+
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            alimento = Alimento(nome="Farelo de soja")
+            s.add(alimento)
+            s.commit()
+            s.refresh(alimento)
+            e_a = Estoque(nome="Farelo de soja — Lote A", categoria="alimento",
+                          quantidade=500.0, unidade="kg", alimento_id=alimento.id)
+            e_b = Estoque(nome="Farelo de soja — Lote B", categoria="alimento",
+                          quantidade=500.0, unidade="kg", alimento_id=alimento.id)
+            s.add(e_a)
+            s.add(e_b)
+            # `Dieta` (CSV legado) alimenta a baixa automática; `DietaLancamento`
+            # + `DietaItemProgramado` (lançamento) é o que o consumo MANUAL
+            # exige pra não cair em "fora da dieta" (B4/B5) — os dois convivem.
+            s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Farelo de soja", quantidade=10.0, unidade="kg"))
+            dieta_lanc = DietaLancamento(lote=1, data_abertura=HOJE, base_quantidade="total")
+            s.add(dieta_lanc)
+            s.commit()
+            s.refresh(dieta_lanc)
+            s.add(DietaItemProgramado(dieta_lancamento_id=dieta_lanc.id, alimento="Farelo de soja", quantidade=10.0, unidade="kg"))
+            s.commit()
+            s.refresh(e_a)
+            s.refresh(e_b)
+            return alimento.id, e_a.id, e_b.id
+
+    def test_estoque_por_alimento_poe_o_preferido_na_frente(self, client):
+        c, engine = client
+        alimento_id, id_a, id_b = self._cenario(engine)
+        with Session(engine) as s:
+            alimento = s.get(Alimento, alimento_id)
+            alimento.estoque_preferido_id = id_b
+            s.add(alimento)
+            s.commit()
+
+            from fazenda.api.routers.alimentacao import _estoque_por_alimento
+            por_alimento, _ = _estoque_por_alimento(s, None)
+            candidatos = por_alimento["farelo de soja"]
+            assert [c["id"] for c in candidatos] == [id_b, id_a]  # preferido primeiro
+            assert {c["id"] for c in candidatos} == {id_a, id_b}  # nenhum candidato sumiu
+
+    def test_estoque_por_alimento_preserva_ordem_de_hoje_sem_preferencia(self, client):
+        """Não-regressão crítica do Gap 3: SEM `estoque_preferido_id` (o
+        padrão), a ordem continua EXATAMENTE a que a query devolve hoje —
+        mesma checagem dinâmica de TestEscolhaArbitrariaDeCandidato (T11) em
+        test_migracao_alimento.py, que este teste espelha."""
+        c, engine = client
+        alimento_id, id_a, id_b = self._cenario(engine)
+        with Session(engine) as s:
+            query_ordem_crua = select(Estoque).where(Estoque.alimento_id.is_not(None)).order_by(Estoque.id)
+            ordem_esperada = [e.id for e in s.exec(query_ordem_crua).all()]
+
+            from fazenda.api.routers.alimentacao import _estoque_por_alimento
+            por_alimento, _ = _estoque_por_alimento(s, None)
+            candidatos = por_alimento["farelo de soja"]
+            assert [c["id"] for c in candidatos] == ordem_esperada
+
+    def test_baixa_automatica_debita_o_item_preferido(self, client):
+        c, engine = client
+        alimento_id, id_a, id_b = self._cenario(engine)
+        with Session(engine) as s:
+            alimento = s.get(Alimento, alimento_id)
+            alimento.estoque_preferido_id = id_b
+            s.add(alimento)
+            s.commit()
+
+        c.get("/alimentacao/")  # baseline
+        with Session(engine) as s:
+            estado = s.get(AlimentacaoEstado, 1)
+            estado.ultima_data_deducao = date.today() - timedelta(days=1)
+            s.add(estado)
+            s.commit()
+
+        r = c.get("/alimentacao/")
+        assert r.status_code == 200
+        with Session(engine) as s:
+            item_a = s.get(Estoque, id_a)
+            item_b = s.get(Estoque, id_b)
+            assert item_b.quantidade == 490.0  # o preferido foi debitado
+            assert item_a.quantidade == 500.0  # o outro nem foi tocado
+
+    def test_resolver_estoque_item_consumo_manual_usa_o_preferido(self, client):
+        c, engine = client
+        alimento_id, id_a, id_b = self._cenario(engine)
+        with Session(engine) as s:
+            alimento = s.get(Alimento, alimento_id)
+            alimento.estoque_preferido_id = id_a
+            s.add(alimento)
+            s.commit()
+
+        r = c.post("/alimentacao/consumo", json={
+            "lote": 1, "data": "2026-07-08", "origem": "kg",
+            "itens": [{"alimento": "Farelo de soja", "quantidade": 10.0, "unidade": "kg"}],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            item_a = s.get(Estoque, id_a)
+            item_b = s.get(Estoque, id_b)
+            assert item_a.quantidade == 490.0  # o preferido foi debitado
+            assert item_b.quantidade == 500.0  # o outro nem foi tocado
+
+
 class TestDietaLancamento:
     def _criar(self, c, **overrides):
         dados = {
@@ -922,6 +1033,223 @@ class TestAlimentos:
         assert r.status_code == 404
 
 
+class TestEstoquePreferido:
+    """Fase P1, Gap 3 — PUT /alimentacao/alimentos/{id}/estoque-preferido:
+    escolha deliberada de qual item de Estoque vinculado recebe a baixa
+    quando o Alimento tem 2+ candidatos (ver `_estoque_por_alimento`)."""
+
+    def _alimento_com_dois_estoques(self, c, engine):
+        alimento_id = c.post("/alimentacao/alimentos", json={"nome": "Farelo de soja"}).json()["id"]
+        with Session(engine) as s:
+            e_a = Estoque(nome="Farelo A", quantidade=100.0, unidade="kg", alimento_id=alimento_id)
+            e_b = Estoque(nome="Farelo B", quantidade=100.0, unidade="kg", alimento_id=alimento_id)
+            s.add(e_a)
+            s.add(e_b)
+            s.commit()
+            s.refresh(e_a)
+            s.refresh(e_b)
+            return alimento_id, e_a.id, e_b.id
+
+    def test_define_estoque_preferido(self, client):
+        c, engine = client
+        alimento_id, id_a, id_b = self._alimento_com_dois_estoques(c, engine)
+        r = c.put(f"/alimentacao/alimentos/{alimento_id}/estoque-preferido", json={"estoque_id": id_b})
+        assert r.status_code == 200
+        assert r.json()["estoque_preferido_id"] == id_b
+        with Session(engine) as s:
+            assert s.get(Alimento, alimento_id).estoque_preferido_id == id_b
+
+    def test_limpa_preferencia_com_null(self, client):
+        c, engine = client
+        alimento_id, id_a, id_b = self._alimento_com_dois_estoques(c, engine)
+        c.put(f"/alimentacao/alimentos/{alimento_id}/estoque-preferido", json={"estoque_id": id_b})
+        r = c.put(f"/alimentacao/alimentos/{alimento_id}/estoque-preferido", json={"estoque_id": None})
+        assert r.status_code == 200
+        assert r.json()["estoque_preferido_id"] is None
+
+    def test_estoque_que_nao_e_candidato_da_400(self, client):
+        c, engine = client
+        alimento_id, id_a, id_b = self._alimento_com_dois_estoques(c, engine)
+        with Session(engine) as s:
+            outro = Estoque(nome="Item avulso", quantidade=1.0, unidade="kg")
+            s.add(outro)
+            s.commit()
+            s.refresh(outro)
+            outro_id = outro.id
+        r = c.put(f"/alimentacao/alimentos/{alimento_id}/estoque-preferido", json={"estoque_id": outro_id})
+        assert r.status_code == 400
+        with Session(engine) as s:
+            assert s.get(Alimento, alimento_id).estoque_preferido_id is None
+
+    def test_alimento_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/alimentos/999/estoque-preferido", json={"estoque_id": None})
+        assert r.status_code == 404
+
+
+class TestEstoquePreferidoIsolamentoFazenda:
+    @pytest.fixture
+    def client_multi_fazenda(self):
+        from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            for fid in (1, 2):
+                s.add(Fazenda(id=fid, nome=f"Fazenda {fid}"))
+                s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="alimentacao", ativo=True))
+            s.commit()
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+
+        class _FakeUser:
+            id = 1
+            papel = "admin"
+            ativo = True
+            username = "teste"
+
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+        def _client(fazenda_id: int) -> TestClient:
+            main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
+            main.app.dependency_overrides[get_fazenda_id_escrita] = lambda: fazenda_id
+            return TestClient(main.app)
+
+        yield engine, _client
+
+        main.app.dependency_overrides.clear()
+
+    def test_alimento_de_outra_fazenda_da_404(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        alimento_id = _client(2).post("/alimentacao/alimentos", json={"nome": "Só da Fazenda 2"}).json()["id"]
+        r = _client(1).put(f"/alimentacao/alimentos/{alimento_id}/estoque-preferido", json={"estoque_id": None})
+        assert r.status_code == 404
+
+
+class TestEstoqueCategoriaDireta:
+    """Fase P1, Gap 2 — PUT /alimentacao/estoque/{id}/categoria: vincula um
+    item de Estoque direto a uma CategoriaAlimento, sem depender do cadastro
+    de Alimento."""
+
+    def test_define_categoria_direta(self, client):
+        c, engine = client
+        cat_id = c.post("/alimentacao/categorias", json={"nome": "Volumoso"}).json()["id"]
+        with Session(engine) as s:
+            e = Estoque(nome="Silagem avulsa", quantidade=10.0, unidade="kg")
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+        r = c.put(f"/alimentacao/estoque/{estoque_id}/categoria", json={"categoria_alimento_id": cat_id})
+        assert r.status_code == 200
+        assert r.json()["categoria_alimento_id"] == cat_id
+        with Session(engine) as s:
+            assert s.get(Estoque, estoque_id).categoria_alimento_id == cat_id
+
+    def test_limpa_categoria_com_null(self, client):
+        c, engine = client
+        cat_id = c.post("/alimentacao/categorias", json={"nome": "Volumoso"}).json()["id"]
+        with Session(engine) as s:
+            e = Estoque(nome="Silagem avulsa", quantidade=10.0, unidade="kg", categoria_alimento_id=cat_id)
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+        r = c.put(f"/alimentacao/estoque/{estoque_id}/categoria", json={"categoria_alimento_id": None})
+        assert r.status_code == 200
+        assert r.json()["categoria_alimento_id"] is None
+
+    def test_categoria_inexistente_da_404(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            e = Estoque(nome="Silagem avulsa", quantidade=10.0, unidade="kg")
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+        r = c.put(f"/alimentacao/estoque/{estoque_id}/categoria", json={"categoria_alimento_id": 999})
+        assert r.status_code == 404
+        with Session(engine) as s:
+            assert s.get(Estoque, estoque_id).categoria_alimento_id is None
+
+    def test_estoque_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/estoque/999/categoria", json={"categoria_alimento_id": None})
+        assert r.status_code == 404
+
+
+class TestEstoqueCategoriaIsolamentoFazenda:
+    @pytest.fixture
+    def client_multi_fazenda(self):
+        from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            for fid in (1, 2):
+                s.add(Fazenda(id=fid, nome=f"Fazenda {fid}"))
+                s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="alimentacao", ativo=True))
+            s.commit()
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+
+        class _FakeUser:
+            id = 1
+            papel = "admin"
+            ativo = True
+            username = "teste"
+
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+        def _client(fazenda_id: int) -> TestClient:
+            main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
+            main.app.dependency_overrides[get_fazenda_id_escrita] = lambda: fazenda_id
+            return TestClient(main.app)
+
+        yield engine, _client
+
+        main.app.dependency_overrides.clear()
+
+    def test_estoque_de_outra_fazenda_da_404(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        with Session(engine) as s:
+            e = Estoque(nome="Só da Fazenda 2", quantidade=10.0, unidade="kg", fazenda_id=2)
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+        r = _client(1).put(f"/alimentacao/estoque/{estoque_id}/categoria", json={"categoria_alimento_id": None})
+        assert r.status_code == 404
+
+    def test_categoria_de_outra_fazenda_da_404(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        cat_id_f2 = _client(2).post("/alimentacao/categorias", json={"nome": "Só da Fazenda 2"}).json()["id"]
+        with Session(engine) as s:
+            e = Estoque(nome="Item da Fazenda 1", quantidade=10.0, unidade="kg", fazenda_id=1)
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+        r = _client(1).put(f"/alimentacao/estoque/{estoque_id}/categoria", json={"categoria_alimento_id": cat_id_f2})
+        assert r.status_code == 404
+        with Session(engine) as s:
+            assert s.get(Estoque, estoque_id).categoria_alimento_id is None
+
+
 class TestMateriaSeca:
     def test_lista_semeia_padrao(self, client):
         c, engine = client
@@ -994,6 +1322,106 @@ class TestAnaliseBromatologica:
         c.post("/alimentacao/analise-bromatologica", json={"data": "2026-06-01", "alimento": "Corte 21"})
         registros = c.get("/alimentacao/analise-bromatologica").json()["registros"]
         assert [r["alimento"] for r in registros] == ["Corte 21", "Silagem"]
+
+    # ── Fase P1, Gap 1: AnaliseBromatologica.alimento_id ────────────────────
+    def test_resolve_alimento_id_automaticamente_por_nome_exato(self, client):
+        c, engine = client
+        alimento_id = c.post("/alimentacao/alimentos", json={"nome": "Silagem de milho"}).json()["id"]
+        r = c.post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Silagem de milho", "ms_pct": 34.5,
+        })
+        assert r.status_code == 201
+        assert r.json()["alimento_id"] == alimento_id
+        with Session(engine) as s:
+            registro = s.exec(select(AnaliseBromatologica).where(AnaliseBromatologica.alimento == "Silagem de milho")).first()
+            assert registro.alimento_id == alimento_id
+
+    def test_alimento_id_fica_nulo_quando_nao_ha_alimento_com_esse_nome(self, client):
+        c, engine = client
+        r = c.post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Ingrediente sem cadastro",
+        })
+        assert r.status_code == 201
+        assert r.json()["alimento_id"] is None
+
+    def test_respeita_alimento_id_passado_explicitamente(self, client):
+        c, engine = client
+        # Nome do laudo não bate com o Alimento — o vínculo explícito vence
+        # sobre a resolução automática por nome.
+        alimento_id = c.post("/alimentacao/alimentos", json={"nome": "Silagem de milho"}).json()["id"]
+        r = c.post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Nome digitado diferente", "alimento_id": alimento_id,
+        })
+        assert r.status_code == 201
+        assert r.json()["alimento_id"] == alimento_id
+
+    def test_alimento_id_explicito_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Silagem", "alimento_id": 999,
+        })
+        assert r.status_code == 404
+
+
+class TestAnaliseBromatologicaIsolamentoFazenda:
+    """`alimento_id` explícito não pode vazar o vínculo pra Alimento de outra
+    fazenda — mesma convenção de IDOR (404, não 403) do resto do módulo."""
+
+    @pytest.fixture
+    def client_multi_fazenda(self):
+        from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            for fid in (1, 2):
+                s.add(Fazenda(id=fid, nome=f"Fazenda {fid}"))
+                s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="alimentacao", ativo=True))
+            s.commit()
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+
+        class _FakeUser:
+            id = 1
+            papel = "admin"
+            ativo = True
+            username = "teste"
+
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+        def _client(fazenda_id: int) -> TestClient:
+            main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
+            main.app.dependency_overrides[get_fazenda_id_escrita] = lambda: fazenda_id
+            return TestClient(main.app)
+
+        yield engine, _client
+
+        main.app.dependency_overrides.clear()
+
+    def test_alimento_id_de_outra_fazenda_da_404(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        alimento_id_f2 = _client(2).post("/alimentacao/alimentos", json={"nome": "Só da Fazenda 2"}).json()["id"]
+        r = _client(1).post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Roubado", "alimento_id": alimento_id_f2,
+        })
+        assert r.status_code == 404
+
+    def test_resolucao_automatica_por_nome_nao_cruza_fazenda(self, client_multi_fazenda):
+        engine, _client = client_multi_fazenda
+        alimento_id_f2 = _client(2).post("/alimentacao/alimentos", json={"nome": "Silagem de milho"}).json()["id"]
+        r = _client(1).post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Silagem de milho",
+        })
+        assert r.status_code == 201
+        assert r.json()["alimento_id"] is None  # não achou "Silagem de milho" na fazenda 1
+        assert r.json()["alimento_id"] != alimento_id_f2
 
 
 class TestEstadoBaixa:
