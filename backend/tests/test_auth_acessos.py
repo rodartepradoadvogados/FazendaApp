@@ -1,8 +1,9 @@
 """
 Testes de:
 - login registra ultimo_login;
-- GET /auth/usuarios/acessos (relatório de últimos acessos) — restrito ao
-  proprietário (e-mail fixo em fazenda.auth.EMAIL_DONO), mesmo para admins.
+- GET /auth/usuarios/acessos (relatório de últimos acessos) — dono-equivalente
+  OU administrador (papel == "admin"), ver fazenda.auth.exigir_admin_ou_dono
+  (ampliado de exigir_dono puro a pedido explícito do usuário, ago/2026).
 """
 from __future__ import annotations
 
@@ -64,11 +65,13 @@ def test_acessos_liberado_para_dono(client):
     assert usernames == {"dono", "outro-admin", "operador"}
 
 
-def test_acessos_bloqueado_para_outro_admin(client):
+def test_acessos_liberado_para_outro_admin(client):
+    """Qualquer `papel == "admin"` agora passa (exigir_admin_ou_dono) — antes
+    só quem estivesse em EMAILS_DONO_EQUIVALENTE."""
     c, _ = client
     token = _login(c, "outro-admin")
     r = c.get("/auth/usuarios/acessos", headers={"Authorization": f"Bearer {token}"})
-    assert r.status_code == 403
+    assert r.status_code == 200
 
 
 def test_acessos_bloqueado_para_operador(client):

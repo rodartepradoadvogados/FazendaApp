@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, eh_consultor_cowdata,
-    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_dono, get_current_user, get_fazenda_atual_id,
-    get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
+    eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
+    get_fazenda_atual_id, get_suporte_do_token, hash_senha, token_manter_conectado, verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
@@ -402,12 +402,26 @@ def listar_usuarios(
 
 
 @router.get("/usuarios/acessos")
-def listar_acessos(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    """Relatório de últimos acessos — restrito ao proprietário (ver exigir_dono).
-    Traz os 3 logins mais recentes de cada usuário (histórico completo em
-    LoginAcesso; Usuario.ultimo_login guarda só o mais recente, mantido por
-    compatibilidade com o resto do sistema)."""
-    usuarios = session.exec(select(Usuario)).all()
+def listar_acessos(
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Relatório de últimos acessos — dono-equivalente OU administrador da
+    fazenda atual (ver exigir_admin_ou_dono; pedido explícito do usuário
+    ago/2026, ampliando o que antes era só `exigir_dono`).
+
+    Escopado à fazenda ATUAL, mesmo padrão e mesmo motivo de `listar_usuarios`
+    acima: sem o filtro, um administrador de UMA fazenda-cliente veria o
+    histórico de login de TODAS as outras (bug de vazamento entre clientes,
+    não só de UX) — `exigir_dono` sozinho nunca precisou disso porque só o
+    proprietário da plataforma passava por aqui; `exigir_admin_ou_dono` abre
+    a um público bem maior (qualquer administrador de qualquer fazenda-cliente),
+    então o filtro deixa de ser opcional."""
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    usuarios = session.exec(query).all()
     resultado = []
     for u in sorted(usuarios, key=lambda u: (u.ultimo_login is None, u.ultimo_login or datetime.min), reverse=True):
         ultimos = session.exec(
