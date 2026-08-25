@@ -53,6 +53,13 @@ export type Ficha = {
   // aplicada ao último item de `resumo_partos`. Ver fazenda.rules.parto_resumo.
   ultima_cria: string;
   linha_tempo_sanitaria: { data: string | null; tipo_evento: string; descricao: string | null; gta: string | null; responsavel: string | null }[];
+  // Curva de lactação: além de curva_referencia_rebanho (já coberto pelo
+  // índice genérico abaixo), a curva de Wood ajustada ao próprio animal e a
+  // referência por mesma ordem de parto — ambas podem vir `null`. Tipadas à
+  // parte porque não são listas de "linhas de lançamento" (formato do
+  // índice genérico), e sim séries numéricas que CurvaLactacao consome.
+  curva_wood?: { del: number; kg: number }[] | null;
+  curva_referencia_grupo_ordem_parto?: { faixa_del: string; media_kg: number; controles: number }[] | null;
 } & Record<string, Record<string, unknown>[] | Record<string, unknown> | null>;
 
 // ── Catálogo de lançamentos (as 16 chaves do retorno de /animais/{n}/ficha) ──
@@ -168,6 +175,9 @@ export const ESTILO_TOKENS_MESA: React.CSSProperties = {
   ["--green-light" as any]: "var(--mob-verde)",
   ["--amber" as any]: "var(--mob-ambar)",
   ["--red" as any]: "var(--mob-vermelho)",
+  // Usado pela 3ª série da Curva de lactação (referência por ordem de
+  // parto) — ver CurvaLactacao.tsx.
+  ["--blue" as any]: "var(--mob-azul)",
 };
 
 export const tituloCartao: React.CSSProperties = { fontSize: "0.72rem", fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--mob-muted)", marginBottom: "0.7rem" };

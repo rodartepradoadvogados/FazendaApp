@@ -12,7 +12,7 @@ import { SecaoRecolhivel, TabBar } from "@/components/ui";
 import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
-import { CurvaLactacao, type FaixaReferencia } from "@/components/CurvaLactacao";
+import { CurvaLactacao, type FaixaReferencia, type PontoWood } from "@/components/CurvaLactacao";
 import { TrioEquivalenteMaduroView, NotaExplicativaEM } from "@/components/TrioEquivalenteMaduro";
 
 type PrecisaoParto = {
@@ -69,6 +69,12 @@ type Ficha = {
   // "último parto" aqui, já é filtrado antes). Ver fazenda.rules.parto_resumo
   // e o campo `cria` de cada linha de `resumo_partos`.
   ultima_cria: string;
+  // Curva de Wood ajustada aos pontos reais DESTE animal (trajetória
+  // esperada + projeção da cauda em aberto) — null sem controle suficiente.
+  curva_wood?: PontoWood[] | null;
+  // Mesma ideia de curva_referencia_rebanho, mas só com vacas na MESMA
+  // ordem de parto deste animal — null se ele nunca pariu ou não há grupo.
+  curva_referencia_grupo_ordem_parto?: FaixaReferencia[] | null;
 };
 
 /**
@@ -443,11 +449,13 @@ function SecaoHistoricoTabela({ chave, titulo, colunas, linhas, onAbrirCria }: {
 // linha a linha) e a curva de lactação (a forma da lactação ao longo do DEL,
 // comparada com a média do rebanho). São perguntas diferentes sobre os mesmos
 // números: "o que foi medido?" e "isto está bom?".
-function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCria, numeroMatriz }: {
+function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, referenciaGrupo, curvaWood, onAbrirCria, numeroMatriz }: {
   colunas: ColunaExport[];
   linhas: Record<string, unknown>[];
   brutas: Record<string, unknown>[];
   referencia?: FaixaReferencia[];
+  referenciaGrupo?: FaixaReferencia[] | null;
+  curvaWood?: PontoWood[] | null;
   onAbrirCria: (numero: string) => void;
   numeroMatriz: string;
 }) {
@@ -489,7 +497,8 @@ function SecaoControleLeiteiro({ colunas, linhas, brutas, referencia, onAbrirCri
         </div>
       )}
       {aba === "curva" ? (
-        <CurvaLactacao pontos={pontos} referencia={referencia} />
+        <CurvaLactacao pontos={pontos} referencia={referencia}
+          referenciaGrupo={referenciaGrupo || undefined} curvaWood={curvaWood || undefined} />
       ) : (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
@@ -805,7 +814,9 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
     const linhas = formatarLinhas("controles_leiteiros", linhasBrutas);
     return (
       <SecaoControleLeiteiro colunas={s.colunas} linhas={linhas} brutas={linhasBrutas}
-        referencia={ficha.curva_referencia_rebanho} onAbrirCria={buscar}
+        referencia={ficha.curva_referencia_rebanho}
+        referenciaGrupo={ficha.curva_referencia_grupo_ordem_parto} curvaWood={ficha.curva_wood}
+        onAbrirCria={buscar}
         numeroMatriz={String(ficha.animal.numero ?? "")} />
     );
   }
