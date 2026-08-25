@@ -33,21 +33,20 @@ const ETAPAS_IATF: { dia: number; hormonios: string }[] = [
   { dia: 11, hormonios: "Inseminação (IATF)" },
 ];
 
-export function FormReprodutivo({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+export function FormReprodutivo({ animais, animalFixado, restringirA }: { animais: Animal[]; animalFixado: string | null; restringirA?: Aba[] }) {
   const [aba, setAba] = useState<Aba | null>(null);
 
   if (!aba) {
-    return (
-      <GradeAcoes
-        opcoes={[
-          { id: "inseminacao", label: "Inseminação", icone: <Syringe size={28} />, cor: "var(--mob-azul)" },
-          { id: "diagnostico", label: "Diagnóstico", icone: <Stethoscope size={28} />, cor: "var(--mob-verde)" },
-          { id: "parto", label: "Parto", icone: <Baby size={28} />, cor: "var(--mob-roxo)" },
-          { id: "iatf", label: "Protocolo IATF", icone: <CalendarClock size={28} />, cor: "var(--mob-laranja)" },
-        ]}
-        onEscolher={(id) => setAba(id as Aba)}
-      />
-    );
+    // `restringirA` (opcional): usado pelo Modo Curral para mostrar só
+    // Inseminação/Parto — sem o prop (undefined), o comportamento é idêntico
+    // ao de hoje, as 4 opções completas usadas por Lançar (LancarTela.tsx).
+    const opcoes = [
+      { id: "inseminacao", label: "Inseminação", icone: <Syringe size={28} />, cor: "var(--mob-azul)" },
+      { id: "diagnostico", label: "Diagnóstico", icone: <Stethoscope size={28} />, cor: "var(--mob-verde)" },
+      { id: "parto", label: "Parto", icone: <Baby size={28} />, cor: "var(--mob-roxo)" },
+      { id: "iatf", label: "Protocolo IATF", icone: <CalendarClock size={28} />, cor: "var(--mob-laranja)" },
+    ].filter((o) => !restringirA || restringirA.includes(o.id as Aba));
+    return <GradeAcoes opcoes={opcoes} onEscolher={(id) => setAba(id as Aba)} />;
   }
 
   return (
