@@ -563,6 +563,39 @@ class TestTipoPessoa:
         assert "Funcionário" in nomes
         assert "Empreiteiro" in nomes
 
+    def test_administrador_e_contador_estao_seedados(self, client):
+        # Administrador/Contador (ago/2026) — adicionados a TIPOS_PESSOA para
+        # que usePessoasAtivas (frontend) tenha um tipo cadastrável que
+        # qualifique alguém como "Responsável" sem precisar ser
+        # Funcionário/Veterinário/Zootecnista (ver regra no frontend).
+        c, engine = client
+        nomes = {t["nome"] for t in c.get("/cadastro/pessoas/tipos").json()}
+        assert "Administrador" in nomes
+        assert "Contador" in nomes
+
+    def test_seed_tipos_pessoa_continua_idempotente_com_administrador_e_contador(self, client):
+        # seed_tipos_pessoa roda uma vez por fazenda (SeedFlag) — chamar a
+        # rota de listagem várias vezes (ela auto-semeia via
+        # seed_tipos_pessoa) não pode duplicar nenhum tipo, incluindo os dois
+        # novos.
+        c, engine = client
+        c.get("/cadastro/pessoas/tipos")
+        c.get("/cadastro/pessoas/tipos")
+        r = c.get("/cadastro/pessoas/tipos")
+        nomes = [t["nome"] for t in r.json()]
+        assert nomes.count("Administrador") == 1
+        assert nomes.count("Contador") == 1
+        assert len(nomes) == len(set(nomes))
+
+    def test_cria_pessoa_administrador_e_contador(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Dona Rosa", "tipos": ["Administrador"]})
+        assert r.status_code == 200
+        assert r.json()["tipos"] == ["Administrador"]
+        r = c.post("/cadastro/pessoas", json={"nome": "Seu Nelson", "tipos": ["Contador"]})
+        assert r.status_code == 200
+        assert r.json()["tipos"] == ["Contador"]
+
     def test_cria_novo_tipo_e_usa_na_pessoa(self, client):
         c, engine = client
         r = c.post("/cadastro/pessoas/tipos", json={"nome": "Consultor"})
