@@ -183,17 +183,21 @@ export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
   const [sujo, setSujo] = useState(false);
-  // Gaveta lateral (T2, mockup 1e) — abre sozinha ao entrar/trocar para um dos
-  // GAVETA_LEAFS; fechada, a tela só mostra a faixa "Abrir lançamento" no
-  // lugar do formulário. `formKey` força o formulário a nascer de novo (só ao
-  // clicar "Salvar e próximo" no rodapé, nunca sozinho, senão descartaria
-  // trabalho em andamento) e `mensagemSalva` controla esse rodapé.
+  // Gaveta lateral (T2, mockup 1e) — SÓ abre com o usuário clicando em "Abrir
+  // lançamento" (botão logo abaixo); fechada, a tela só mostra essa faixa no
+  // lugar do formulário. Trocar de aba (inclusive o valor inicial de `sel` no
+  // primeiro carregamento de /lancamentos) sempre FECHA a gaveta — nunca abre
+  // sozinha, mesmo que a aba de destino seja uma GAVETA_LEAF; do contrário a
+  // tela nasce direto dentro do formulário e trava a navegação (usuário não
+  // enxerga a lista de abas por trás). `formKey` força o formulário a nascer
+  // de novo (só ao clicar "Salvar e próximo" no rodapé, nunca sozinho, senão
+  // descartaria trabalho em andamento) e `mensagemSalva` controla esse rodapé.
   const ehGaveta = GAVETA_LEAFS.has(sel);
   const [gavetaAberta, setGavetaAberta] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [mensagemSalva, setMensagemSalva] = useState<string | null>(null);
   useEffect(() => {
-    setGavetaAberta(GAVETA_LEAFS.has(sel));
+    setGavetaAberta(false);
     setMensagemSalva(null);
   }, [sel]);
   const fecharGaveta = useCallback(() => {
