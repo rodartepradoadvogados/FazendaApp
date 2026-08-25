@@ -66,7 +66,7 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
             <CowDataMark size={34} />
             <div>
               <CowDataWordmark size="1rem" cowColor="var(--cream)" dataColor={PETROLEO} />
-              <p style={{ margin: 0, fontSize: "0.68rem", color: "rgba(243,231,211,0.7)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+              <p style={{ margin: 0, fontSize: "0.68rem", color: "rgba(245,246,244,0.7)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                 <FlaskConical size={11} /> Formulação de Dietas{fazendaNome ? ` · ${fazendaNome}` : ""}
               </p>
             </div>
@@ -84,17 +84,17 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
             <ArrowLeft size={14} /> Voltar
           </button>
         </div>
-        <nav style={{ display: "flex", gap: "0.2rem", padding: "0 1rem", overflowX: "auto", borderTop: "1px solid rgba(243,231,211,0.14)" }}>
+        <nav style={{ display: "flex", gap: "0.2rem", padding: "0 1rem", overflowX: "auto", borderTop: "1px solid rgba(245,246,244,0.14)" }}>
           <Link href="/dietas" style={{
             padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
-            color: path === "/dietas" ? "var(--cream)" : "rgba(243,231,211,0.62)",
+            color: path === "/dietas" ? "var(--cream)" : "rgba(245,246,244,0.62)",
             borderBottom: path === "/dietas" ? `2px solid ${PETROLEO}` : "2px solid transparent",
           }}>
             Simulações
           </Link>
           <Link href="/dietas/nova" style={{
             padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
-            color: path === "/dietas/nova" ? "var(--cream)" : "rgba(243,231,211,0.62)",
+            color: path === "/dietas/nova" ? "var(--cream)" : "rgba(245,246,244,0.62)",
             borderBottom: path === "/dietas/nova" ? `2px solid ${PETROLEO}` : "2px solid transparent",
           }}>
             Nova simulação
@@ -102,7 +102,7 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
           <Link href="/dietas/biblioteca" style={{
             padding: "0.65rem 0.9rem", fontSize: "0.82rem", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap",
             display: "flex", alignItems: "center", gap: "0.35rem",
-            color: path === "/dietas/biblioteca" ? "var(--cream)" : "rgba(243,231,211,0.62)",
+            color: path === "/dietas/biblioteca" ? "var(--cream)" : "rgba(245,246,244,0.62)",
             borderBottom: path === "/dietas/biblioteca" ? `2px solid ${PETROLEO}` : "2px solid transparent",
           }}>
             <Library size={13} /> Biblioteca de referência

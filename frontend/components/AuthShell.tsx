@@ -145,7 +145,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
   if (path === "/login" || path.startsWith("/sobre/")) return <>{children}</>;
 
-  // Milk News tem casca visual PRÓPRIA e FIXA (creme, mesmo logo do site/app)
+  // Milk News tem casca visual PRÓPRIA e FIXA (branca, mesmo logo do site/app)
   // — igual para qualquer visitante, logado ou não, independente do tema
   // escolhido no resto do sistema (ver NewsShell). Fica antes do gate de
   // "estado" porque não depende de login (ver ROTA_PUBLICA acima).
