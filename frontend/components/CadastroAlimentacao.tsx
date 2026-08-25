@@ -21,7 +21,7 @@ import {
   type ContextoDieta, type ApresentacaoDieta,
   fetchCategoriasAlimento, criarCategoriaAlimento, atualizarCategoriaAlimento, excluirCategoriaAlimento, type CategoriaAlimento,
   fetchAlimentos, criarAlimento, atualizarAlimento, excluirAlimento, type Alimento,
-  fetchRelatorioMigracaoAlimentacao, type RelatorioMigracao,
+  fetchRelatorioMigracaoAlimentacao, atualizarEstoquePreferidoAlimento, atualizarCategoriaAlimentoEstoque, type RelatorioMigracao,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { casaBusca } from "@/lib/busca";
@@ -768,11 +768,71 @@ function TabelaItensFantasma({ itens }: { itens: RelatorioMigracao["fantasmas_im
   );
 }
 
-function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produtos_sem_categoria"] }) {
+// Mesmo agrupamento raiz→filhas de `CategoriasAlimentoTab`/`AlimentosTab`
+// (categoria_pai_id), aqui achatado num só <select> por linha da tabela — a
+// subcategoria some indentada (↳) logo abaixo da raiz, em vez dos dois
+// selects encadeados do formulário de Alimento (que não cabem numa célula).
+function opcoesCategoriaHierarquicas(categorias: CategoriaAlimento[]) {
+  const raizes = categorias.filter((c) => c.categoria_pai_id == null).sort((a, b) => a.nome.localeCompare(b.nome));
+  const filhasDe = (paiId: number) => categorias.filter((c) => c.categoria_pai_id === paiId).sort((a, b) => a.nome.localeCompare(b.nome));
+  const opcoes: React.ReactNode[] = [];
+  raizes.forEach((raiz) => {
+    opcoes.push(<option key={raiz.id} value={raiz.id}>{raiz.nome}</option>);
+    filhasDe(raiz.id).forEach((filha) => {
+      opcoes.push(<option key={filha.id} value={filha.id}>{"  ↳ " + filha.nome}</option>);
+    });
+  });
+  return opcoes;
+}
+
+// Fase P1 — ação nova desta linha: liga o item de Estoque direto a uma
+// CategoriaAlimento (PUT /alimentacao/estoque/{id}/categoria), sem precisar
+// cadastrar/editar um Alimento no meio. Ao salvar com sucesso a linha some da
+// lista (avisa `onCategorizado`) — o motivo "sem categoria" deixou de valer,
+// então mantê-la aqui com o picker preenchido ficaria contradizendo a própria
+// coluna "Motivo".
+function CategoriaEstoquePicker({ item, categorias, onCategorizado }: {
+  item: RelatorioMigracao["produtos_sem_categoria"][number];
+  categorias: CategoriaAlimento[];
+  onCategorizado: (estoqueId: number, estoqueNome: string, categoriaNome: string) => void;
+}) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const escolher = async (valor: string) => {
+    if (!valor) return;
+    const categoriaId = Number(valor);
+    setSalvando(true); setErro(null);
+    try {
+      await atualizarCategoriaAlimentoEstoque(item.id, categoriaId);
+      const nomeCategoria = categorias.find((c) => c.id === categoriaId)?.nome || "";
+      onCategorizado(item.id, item.nome, nomeCategoria);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar a categoria");
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div>
+      <select style={{ ...input, maxWidth: "17rem" }} value="" disabled={salvando} onChange={(e) => escolher(e.target.value)}>
+        <option value="">{salvando ? "Salvando…" : "Selecionar categoria…"}</option>
+        {opcoesCategoriaHierarquicas(categorias)}
+      </select>
+      {erro && <p style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: "0.2rem" }}>{erro}</p>}
+    </div>
+  );
+}
+
+function TabelaProdutosSemCategoria({ itens, categorias, onCategorizado }: {
+  itens: RelatorioMigracao["produtos_sem_categoria"];
+  categorias: CategoriaAlimento[];
+  onCategorizado: (estoqueId: number, estoqueNome: string, categoriaNome: string) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th>Nome</th><th style={{ textAlign: "right" }}>Qtd.</th><th>Unid.</th><th>Finalidade</th><th>Motivo</th></tr></thead>
+        <thead><tr><th>Nome</th><th style={{ textAlign: "right" }}>Qtd.</th><th>Unid.</th><th>Finalidade</th><th>Motivo</th><th>Categorizar agora</th></tr></thead>
         <tbody>
           {itens.map((it) => (
             <tr key={it.id}>
@@ -781,6 +841,7 @@ function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produ
               <td style={{ fontSize: "0.78rem" }}>{it.unidade || "—"}</td>
               <td style={{ fontSize: "0.78rem" }}>{it.finalidade || "—"}</td>
               <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.motivo}</td>
+              <td><CategoriaEstoquePicker item={it} categorias={categorias} onCategorizado={onCategorizado} /></td>
             </tr>
           ))}
         </tbody>
@@ -789,11 +850,68 @@ function TabelaProdutosSemCategoria({ itens }: { itens: RelatorioMigracao["produ
   );
 }
 
-function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembramentos"] }) {
+// Fase P1 — ação nova desta linha: escolhe qual `produtos[]` recebe a baixa
+// automática/consumo manual (PUT /alimentacao/alimentos/{id}/estoque-preferido).
+// Hoje, sem escolha, o backend usa o primeiro item vinculado, numa ordem
+// arbitrária que pode mudar sozinha conforme o vínculo é reordenado — este
+// picker troca essa arbitrariedade por uma decisão explícita da fazenda, que
+// só muda quando alguém mudar aqui de novo.
+function ItemPreferidoPicker({ item, onAtualizado }: {
+  item: RelatorioMigracao["desmembramentos"][number];
+  onAtualizado: (alimentoId: number, estoquePreferidoId: number | null) => void;
+}) {
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const escolher = async (valor: string) => {
+    const novoId = valor === "" ? null : Number(valor);
+    setSalvando(true); setErro(null);
+    try {
+      await atualizarEstoquePreferidoAlimento(item.alimento_id, novoId);
+      onAtualizado(item.alimento_id, novoId);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar o item preferido");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div>
+      <label style={{ ...lbl, marginBottom: "0.15rem" }}>Item preferido para a baixa automática</label>
+      <select style={{ ...input, maxWidth: "20rem" }} value={item.estoque_preferido_id ?? ""} disabled={salvando} onChange={(e) => escolher(e.target.value)}>
+        <option value="">nenhum escolhido — usa a ordem arbitrária de hoje</option>
+        {item.produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+      </select>
+      <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+        Sem uma escolha aqui, o sistema usa o primeiro item vinculado — uma ordem que pode mudar sozinha. Escolher fixa
+        deliberadamente qual item recebe a baixa/consumo, até você trocar de novo.
+      </p>
+      {salvando && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Salvando…</p>}
+      {!salvando && erro && <p style={{ fontSize: "0.72rem", color: "var(--red)", marginTop: "0.2rem" }}>{erro}</p>}
+      {!salvando && !erro && item.estoque_preferido_id != null && (
+        <p style={{ fontSize: "0.72rem", color: "var(--green-light)", marginTop: "0.2rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+          <CheckCircle2 size={12} /> Escolha salva.
+        </p>
+      )}
+      {item.tem_alimento_nutricional && (
+        <p style={{ fontSize: "0.7rem", color: "var(--amber, #c99a2e)", marginTop: "0.3rem" }}>
+          Este alimento tem composição nutricional cadastrada (AlimentoNutricional) — no desmembramento futuro, só um
+          produto poderá herdá-la; escolher o preferido aqui já deixa claro qual.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TabelaDesmembramentos({ itens, onAtualizado }: {
+  itens: RelatorioMigracao["desmembramentos"];
+  onAtualizado: (alimentoId: number, estoquePreferidoId: number | null) => void;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th>Alimento</th><th>Produtos de Estoque vinculados</th><th>Tem composição (AlimentoNutricional)</th></tr></thead>
+        <thead><tr><th>Alimento</th><th>Produtos de Estoque vinculados</th><th>Baixa automática</th></tr></thead>
         <tbody>
           {itens.map((it) => (
             <tr key={it.alimento_id}>
@@ -801,10 +919,8 @@ function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembram
               <td style={{ fontSize: "0.78rem" }}>
                 {it.produtos.map((p) => `${p.nome} (${num(p.quantidade)} ${p.unidade || ""})`).join(" · ")}
               </td>
-              <td style={{ fontSize: "0.78rem" }}>
-                {it.tem_alimento_nutricional
-                  ? <span style={{ color: "var(--amber, #c99a2e)" }}>Sim — só um produto poderá herdar a composição ao desmembrar</span>
-                  : <span style={{ color: "var(--text-muted)" }}>Não</span>}
+              <td style={{ minWidth: "18rem" }}>
+                <ItemPreferidoPicker item={it} onAtualizado={onAtualizado} />
               </td>
             </tr>
           ))}
@@ -814,11 +930,20 @@ function TabelaDesmembramentos({ itens }: { itens: RelatorioMigracao["desmembram
   );
 }
 
+// Só informativo (sem picker/ação) — a divergência de nome em si não tem
+// mecanismo de resolução nesta fase; as duas contagens só deixam claro o
+// risco de um futuro rename: "pelo nome" é o quanto quebraria HOJE (vínculo
+// por igualdade exata de string), "por id" é o quanto já está imune a isso
+// (vínculo direto, sobrevive a renomear o Alimento).
 function TabelaDivergenciaNome({ itens }: { itens: RelatorioMigracao["divergencia_nome"] }) {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th>Nome do Alimento (atual)</th><th>Nome no item de Estoque</th><th style={{ textAlign: "right" }}>Laudos pelo nome atual</th></tr></thead>
+        <thead><tr>
+          <th>Nome do Alimento (atual)</th><th>Nome no item de Estoque</th>
+          <th style={{ textAlign: "right" }}>Laudos presos ao nome atual</th>
+          <th style={{ textAlign: "right" }}>Laudos já seguros (vínculo por id)</th>
+        </tr></thead>
         <tbody>
           {itens.map((it) => (
             <tr key={`${it.alimento_id}-${it.estoque_id}`}>
@@ -827,6 +952,11 @@ function TabelaDivergenciaNome({ itens }: { itens: RelatorioMigracao["divergenci
               <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
                 {it.quantidade_laudos_pelo_nome_atual > 0
                   ? <span style={{ color: "var(--amber, #c99a2e)", fontWeight: 700 }}>{it.quantidade_laudos_pelo_nome_atual}</span>
+                  : 0}
+              </td>
+              <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
+                {it.quantidade_laudos_pelo_id > 0
+                  ? <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{it.quantidade_laudos_pelo_id}</span>
                   : 0}
               </td>
             </tr>
@@ -887,8 +1017,10 @@ function TabelaRmca({ itens }: { itens: RelatorioMigracao["rmca"]["so_pela_conta
 
 function ConferenciaMigracaoTab() {
   const [dados, setDados] = useState<RelatorioMigracao | null>(null);
+  const [categorias, setCategorias] = useState<CategoriaAlimento[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const [ultimaCategorizacao, setUltimaCategorizacao] = useState<string | null>(null);
 
   useEffect(() => {
     setCarregando(true);
@@ -896,7 +1028,21 @@ function ConferenciaMigracaoTab() {
       .then(setDados)
       .catch((e: any) => setErro(e.message || "Erro ao carregar o relatório"))
       .finally(() => setCarregando(false));
+    fetchCategoriasAlimento().then(setCategorias).catch(() => {});
   }, []);
+
+  // Atualiza o estado local após cada ação de Fase P1 — nunca refaz o
+  // fetch inteiro do relatório, só reflete o que acabou de ser salvo.
+  const atualizarPreferido = (alimentoId: number, estoquePreferidoId: number | null) => {
+    setDados((d) => d && {
+      ...d,
+      desmembramentos: d.desmembramentos.map((it) => it.alimento_id === alimentoId ? { ...it, estoque_preferido_id: estoquePreferidoId } : it),
+    });
+  };
+  const marcarCategorizado = (estoqueId: number, estoqueNome: string, categoriaNome: string) => {
+    setUltimaCategorizacao(`"${estoqueNome}" foi categorizado como "${categoriaNome}" e saiu desta lista.`);
+    setDados((d) => d && { ...d, produtos_sem_categoria: d.produtos_sem_categoria.filter((p) => p.id !== estoqueId) });
+  };
 
   return (
     <div>
@@ -906,9 +1052,11 @@ function ConferenciaMigracaoTab() {
       }}>
         <SearchCheck size={16} style={{ flexShrink: 0, marginTop: "0.1rem", color: "var(--accent-icon)" }} />
         <div>
-          <strong>Este relatório não altera nada. É um retrato dos dados para conferência.</strong>
+          <strong>Este relatório é, na maior parte, um retrato dos dados para conferência — quase nada aqui altera algo.</strong>
           <div style={{ color: "var(--text-muted)", marginTop: "0.15rem" }}>
-            Nenhum item é mesclado, renomeado ou excluído aqui — as ações vêm numa fase futura, depois que você conferir este retrato.
+            Nenhum item é mesclado, renomeado ou excluído aqui. Duas seções abaixo ("Alimentos com mais de um produto" e
+            "Produtos de alimento sem categoria") deixam você escolher um item preferido ou uma categoria diretamente — o
+            resto continua somente leitura, com as demais ações vindo numa fase futura.
           </div>
         </div>
       </div>
@@ -941,27 +1089,32 @@ function ConferenciaMigracaoTab() {
           <SecaoRecolhivel
             titulo="Produtos de alimento sem categoria" icon={Tag}
             defaultAberta={dados.produtos_sem_categoria.length > 0} badge={String(dados.produtos_sem_categoria.length)}
-            descricao="Itens que são alimento (por vínculo ou pela finalidade), mas sem classificação completa hoje."
+            descricao='Itens que são alimento (por vínculo ou pela finalidade), mas sem classificação completa hoje — escolha a categoria direto na coluna "Categorizar agora", sem precisar passar pelo cadastro de Alimento.'
           >
+            {ultimaCategorizacao && (
+              <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.7rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                <CheckCircle2 size={14} /> {ultimaCategorizacao}
+              </p>
+            )}
             {dados.produtos_sem_categoria.length
-              ? <TabelaProdutosSemCategoria itens={dados.produtos_sem_categoria} />
+              ? <TabelaProdutosSemCategoria itens={dados.produtos_sem_categoria} categorias={categorias} onCategorizado={marcarCategorizado} />
               : <VazioPositivo texto="Nenhuma ocorrência — todo produto de alimento está classificado." />}
           </SecaoRecolhivel>
 
           <SecaoRecolhivel
             titulo="Alimentos com mais de um produto (desmembramento futuro)" icon={GitMerge}
             defaultAberta={dados.desmembramentos.length > 0} badge={String(dados.desmembramentos.length)}
-            descricao="Um Alimento com 2+ itens de Estoque vinculados — quando a camada Alimento sair da interface, cada produto vira uma linha independente."
+            descricao='Um Alimento com 2+ itens de Estoque vinculados — hoje o sistema escolhe sozinho, em ordem arbitrária, qual deles recebe a baixa automática/consumo; a coluna "Baixa automática" deixa você tornar essa escolha deliberada. Quando a camada Alimento sair da interface, cada produto também vira uma linha independente.'
           >
             {dados.desmembramentos.length
-              ? <TabelaDesmembramentos itens={dados.desmembramentos} />
+              ? <TabelaDesmembramentos itens={dados.desmembramentos} onAtualizado={atualizarPreferido} />
               : <VazioPositivo texto="Nenhuma ocorrência — nenhum Alimento tem mais de um produto vinculado." />}
           </SecaoRecolhivel>
 
           <SecaoRecolhivel
             titulo="Nome do Alimento diverge do produto de Estoque" icon={FlaskConical}
             defaultAberta={dados.divergencia_nome.length > 0} badge={String(dados.divergencia_nome.length)}
-            descricao="Análises bromatológicas se ligam ao alimento por igualdade EXATA de string com o nome atual — renomear custaria os laudos contados aqui."
+            descricao='Análises bromatológicas podem se ligar ao alimento por igualdade EXATA de string com o nome (quebra ao renomear) ou por vínculo direto de id (sobrevive a um rename). Quanto maior "presos ao nome atual", mais arriscado renomear; quanto maior "já seguros por id", mais seguro.'
           >
             {dados.divergencia_nome.length
               ? <TabelaDivergenciaNome itens={dados.divergencia_nome} />
