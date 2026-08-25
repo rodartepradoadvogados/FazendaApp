@@ -546,6 +546,28 @@ def calcular_agenda(
         for anexo, pedido in session.exec(query_docs_pedido).all()
     ]
 
+    # Pedido ainda aberto/parcialmente atendido com data prevista de entrega —
+    # alerta persistente "já chegou?" (ver AgendaEngine.calcular, param
+    # `pedidos_entrega_prevista`). Diferente do bloco acima (documento
+    # vencendo, com janela de 2 dias): aqui não há prazo-limite, é um
+    # lembrete de conferência física que precisa continuar visível antes E
+    # depois de `data_prevista`, até a entrega ser de fato marcada
+    # (PedidoItem.quantidade_entregue) — mesmo racional do Pré-parto/Secagem.
+    query_pedidos_entrega = select(Pedido).where(
+        Pedido.data_prevista.is_not(None), Pedido.status.in_(("aberto", "parcialmente_atendido")),
+    )
+    if fazenda_id is not None:
+        query_pedidos_entrega = query_pedidos_entrega.where(Pedido.fazenda_id == fazenda_id)
+    pedidos_entrega_prevista = [
+        {
+            "pedido_id": pedido.id,
+            "numero_pedido": pedido.numero_pedido,
+            "data_prevista": pedido.data_prevista,
+            "fornecedor_cliente": pedido.fornecedor_cliente,
+        }
+        for pedido in session.exec(query_pedidos_entrega).all()
+    ]
+
     # Documento de Pessoa vencendo — hoje só "Contrato de trabalho por prazo
     # determinado" (ver AgendaEngine.calcular, param `pessoas_documentos_
     # vencendo`), pessoa ainda ativa. Antecedência maior que a de Pedido (15
@@ -647,6 +669,7 @@ def calcular_agenda(
         lotes=lotes,
         secagens=secagens,
         pedidos_documentos_vencendo=pedidos_documentos_vencendo,
+        pedidos_entrega_prevista=pedidos_entrega_prevista,
         pessoas_documentos_vencendo=pessoas_documentos_vencendo,
         inducoes_cio=inducoes_cio,
         aplicacoes_iatf=aplicacoes_iatf_todas,
