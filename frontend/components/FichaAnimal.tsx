@@ -82,6 +82,15 @@ type Ficha = {
  * produção, duração e reprodução de cada lactação, lado a lado. Mais
  * antiga primeiro (mesma ordem de `ficha.resumo_partos`).
  */
+// Número da cria (o filhote, não a ordem de parto da mãe) — itálico "sem
+// dados" tanto pra quando não há número nenhum (natimorto/aborto, backend
+// manda "") quanto pra "S/N" (pariu mas não numerou): as duas situações são
+// igualmente "não sei o número", não vale a pena distinguir na tela.
+function renderCria(valor: string | null | undefined) {
+  if (!valor || valor === "S/N") return <em>sem dados</em>;
+  return valor;
+}
+
 function QuadroResumoPartos({ linhas }: { linhas: Ficha["resumo_partos"] }) {
   if (!linhas?.length) return null;
   const fmtKg = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg`);
@@ -122,7 +131,7 @@ function QuadroResumoPartos({ linhas }: { linhas: Ficha["resumo_partos"] }) {
                 </td>
                 <td style={{ textAlign: "right" }}>{l.tentativas_emprenhar ?? "—"}</td>
                 <td style={{ textAlign: "right" }}>{l.del_concepcao ?? "—"}</td>
-                <td>{l.cria || "—"}</td>
+                <td>{renderCria(l.cria)}</td>
               </tr>
             ))}
           </tbody>
@@ -295,7 +304,7 @@ function construirSecaoQuadroResumo(ficha: Ficha): SecaoFicha {
     previsao_parto: ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—",
     // Cria do último parto — "S/N" se pariu sem numerar, vazio (aqui "—")
     // se o último parto foi natimorto. Ver fazenda.rules.parto_resumo.
-    ultima_cria: ficha.ultima_cria || "—",
+    ultima_cria: (ficha.ultima_cria && ficha.ultima_cria !== "S/N") ? ficha.ultima_cria : "sem dados",
   };
   return {
     titulo: "Quadro resumo",
@@ -350,7 +359,7 @@ function construirSecaoResumoPartos(linhas: Ficha["resumo_partos"]): SecaoFicha 
       producao_305_dias: fmtKg(l.producao_305_dias_kg),
       tentativas_emprenhar: l.tentativas_emprenhar ?? "—",
       del_concepcao: l.del_concepcao ?? "—",
-      cria: l.cria || "—",
+      cria: (l.cria && l.cria !== "S/N") ? l.cria : "sem dados",
     })),
   };
 }
@@ -896,7 +905,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
               <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto?.dias_gestacao ?? "—"}</div>
               <div><span style={labelStyle}>DEL atual</span><br />{a.del_dias != null ? String(a.del_dias) : "—"}</div>
               <div><span style={labelStyle}>Previsão de parto</span><br />{ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
-              <div><span style={labelStyle}>Última cria</span><br />{ficha.ultima_cria || "—"}</div>
+              <div><span style={labelStyle}>Última cria</span><br />{renderCria(ficha.ultima_cria)}</div>
             </div>
           </div>
 
