@@ -533,10 +533,23 @@ def excluir_folha_pagamento(
 # projeção e lançar a guia de verdade, com seus campos estruturados
 # (GuiaFolhaEncargo) para permitir relatório depois). A conta a pagar criada
 # é um registro comum de ContaGerencial (mesmo padrão de Folha/Férias/13º) —
-# editável pelo fluxo normal de Contas a Pagar/Lançamentos.
+# editável pelo fluxo normal de Contas a Pagar/Lançamentos. Diferente de
+# Folha/Férias/13º, aqui `codigo_conta` já sai preenchido (ver
+# CODIGO_CONTA_GUIA_FGTS/CODIGO_CONTA_GUIA_DCTF): o destino no plano de
+# contas é sempre o mesmo, sem ambiguidade a resolver depois.
 # ---------------------------------------------------------------------------
 TIPO_DOCUMENTO_GUIA_FGTS = "Guia FGTS"
 TIPO_DOCUMENTO_GUIA_DCTF = "Guia DCTF"
+# Conta gerencial do plano de contas (finalidade administrativa, categoria
+# folha de pagamento) a que cada guia pertence — já cadastrada no plano de
+# contas de cada fazenda e vinculada ao produto de estoque correspondente
+# (dado de cada tenant — PlanoContaGerencial/Produto.conta_gerencial_despesa_padrao
+# — carregado via CSV/tela própria, não seed deste repo). Fixo por tipo (não
+# escolhido pelo usuário) porque, ao contrário da Folha/Férias/13º (que ficam
+# sem codigo_conta e são classificadas depois em Financeiro), aqui o destino é
+# sempre o mesmo — sem ambiguidade a resolver.
+CODIGO_CONTA_GUIA_FGTS = "3.03.01.07"
+CODIGO_CONTA_GUIA_DCTF = "3.03.01.06"
 
 
 class GuiaFolhaEncargoIn(BaseModel):
@@ -579,6 +592,7 @@ def lancar_guia_folha_encargo(
     ano, mes = (int(x) for x in dados.competencia.split("-"))
     numero_lancamento = _proximo_numero_lancamento(session, ano)
     label = TIPO_DOCUMENTO_GUIA_FGTS if dados.tipo == "fgts" else TIPO_DOCUMENTO_GUIA_DCTF
+    codigo_conta = CODIGO_CONTA_GUIA_FGTS if dados.tipo == "fgts" else CODIGO_CONTA_GUIA_DCTF
     conta = ContaGerencial(
         fazenda_id=fazenda_id,
         numero_lancamento=numero_lancamento,
@@ -586,6 +600,7 @@ def lancar_guia_folha_encargo(
         data_vencimento=dados.data_vencimento,
         data_competencia=date(ano, mes, 1),
         tipo_documento=label,
+        codigo_conta=codigo_conta,
         centro_custo=dados.centro_custo,
         valor_total=valor_total,
         parcela_num=1, parcela_total=1,
