@@ -8,10 +8,10 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, ControleLeiteiro, Lactacao
+from fazenda.models import Animal, ControleLeiteiro, Lactacao, Parto
 
 
 @pytest.fixture
@@ -145,3 +145,103 @@ class TestCriarControles:
         assert registro["ordenha1_kg"] == 12.5
         assert registro["ordenha2_kg"] is None
         assert registro["producao_kg"] == 12.5
+
+
+@pytest.fixture
+def client_com_dois_partos():
+    """Vaca 201 com dois partos e três controles: um ANTES de qualquer parto
+    conhecido, um DURANTE a 1ª lactação e um DURANTE a 2ª — grava direto no
+    banco (não via POST) porque este teste é sobre a LEITURA de
+    `GET /producao/controles`, não sobre o lançamento."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 1
+        papel = "admin"
+        ativo = True
+        username = "teste"
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        with Session(engine) as s:
+            s.add(Animal(numero="201", grupo_primario="01 - Alta", raca="Holandês", ativo=True))
+            s.add(Parto(numero_matriz="201", data_parto=date(2026, 1, 1), ordem_parto=1))
+            s.add(Parto(numero_matriz="201", data_parto=date(2026, 7, 1), ordem_parto=2))
+            s.add(ControleLeiteiro(numero_matriz="201", data_controle=date(2025, 1, 1), producao_kg=20.0))
+            s.add(ControleLeiteiro(numero_matriz="201", data_controle=date(2026, 2, 1), producao_kg=25.0))
+            s.add(ControleLeiteiro(numero_matriz="201", data_controle=date(2026, 8, 1), producao_kg=30.0))
+            s.commit()
+        yield c, engine
+    main.app.dependency_overrides.clear()
+
+
+class TestOrdemPartoNaListagem:
+    """Regressão: GET /producao/controles rotulava TODOS os controles do
+    animal com a contagem TOTAL de partos dele — uma vaca hoje de 2ª cria
+    aparecia com "2" até nos controles de quando era primípara. Corrigido
+    para calcular a ordem vigente NA DATA de cada controle (ver
+    rules/ordem_parto_historica.py::ordem_parto_na_data), a mesma lógica já
+    usada pelo relatório de Equivalente Maduro."""
+
+    def test_ordem_muda_conforme_a_lactacao(self, client_com_dois_partos):
+        c, engine = client_com_dois_partos
+        r = c.get("/producao/controles")
+        registros = {reg["data"]: reg["ordem_parto"] for reg in r.json()["controles"] if reg["numero"] == "201"}
+        # Controle feito DURANTE a 1ª lactação: ordem 1, não 2 (a vaca só teve
+        # o 2º parto depois) — é o bug clássico que este teste trava.
+        assert registros["2026-02-01"] == 1
+        # Controle feito DURANTE a 2ª lactação: ordem 2.
+        assert registros["2026-08-01"] == 2
+
+    def test_controle_anterior_ao_primeiro_parto_conhecido_fica_sem_ordem(self, client_com_dois_partos):
+        # Nenhuma ordem inventada — nulo é mais honesto que um palpite que não
+        # corresponde a nada (mesma filosofia de scripts/reconstruir_ordem_parto.py).
+        c, engine = client_com_dois_partos
+        r = c.get("/producao/controles")
+        registro = next(reg for reg in r.json()["controles"] if reg["data"] == "2025-01-01")
+        assert registro["ordem_parto"] is None
+
+
+class TestRelatorioOrdemParto:
+    """GET /producao/ordem-parto/relatorio — versão HTTP, somente leitura, do
+    script (existe porque este ambiente não alcança o Postgres de produção
+    diretamente para rodar o script de linha de comando)."""
+
+    def test_relatorio_reflete_o_mesmo_cenario_do_endpoint_de_listagem(self, client_com_dois_partos):
+        c, engine = client_com_dois_partos
+        r = c.get("/producao/ordem-parto/relatorio")
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["partos"] == 2
+        assert corpo["controles"] == 3
+        # O atalho antigo é a contagem TOTAL de partos (2) aplicada aos 3
+        # controles. A ordem correta por data é None, 1, 2 — o controle mais
+        # recente (2026-08-01, já na 2ª lactação) bate com o atalho por
+        # coincidência (é exatamente aí que o atalho SEMPRE acerta, porque a
+        # contagem total É a ordem correta da lactação atual); os outros dois
+        # divergem, que é o bug que a reconstrução existe pra corrigir.
+        assert corpo["muda"] == 2
+        # O controle anterior a qualquer parto conhecido não tem resposta
+        # honesta — conta como "viraria desconhecido", não como um palpite.
+        assert corpo["vira_desconhecido"] == 1
+
+    def test_relatorio_nao_grava_nada(self, client_com_dois_partos):
+        # Chamar a rota duas vezes não pode ter efeito colateral nenhum —
+        # é leitura pura, igual ao script sem --gravar.
+        c, engine = client_com_dois_partos
+        c.get("/producao/ordem-parto/relatorio")
+        r2 = c.get("/producao/ordem-parto/relatorio")
+        assert r2.json()["muda"] == 2
+        with Session(engine) as s:
+            controles = s.exec(select(ControleLeiteiro)).all()
+            assert all(ctrl.ordem_parto is None for ctrl in controles)
