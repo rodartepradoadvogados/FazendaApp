@@ -128,18 +128,19 @@
   --fin-pagamento-bg: rgba(46, 125, 82, 0.20);
 }
 
-/* ── Tema CLARO — redesign "Cooperativa" (Direção B): fundo creme no lugar
-   do cinza frio, painéis brancos ── */
+/* ── Tema CLARO — branco neutro (sem viés bege/creme), painéis brancos ──
+   Trocado do creme original (Direção B) a pedido explícito do usuário —
+   mesma estrutura de tokens, só a base neutra deixou de ter viés amarelo. */
 :root[data-theme="claro"] {
   color-scheme: light;
-  --bg:          #F5F1E8;
+  --bg:          #F1F1EF;
   --surface:     #FFFFFF;
-  --surface-2:   #FAF7F0;
-  --border:      #E3DCCD;
+  --surface-2:   #E9E9E6;
+  --border:      #DBDBD7;
   /* Borda mais forte — contorno de campo, botão secundário, moldura de
      tabela. Só existe no claro/misto; no escuro, todo uso cai no fallback
      var(--border-strong, var(--border)). */
-  --border-strong: #D3C9B4;
+  --border-strong: #C7C7C2;
   --text:        #1E1B18;
   --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
@@ -162,9 +163,10 @@
   /* Contorno do grupo de sub-abas aberto — vinho no claro (fundo branco). */
   --sidebar-subnav-outline: var(--vinho);
   --sidebar-subnav-outline-bg: rgba(94, 26, 46, 0.06);
-  /* Fundo da faixa de sub-abas — palha na paleta vinho (padrão); a paleta
-     verde troca para cinza claro (ver bloco data-paleta="verde" abaixo). */
-  --sidebar-subnav-bg: #F1E8CE;
+  /* Fundo da faixa de sub-abas — cinza neutro na paleta vinho (padrão),
+     mesmo tom de --surface-2; a paleta verde usa um cinza levemente
+     azulado próprio (ver bloco data-paleta="verde" abaixo). */
+  --sidebar-subnav-bg: #E9E9E6;
   /* No claro, a aba ativa vira vinho sólido com texto dourado-claro (alto
      contraste); os ícones de seção usam o vinho para se lerem sobre o branco. */
   --pill-active-bg: var(--vinho);
@@ -185,11 +187,11 @@
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
 :root[data-theme="misto"] {
   color-scheme: light;
-  --bg:          #F5F1E8;
+  --bg:          #F1F1EF;
   --surface:     #FFFFFF;
-  --surface-2:   #FAF7F0;
-  --border:      #E3DCCD;
-  --border-strong: #D3C9B4;
+  --surface-2:   #E9E9E6;
+  --border:      #DBDBD7;
+  --border-strong: #C7C7C2;
   --text:        #1E1B18;
   --text-muted:  #6E665C;
   --card-header-bg: var(--surface);
