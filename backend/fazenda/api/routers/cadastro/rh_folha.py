@@ -644,6 +644,90 @@ def listar_guias_folha_encargo(
     return [g.model_dump() for g in session.exec(query).all()]
 
 
+def _conta_da_guia(session: Session, guia: GuiaFolhaEncargo) -> ContaGerencial | None:
+    if not guia.numero_lancamento:
+        return None
+    return session.exec(
+        select(ContaGerencial).where(ContaGerencial.numero_lancamento == guia.numero_lancamento)
+    ).first()
+
+
+@router.put("/folha-pagamento/guias/{guia_id}")
+def atualizar_guia_folha_encargo(
+    guia_id: int, dados: GuiaFolhaEncargoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Corrige uma guia de FGTS/DCTF já lançada. Diferente de FolhaPagamento/
+    FeriasFuncionario, GuiaFolhaEncargo não tem campo `status` próprio — "já
+    paga" é decidido pela ContaGerencial vinculada (valor_pago preenchido).
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    guia = session.get(GuiaFolhaEncargo, guia_id)
+    if not guia or (fazenda_id is not None and guia.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Guia de FGTS/DCTF não encontrada")
+    conta = _conta_da_guia(session, guia)
+    if conta and conta.valor_pago is not None:
+        raise HTTPException(status_code=400, detail="Guia já paga não pode ser editada.")
+    if dados.tipo not in ("fgts", "dctf"):
+        raise HTTPException(status_code=400, detail="tipo deve ser 'fgts' ou 'dctf'")
+    valor_total = round(dados.valor_principal + dados.valor_multa + dados.valor_juros, 2)
+    if valor_total <= 0:
+        raise HTTPException(status_code=400, detail="O valor total da guia deve ser positivo")
+
+    label = TIPO_DOCUMENTO_GUIA_FGTS if dados.tipo == "fgts" else TIPO_DOCUMENTO_GUIA_DCTF
+    codigo_conta = CODIGO_CONTA_GUIA_FGTS if dados.tipo == "fgts" else CODIGO_CONTA_GUIA_DCTF
+    ano, mes = (int(x) for x in dados.competencia.split("-"))
+
+    guia.tipo = dados.tipo
+    guia.competencia = dados.competencia
+    guia.codigo_receita = dados.codigo_receita if dados.tipo == "dctf" else None
+    guia.valor_principal = dados.valor_principal
+    guia.valor_multa = dados.valor_multa
+    guia.valor_juros = dados.valor_juros
+    guia.valor_total = valor_total
+    guia.data_vencimento = dados.data_vencimento
+    guia.linha_digitavel = dados.linha_digitavel
+    guia.origem = dados.origem if dados.origem in ("manual", "leitura_automatica") else "manual"
+    session.add(guia)
+
+    # Mantém a conta a pagar gerada junto em sincronia com a edição — sem
+    # isso, a guia e o lançamento financeiro divergem depois de editar.
+    if conta:
+        conta.descricao = f"{label} — {dados.competencia}"
+        conta.data_vencimento = dados.data_vencimento
+        conta.data_competencia = date(ano, mes, 1)
+        conta.tipo_documento = label
+        conta.codigo_conta = codigo_conta
+        conta.centro_custo = dados.centro_custo
+        conta.valor_total = valor_total
+        conta.numero_boleto = dados.linha_digitavel
+        session.add(conta)
+
+    session.commit()
+    session.refresh(guia)
+    return {**guia.model_dump(), "conta_id": conta.id if conta else None}
+
+
+@router.delete("/folha-pagamento/guias/{guia_id}")
+def excluir_guia_folha_encargo(
+    guia_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    guia = session.get(GuiaFolhaEncargo, guia_id)
+    if not guia or (fazenda_id is not None and guia.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Guia de FGTS/DCTF não encontrada")
+    conta = _conta_da_guia(session, guia)
+    if conta and conta.valor_pago is not None:
+        raise HTTPException(status_code=400, detail="Guia já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
+    if conta:
+        session.delete(conta)
+    session.delete(guia)
+    session.commit()
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Férias — cálculo (dias gozados + 1/3 constitucional + abono pecuniário
 # opcional) e lançamento em Contas a Pagar. Sem envio ao eSocial (fora de

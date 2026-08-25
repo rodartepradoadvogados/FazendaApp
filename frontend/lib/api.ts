@@ -2062,6 +2062,20 @@ export async function fetchGuiasFolhaEncargo(): Promise<GuiaFolhaEncargo[]> {
   if (!res.ok) throw new Error(`Guias de FGTS/DCTF error: ${res.status}`);
   return res.json();
 }
+export async function atualizarGuiaFolhaEncargo(
+  guiaId: number, dados: GuiaFolhaEncargoDados,
+): Promise<GuiaFolhaEncargo & { conta_id: number | null }> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias/${guiaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar guia de FGTS/DCTF"); }
+  return res.json();
+}
+export async function excluirGuiaFolhaEncargo(guiaId: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/guias/${guiaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir guia de FGTS/DCTF"); }
+  return res.json();
+}
 
 // ── Folha de pagamento unificada (funcionário + empreita + contrato + diária + férias/13º) ──
 export type LinhaFolhaUnificada = {
