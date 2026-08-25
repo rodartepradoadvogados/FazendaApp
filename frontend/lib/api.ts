@@ -4453,6 +4453,42 @@ export async function fetchControles() {
   return res.json();
 }
 
+// Reconstrução de ControleLeiteiro.ordem_parto — ferramenta de correção de
+// dados histórica, ver fazenda/api/routers/producao.py (seção "Reconstrução
+// de ControleLeiteiro.ordem_parto") e rules/ordem_parto_historica.py para o
+// porquê completo. GET nunca grava nada; POST só grava com
+// `confirmar: true` explícito.
+export type AmostraDivergenciaOrdemParto = {
+  numero_matriz: string;
+  data_controle: string | null;
+  ordem_hoje: number | null;
+  ordem_correta: number | null;
+};
+export type DivergenciasOrdemParto = {
+  partos: number;
+  controles: number;
+  animais_com_parto: number;
+  lactacoes_por_ordem: Record<string, number>;
+  idade_ao_parto: Record<string, number>;
+  muda: number;
+  vira_desconhecido: number;
+  periodo_partos: [string, string] | null;
+  periodo_controles: [string, string] | null;
+  amostra: AmostraDivergenciaOrdemParto[];
+};
+export async function fetchDivergenciasOrdemParto(): Promise<DivergenciasOrdemParto> {
+  const res = await authFetch(`${API}/producao/ordem-parto/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de ordem de parto"); }
+  return res.json();
+}
+export async function reconstruirOrdemParto(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/ordem-parto/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir a ordem de parto"); }
+  return res.json();
+}
+
 // Equivalente maduro — redesign "padronização por vaca" (ver nota de
 // redesign no topo de `fazenda/rules/equivalente_maduro.py`). O trio de
 // apresentação (produz hoje / produzirá / diferença) nunca aparece sozinho;

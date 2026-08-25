@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Settings, Layers, FileSpreadsheet, Palette, CheckCheck, ExternalLink, ShieldCheck } from "lucide-react";
+import { Settings, Layers, FileSpreadsheet, Palette, CheckCheck, ExternalLink, ShieldCheck, History } from "lucide-react";
 import { podeModulo, ehAdmin, ehDono, ehContratanteAdministrador } from "@/lib/api";
 import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
@@ -11,13 +11,14 @@ import { ABAS_CADASTRO_ESTOQUE, type AbaCadastroEstoque } from "@/components/Cad
 import ImportarDados from "@/components/ImportarDados";
 import { AprovacoesView } from "@/components/AprovacoesView";
 import { AuditoriaCowDataView } from "@/components/AuditoriaCowDataView";
+import { OrdemPartoReconstrucaoView } from "@/components/OrdemPartoReconstrucaoView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 // "Parâmetros" e "News" viraram abas de primeiro nível de Administração
 // (17/08/2026, pedido explícito do usuário) — ver app/parametros/page.tsx e
 // app/news-admin/page.tsx. Não vivem mais aqui dentro.
-type Aba = "cadastro" | "upload" | "importar" | "aprovacoes" | "auditoria-cowdata" | "aparencia";
+type Aba = "cadastro" | "upload" | "importar" | "aprovacoes" | "auditoria-cowdata" | "ordem-parto" | "aparencia";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -45,6 +46,11 @@ export default function ConfiguracoesPage() {
     // Logo abaixo de Aprovações, só para o contratante-administrador (quem
     // contratou o plano) — pedido explícito do usuário.
     if (ehContratanteAdministrador()) abas.push({ id: "auditoria-cowdata", label: "Auditoria CowData", icon: ShieldCheck, title: "Acessos de suporte da CowData a esta fazenda, e compromissos de confiança/LGPD" });
+    // Ferramenta administrativa pontual de correção de dado histórico — ver
+    // OrdemPartoReconstrucaoView. Restrita a administrador, mesmo critério de
+    // Aprovações acima (rewrite de dado de produção, não é autoatendimento
+    // de qualquer operador).
+    if (ehAdmin()) abas.push({ id: "ordem-parto", label: "Ordem de Parto", icon: History, title: "Corrige a ordem de parto histórica do controle leiteiro" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);
@@ -132,6 +138,7 @@ export default function ConfiguracoesPage() {
         {aba === "importar" && <ImportarDados />}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
         {aba === "auditoria-cowdata" && <div className="px-6"><AuditoriaCowDataView /></div>}
+        {aba === "ordem-parto" && <div className="px-6"><OrdemPartoReconstrucaoView /></div>}
       </div>
     </div>
   );
