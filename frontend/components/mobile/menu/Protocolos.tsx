@@ -22,8 +22,10 @@ import { Printer } from "lucide-react";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 
 const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário" };
+// Badge por tipo — alinhado aos mesmos tokens --cat-* do Menu/Agenda (antes
+// usava mob-azul/roxo/verde soltos, sem relação com o módulo do protocolo).
 const COR_TIPO: Record<string, string> = {
-  produtivo: "var(--mob-azul)", reprodutivo: "var(--mob-roxo)", sanitario: "var(--mob-verde)",
+  produtivo: "var(--cat-producao)", reprodutivo: "var(--cat-reproducao)", sanitario: "var(--cat-sanidade)",
 };
 const COR_ESTADO: Record<string, string> = {
   realizada: "var(--mob-verde)", atrasada: "var(--mob-vermelho)", pendente: "var(--mob-muted)",

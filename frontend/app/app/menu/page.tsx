@@ -81,13 +81,18 @@ const GRUPOS: Grupo[] = [
     { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={20} />, soAdmin: true },
     { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
+  // Os 4 itens abaixo não levam `cor` própria de propósito: sem override,
+  // LinhaMenu cai em `i.cor || g.cor` (ver render, mais abaixo) e herda
+  // --cat-alimentacao da seção — antes cada item tinha uma cor solta
+  // (laranja/verde/azul/roxo) sem relação com a categoria, o "aleatório"
+  // relatado pelo usuário.
   { secao: "alimentacao", titulo: "Alimentação", cor: "var(--cat-alimentacao)", iconeSecao: <Wheat size={26} />, itens: [
-    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={20} />, cor: "var(--mob-laranja)" },
-    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={20} />, cor: "var(--mob-verde)" },
-    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={20} />, cor: "var(--mob-azul)" },
-    { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={20} />, cor: "var(--mob-roxo)" },
+    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={20} /> },
+    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={20} /> },
+    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={20} /> },
+    { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={20} /> },
   ] },
-  { secao: "producao", titulo: "Produção", cor: "var(--mob-azul)", iconeSecao: <Milk size={26} />, itens: [
+  { secao: "producao", titulo: "Produção", cor: "var(--cat-producao)", iconeSecao: <Milk size={26} />, itens: [
     { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={20} /> },
     { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={20} /> },
     { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={20} /> },
@@ -436,18 +441,28 @@ export default function Pagina() {
   // Item "Protocolos" definido à parte porque, para o operador restrito (ver
   // `restrito` acima), ele sai daqui e vira a 1ª seção do menu inteiro —
   // para todo mundo mais, fica exatamente onde sempre esteve, dentro de Módulos.
-  const itemProtocolos = { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-roxo)" };
+  // Protocolos (IATF + sanitário + produtivo, ver COR_TIPO em
+  // components/mobile/menu/Protocolos.tsx) e Portal (comunicação interna)
+  // não pertencem a um único módulo — Protocolos cruza Reprodução e
+  // Sanidade, Portal não é um módulo de fazenda. Em vez de forçar um
+  // --cat-* que só contaria metade da história, os dois usam o dourado
+  // "sem categoria" que já é o padrão do app quando nenhuma cor é passada
+  // (ver corIcone em LinhaMenu, abaixo) — neutro, não aleatório.
+  const itemProtocolos = { id: "protocolos" as const, titulo: "Protocolos", subtitulo: "Protocolos sanitários e reprodutivos", icone: <ListChecks size={20} />, cor: "var(--mob-dourado-2)" };
   const modulosOpcoes = [
     ...(montado && podeModulo("estoque") ? [{ id: "estoque" as const, titulo: "Estoque", subtitulo: statEstoqueValor || "Alimentação, medicamentos, sêmen…", icone: <Boxes size={20} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria" as const, titulo: "Recria", subtitulo: "Bezerras e novilhas em recria", icone: <Baby size={20} />, cor: "var(--cat-recria)" }] : []),
     ...(!restrito ? [itemProtocolos] : []),
-    { id: "portal" as const, titulo: "Portal", subtitulo: "Comunicação interna e fotos do campo", icone: <MessageSquare size={20} />, cor: "var(--mob-roxo)" },
+    { id: "portal" as const, titulo: "Portal", subtitulo: "Comunicação interna e fotos do campo", icone: <MessageSquare size={20} />, cor: "var(--mob-dourado-2)" },
   ];
 
   // Administração — "Controle de Acesso" só para o proprietário (ver
   // ehDono()); já reúne últimos acessos + auditoria de atividade, então não
   // há uma aba separada para isso. "Painel CowData" é a exceção que navega
-  // de verdade (ver comentário no topo do arquivo).
+  // de verdade (ver comentário no topo do arquivo). Controle de Acesso é um
+  // módulo de fazenda de verdade (--cat-acesso); Painel CowData e Assistente
+  // Virtual não são — são administração da própria CowData/ferramenta, então
+  // ficam no dourado institucional (--mob-dourado) em vez de um --cat-* forçado.
   const administracaoOpcoes = [
     ...(montado && ehDono() ? [{ id: "controleAcesso" as const, titulo: "Controle de Acesso", subtitulo: "Usuários, acessos e auditoria", icone: <Users size={20} />, cor: "var(--cat-acesso)" }] : []),
     ...(montado && ehDono() ? [{ id: "painelCowData" as const, titulo: "Painel CowData", subtitulo: "Administração da CowData (proprietário)", icone: <Building2 size={20} />, cor: "var(--mob-dourado)" }] : []),

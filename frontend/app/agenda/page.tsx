@@ -80,7 +80,7 @@ function categoriaLabel(categoria: string): string {
 const COR_CATEGORIA: Record<string, string> = {
   "Reprodutivo":       "var(--cat-reproducao)",
   "Sanidade":          "var(--cat-sanidade)",
-  "Produção":          "var(--blue)",
+  "Produção":          "var(--cat-producao)",
   "Gestão/Financeiro": "var(--cat-financeiro)",
   "Atividades":        "var(--text-muted)",
 };

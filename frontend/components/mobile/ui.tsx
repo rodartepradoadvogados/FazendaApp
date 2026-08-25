@@ -8,14 +8,19 @@ import type { ReactNode, CSSProperties } from "react";
 
 /** Cores dos rótulos de categoria — as MESMAS cores já usadas em Lançar
  * (LancarTela) e no Menu, para que a mesma categoria nunca mude de cor ao
- * trocar de tela dentro do app. */
+ * trocar de tela dentro do app. Usa os tokens --cat-* (globals.css), fixos
+ * por módulo em todo o produto — antes este mapa tinha seu próprio conjunto
+ * de cores soltas (--mob-roxo/azul/verde/laranja/vinho), divergente do
+ * Menu e da Agenda apesar do comentário acima já prometer as "MESMAS
+ * cores". "manejo" (Relatórios de Manejo) cai em --cat-gestao, a seção do
+ * Menu onde ele vive; "atividades" segue neutro (não é um módulo). */
 export const CATEGORIA_COR: Record<string, string> = {
-  reprodutivo: "var(--mob-roxo)",
-  producao: "var(--mob-azul)",
-  sanidade: "var(--mob-verde)",
-  manejo: "var(--mob-azul)",
-  alimentacao: "var(--mob-laranja)",
-  financeiro: "var(--mob-vinho)",
+  reprodutivo: "var(--cat-reproducao)",
+  producao: "var(--cat-producao)",
+  sanidade: "var(--cat-sanidade)",
+  manejo: "var(--cat-gestao)",
+  alimentacao: "var(--cat-alimentacao)",
+  financeiro: "var(--cat-financeiro)",
   atividades: "var(--mob-muted)",
 };
 export function corCategoria(cat?: string | null): string {
