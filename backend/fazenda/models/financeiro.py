@@ -458,8 +458,18 @@ class PedidoItem(SQLModel, table=True):
     valor_unitario_estimado: Optional[float] = None
     valor_total_estimado: float
     # Quanto desse item já foi coberto por lançamentos/movimentos vinculados.
+    # Dirige o status ATUAL do Pedido (ver pedidos.py::atualizar_status_por_*)
+    # — dinheiro lançado ou estoque baixado, não entrega física.
     quantidade_atendida: float = 0
     valor_atendido: float = 0
+    # Quanto desse item já foi CONFIRMADO como fisicamente entregue — só
+    # escrito por uma ação explícita de "marcar entrega" (ainda não
+    # implementada), nunca por lançamento financeiro nem movimento de
+    # estoque. Paralelo e independente de quantidade_atendida/valor_atendido
+    # de propósito: é a base do novo cálculo de status em
+    # fazenda.rules.pedido_status.calcular_status_pedido, que nenhum router
+    # ainda chama (ver comentário da migração f1a2b3c4d5e6).
+    quantidade_entregue: float = 0
 
 
 CATEGORIAS_PEDIDO_ANEXO = ["Orçamento", "Ordem de serviço", "Outro documento"]
