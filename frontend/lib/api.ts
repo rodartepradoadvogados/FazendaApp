@@ -4070,10 +4070,17 @@ export type RelatorioMigracaoDesmembramento = {
   alimento_id: number; alimento_nome: string | null;
   produtos: { id: number; nome: string; quantidade: number | null; unidade: string | null }[];
   tem_alimento_nutricional: boolean;
+  // Fase P1: qual dos `produtos` acima (se algum) já foi escolhido
+  // deliberadamente como o item que recebe a baixa automática — null significa
+  // que ninguém escolheu ainda, e o sistema segue na ordem arbitrária de hoje.
+  estoque_preferido_id: number | null;
 };
 export type RelatorioMigracaoDivergenciaNome = {
   alimento_id: number; alimento_nome: string; estoque_id: number; estoque_nome: string;
   quantidade_laudos_pelo_nome_atual: number;
+  // Fase P1: quantos desses laudos já estão ligados por id (imunes a um
+  // futuro rename do Alimento) — informativo, não muda nenhuma resolução.
+  quantidade_laudos_pelo_id: number;
 };
 export type RelatorioMigracaoIngredienteNaoResolvivel = {
   ingrediente: string; classificacao: "resolve_0" | "ambiguo"; motivo: string;
@@ -4094,6 +4101,30 @@ export type RelatorioMigracao = {
 export async function fetchRelatorioMigracaoAlimentacao(): Promise<RelatorioMigracao> {
   const res = await authFetch(`${API}/alimentacao/migracao/relatorio`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Relatório de conferência error: ${res.status}`);
+  return res.json();
+}
+
+// Fase P1 — as duas únicas ações que a aba "Conferência" ganha (o resto da
+// aba continua somente leitura): escolher qual item de Estoque recebe a
+// baixa automática de um Alimento com 2+ candidatos, e ligar um item de
+// Estoque direto a uma CategoriaAlimento, sem precisar de um Alimento no meio.
+export async function atualizarEstoquePreferidoAlimento(alimentoId: number, estoqueId: number | null): Promise<Alimento> {
+  const res = await authFetch(`${API}/alimentacao/alimentos/${alimentoId}/estoque-preferido`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estoque_id: estoqueId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir o item preferido"); }
+  return res.json();
+}
+// Nome diferente de `atualizarCategoriaEstoque` (acima, Cadastro > Estoque >
+// Categoria — texto livre, sem relação nenhuma) DE PROPÓSITO: esta aqui grava
+// `Estoque.categoria_alimento_id`, o vínculo novo da Fase P1 com o cadastro de
+// CategoriaAlimento (o mesmo de Configurações > Cadastro > Alimentação >
+// Categorias) — duas colunas, dois conceitos, dois endpoints diferentes.
+export async function atualizarCategoriaAlimentoEstoque(estoqueId: number, categoriaAlimentoId: number | null) {
+  const res = await authFetch(`${API}/alimentacao/estoque/${estoqueId}/categoria`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoria_alimento_id: categoriaAlimentoId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir a categoria do item de estoque"); }
   return res.json();
 }
 
