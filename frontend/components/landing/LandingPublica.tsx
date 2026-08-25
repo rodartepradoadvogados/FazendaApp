@@ -14,9 +14,17 @@ import { MODULOS, PLANOS, PRECO_PLACEHOLDER } from "./dados";
 // "deslogado"`, e app/page.tsx, que decide landing-vs-Capa consultando
 // getToken()). Reaproveita a mesma casca das páginas /sobre/* (PublicPage,
 // components/institucional/PublicShell.tsx) — mesmo cabeçalho com "Entrar",
-// mesmo fundo marinho/dourado da paleta "Cooperativa" (Direção B), mesmo
-// rodapé. Nenhuma cor nova: tudo vem de var(--cat-*)/var(--dourado*) já
-// definidos em app/globals.css.
+// mesmo fundo marinho/dourado institucional, mesmo rodapé. Nenhuma cor nova:
+// tudo vem de var(--cat-*)/var(--dourado*) já definidos em app/globals.css
+// (ver PublicShell.tsx para o degradê de fundo, fixo por não poder usar
+// var(--vinho) — ver comentário lá).
+//
+// Ajuste pós-lançamento (revisão visual): títulos grandes foram de peso 800
+// para 700 — o site inteiro já usa peso 700 como padrão em h1-h4 (ver regra
+// global em app/globals.css), esta landing é que estava sobrescrevendo esse
+// padrão localmente com 800, "gritando" mais que o resto do produto.
+// Destaques em dourado trocaram de --dourado-light (claro) para --dourado
+// (mais escuro/sóbrio) a pedido do dono do produto.
 
 function Hero() {
   return (
@@ -29,14 +37,25 @@ function Hero() {
         }} />
       </div>
       <div style={{ position: "relative", zIndex: 1, maxWidth: "760px", margin: "0 auto", textAlign: "center" }}>
+        {/* Eyebrow suavizado: era 700/uppercase/0.06em de letter-spacing — lia
+            como "gritado" sozinho, antes mesmo do h1 abaixo. Peso e
+            letter-spacing reduzidos; cor trocada de --dourado-light (claro)
+            para --dourado (mais escuro/sóbrio, mesmo token do resto da
+            página). Fundo/borda eram rgba(201,164,76,*) — um hex de dourado
+            inventado — agora derivam de var(--dourado) via color-mix. */}
         <span style={{
-          display: "inline-block", padding: "0.3rem 0.75rem", borderRadius: "999px", fontSize: "0.72rem", fontWeight: 700,
-          letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--dourado-light)",
-          background: "rgba(201,164,76,0.14)", border: "1px solid rgba(201,164,76,0.3)", marginBottom: "1.1rem",
+          display: "inline-block", padding: "0.3rem 0.75rem", borderRadius: "999px", fontSize: "0.72rem", fontWeight: 600,
+          letterSpacing: "0.03em", textTransform: "uppercase", color: "var(--dourado)",
+          background: "color-mix(in srgb, var(--dourado) 14%, transparent)",
+          border: "1px solid color-mix(in srgb, var(--dourado) 30%, transparent)", marginBottom: "1.1rem",
         }}>
           Gestão completa da fazenda leiteira
         </span>
-        <h1 style={{ fontSize: "clamp(1.9rem, 4vw, 2.9rem)", fontWeight: 800, lineHeight: 1.15, margin: "0 0 1rem", color: "#fff" }}>
+        {/* Peso 800→700 e escala reduzida (topo do clamp 2.9rem→2.5rem) — o
+            resto do produto já usa peso 700 como padrão para h1-h4 (regra
+            global em app/globals.css); esta landing sobrescrevia isso
+            localmente, o que destoava do resto do site. */}
+        <h1 style={{ fontSize: "clamp(1.75rem, 3.4vw, 2.5rem)", fontWeight: 700, lineHeight: 1.18, margin: "0 0 1rem", color: "#fff" }}>
           Sua fazenda leiteira, inteira, num só sistema
         </h1>
         <p style={{ fontSize: "1.05rem", color: "rgba(245,238,241,0.78)", margin: "0 0 1.8rem", lineHeight: 1.55 }}>
@@ -89,7 +108,8 @@ function PrintDoApp() {
             </span>
             <span style={{
               marginLeft: "auto", fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase",
-              color: "var(--dourado-light)", background: "rgba(201,164,76,0.14)", border: "1px solid rgba(201,164,76,0.3)",
+              color: "var(--dourado)", background: "color-mix(in srgb, var(--dourado) 14%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--dourado) 30%, transparent)",
               borderRadius: "999px", padding: "0.2rem 0.6rem",
             }}>
               Prévia ilustrativa
@@ -127,7 +147,7 @@ function Modulos() {
   return (
     <section id="modulos" style={{ padding: "0 1.5rem 3.5rem" }}>
       <div style={{ maxWidth: "1120px", margin: "0 auto" }}>
-        <h2 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#fff", margin: "0 0 0.5rem", textAlign: "center" }}>
+        <h2 style={{ fontSize: "1.4rem", fontWeight: 700, color: "#fff", margin: "0 0 0.5rem", textAlign: "center" }}>
           Tudo que a fazenda precisa, em um painel só
         </h2>
         <p style={{ textAlign: "center", color: "rgba(245,238,241,0.68)", fontSize: "0.9rem", margin: "0 0 2rem" }}>
@@ -161,11 +181,11 @@ function CartaoPlano({ plano }: { plano: (typeof PLANOS)[number] }) {
       <div style={{
         gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1.2rem",
         justifyContent: "space-between", padding: "1.6rem 1.8rem", borderRadius: "var(--r-md)",
-        background: "linear-gradient(120deg, rgba(201,164,76,0.16), rgba(201,164,76,0.05))",
-        border: "1px solid rgba(201,164,76,0.35)",
+        background: "linear-gradient(120deg, color-mix(in srgb, var(--dourado) 16%, transparent), color-mix(in srgb, var(--dourado) 5%, transparent))",
+        border: "1px solid color-mix(in srgb, var(--dourado) 35%, transparent)",
       }}>
         <div style={{ maxWidth: "560px" }}>
-          <div style={{ fontWeight: 800, fontSize: "1.15rem", color: "#fff", marginBottom: "0.3rem" }}>{plano.nome}</div>
+          <div style={{ fontWeight: 700, fontSize: "1.15rem", color: "#fff", marginBottom: "0.3rem" }}>{plano.nome}</div>
           <p style={{ margin: 0, color: "rgba(245,238,241,0.75)", fontSize: "0.88rem", lineHeight: 1.5 }}>{plano.resumo}</p>
         </div>
         {/* NOTA: não existe hoje nenhum canal de contato/orçamento no produto
@@ -184,8 +204,18 @@ function CartaoPlano({ plano }: { plano: (typeof PLANOS)[number] }) {
   return (
     <div className="card" style={{
       display: "flex", flexDirection: "column", height: "100%", position: "relative",
+      // .card tem uma regra global (app/globals.css: ".card { overflow-x: auto; }",
+      // para cards com tabela larga rolarem por dentro) que, por espec de CSS,
+      // força overflow-y para "auto" também quando só overflow-x é setado —
+      // e overflow não-visível em qualquer eixo recorta filhos absolutos que
+      // ultrapassam a caixa. Era exatamente isso que cortava ao meio o selo
+      // "Mais escolhido" abaixo (top: -0.7rem, poking para fora do card) em
+      // toda largura testada (confirmado via screenshot, não suposição).
+      // overflow:visible aqui devolve o comportamento local sem tocar a regra
+      // global (que outros cards com tabela ainda precisam).
+      overflow: "visible",
       border: plano.destaque ? "1px solid var(--dourado)" : undefined,
-      boxShadow: plano.destaque ? "0 0 0 1px var(--dourado), 0 18px 40px rgba(201,164,76,0.15)" : undefined,
+      boxShadow: plano.destaque ? "0 0 0 1px var(--dourado), 0 18px 40px color-mix(in srgb, var(--dourado) 15%, transparent)" : undefined,
     }}>
       {plano.destaque && (
         <span style={{
@@ -197,9 +227,9 @@ function CartaoPlano({ plano }: { plano: (typeof PLANOS)[number] }) {
           <Award size={11} /> Mais escolhido
         </span>
       )}
-      <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "#fff", marginTop: plano.destaque ? "0.4rem" : 0 }}>{plano.nome}</div>
+      <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "#fff", marginTop: plano.destaque ? "0.4rem" : 0 }}>{plano.nome}</div>
       <p style={{ margin: "0.3rem 0 0.9rem", color: "var(--text-muted)", fontSize: "0.8rem", lineHeight: 1.45, minHeight: "2.6rem" }}>{plano.resumo}</p>
-      <div style={{ fontSize: "1.3rem", fontWeight: 800, color: "var(--dourado-light)", marginBottom: "1rem" }}>{PRECO_PLACEHOLDER}</div>
+      <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--dourado)", marginBottom: "1rem" }}>{PRECO_PLACEHOLDER}</div>
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.5rem", flex: 1 }}>
         {plano.itens.map((item) => (
           <li key={item} style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", fontSize: "0.82rem", color: "rgba(245,238,241,0.82)" }}>
@@ -220,15 +250,26 @@ function Planos() {
   return (
     <section id="planos" style={{ padding: "0 1.5rem 3.5rem" }}>
       <div style={{ maxWidth: "1120px", margin: "0 auto" }}>
-        <h2 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#fff", margin: "0 0 0.5rem", textAlign: "center" }}>
+        <h2 style={{ fontSize: "1.4rem", fontWeight: 700, color: "#fff", margin: "0 0 0.5rem", textAlign: "center" }}>
           Um plano para cada tamanho de fazenda
         </h2>
         <p style={{ textAlign: "center", color: "rgba(245,238,241,0.68)", fontSize: "0.9rem", margin: "0 0 2rem" }}>
           Módulos crescem com a operação — comece pelo essencial ou já entre com tudo.
         </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px,1fr))", gap: "1.1rem", alignItems: "stretch" }}>
+        {/* Era "repeat(auto-fit, minmax(230px,1fr))": confirmado via screenshot
+            (Playwright, ~830-1050px de largura) que o auto-fit encaixava 3
+            cards numa linha e deixava o 4º (Diamond) sozinho numa linha
+            própria, esticado — layout imprevisível, não intencional.
+            Breakpoints fixos (1/2/4 colunas) substituem o auto-fit: cada
+            largura sempre fecha uma grade completa, sem card órfão. */}
+        <div className="planos-grid">
           {PLANOS.map((p) => <CartaoPlano key={p.chave} plano={p} />)}
         </div>
+        <style>{`
+          .planos-grid { display: grid; grid-template-columns: 1fr; gap: 1.1rem; align-items: stretch; }
+          @media (min-width: 640px) { .planos-grid { grid-template-columns: repeat(2, 1fr); } }
+          @media (min-width: 1000px) { .planos-grid { grid-template-columns: repeat(4, 1fr); } }
+        `}</style>
       </div>
     </section>
   );
@@ -254,12 +295,12 @@ function MilkNewsTeaser() {
       <div style={{ maxWidth: "1120px", margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.6rem", marginBottom: "1.2rem" }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--dourado-light)", fontSize: "0.78rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--dourado)", fontSize: "0.78rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.03em" }}>
               <Newspaper size={14} /> Milk News
             </div>
-            <h2 style={{ fontSize: "1.3rem", fontWeight: 800, color: "#fff", margin: "0.3rem 0 0" }}>O mercado do leite, resumido todo santo dia</h2>
+            <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#fff", margin: "0.3rem 0 0" }}>O mercado do leite, resumido todo santo dia</h2>
           </div>
-          <Link href="/news" style={{ color: "var(--dourado-light)", fontSize: "0.85rem", fontWeight: 600, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+          <Link href="/news" style={{ color: "var(--dourado)", fontSize: "0.85rem", fontWeight: 600, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
             Ver todas as matérias <ArrowRight size={14} />
           </Link>
         </div>
@@ -277,7 +318,7 @@ function MilkNewsTeaser() {
                   <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "3px", background: "var(--dourado)" }} />
                 </div>
                 <div style={{ padding: "0.9rem 1rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.66rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dourado-light)", marginBottom: "0.4rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.66rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dourado)", marginBottom: "0.4rem" }}>
                     <TrendingUp size={11} /> {n.categoria || "Notícia setorial"}
                   </div>
                   <div style={{ fontWeight: 700, color: "var(--text)", fontSize: "0.88rem", lineHeight: 1.35 }}>{n.manchete}</div>
@@ -299,7 +340,7 @@ function MilkNewsTeaser() {
 function ChamadaFinal() {
   return (
     <section style={{ padding: "3.5rem 1.5rem 3rem", textAlign: "center", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-      <h2 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#fff", margin: "0 0 0.6rem" }}>
+      <h2 style={{ fontSize: "1.4rem", fontWeight: 700, color: "#fff", margin: "0 0 0.6rem" }}>
         Pronto para organizar a fazenda de um jeito só?
       </h2>
       <p style={{ color: "rgba(245,238,241,0.7)", fontSize: "0.92rem", margin: "0 0 1.4rem" }}>
