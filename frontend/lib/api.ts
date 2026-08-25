@@ -6092,6 +6092,21 @@ export async function atualizarRastreioPedido(id: number, dados: { enviado: bool
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar rastreio do pedido"); }
   return res.json();
 }
+// Marca quanto de um item do pedido já foi FISICAMENTE entregue — valor
+// ABSOLUTO novo do item (substitui, não soma). O status do pedido volta
+// recalculado (nunca mais escolhido à mão) e, se faltar algo para fechar a
+// ponta financeira, `pendencias` traz o que falta (ver marcar_entrega_item_pedido).
+export type EntregaItemPedidoResultado = {
+  id: number; status: string; pendencias: string[]; avisos_estoque: string[];
+  item: { id: number; quantidade_entregue: number };
+};
+export async function marcarEntregaItemPedido(pedidoId: number, itemId: number, quantidadeEntregue: number): Promise<EntregaItemPedidoResultado> {
+  const res = await authFetch(`${API}/pedidos/${pedidoId}/itens/${itemId}/entrega`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade_entregue: quantidadeEntregue }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao marcar entrega do item"); }
+  return res.json();
+}
 
 // Anexos de Pedido — orçamento, ordem de serviço ou outro documento, com
 // validade opcional (ver PedidoAnexo no backend); quando há validade, a
