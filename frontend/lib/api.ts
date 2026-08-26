@@ -4224,7 +4224,7 @@ export async function criarAnaliseBromatologica(dados: {
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
   base_quantidade?: string; leite_bezerros_kg_dia?: number | null;
-  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null }[]; encerrar_anterior?: boolean;
+  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null; base_quantidade?: string | null }[]; encerrar_anterior?: boolean;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -4238,7 +4238,10 @@ export type ContextoDieta = {
   ultima_dieta: {
     data_abertura: string; data_prevista_encerramento: string | null; responsavel: string | null;
     base_quantidade: string | null; leite_bezerros_kg_dia: number | null; leite_por_bezerro_kg_dia: number | null;
-    itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null }[];
+    // `total_dia` só é `null` no caso extremo de um item com override
+    // "por cabeça" num lote sem nenhum animal ativo (não há efetivo para
+    // multiplicar e chegar no total do lote) — ver `_totais_item` no backend.
+    itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null }[];
   } | null;
 };
 export async function fetchContextoDieta(lote: number) {
@@ -4249,7 +4252,10 @@ export async function fetchContextoDieta(lote: number) {
 export type ApresentacaoDieta = {
   lote: number; nome: string | null; qtd_animais: number; data_abertura: string; data_prevista_encerramento: string | null;
   num_tratos: number; vagao_kg_dia: number; vagao_kg_trato: number;
-  itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null; total_trato: number }[];
+  // `total_dia`/`total_trato` só ficam `null` no caso extremo de um item com
+  // override "por cabeça" num lote sem nenhum animal ativo — ver
+  // `_totais_item` no backend.
+  itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null; total_trato: number | null }[];
 };
 export async function fetchApresentacaoDieta(id: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/apresentacao`, { cache: "no-store" });

@@ -114,6 +114,8 @@ class DietaLancamento(SQLModel, table=True):
     observacao: Optional[str] = None
     # Como as quantidades dos itens foram informadas: "total" do lote/dia (padrão)
     # ou "animal" (por cabeça/dia — o total é multiplicado pelo nº de animais).
+    # Serve de PADRÃO da dieta — cada item pode sobrescrever isso individualmente
+    # em `DietaItemProgramado.base_quantidade` (ver lá).
     base_quantidade: Optional[str] = None
     # Leite destinado aos bezerros nesta dieta (kg/dia do lote) — alimenta o
     # relatório Controle × Entregue (consumo de bezerros). Preenchido pelo
@@ -149,6 +151,12 @@ class DietaItemProgramado(SQLModel, table=True):
     # entre as duas bases quando informado.
     base: Optional[str] = None
     ms_pct: Optional[float] = None
+    # Sobrescreve, só para este item, o `DietaLancamento.base_quantidade` da
+    # dieta ("total" ou "animal") — permite misturar bases no mesmo lançamento
+    # (ex.: silagem em total do lote e concentrado em por-cabeça). `None`
+    # (padrão) significa "usa o valor da dieta" — retrocompatível com todo
+    # item lançado antes desta coluna existir.
+    base_quantidade: Optional[str] = None
 
 
 class IngredienteMS(SQLModel, table=True):
