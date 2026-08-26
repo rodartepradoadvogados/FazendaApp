@@ -32,7 +32,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, Dieta, Estoque, MovimentoEstoque,
+    Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, Dieta, Estoque, Lote, MovimentoEstoque,
 )
 
 HOJE = date(2026, 8, 24)
@@ -408,6 +408,11 @@ class TestSnapshotBaixaAutomatica:
     def test_baixa_gera_um_movimento_por_ingrediente_com_valores_exatos(self, client):
         c, engine = client
         with Session(engine) as s:
+            # Baixa automática por dias decorridos agora exige opt-in explícito
+            # por lote (`Lote.modo_baixa_estoque == "automatica"`) — sem o
+            # cadastro, o lote cai no padrão "consumo_real" e este cenário
+            # determinístico não debitaria nada.
+            s.add(Lote(codigo="01", nome="Alta", modo_baixa_estoque="automatica"))
             s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
             s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
             s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Silagem de milho", quantidade=20.0, unidade="kg"))
@@ -471,6 +476,9 @@ class TestEscolhaArbitrariaDeCandidato:
     def test_debita_apenas_um_dos_dois_itens_vinculados(self, client):
         c, engine = client
         with Session(engine) as s:
+            # Mesmo motivo do teste acima: baixa automática exige opt-in por
+            # lote (`modo_baixa_estoque == "automatica"`).
+            s.add(Lote(codigo="01", nome="Alta", modo_baixa_estoque="automatica"))
             s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
             alimento = Alimento(nome="Farelo de soja")
             s.add(alimento)
