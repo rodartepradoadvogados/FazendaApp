@@ -641,6 +641,58 @@ class TestDietaContextoApresentacao:
         assert ap["vagao_kg_dia"] == 400.0
         assert ap["vagao_kg_trato"] == 200.0
 
+    def test_apresentacao_e_contexto_respeitam_dieta_lancada_por_animal(self, client):
+        """Bug pré-existente (spec): `apresentacao_dieta` e o bloco
+        `ultima_dieta.itens` de `contexto_dieta` ignoravam `base_quantidade`
+        da dieta e tratavam `quantidade` como sempre sendo o total do lote.
+        Lote com 2 animais, dieta lançada "por animal" com 2kg/cabeça/dia — o
+        total do lote tem que dar 4kg (não 2kg, e não 0.2kg de dobrar a
+        divisão), e por_cabeca tem que continuar 2kg (não 1kg)."""
+        c, engine = client
+        self._seed_lote(engine)
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-05", "base_quantidade": "animal",
+            "itens": [{"alimento": "Concentrado", "quantidade": 2.0, "unidade": "kg"}],
+        }).json()["id"]
+
+        ap = c.get(f"/alimentacao/dietas/{dieta_id}/apresentacao").json()
+        item = ap["itens"][0]
+        assert item["total_dia"] == 4.0
+        assert item["por_cabeca"] == 2.0
+        assert item["total_trato"] == 2.0
+        assert ap["vagao_kg_dia"] == 4.0
+        assert ap["vagao_kg_trato"] == 2.0
+
+        ctx = c.get("/alimentacao/dietas/contexto/1").json()
+        item_ctx = ctx["ultima_dieta"]["itens"][0]
+        assert item_ctx["total_dia"] == 4.0
+        assert item_ctx["por_cabeca"] == 2.0
+
+    def test_apresentacao_mistura_base_por_item_na_mesma_dieta(self, client):
+        """O pedido do proprietário: dentro da MESMA dieta/lote, um item pode
+        ser lançado em total do lote e outro por cabeça — cada um calcula
+        pela SUA PRÓPRIA base, independente do padrão da dieta. Dieta padrão
+        "total"; Silagem sem override (herda "total", 400kg do lote);
+        Concentrado com override "animal" (3kg/cabeça, lote de 2 animais)."""
+        c, engine = client
+        self._seed_lote(engine)
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-05", "base_quantidade": "total",
+            "itens": [
+                {"alimento": "Silagem", "quantidade": 400.0, "unidade": "kg"},
+                {"alimento": "Concentrado", "quantidade": 3.0, "unidade": "kg", "base_quantidade": "animal"},
+            ],
+        }).json()["id"]
+
+        ap = c.get(f"/alimentacao/dietas/{dieta_id}/apresentacao").json()
+        por_alimento = {it["alimento"]: it for it in ap["itens"]}
+        assert por_alimento["Silagem"]["total_dia"] == 400.0
+        assert por_alimento["Silagem"]["por_cabeca"] == 200.0
+        assert por_alimento["Concentrado"]["total_dia"] == 6.0
+        assert por_alimento["Concentrado"]["por_cabeca"] == 3.0
+        # Vagão soma o total do LOTE de cada item na sua própria base: 400 + 6.
+        assert ap["vagao_kg_dia"] == 406.0
+
     def test_nova_dieta_gera_alerta_vespera_e_dia(self, client):
         c, engine = client
         self._seed_lote(engine)

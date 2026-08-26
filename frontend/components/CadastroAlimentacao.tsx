@@ -40,17 +40,34 @@ const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
-type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null };
+// `baseQuantidade` aqui é o OVERRIDE por item ("total"/"animal"); null/undefined
+// = herda a base do lote (`LoteForm.baseQuantidade`) — mesma semântica do
+// backend (`DietaItemProgramado.base_quantidade`, ver `_base_efetiva`).
+type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null; baseQuantidade?: "total" | "animal" | null };
 type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; leitePorBezerroLDia: string; itens: ItemForm[] };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
-const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null });
+const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null, baseQuantidade: null });
 // Quantidade física (matéria natural) a oferecer — converte de MS para MN
 // usando o %MS do ingrediente; só se aplica a kg/g (mesma regra do backend).
 function quantidadeFisica(it: ItemForm): number {
   const q = Number(it.quantidade) || 0;
   if (it.base === "MS" && it.ms_pct && ["kg", "g"].includes(it.unidade)) return q / (it.ms_pct / 100);
   return q;
+}
+// Base EFETIVA de um item: o override do próprio item, senão a do lote —
+// espelha `_base_efetiva` do backend (fazenda/api/routers/alimentacao.py),
+// pra o preview ao vivo do formulário nunca discordar do que o servidor vai
+// calcular ao salvar.
+function baseEfetivaItem(it: ItemForm, baseLote: string): "total" | "animal" {
+  return it.baseQuantidade || (baseLote as "total" | "animal") || "total";
+}
+// (total_lote_dia, por_cabeca_dia) de um item, dado o físico (MN) já
+// convertido e sua base efetiva — espelha `_totais_item` do backend: um dos
+// dois vem direto do valor lançado, o outro é derivado por `nAnimais`.
+function totaisItem(qFisica: number, baseEfetiva: "total" | "animal", nAnimais: number): [number | null, number | null] {
+  if (baseEfetiva === "animal") return [nAnimais ? qFisica * nAnimais : null, qFisica];
+  return [qFisica, nAnimais ? qFisica / nAnimais : null];
 }
 const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", leitePorBezerroLDia: "", itens: [itemVazio()] });
 
@@ -1266,7 +1283,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
             lote: ln, responsavel: f.responsavel || undefined, data_abertura: f.dataAbertura, base_quantidade: f.baseQuantidade,
             leite_bezerros_kg_dia: f.leiteBezerros ? Number(f.leiteBezerros) : null,
             data_prevista_encerramento: f.dataPrevista || undefined,
-            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base, ms_pct: it.ms_pct })),
+            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base, ms_pct: it.ms_pct, base_quantidade: it.baseQuantidade || null })),
             encerrar_anterior: encerrar,
           });
           salvos.push(ln);
@@ -1308,7 +1325,13 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
           const ctx = contextos[ln];
           const f = forms[ln];
           const nAnimais = ctx?.qtd_animais ?? l.qtd_animais ?? 0;
-          const vagaoKg = f ? f.itens.reduce((s, it) => (["kg", "g"].includes(it.unidade) ? s + quantidadeFisica(it) : s), 0) : 0;
+          // Total do lote de cada item na SUA PRÓPRIA base (não a do lote
+          // uniformemente) — mesmo cálculo de `apresentacao_dieta` no backend.
+          const vagaoKg = f ? f.itens.reduce((s, it) => {
+            if (!["kg", "g"].includes(it.unidade)) return s;
+            const [totalLote] = totaisItem(quantidadeFisica(it), baseEfetivaItem(it, f.baseQuantidade), nAnimais);
+            return s + (totalLote ?? 0);
+          }, 0) : 0;
           const preenchido = lotesPreenchidos.includes(ln);
           return (
             <div key={l.codigo} style={{ border: "1px solid " + (preenchido ? "var(--dourado)" : "var(--border)"), borderRadius: 10, overflow: "hidden" }}>
@@ -1398,8 +1421,12 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                       {(f?.itens || []).map((it, idx) => {
                         const qLancado = Number(it.quantidade) || 0;
                         const qFisica = quantidadeFisica(it);
-                        const porCab = nAnimais ? qFisica / nAnimais : null;
-                        const porTrato = qFisica / NUM_TRATOS;
+                        // Base EFETIVA deste item (override próprio, senão a do
+                        // lote) — mesma resolução do backend (`_base_efetiva`),
+                        // pra o preview ao vivo nunca discordar do que é salvo.
+                        const baseEfetiva = baseEfetivaItem(it, f?.baseQuantidade || "total");
+                        const [totalLoteDia, porCab] = totaisItem(qFisica, baseEfetiva, nAnimais);
+                        const porTrato = totalLoteDia != null ? totalLoteDia / NUM_TRATOS : null;
                         const msConhecido = it.alimento in msPorAlimento;
                         const semMsCadastrado = it.base === "MS" && msConhecido && !msPorAlimento[it.alimento];
                         return (
@@ -1416,7 +1443,14 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                                 />
                               </div>
                               <div>
-                                <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
+                                <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.3rem" }}>
+                                  <label style={lbl}>{baseEfetiva === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
+                                  <BaseQuantidadeItemToggle
+                                    value={it.baseQuantidade ?? null}
+                                    padrao={f?.baseQuantidade === "animal" ? "animal" : "total"}
+                                    onChange={(v) => patchItem(ln, idx, { baseQuantidade: v })}
+                                  />
+                                </div>
                                 <input type="number" inputMode="decimal" style={input} value={it.quantidade} onChange={(e) => patchItem(ln, idx, { quantidade: e.target.value })} />
                               </div>
                               <div>
@@ -1434,8 +1468,8 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                             {/* Cálculo automático enquanto edita — já convertido para o físico
                                 (matéria natural) quando lançado em base MS. */}
                             <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap", fontSize: "0.76rem" }}>
-                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{num(porTrato)} {it.unidade}/trato</span>
-                              <span style={{ color: "var(--amber)", fontWeight: 600 }}>{num(qFisica)} {it.unidade}/dia</span>
+                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{porTrato != null ? `${num(porTrato)} ${it.unidade}/trato` : `— ${it.unidade}/trato`}</span>
+                              <span style={{ color: "var(--amber)", fontWeight: 600 }}>{totalLoteDia != null ? `${num(totalLoteDia)} ${it.unidade}/dia` : `— ${it.unidade}/dia`}</span>
                               <span style={{ color: "var(--text-muted)" }}>{porCab != null ? `${num(porCab, 3)} ${it.unidade}/cab` : "—/cab"}</span>
                               {it.base === "MS" && it.ms_pct && qFisica !== qLancado && (
                                 <span style={{ color: "var(--text-muted)" }}>({num(qLancado)} {it.unidade} MS a {num(it.ms_pct, 1)}% MS)</span>
@@ -1487,6 +1521,41 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
           {salvando ? "Salvando…" : `Salvar ${lotesPreenchidos.length || ""} ${lotesPreenchidos.length === 1 ? "dieta" : "dietas"}`.trim()}
         </button>
       </div>
+    </div>
+  );
+}
+
+// Pílula por item pra escolher a base da quantidade ("Lote"/"Cabeça"),
+// independente do dropdown do lote — mesmo padrão visual das pílulas já
+// usadas nesta tela (abas e contadores, var(--pill-active-*)), só compacto o
+// bastante pra caber ao lado do rótulo da quantidade em cada produto.
+// "Padrão" (sem override, `value === null`) sempre reflete visualmente a
+// base do lote no momento (`padrao`), sem fixar o item numa base ao trocar
+// o dropdown do lote depois.
+function BaseQuantidadeItemToggle({
+  value, padrao, onChange,
+}: { value: "total" | "animal" | null; padrao: "total" | "animal"; onChange: (v: "total" | "animal" | null) => void }) {
+  const opcoes: { id: "total" | "animal" | null; label: string }[] = [
+    { id: null, label: padrao === "animal" ? "Padrão (cabeça)" : "Padrão (lote)" },
+    { id: "total", label: "Lote" },
+    { id: "animal", label: "Cabeça" },
+  ];
+  return (
+    <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+      {opcoes.map((o) => {
+        const ativo = value === o.id;
+        return (
+          <button type="button" key={String(o.id)} onClick={() => onChange(o.id)}
+            title="Base da quantidade deste produto — herda do lote por padrão, ou pode ser lançado à parte por total do lote/dia ou por cabeça/dia."
+            style={{
+              fontSize: "0.64rem", padding: "0.1rem 0.45rem", borderRadius: 999, cursor: "pointer",
+              border: "1px solid " + (ativo ? "var(--pill-active-border)" : "var(--border)"),
+              background: ativo ? "var(--pill-active-bg)" : "transparent",
+              color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)",
+              fontWeight: ativo ? 700 : 500,
+            }}>{o.label}</button>
+        );
+      })}
     </div>
   );
 }

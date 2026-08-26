@@ -1400,6 +1400,9 @@ class ItemProgramadoIn(BaseModel):
     unidade: str
     base: str | None = None       # "MN" (matéria natural) | "MS" (matéria seca)
     ms_pct: float | None = None   # % de matéria seca do alimento
+    # Override por item de `DietaLancamento.base_quantidade` — "total" ou
+    # "animal"; None (padrão) herda a base da dieta. Ver `_base_efetiva`.
+    base_quantidade: str | None = None
 
 
 def _quantidade_fisica(quantidade: float, unidade: str | None, base: str | None, ms_pct: float | None) -> float:
@@ -1535,11 +1538,7 @@ def contexto_dieta(
                 round(ativa.leite_bezerros_kg_dia / n, 2) if ativa.leite_bezerros_kg_dia and n else None
             ),
             "itens": [
-                {
-                    "alimento": it.alimento, "unidade": it.unidade,
-                    "total_dia": round(_quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct), 2),
-                    "por_cabeca": round(_quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct) / n, 3) if n else None,
-                }
+                _linha_item_dieta(it, ativa.base_quantidade, n)
                 for it in itens
             ],
         }
@@ -1585,15 +1584,17 @@ def apresentacao_dieta(
     linhas = []
     total_dia = 0.0
     for it in itens:
-        td = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)  # total físico (MN) do lote/dia
-        linhas.append({
-            "alimento": it.alimento, "unidade": it.unidade,
-            "total_dia": round(td, 2),
-            "por_cabeca": round(td / n, 3) if n else None,
-            "total_trato": round(td / NUM_TRATOS, 2),
-        })
-        if (it.unidade or "").lower() in ("kg", "g"):
-            total_dia += td
+        # Total do lote/dia deste item, respeitando a base EFETIVA (override
+        # do item, senão a da dieta) — não o valor de `it.quantidade` cru, que
+        # só é o total do lote quando a base é "total" (ver `_linha_item_dieta`
+        # e `_totais_item`; era aqui que a conta ficava errada por um fator do
+        # tamanho do lote quando a dieta era lançada "por animal").
+        linha = _linha_item_dieta(it, dieta.base_quantidade, n)
+        total_lote_item = linha["total_dia"]
+        linha["total_trato"] = round(total_lote_item / NUM_TRATOS, 2) if total_lote_item is not None else None
+        linhas.append(linha)
+        if (it.unidade or "").lower() in ("kg", "g") and total_lote_item is not None:
+            total_dia += total_lote_item
     return {
         "lote": dieta.lote, "nome": lote_cad.nome if lote_cad else None, "qtd_animais": n,
         "data_abertura": dieta.data_abertura.isoformat(),
@@ -1725,17 +1726,53 @@ def _item_da_dieta(itens: list[DietaItemProgramado], alimento: str, alimento_id:
     return None
 
 
+def _base_efetiva(item_base: str | None, dieta_base: str | None) -> str:
+    """Resolve qual base ("total" ou "animal") vale para UM item: o override
+    do próprio item, se informado, senão a base da dieta, senão "total" — o
+    legado de todo lançamento anterior a este override existir. Nunca ler
+    `DietaItemProgramado.quantidade` sem passar antes por aqui: é o que
+    permite misturar bases dentro da mesma dieta (silagem em total do lote,
+    concentrado por cabeça) sem quebrar quem nunca usou a base por item."""
+    return item_base or dieta_base or "total"
+
+
 def _por_cabeca(qtd_fisica: float, base_quantidade: str | None, n_animais: int) -> float | None:
-    """Quantidade por cabeça de um item programado, respeitando
-    `DietaLancamento.base_quantidade` — a causa mais provável de dobrar a
-    conta (ver spec da sessão): quando a dieta já foi lançada "por animal", o
+    """Quantidade por cabeça de um item programado, dada a base EFETIVA já
+    resolvida (ver `_base_efetiva`) — a causa mais provável de dobrar a conta
+    (ver spec da sessão): quando o item já foi lançado "por animal", o
     `quantidade` do item JÁ É por cabeça (não dividir de novo); quando foi
-    lançada "total" (padrão), é o total do lote e só vira por-cabeça dividindo
+    lançado "total" (padrão), é o total do lote e só vira por-cabeça dividindo
     pelo efetivo atual. `None` quando não há efetivo para dividir — melhor não
     responder do que inventar um valor com denominador zero."""
     if base_quantidade == "animal":
         return qtd_fisica
     return qtd_fisica / n_animais if n_animais else None
+
+
+def _totais_item(qtd_fisica: float, base_efetiva: str, n_animais: int) -> tuple[float | None, float | None]:
+    """Retorna (total_lote_dia, por_cabeca_dia) de um item a partir da sua
+    quantidade física já convertida (MN) e da base EFETIVA (ver
+    `_base_efetiva`) — um dos dois vem direto do valor lançado, o outro é
+    derivado multiplicando/dividindo por `n_animais`. `None` no lado derivado
+    quando não há efetivo para multiplicar/dividir."""
+    if base_efetiva == "animal":
+        return (qtd_fisica * n_animais if n_animais else None), qtd_fisica
+    return qtd_fisica, (qtd_fisica / n_animais if n_animais else None)
+
+
+def _linha_item_dieta(it: DietaItemProgramado, dieta_base_quantidade: str | None, n_animais: int) -> dict:
+    """Um item de dieta pronto pra exibição (total/dia + por cabeça/dia), já
+    resolvendo a base EFETIVA (override do item, senão da dieta, senão
+    "total") — usado por `contexto_dieta` e `apresentacao_dieta` para nunca
+    tratar `it.quantidade` como total do lote sem checar a base."""
+    qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+    base_efetiva = _base_efetiva(it.base_quantidade, dieta_base_quantidade)
+    total_dia, por_cabeca = _totais_item(qtd_fisica, base_efetiva, n_animais)
+    return {
+        "alimento": it.alimento, "unidade": it.unidade,
+        "total_dia": round(total_dia, 2) if total_dia is not None else None,
+        "por_cabeca": round(por_cabeca, 3) if por_cabeca is not None else None,
+    }
 
 
 def _resolver_estoque_item(
@@ -1803,7 +1840,8 @@ def dieta_do_lote_consumo(
     linhas = []
     for it in itens:
         qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
-        por_cabeca = _por_cabeca(qtd_fisica, dieta.base_quantidade, n)
+        base_efetiva = _base_efetiva(it.base_quantidade, dieta.base_quantidade)
+        por_cabeca = _por_cabeca(qtd_fisica, base_efetiva, n)
         linhas.append({
             "alimento": it.alimento, "alimento_id": it.alimento_id,
             "quantidade": it.quantidade, "unidade": it.unidade,
@@ -1927,10 +1965,12 @@ def lancar_consumo(
 
         if dados.origem == "animais" and item_dieta is not None:
             # Recalculado no servidor — não confia no valor que o front
-            # mandou. É exatamente aqui que a conta dobra se `base_quantidade`
-            # for ignorado (ver docstring de `_por_cabeca`).
+            # mandou. É exatamente aqui que a conta dobra se a base EFETIVA
+            # (override do item, senão a da dieta) for ignorada (ver docstring
+            # de `_por_cabeca`).
             qtd_fisica = _quantidade_fisica(item_dieta.quantidade, item_dieta.unidade, item_dieta.base, item_dieta.ms_pct)
-            por_cabeca = _por_cabeca(qtd_fisica, dieta.base_quantidade if dieta else None, n_animais)
+            base_efetiva = _base_efetiva(item_dieta.base_quantidade, dieta.base_quantidade if dieta else None)
+            por_cabeca = _por_cabeca(qtd_fisica, base_efetiva, n_animais)
             if por_cabeca is None:
                 raise HTTPException(
                     status_code=400,
