@@ -318,6 +318,17 @@ class ConsumoAlimento(SQLModel, table=True):
     # flag `permitir_fora_da_dieta`. Marcado para o relatório poder separar o
     # que foi exceção do que foi plano.
     fora_da_dieta: bool = False
+    # Se ESTE registro de fato debitou o Estoque (`estoque_baixa.baixar`) ao
+    # ser criado — depende do `Lote.modo_baixa_estoque` NO MOMENTO do
+    # lançamento ("consumo_real" debita, "automatica"/"sem_baixa" não, pra não
+    # dobrar a baixa que a Alimentação já faz sozinha por dia decorrido).
+    # Nasce True porque toda linha existente ANTES deste campo debitou estoque
+    # incondicionalmente (era o único comportamento que existia). Guardado no
+    # registro, não recalculado do modo ATUAL do lote, porque o modo pode
+    # mudar depois — a exclusão (`excluir_consumo`) tem de saber se estorna
+    # olhando pro que aconteceu quando o lançamento foi feito, não pro que o
+    # lote é hoje.
+    baixou_estoque: bool = True
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 

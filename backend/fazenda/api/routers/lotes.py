@@ -92,6 +92,12 @@ class LoteIn(BaseModel):
     # aplicação para ligá-las — só editando o banco à mão.
     permitir_fora_da_dieta: bool = False
     permitir_sem_estoque: bool = False
+    # Como a dieta deste lote afeta o Estoque — "automatica" (baixa dia a dia
+    # pelo plano), "consumo_real" (só baixa quando alguém lança o consumo de
+    # verdade) ou "sem_baixa" (a dieta é só plano/receita). Nasce
+    # "consumo_real" (padrão restritivo/compatível — ver Lote.modo_baixa_estoque)
+    # e, como as duas flags acima, precisa ser editável por aqui.
+    modo_baixa_estoque: str = "consumo_real"
 
 
 def _validar_faixas(dados: LoteIn) -> None:
@@ -172,6 +178,7 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.ativo = dados.ativo
     lote.permitir_fora_da_dieta = dados.permitir_fora_da_dieta
     lote.permitir_sem_estoque = dados.permitir_sem_estoque
+    lote.modo_baixa_estoque = dados.modo_baixa_estoque
 
 
 @router.get("/")

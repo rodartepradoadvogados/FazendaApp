@@ -63,6 +63,11 @@ def _seed(engine):
         s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
         s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Silagem de milho", quantidade=20.0, unidade="kg"))
         s.add(Estoque(nome="Silagem de milho", categoria="alimento", quantidade=1000.0, unidade="kg"))
+        # `modo_baixa_estoque="automatica"`: este seed alimenta os testes da
+        # baixa por dias decorridos, então o lote precisa ter pedido esse
+        # modo explicitamente — o padrão "consumo_real" não seria debitado
+        # aqui (ver `_consumo_total_modo_automatica`).
+        s.add(Lote(codigo="01", nome="Alta", modo_baixa_estoque="automatica"))
         s.commit()
 
 
@@ -192,6 +197,7 @@ class TestBaixaAutomatica:
             s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
             s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Ração", quantidade=5.0, unidade="kg"))
             s.add(Estoque(nome="Ração", categoria="alimento", quantidade=1000.0, unidade="saca 30kg"))
+            s.add(Lote(codigo="01", nome="Alta", modo_baixa_estoque="automatica"))
             s.commit()
 
         c.get("/alimentacao/")  # estabelece baseline = hoje
@@ -288,7 +294,7 @@ class TestEstoquePreferidoResolucao:
     (nunca remove os outros), e todo call site que pega `candidatos[0]`
     passa a debitar/consumir esse item sem precisar mudar."""
 
-    def _cenario(self, engine):
+    def _cenario(self, engine, modo_baixa_estoque: str | None = None):
         from fazenda.models import DietaItemProgramado, DietaLancamento
 
         with Session(engine) as s:
@@ -309,6 +315,12 @@ class TestEstoquePreferidoResolucao:
             s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Farelo de soja", quantidade=10.0, unidade="kg"))
             dieta_lanc = DietaLancamento(lote=1, data_abertura=HOJE, base_quantidade="total")
             s.add(dieta_lanc)
+            # Só cria o cadastro do lote quando o teste precisa de um modo
+            # explícito (a baixa automática exige opt-in "automatica"); os
+            # testes de consumo MANUAL não passam `modo_baixa_estoque` e
+            # dependem do padrão restritivo "consumo_real" sem cadastro nenhum.
+            if modo_baixa_estoque is not None:
+                s.add(Lote(codigo="01", nome="Alta", modo_baixa_estoque=modo_baixa_estoque))
             s.commit()
             s.refresh(dieta_lanc)
             s.add(DietaItemProgramado(dieta_lancamento_id=dieta_lanc.id, alimento="Farelo de soja", quantidade=10.0, unidade="kg"))
@@ -350,7 +362,7 @@ class TestEstoquePreferidoResolucao:
 
     def test_baixa_automatica_debita_o_item_preferido(self, client):
         c, engine = client
-        alimento_id, id_a, id_b = self._cenario(engine)
+        alimento_id, id_a, id_b = self._cenario(engine, modo_baixa_estoque="automatica")
         with Session(engine) as s:
             alimento = s.get(Alimento, alimento_id)
             alimento.estoque_preferido_id = id_b

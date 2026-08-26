@@ -162,6 +162,31 @@ def _obter_estado_alimentacao(session: Session, fazenda_id: int | None) -> Alime
     return session.exec(query).first()
 
 
+def _consumo_total_modo_automatica(por_lote: list[dict], lotes_cadastro: list[dict]) -> list[dict]:
+    """Re-agrega `calcular_consumo(...)["por_lote"]` por ingrediente, só para
+    os lotes cujo `Lote.modo_baixa_estoque == "automatica"` — mesma soma que
+    `calcular_consumo` já faz para `consumo_total`, mas escopada aos lotes que
+    de fato pediram a baixa dia-a-dia pelo plano (ver proposta aceita pelo
+    proprietário: "automática"/"consumo real"/"sem baixa" por lote).
+
+    Lote sem cadastro (dado legado — ver comentário equivalente em
+    `lancar_consumo` sobre `permitir_fora_da_dieta`/`permitir_sem_estoque`)
+    cai no padrão restritivo "consumo_real", ou seja, NÃO entra aqui: ausência
+    de cadastro nunca é motivo pra afrouxar uma checagem de segurança, e aqui
+    a checagem é "não debita estoque sem o lote ter pedido explicitamente"."""
+    modo_por_codigo = {l["codigo"]: (l.get("modo_baixa_estoque") or "consumo_real") for l in lotes_cadastro if l.get("codigo")}
+    consumo_total: dict[str, dict] = {}
+    for info in por_lote:
+        modo = modo_por_codigo.get(f"{info['lote']:02d}", "consumo_real")
+        if modo != "automatica":
+            continue
+        for item in info["itens"]:
+            chave = item["ingrediente"]
+            acc = consumo_total.setdefault(chave, {"ingrediente": chave, "unidade": item["unidade"], "consumo_dia": 0.0})
+            acc["consumo_dia"] = round(acc["consumo_dia"] + item["consumo_dia"], 2)
+    return sorted(consumo_total.values(), key=lambda x: -x["consumo_dia"])
+
+
 def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     """
     Baixa automática de estoque por dias decorridos (opção A). Usa uma trava
@@ -206,7 +231,12 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
         return {"dias_deduzidos": 0, "ultima_data_deducao": atualizado.ultima_data_deducao.isoformat()}
 
     dietas, animais = _dietas_e_animais(session, fazenda_id)
-    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))["consumo_total"]
+    lotes_cadastro = _lotes_cadastro(session, fazenda_id)
+    por_lote = calcular_consumo(dietas, animais, lotes_cadastro)["por_lote"]
+    # Só os lotes em modo "automatica" entram na baixa por dias decorridos —
+    # "consumo_real" (padrão) e "sem_baixa" só são tocados (ou nunca são,
+    # respectivamente) pelo lançamento manual em `lancar_consumo`.
+    consumo_total = _consumo_total_modo_automatica(por_lote, lotes_cadastro)
     estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
 
     itens_baixados = []
@@ -1991,6 +2021,11 @@ def lancar_consumo(
     # uma checagem de segurança.
     permitir_fora_da_dieta = bool(lote_cad.permitir_fora_da_dieta) if lote_cad else False
     permitir_sem_estoque = bool(lote_cad.permitir_sem_estoque) if lote_cad else False
+    # Mesma postura: sem cadastro, cai no padrão "consumo_real" — o único
+    # modo em que este endpoint sempre debitou estoque, então um lote legado
+    # continua se comportando exatamente como antes desta coluna existir.
+    modo_baixa_estoque = (lote_cad.modo_baixa_estoque if lote_cad else None) or "consumo_real"
+    deduzir_estoque = modo_baixa_estoque == "consumo_real"
 
     dieta = _dieta_ativa_do_lote(session, dados.lote, fazenda_id)
     itens_dieta = _itens_dieta_lancamento(session, dieta.id, fazenda_id) if dieta else []
@@ -2044,15 +2079,21 @@ def lancar_consumo(
             alimento=item_in.alimento, alimento_id=item_in.alimento_id,
             quantidade=quantidade, unidade=unidade, num_animais=dados.num_animais,
             origem=dados.origem, fora_da_dieta=fora_da_dieta, usuario_id=user.id,
+            baixou_estoque=deduzir_estoque,
         )
         session.add(registro)
         session.flush()  # gera o id antes do movimento de estoque (origem_id rastreável — B7)
-        avisos.extend(estoque_baixa.baixar(
-            session, item=estoque_item, quantidade=quantidade, unidade=unidade, data=dados.data,
-            fazenda_id=fazenda_id,
-            observacao=f"Consumo diário — lote {dados.lote:02d}, {item_in.alimento}",
-            usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=item_in.alimento,
-        ))
+        # "automatica"/"sem_baixa" registram o consumo (sobra/histórico
+        # continuam funcionando) mas NÃO tocam o Estoque aqui — "automatica"
+        # já é debitada pelo mecanismo de dias decorridos (`_dar_baixa_automatica`)
+        # e dobraria a baixa; "sem_baixa" é só plano/receita, por decisão do lote.
+        if deduzir_estoque:
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=quantidade, unidade=unidade, data=dados.data,
+                fazenda_id=fazenda_id,
+                observacao=f"Consumo diário — lote {dados.lote:02d}, {item_in.alimento}",
+                usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=item_in.alimento,
+            ))
 
     session.commit()
     return {"ok": True, "avisos": avisos}
@@ -2065,19 +2106,27 @@ def excluir_consumo(
 ) -> dict:
     """B9: exclui um lançamento de consumo e devolve o produto ao estoque
     pelo mesmo motor — o estorno espelha a baixa, não uma baixa negativa
-    inventada na mão."""
+    inventada na mão.
+
+    Só devolve quando `baixou_estoque` é True: um registro lançado com o lote
+    em modo "automatica"/"sem_baixa" nunca tocou o Estoque, então devolver
+    aqui inventaria estoque que nunca saiu. Olha o FLAG DO REGISTRO, não o
+    modo ATUAL do lote — o modo pode ter mudado depois do lançamento, e o
+    estorno tem de espelhar o que aconteceu quando o consumo foi lançado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(ConsumoAlimento, consumo_id)
     if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento de consumo não encontrado")
-    estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
-    estoque_item = _resolver_estoque_item(session, fazenda_id, registro.alimento, estoque_por_alimento)
-    avisos = estoque_baixa.devolver(
-        session, item=estoque_item, quantidade=registro.quantidade, unidade=registro.unidade,
-        data=registro.data, fazenda_id=fazenda_id,
-        observacao=f"Exclusão do consumo diário — lote {registro.lote:02d}, {registro.alimento}",
-        usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=registro.alimento,
-    )
+    avisos: list[str] = []
+    if registro.baixou_estoque:
+        estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
+        estoque_item = _resolver_estoque_item(session, fazenda_id, registro.alimento, estoque_por_alimento)
+        avisos = estoque_baixa.devolver(
+            session, item=estoque_item, quantidade=registro.quantidade, unidade=registro.unidade,
+            data=registro.data, fazenda_id=fazenda_id,
+            observacao=f"Exclusão do consumo diário — lote {registro.lote:02d}, {registro.alimento}",
+            usuario_id=user.id, origem_tipo="consumo_alimento", origem_id=registro.id, produto=registro.alimento,
+        )
     session.delete(registro)
     session.commit()
     return {"ok": True, "avisos": avisos}
