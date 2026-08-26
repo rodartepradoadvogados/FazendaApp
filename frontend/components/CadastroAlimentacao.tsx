@@ -1182,6 +1182,9 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // Por padrão só oferece produto de estoque com saldo positivo — evita
+  // lançar dieta com um item que já zerou. Marcar liga a exceção.
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
   // Popup "importar dieta formulada" (Formulação de Dietas) — qual lote está
   // com o popup aberto, ou null se nenhum.
@@ -1192,6 +1195,19 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
     fetchMateriaSeca().then((itens) => setMsPorAlimento(Object.fromEntries(itens.map((i) => [i.nome, i.ms_pct])))).catch(() => {});
     fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => {});
   }, []);
+
+  // Produtos de estoque elegíveis para dieta: finalidade de alimentação/
+  // nutrição (não só o valor literal "Ração/Alimento" — cobre variações como
+  // "Nutrição" cadastradas pela própria fazenda, mesmo critério de
+  // `_finalidade_indica_alimento` no backend) e, por padrão, saldo positivo.
+  const itensDietaPicker = useMemo(() => {
+    const termosNutricao = ["aliment", "nutri", "racao"];
+    return estoqueItens.filter((it) => {
+      const finalidadeOk = it.finalidade == null || termosNutricao.some((t) => casaBusca(it.finalidade, t));
+      if (!finalidadeOk) return false;
+      return incluirSemEstoque || Number(it.quantidade ?? 0) > 0;
+    });
+  }, [estoqueItens, incluirSemEstoque]);
 
   const loteNum = (l: LoteRow) => Number(l.codigo.slice(0, 2));
 
@@ -1279,6 +1295,11 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
         A <strong>quantidade</strong> de cada produto é o total do lote por dia — o sistema calcula sozinho por cabeça,
         por trato ({NUM_TRATOS} tratos/dia) e o total de kg no vagão. Ao final, um único botão salva todos os lotes.
       </p>
+
+      <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem", cursor: "pointer" }}>
+        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+        Incluir produtos sem estoque na lista de seleção
+      </label>
 
       <div className="space-y-2">
         {lotes.map((l) => {
@@ -1387,11 +1408,10 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                               <div style={{ gridColumn: "1 / -1" }}>
                                 <label style={lbl}>Produto {idx + 1}</label>
                                 <EstoquePicker
-                                  itens={estoqueItens}
+                                  itens={itensDietaPicker}
                                   value={it.alimento}
                                   onChange={(v) => patchItem(ln, idx, { alimento: v, ms_pct: msPorAlimento[v] ?? null })}
-                                  finalidades={["Ração/Alimento"]}
-                                  somenteVinculadosAlimento
+                                  todasFinalidades
                                   placeholder="Selecionar silagem/alimento…"
                                 />
                               </div>
