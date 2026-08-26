@@ -189,9 +189,15 @@ def test_backfill_e_idempotente(tmp_path):
 
 
 def test_downgrade_e_reupgrade_reproduz_o_mesmo_estado(tmp_path):
-    """Round-trip completo: upgrade -> downgrade -1 -> upgrade head chega
-    exatamente no mesmo estado (upgrade é determinístico) — mesma garantia
-    de idempotência exigida pela migração de tipo_pessoa."""
+    """Round-trip completo: upgrade -> downgrade até antes de e3bc1c978262 ->
+    upgrade head chega exatamente no mesmo estado (upgrade é determinístico)
+    — mesma garantia de idempotência exigida pela migração de tipo_pessoa.
+
+    O downgrade aponta pro down_revision de e3bc1c978262 (`bd9c8a966d75`) em
+    vez de "-1": "-1" desfaz só o ÚLTIMO passo a partir de head, que deixou
+    de ser e3bc1c978262 assim que alguma migração nova foi encadeada depois
+    dela (ver dieta_item_programado.base_quantidade) — o teste precisa
+    continuar mirando ESTA migração específica, não "o que for head agora"."""
     db_path = tmp_path / "p1_roundtrip.db"
     _rodar_alembic(db_path, "upgrade", "bd9c8a966d75")
 
@@ -209,7 +215,7 @@ def test_downgrade_e_reupgrade_reproduz_o_mesmo_estado(tmp_path):
     }
     conn.close()
 
-    _rodar_alembic(db_path, "downgrade", "-1")
+    _rodar_alembic(db_path, "downgrade", "bd9c8a966d75")
 
     conn = sqlite3.connect(db_path)
     # As colunas novas somem no downgrade — confirma que a coluna foi
