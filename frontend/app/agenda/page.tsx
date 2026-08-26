@@ -7,7 +7,7 @@ import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLe
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoque, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
-  cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
+  cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
   criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
   authFetch, API, mensagemErroApi,
 } from "@/lib/api";
@@ -198,6 +198,12 @@ export default function AgendaPage() {
   const [cronogramaCriandoVet, setCronogramaCriandoVet] = useState<Set<string>>(new Set());
   const [cronogramaAdiarData, setCronogramaAdiarData] = useState<Record<string, string>>({});
   const [cronogramaAdiarMotivo, setCronogramaAdiarMotivo] = useState<Record<string, string>>({});
+
+  // Data de início da lactação no card "Confirmar início de lactação"
+  // (indução) — pré-preenchida com e.data_sugerida (última etapa do
+  // protocolo), editável antes de confirmar "Sim". Mesmo padrão de estado
+  // por eventoId de cronogramaAdiarData acima.
+  const [lactacaoInducaoData, setLactacaoInducaoData] = useState<Record<string, string>>({});
 
   const [cronogramaAplicarAbertos, setCronogramaAplicarAbertos] = useState<Set<string>>(new Set());
   const toggleCronogramaAplicar = (id: string) => setCronogramaAplicarAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -732,6 +738,26 @@ export default function AgendaPage() {
     finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
+  // Confirmação de início de lactação (indução) — "Sim" abre a Lactacao
+  // (origem "inducao") na data escolhida; "Não" não chama o backend de
+  // produção (não existe resposta própria para gravar, ao contrário da
+  // cura) — só marcarEventoRealizado tira o card da Agenda, mesmo padrão de
+  // descartarPendencia logo abaixo.
+  const confirmarLactacaoInducaoAgenda = async (e: any, entrouEmLactacao: boolean) => {
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      if (entrouEmLactacao) {
+        const dataInicio = lactacaoInducaoData[e.id] || e.data_sugerida || undefined;
+        await confirmarLactacaoInducao(e.lancamento_id, e.numero_matriz, true, dataInicio);
+      }
+      await marcarEventoRealizado(e.id);
+      await carregar();
+      mostrarFeedback(entrouEmLactacao ? "Lactação iniciada." : "Registrado: não entrou em lactação.");
+    }
+    catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Descartar pendência sanitária sem aplicar (ex.: pendência antiga que não
   // faz mais sentido registrar) — some da Agenda sem criar Sanidade nem baixa
   // de estoque, ao contrário de "Dar baixa". Reaproveita o mesmo
@@ -1210,6 +1236,18 @@ export default function AgendaPage() {
                                   Curado?
                                   <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, true)}>Sim</button>
                                   <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, false)}>Não</button>
+                                </span>
+                              ) : (e as any).tipo === "confirmar_lactacao_inducao" ? (
+                                <span className="flex items-center gap-2 flex-wrap" style={{ fontSize: "0.72rem" }} onClick={(ev) => ev.stopPropagation()}>
+                                  Entrou em lactação?
+                                  <input
+                                    type="date"
+                                    style={{ ...inputInline, width: "auto" }}
+                                    value={lactacaoInducaoData[e.id] ?? (e as any).data_sugerida ?? ""}
+                                    onChange={(ev) => setLactacaoInducaoData((p) => ({ ...p, [e.id]: ev.target.value }))}
+                                  />
+                                  <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, true)}>Sim</button>
+                                  <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, false)}>Não</button>
                                 </span>
                               ) : ehBstAplicacao ? (
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirListasBst()}>

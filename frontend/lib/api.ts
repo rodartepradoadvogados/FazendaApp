@@ -3497,6 +3497,22 @@ export async function marcarCuraAplicacao(id: number, curada: boolean) {
   return res.json();
 }
 
+export async function confirmarLactacaoInducao(
+  lancamentoId: number, numeroMatriz: string, entrouEmLactacao: boolean, dataInicio?: string,
+) {
+  // Resposta ao card "Confirmar início de lactação" da Agenda (indução de
+  // lactação concluída sem lactação aberta — ver agenda.py::
+  // eventos_confirmar_lactacao_inducao). "Não" não grava nada no backend
+  // além do ack; quem tira o card da Agenda é sempre o
+  // marcarEventoRealizado chamado em seguida pelo handler, igual à cura.
+  const res = await authFetch(`${API}/producao/inducao-lactacao/${lancamentoId}/${encodeURIComponent(numeroMatriz)}/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entrou_em_lactacao: entrouEmLactacao, data_inicio: dataInicio || undefined }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao confirmar início de lactação"); }
+  return res.json();
+}
+
 export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean) {
   // Rota nova, com nome correto — /mastite/cura (retrocompatibilidade) segue
   // funcionando pois o app em produção ainda a chama, mas serve qualquer

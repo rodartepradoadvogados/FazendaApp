@@ -34,6 +34,8 @@ from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitari
 from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
 from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
 from fazenda.rules.cura_protocolo import protocolo_terminado
+from fazenda.rules import lactacao as regras_lactacao
+from fazenda.rules.lactacao import inducao_concluida
 from fazenda.rules.protocolo_customizado import (
     eventos_agenda as _eventos_protocolo_custom_agenda,
     marcar_realizado as _marcar_protocolo_custom_realizado,
@@ -1101,6 +1103,52 @@ def calcular_agenda(
                 "cura_origem": "protocolo", "cura_id": lanc.id,
             })
 
+    # Confirmação de início de lactação — protocolo de indução de lactação
+    # (ProtocoloInducaoLancamento/Aplicacao, ver bloco acima) concluído para
+    # uma matriz sem que isso tenha aberto a `Lactacao` dela (ver
+    # fazenda/rules/lactacao.py — o modelo e `abrir_lactacao(origem="inducao")`
+    # já existiam prontos, mas nenhum call site os usava: uma matriz que
+    # terminava a indução ficava com todas as etapas realizadas e NUNCA
+    # entrava em lactação no sistema). Espelha "Confirmar cura" acima, mas a
+    # agregação é por (lançamento, MATRIZ) — o lançamento de indução é em
+    # LOTE (várias matrizes por lançamento), diferente do lançamento de
+    # protocolo sanitário (uma matriz só) — então um lançamento com 5
+    # matrizes onde só 3 terminaram já pergunta por essas 3, sem esperar as
+    # outras 2 (ver `inducao_concluida`, que agrega por animal).
+    # Sem piso de data, mesmo espírito de "perda de prenhez sem motivo"
+    # (mais abaixo): uma indução concluída há meses (ex.: matriz 422, que deu
+    # origem a este card) continua pendente até o usuário responder, não só
+    # nos dias seguintes à conclusão — é "computado ao vivo do estado atual",
+    # não um evento agendado com janela de validade.
+    eventos_confirmar_lactacao_inducao = []
+    aplicacoes_inducao_por_animal: dict[tuple[int, str], list[ProtocoloInducaoAplicacao]] = {}
+    for a in session.exec(_da_fazenda(select(ProtocoloInducaoAplicacao), ProtocoloInducaoAplicacao)).all():
+        lanc_inducao = lancamentos_inducao_por_id.get(a.lancamento_id)
+        if not lanc_inducao or not lanc_inducao.ativo or lanc_inducao.encerrado_em:
+            continue  # cancelado ou encerrado manualmente antes do fim — não pergunta
+        aplicacoes_inducao_por_animal.setdefault((a.lancamento_id, a.numero_matriz), []).append(a)
+    for (lancamento_id, numero_matriz), aps_animal in aplicacoes_inducao_por_animal.items():
+        chave = f"confirmar_lactacao_inducao_{lancamento_id}_{numero_matriz}"
+        if chave in realizados:
+            continue
+        concluida, data_sugerida = inducao_concluida(aps_animal)
+        if not concluida:
+            continue  # ainda falta etapa dessa matriz — não é pendência ainda
+        if regras_lactacao.lactacao_aberta(
+            session, numero_matriz=numero_matriz, data=data, fazenda_id=fazenda_id,
+        ) is not None:
+            continue  # já em lactação (ex.: um parto lançado depois) — nada a perguntar
+        lanc_inducao = lancamentos_inducao_por_id[lancamento_id]
+        eventos_confirmar_lactacao_inducao.append({
+            "id": chave, "data": (data_sugerida or data).isoformat(), "categoria": "Produção",
+            "descricao": f"Confirmar início de lactação — indução concluída (matriz {numero_matriz})",
+            "numero_animal": numero_matriz,
+            "observacao": f"Protocolo: {lanc_inducao.nome_protocolo}",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "confirmar_lactacao_inducao",
+            "lancamento_id": lancamento_id, "numero_matriz": numero_matriz,
+            "data_sugerida": data_sugerida.isoformat() if data_sugerida else None,
+        })
+
     # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com
     # link para abrir a dieta. A chave inclui a data de referência → o alerta
     # de véspera e o do dia são eventos distintos (marcar um não some o outro).
@@ -1518,7 +1566,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_alerta_sobra + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_confirmar_lactacao_inducao + eventos_nova_dieta + eventos_alerta_sobra + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
