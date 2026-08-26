@@ -36,6 +36,7 @@ from fazenda.rules.equivalente_maduro import (
 )
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules import lactacao as regras_lactacao
+from fazenda.rules.lactacao import inducao_concluida
 from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data, ordem_parto_pelo_atalho_atual
 from fazenda.rules.producao_305 import PontoControle, Producao305, producao_305_dias
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
@@ -1867,6 +1868,74 @@ def listar_inducao_lactacao_ativos(
             "animais": animais_status,
         })
     return ativos
+
+
+class ConfirmarInducaoLactacaoIn(BaseModel):
+    entrou_em_lactacao: bool
+    data_inicio: date | None = None  # override da data sugerida (última etapa) — ver inducao_concluida
+
+
+@router.post("/inducao-lactacao/{lancamento_id}/{numero_matriz}/confirmar")
+def confirmar_inducao_lactacao(
+    lancamento_id: int, numero_matriz: str, dados: ConfirmarInducaoLactacaoIn,
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Resposta ao card "Confirmar início de lactação" da Agenda (ver bloco
+    `eventos_confirmar_lactacao_inducao` em agenda.py) — a matriz terminou
+    todas as etapas de um protocolo de indução de lactação em lote
+    (`ProtocoloInducaoLancamento`/`ProtocoloInducaoAplicacao`) sem que isso
+    tivesse aberto a `Lactacao` dela (era o gap: o modelo e
+    `abrir_lactacao(origem="inducao")` já existiam prontos, mas nenhum call
+    site os usava — ver `fazenda.rules.lactacao.ORIGEM_INDUCAO`).
+
+    "Não" não grava nada aqui de propósito — não existe (nem foi criado) um
+    campo próprio de resposta por animal, ao contrário de
+    `ProtocoloSanitarioLancamento.curada`: o mesmo mecanismo genérico
+    `EventoRealizado` que já tira ~15 outros tipos de pendência da Agenda
+    (ex.: "descartar pendência" sanitária, sem resposta persistida nenhuma)
+    é suficiente para o card sumir depois de respondido — o frontend chama
+    este endpoint e, em seguida, sempre `POST /agenda/realizados` (mesmo
+    padrão de `confirmarCura`/`descartarPendencia`, reversível de graça pelo
+    "Desfazer" genérico de qualquer pendência)."""
+    lancamento = session.get(ProtocoloInducaoLancamento, lancamento_id)
+    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento de protocolo de indução não encontrado")
+
+    if not dados.entrou_em_lactacao:
+        return {"entrou_em_lactacao": False, "lactacao_id": None}
+
+    query_aplicacoes = (
+        select(ProtocoloInducaoAplicacao)
+        .where(ProtocoloInducaoAplicacao.lancamento_id == lancamento_id)
+        .where(ProtocoloInducaoAplicacao.numero_matriz == numero_matriz)
+    )
+    aplicacoes = session.exec(query_aplicacoes).all()
+    if not aplicacoes:
+        raise HTTPException(
+            status_code=404,
+            detail="Nenhuma etapa de indução encontrada para esta matriz neste lançamento",
+        )
+
+    _, data_sugerida = inducao_concluida(aplicacoes)
+    data_inicio = dados.data_inicio or data_sugerida
+    if data_inicio is None:
+        raise HTTPException(status_code=400, detail="Informe a data de início da lactação")
+
+    # Mesma dupla de chamadas do endpoint de parto (reproducao.py::
+    # registrar_parto) e na mesma ordem: abre a lactação e só depois
+    # ressincroniza o campo congelado `Animal.del_dias` (que precisa da
+    # lactação já aberta para calcular o DEL ao vivo corretamente).
+    lactacao = regras_lactacao.abrir_lactacao(
+        session, numero_matriz=numero_matriz, data_inicio=data_inicio,
+        origem=regras_lactacao.ORIGEM_INDUCAO, fazenda_id=fazenda_id,
+        usuario_id=_usuario_id_seguro(user),
+    )
+    regras_lactacao.sincronizar_del_do_animal(
+        session, numero_matriz=numero_matriz, fazenda_id=fazenda_id,
+    )
+    session.commit()
+    return {"entrou_em_lactacao": True, "lactacao_id": lactacao.id}
 
 
 # ---------------------------------------------------------------------------

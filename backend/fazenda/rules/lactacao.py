@@ -33,8 +33,12 @@ um inteiro com 0 como sentinela.
 ## Quem abre e quem fecha
 
 Abre: `POST /reproducao/encerramento-gestacao` (parto, aborto ou natimorto,
-com a data REAL do evento — retroativa quando for o caso) e o backfill dos
-partos que já existiam no banco. Fecha: `POST /producao/secagem`.
+com a data REAL do evento — retroativa quando for o caso), o backfill dos
+partos que já existiam no banco, e `POST /producao/inducao-lactacao/
+{lancamento_id}/{numero_matriz}/confirmar` (resposta ao card "Confirmar
+início de lactação" da Agenda, quando um protocolo de indução de lactação em
+lote termina todas as etapas de uma matriz — ver `inducao_concluida` abaixo e
+`ORIGEM_INDUCAO`). Fecha: `POST /producao/secagem`.
 
 Nada aqui dá commit — as funções recebem a `Session` do chamador e fazem
 parte da transação dele (o endpoint de encerramento de gestação grava
@@ -67,6 +71,31 @@ def _escopo(query, modelo, fazenda_id: int | None):
     if fazenda_id is not None:
         query = query.where(modelo.fazenda_id == fazenda_id)
     return query
+
+
+# ---------------------------------------------------------------------------
+# Indução de lactação — apoio ao card "Confirmar início de lactação" da Agenda
+# ---------------------------------------------------------------------------
+def inducao_concluida(aplicacoes: list) -> tuple[bool, date | None]:
+    """Recebe as `ProtocoloInducaoAplicacao` de UMA MATRIZ dentro de UM
+    `ProtocoloInducaoLancamento` e devolve `(concluida, data_sugerida)`.
+
+    Diferente de `fazenda.rules.cura_protocolo.protocolo_terminado` — que
+    olha só as aplicações do ÚLTIMO DIA porque lá o lançamento é de UM
+    animal só — aqui a lista já chega filtrada por animal (o lançamento de
+    indução é em LOTE, várias matrizes por `ProtocoloInducaoLancamento`, ver
+    `ProtocoloInducaoAplicacao`). "Concluída" é então TODAS as etapas DESSE
+    animal estarem `realizada=True`, não só as do último dia dele.
+
+    `data_sugerida` é a data real da última etapa (`data_realizacao`, quando
+    já lançada) ou a `data_prevista` dela quando não houver — o ponto de
+    partida editável da lactação mostrado no card da Agenda (ver
+    `fazenda.api.routers.agenda` e `POST /producao/inducao-lactacao/
+    {lancamento_id}/{numero_matriz}/confirmar`)."""
+    if not aplicacoes or not all(a.realizada for a in aplicacoes):
+        return False, None
+    ultima = max(aplicacoes, key=lambda a: a.dia)
+    return True, (ultima.data_realizacao or ultima.data_prevista)
 
 
 # ---------------------------------------------------------------------------
