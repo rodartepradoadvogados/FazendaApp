@@ -47,16 +47,61 @@ ALIMENTOS_PADRAO = [
 
 
 def _dietas_e_animais(session: Session, fazenda_id: int | None) -> tuple[list[dict], list[dict]]:
-    query_dieta = select(Dieta)
+    """Funde as duas fontes de plano de dieta por lote — achado ao investigar
+    por que uma dieta lançada em "Lançar nova dieta" não aparecia em Plano
+    por Lote / Necessidade mensal / baixa automática: essas telas sempre
+    leram só `Dieta` (linha congelada do DIETA.csv importado uma vez),
+    nunca `DietaLancamento`/`DietaItemProgramado` (a tela de lançamento
+    "de verdade", com histórico e reconstrução por lote).
+
+    Por lote, a fonte é EXCLUSIVA, nunca somada: um lote com dieta ATIVA
+    lançada na tela nova usa só ela (senão o plano novo somaria com o
+    import antigo e dobraria o consumo/baixa); um lote sem lançamento
+    nenhum na tela nova continua lendo só `Dieta`, como sempre — zero
+    mudança de comportamento pra quem nunca usou "Lançar nova dieta"."""
     query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
     if fazenda_id is not None:
-        query_dieta = query_dieta.where(Dieta.fazenda_id == fazenda_id)
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
-    dietas = [d.model_dump() for d in session.exec(query_dieta).all()]
     animais = [
         a.model_dump() for a in session.exec(query_animal).all()
         if not a.eh_semen and a.sexo != "M"
     ]
+
+    query_ativas = select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)  # noqa: E711
+    if fazenda_id is not None:
+        query_ativas = query_ativas.where(DietaLancamento.fazenda_id == fazenda_id)
+    ativas = session.exec(query_ativas).all()
+    lotes_com_lancamento = {d.lote for d in ativas}
+
+    dietas: list[dict] = []
+    n_animais_por_lote: dict[int, int] = {}
+    for dieta in ativas:
+        if dieta.lote not in n_animais_por_lote:
+            n_animais_por_lote[dieta.lote] = len(_animais_do_lote(session, dieta.lote, fazenda_id))
+        n = n_animais_por_lote[dieta.lote]
+        query_itens = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta.id)
+        if fazenda_id is not None:
+            query_itens = query_itens.where(DietaItemProgramado.fazenda_id == fazenda_id)
+        for it in session.exec(query_itens).all():
+            qtd_fisica = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)
+            base_efetiva = _base_efetiva(it.base_quantidade, dieta.base_quantidade)
+            _, por_cabeca = _totais_item(qtd_fisica, base_efetiva, n)
+            # Sem `categoria` (None) de propósito: `_remapear_lote_pela_categoria`
+            # só remapeia lote congelado de import antigo — `dieta.lote` aqui já
+            # é o lote atual escolhido na tela, não precisa de remapeamento.
+            dietas.append({
+                "lote": dieta.lote, "categoria": None, "ingrediente": it.alimento,
+                "quantidade": por_cabeca, "unidade": it.unidade,
+            })
+
+    query_dieta = select(Dieta)
+    if fazenda_id is not None:
+        query_dieta = query_dieta.where(Dieta.fazenda_id == fazenda_id)
+    for d in session.exec(query_dieta).all():
+        if d.lote in lotes_com_lancamento:
+            continue
+        dietas.append(d.model_dump())
+
     return dietas, animais
 
 

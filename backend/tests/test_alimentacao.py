@@ -741,6 +741,80 @@ class TestDietaContextoApresentacao:
         assert len(futuro) == 0
 
 
+class TestDietaLancamentoApareceNoPlanoPorLote:
+    """Bug real reportado pelo dono: uma dieta lançada em "Lançar nova dieta"
+    (`DietaLancamento`/`DietaItemProgramado`) nunca aparecia em Plano por
+    Lote / Necessidade mensal / baixa automática — essas telas só liam
+    `Dieta` (linha congelada do DIETA.csv importado uma vez, nunca escrita
+    pela tela de lançamento). `_dietas_e_animais` agora funde as duas fontes,
+    por lote, com a dieta lançada tendo prioridade exclusiva sobre o import
+    legado do mesmo lote (nunca soma as duas)."""
+
+    def test_dieta_lancada_aparece_no_get_alimentacao(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.commit()
+        c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-01",
+            "itens": [{"alimento": "Caroço de algodão", "quantidade": 5.0, "unidade": "kg"}],
+        })
+
+        r = c.get("/alimentacao/")
+        assert r.status_code == 200
+        dados = r.json()
+        total = {x["ingrediente"]: x["consumo_dia"] for x in dados["consumo_total"]}
+        assert total["Caroço de algodão"] == 5.0  # base "total" (padrão): 5kg é o total do lote/dia, não por cabeça
+        lote1 = next(l for l in dados["por_lote"] if l["lote"] == 1)
+        assert {i["ingrediente"] for i in lote1["itens"]} == {"Caroço de algodão"}
+
+    def test_dieta_lancada_por_animal_calcula_por_cabeca_certo(self, client):
+        """Regressão da mesma classe do bug de `apresentacao_dieta`/
+        `contexto_dieta`/`dieta_do_lote_consumo`: aqui na fusão com o legado
+        também não pode tratar `quantidade` como total do lote quando a
+        dieta foi lançada "por animal"."""
+        c, engine = client
+        with Session(engine) as s:
+            for n in ("1", "2", "3"):
+                s.add(Animal(numero=n, categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.commit()
+        c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-01", "base_quantidade": "animal",
+            "itens": [{"alimento": "Concentrado", "quantidade": 2.0, "unidade": "kg"}],
+        })
+
+        total = {x["ingrediente"]: x["consumo_dia"] for x in c.get("/alimentacao/").json()["consumo_total"]}
+        assert total["Concentrado"] == 6.0  # 2kg/cabeça * 3 animais — não 2/3 nem 2*3*3
+
+    def test_dieta_lancada_substitui_o_import_legado_do_mesmo_lote_sem_somar(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            # Import legado do MESMO lote 1 — não pode aparecer mais depois
+            # que uma dieta é lançada pra esse lote (senão dobra o consumo).
+            s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Silagem de milho", quantidade=20.0, unidade="kg"))
+            s.commit()
+        c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-01",
+            "itens": [{"alimento": "Caroço de algodão", "quantidade": 5.0, "unidade": "kg"}],
+        })
+
+        total = {x["ingrediente"]: x["consumo_dia"] for x in c.get("/alimentacao/").json()["consumo_total"]}
+        assert "Silagem de milho" not in total
+        assert total["Caroço de algodão"] == 5.0
+
+    def test_lote_sem_dieta_lancada_continua_lendo_o_import_legado(self, client):
+        """Zero mudança de comportamento pra quem nunca usou "Lançar nova
+        dieta" — lote 2 aqui não tem nenhum DietaLancamento."""
+        c, engine = client
+        _seed(engine)  # semeia lote 1 com Dieta legada (Silagem de milho)
+
+        total = {x["ingrediente"]: x["consumo_dia"] for x in c.get("/alimentacao/").json()["consumo_total"]}
+        assert total["Silagem de milho"] == 40.0
+
+
 class TestCategoriasAlimento:
     def test_lista_categorias_semeia_padrao(self, client):
         c, engine = client
