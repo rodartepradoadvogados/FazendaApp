@@ -4,11 +4,13 @@
 // dieta), lança os produtos com cálculo automático (por cabeça, total/dia,
 // total/trato e kg no vagão), datas de início e provável fim, e salva. Se já
 // houver dieta ativa no lote, pergunta se deseja encerrá-la na data de início.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { MobVoltar, MobCampo, MobCard, MobAviso } from "@/components/mobile/ui";
-import { fetchLotes, fetchAlimentosPadrao, fetchContextoDieta, type ContextoDieta } from "@/lib/api";
+import { fetchLotes, fetchEstoque, fetchContextoDieta, type ContextoDieta } from "@/lib/api";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
+import { casaBusca } from "@/lib/busca";
+import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 
 const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
@@ -29,7 +31,7 @@ function fmtData(iso?: string | null): string {
 
 export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
   const [lotes, setLotes] = useState<LoteRow[]>([]);
-  const [alimentos, setAlimentos] = useState<string[]>([]);
+  const [estoqueItens, setEstoqueItens] = useState<EstoqueItemPicker[]>([]);
   const [loteSel, setLoteSel] = useState("");
   const [ctx, setCtx] = useState<ContextoDieta | null>(null);
   const [dataInicio, setDataInicio] = useState(hoje());
@@ -37,16 +39,33 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
   const [itens, setItens] = useState<Item[]>([{ alimento: "", quantidade: "", unidade: "kg" }]);
   const [salvando, setSalvando] = useState(false);
   const [aviso, setAviso] = useState<{ tipo: "ok" | "offline" | "erro"; msg: string } | null>(null);
+  // Por padrão só oferece produto de estoque com saldo positivo — marcar
+  // liga a exceção (mesmo critério do site, Configurações > Cadastro >
+  // Alimentação > Nova dieta).
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
 
-  // Listas do formulário (lotes, alimentos) e contexto do lote: cache local —
+  // Listas do formulário (lotes, estoque) e contexto do lote: cache local —
   // sem internet, o funcionário ainda enxerga a última cópia vista e pode
   // lançar a dieta (entra na fila de envio).
   useEffect(() => {
     fetchComCache<LoteRow[]>("menu_lancar_dieta_lotes", () => fetchLotes() as Promise<LoteRow[]>)
       .then((r) => setLotes((r.dados || []).filter((l) => /^\d\d/.test(l.codigo))));
-    fetchComCache<string[]>("menu_lancar_dieta_alimentos", () => fetchAlimentosPadrao() as Promise<string[]>)
-      .then((r) => setAlimentos(r.dados || []));
+    fetchComCache<EstoqueItemPicker[]>("menu_lancar_dieta_estoque", () => fetchEstoque().then((d) => d.itens || []))
+      .then((r) => setEstoqueItens(r.dados || []));
   }, []);
+
+  // Produtos elegíveis para dieta: finalidade de alimentação/nutrição (não
+  // só o valor literal "Ração/Alimento" — cobre variações como "Nutrição"
+  // cadastradas pela própria fazenda) e, por padrão, saldo positivo. Mesmo
+  // critério de itensDietaPicker no site (CadastroAlimentacao.tsx).
+  const itensDietaPicker = useMemo(() => {
+    const termosNutricao = ["aliment", "nutri", "racao"];
+    return estoqueItens.filter((it) => {
+      const finalidadeOk = it.finalidade == null || termosNutricao.some((t) => casaBusca(it.finalidade, t));
+      if (!finalidadeOk) return false;
+      return incluirSemEstoque || Number(it.quantidade ?? 0) > 0;
+    });
+  }, [estoqueItens, incluirSemEstoque]);
 
   useEffect(() => {
     setCtx(null);
@@ -128,14 +147,18 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
         </div>
       </div>
 
-      <datalist id="alimentos-mob-dieta">{alimentos.map((a) => <option key={a} value={a} />)}</datalist>
+      <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.7rem" }}>
+        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+        Incluir produtos sem estoque na lista
+      </label>
 
       {itens.map((it, idx) => {
         const q = Number(it.quantidade) || 0;
         return (
           <MobCard key={idx} style={{ marginBottom: "0.6rem", position: "relative" }}>
             <MobCampo label={`Produto ${idx + 1}`}>
-              <input className="mob-input" list="alimentos-mob-dieta" value={it.alimento} onChange={(e) => patchItem(idx, { alimento: e.target.value })} placeholder="ex.: Silagem de milho" />
+              <EstoquePicker itens={itensDietaPicker} value={it.alimento} onChange={(v) => patchItem(idx, { alimento: v })}
+                todasFinalidades placeholder="Selecionar silagem/alimento…" />
             </MobCampo>
             <div style={{ display: "flex", gap: "0.6rem" }}>
               <div style={{ flex: 1 }}>
