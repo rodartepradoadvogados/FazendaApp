@@ -615,7 +615,18 @@ def calcular_agenda(
         s for s in session.exec(_da_fazenda(select(Sanidade), Sanidade)).all()
         if s.atividade == "BST" or MARCADORES_BST.search(s.produto or "")
     ]
-    datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
+    # Âncora da PRÓXIMA aplicação de rotina do rebanho: usa só as aplicações
+    # feitas pela rotina de BST (atividade == "BST"), nunca as doses de um
+    # protocolo de indução de lactação (_marcar_protocolo_inducao_realizado,
+    # que grava protocolo_inducao_lancamento_id em vez de atividade) nem uma
+    # aplicação avulsa (criar_aplicacao_sanidade, em sanidade.py) — mesmo que
+    # o produto seja BST. Essas doses são de um animal específico, fora do
+    # ciclo do rebanho inteiro, e não têm o condão de antecipar/atrasar a
+    # próxima aplicação de rotina. `sanidades_bst` (acima, mais abrangente)
+    # continua servindo só para saber se um animal específico já recebeu
+    # BST alguma vez (bst_nunca_aplicados/ja_aplicado_antes).
+    sanidades_bst_rotina = [s for s in sanidades_bst if s.atividade == "BST"]
+    datas_bst = [s.data_aplicacao for s in sanidades_bst_rotina if s.data_aplicacao]
     intervalo_bst_dias = intervalo_bst()
 
     # Indução de cio (PGF2α/Cloprostenol) — só a janela que o motor de fato
