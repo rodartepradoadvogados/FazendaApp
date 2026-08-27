@@ -155,6 +155,71 @@ class TestApareceQuandoConcluidoSemLactacao:
         assert _eventos_confirmar(_agenda(c)) == []
 
 
+class TestLactacaoFantasmaAnteriorAInducao:
+    """O caso real que motivou este ajuste (matriz 422, relatado em produção):
+    uma secagem que nunca foi lançada no sistema deixa a `Lactacao` anterior
+    aberta para sempre. Sem este ajuste, o card via `lactacao_aberta(...) is
+    not None` e desistia calado — a matriz ficava com DEL vivo crescendo
+    (497 dias, no caso real) e sem NENHUM jeito de abrir a lactação da
+    indução, porque o próprio código achava que ela "já estava lactando".
+
+    Diferença do critério: a lactação aberta PREVIA ao D0 da indução é tratada
+    como o furo, não como "já resolvido" — o card aparece do mesmo jeito, com
+    `aviso`, e "Sim" fecha a lactação antiga (comportamento já embutido em
+    `abrir_lactacao`) na data escolhida para a nova."""
+
+    def test_lactacao_aberta_antes_do_d0_gera_pendencia_com_aviso(self, client):
+        c, engine = client
+        protocolo_id = _protocolo_id(c)
+        data_d0 = (date.today() - timedelta(days=10)).isoformat()
+        lancamento_id = _lancar(c, protocolo_id, ["422"], data_d0)
+        _concluir_etapas(engine, lancamento_id, ["422"])
+
+        data_lactacao_antiga = date.today() - timedelta(days=497)
+        with Session(engine) as s:
+            s.add(Lactacao(numero_matriz="422", data_inicio=data_lactacao_antiga, origem="parto"))
+            s.commit()
+
+        eventos = _eventos_confirmar(_agenda(c))
+        assert len(eventos) == 1, eventos
+        assert eventos[0]["aviso"] is not None
+        assert data_lactacao_antiga.isoformat() in eventos[0]["aviso"]
+
+    def test_confirmar_sim_fecha_lactacao_antiga_na_data_da_nova(self, client):
+        c, engine = client
+        protocolo_id = _protocolo_id(c)
+        data_d0 = (date.today() - timedelta(days=10)).isoformat()
+        lancamento_id = _lancar(c, protocolo_id, ["422"], data_d0)
+        _concluir_etapas(engine, lancamento_id, ["422"])
+
+        data_lactacao_antiga = date.today() - timedelta(days=497)
+        with Session(engine) as s:
+            antiga = Lactacao(numero_matriz="422", data_inicio=data_lactacao_antiga, origem="parto")
+            s.add(antiga)
+            s.commit()
+            antiga_id = antiga.id
+
+        data_nova = (date.today() - timedelta(days=1)).isoformat()
+        r = c.post(
+            f"/producao/inducao-lactacao/{lancamento_id}/422/confirmar",
+            json={"entrou_em_lactacao": True, "data_inicio": data_nova},
+        )
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            antiga_depois = s.get(Lactacao, antiga_id)
+            assert antiga_depois.data_fim.isoformat() == data_nova
+
+            nova = s.exec(
+                select(Lactacao).where(Lactacao.numero_matriz == "422", Lactacao.id != antiga_id)
+            ).first()
+            assert nova is not None
+            assert nova.origem == "inducao"
+            assert nova.data_fim is None
+
+        assert _eventos_confirmar(_agenda(c)) == []
+
+
 class TestConfirmarEndpoint:
     def test_confirmar_sim_abre_lactacao_origem_inducao_e_sincroniza_del(self, client):
         c, engine = client

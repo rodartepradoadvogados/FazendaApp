@@ -1134,11 +1134,28 @@ def calcular_agenda(
         concluida, data_sugerida = inducao_concluida(aps_animal)
         if not concluida:
             continue  # ainda falta etapa dessa matriz — não é pendência ainda
-        if regras_lactacao.lactacao_aberta(
-            session, numero_matriz=numero_matriz, data=data, fazenda_id=fazenda_id,
-        ) is not None:
-            continue  # já em lactação (ex.: um parto lançado depois) — nada a perguntar
         lanc_inducao = lancamentos_inducao_por_id[lancamento_id]
+        lactacao_atual = regras_lactacao.lactacao_aberta(
+            session, numero_matriz=numero_matriz, data=data, fazenda_id=fazenda_id,
+        )
+        # Só é "já resolvido, nada a perguntar" quando a lactação aberta COMEÇOU
+        # durante ou depois desta indução (ex.: a matriz emprenhou e pariu de
+        # verdade no meio do protocolo). Uma lactação aberta desde ANTES do D0
+        # é o bug real que motivou este card (matriz 422): uma secagem que
+        # nunca foi lançada no sistema deixa a Lactacao anterior aberta para
+        # sempre, com DEL vivo cada vez maior, mesmo com a matriz já seca de
+        # verdade. Silenciar o card nesse caso escondia o problema em vez de
+        # sinalizá-lo — por isso ele aparece do mesmo jeito, com aviso.
+        if lactacao_atual is not None and lactacao_atual.data_inicio >= lanc_inducao.data_d0:
+            continue  # já em lactação por evento real ocorrido nesta janela — nada a perguntar
+        aviso = None
+        if lactacao_atual is not None:
+            aviso = (
+                f"Esta matriz já tem uma lactação aberta desde {lactacao_atual.data_inicio.isoformat()} "
+                "(antes desta indução) — provável secagem nunca lançada no sistema. Confirmar "
+                "\"Sim\" fecha essa lactação antiga na data escolhida abaixo; se a secagem real "
+                "aconteceu antes, lance-a primeiro em Produção > Secagem para manter o histórico correto."
+            )
         eventos_confirmar_lactacao_inducao.append({
             "id": chave, "data": (data_sugerida or data).isoformat(), "categoria": "Produção",
             "descricao": f"Confirmar início de lactação — indução concluída (matriz {numero_matriz})",
@@ -1147,6 +1164,7 @@ def calcular_agenda(
             "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "confirmar_lactacao_inducao",
             "lancamento_id": lancamento_id, "numero_matriz": numero_matriz,
             "data_sugerida": data_sugerida.isoformat() if data_sugerida else None,
+            "aviso": aviso,
         })
 
     # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com

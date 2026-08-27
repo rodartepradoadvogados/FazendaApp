@@ -1238,17 +1238,22 @@ export default function AgendaPage() {
                                   <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, false)}>Não</button>
                                 </span>
                               ) : (e as any).tipo === "confirmar_lactacao_inducao" ? (
-                                <span className="flex items-center gap-2 flex-wrap" style={{ fontSize: "0.72rem" }} onClick={(ev) => ev.stopPropagation()}>
-                                  Entrou em lactação?
-                                  <input
-                                    type="date"
-                                    style={{ ...inputInline, width: "auto" }}
-                                    value={lactacaoInducaoData[e.id] ?? (e as any).data_sugerida ?? ""}
-                                    onChange={(ev) => setLactacaoInducaoData((p) => ({ ...p, [e.id]: ev.target.value }))}
-                                  />
-                                  <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, true)}>Sim</button>
-                                  <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, false)}>Não</button>
-                                </span>
+                                <div className="flex flex-col gap-1" style={{ alignItems: "flex-start", maxWidth: "22rem" }} onClick={(ev) => ev.stopPropagation()}>
+                                  {(e as any).aviso ? (
+                                    <span style={{ fontSize: "0.68rem", color: "var(--red)" }}>{(e as any).aviso}</span>
+                                  ) : null}
+                                  <span className="flex items-center gap-2 flex-wrap" style={{ fontSize: "0.72rem" }}>
+                                    Entrou em lactação?
+                                    <input
+                                      type="date"
+                                      style={{ ...inputInline, width: "auto" }}
+                                      value={lactacaoInducaoData[e.id] ?? (e as any).data_sugerida ?? ""}
+                                      onChange={(ev) => setLactacaoInducaoData((p) => ({ ...p, [e.id]: ev.target.value }))}
+                                    />
+                                    <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, true)}>Sim</button>
+                                    <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarLactacaoInducaoAgenda(e, false)}>Não</button>
+                                  </span>
+                                </div>
                               ) : ehBstAplicacao ? (
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirListasBst()}>
                                   <Layers size={12} /> Ver listas
