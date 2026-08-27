@@ -38,7 +38,8 @@ from fazenda.rules.patrimonio import (
     METODOS_DEPRECIACAO, METODOS_VALIDOS, MOTIVOS_BAIXA, MOTIVOS_BAIXA_COM_VENDA,
     MOTIVOS_BAIXA_VALIDOS, TIPOS_PATRIMONIO, UNIDADES_PATRIMONIO,
     calcular_depreciacao, eh_tipo_nao_depreciavel, proxima_atualizacao_valor_mercado,
-    metodo_normalizado, resultado_baixa, somar_meses, status_manutencao, valor_base_aquisicao,
+    metodo_normalizado, resolver_metodo, resultado_baixa, somar_meses, status_manutencao,
+    valor_base_aquisicao,
     vida_util_em_anos,
 )
 from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
@@ -2129,11 +2130,17 @@ def _validar_metodo_patrimonio(dados: "PatrimonioIn") -> None:
     o campo vazio continua válido — cai em LINEAR no cálculo, que é o
     comportamento histórico; o que se rejeita é texto NOVO fora da lista,
     vindo de um formulário adulterado ou de integração."""
-    if dados.metodo_depreciacao and dados.metodo_depreciacao not in METODOS_VALIDOS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Método de depreciação inválido. Use um destes: {', '.join(METODOS_VALIDOS)}.",
-        )
+    if dados.metodo_depreciacao:
+        canonico = resolver_metodo(dados.metodo_depreciacao)
+        if canonico is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Método de depreciação inválido. Use um destes: {', '.join(METODOS_VALIDOS)}.",
+            )
+        # Grava sempre a chave canônica, mesmo quando veio o rótulo por
+        # extenso do legado ("Linear") — o banco fica com um valor só por
+        # método, em vez de acumular grafias.
+        dados.metodo_depreciacao = canonico
     if dados.metodo_depreciacao == "UNIDADES_PRODUZIDAS" and not dados.unidades_vida_util_total:
         raise HTTPException(
             status_code=400,

@@ -148,29 +148,47 @@ METODOS_VALIDOS: tuple[str, ...] = tuple(chave for chave, _r, _d in METODOS_DEPR
 FATOR_SALDO_DECRESCENTE_PADRAO = 2.0
 
 
-def metodo_normalizado(metodo: str | None) -> str:
-    """Método do item, sempre um dos METODOS_VALIDOS. Vazio/desconhecido cai
-    em LINEAR — é o comportamento histórico (o campo era texto livre e nunca
-    foi lido pelo cálculo; todo item existente deprecia linear hoje), então
-    o default preserva o número que o usuário já vê na tela.
+# Grafias por extenso que o CSV legado (e integrações antigas) trazem no
+# lugar da chave. Reconhecer é diferente de adivinhar: só casa com texto que
+# corresponde de fato a um método conhecido.
+_APELIDOS_METODO: dict[str, str] = {
+    "linear": LINEAR, "linha reta": LINEAR, "quotas constantes": LINEAR, "constante": LINEAR,
+    "saldo decrescente": SALDO_DECRESCENTE, "acelerada": SALDO_DECRESCENTE,
+    "decrescente": SALDO_DECRESCENTE, "saldo decrescente em dobro": SALDO_DECRESCENTE,
+    "soma dos digitos": SOMA_DIGITOS, "soma de digitos": SOMA_DIGITOS, "digitos": SOMA_DIGITOS,
+    "unidades produzidas": UNIDADES_PRODUZIDAS, "unidades": UNIDADES_PRODUZIDAS,
+    "por uso": UNIDADES_PRODUZIDAS, "horas": UNIDADES_PRODUZIDAS,
+}
 
-    Aceita também o rótulo por extenso que o CSV legado possa trazer
-    ("Linear", "linha reta") — normalizando, não adivinhando: só casa com
-    grafia que corresponda de fato a um método conhecido."""
+
+def resolver_metodo(metodo: str | None) -> str | None:
+    """Chave canônica do método, ou None quando o texto não corresponde a
+    método nenhum. É a versão ESTRITA — quem VALIDA entrada usa esta.
+
+    Aceita a chave ("LINEAR"), a chave em qualquer caixa/acentuação e os
+    rótulos por extenso do legado ("Linear", "linha reta"). Rejeitar
+    "Linear" seria incoerente: o cálculo sempre soube lê-lo, então recusá-lo
+    na gravação faria o sistema entender um texto que se recusa a aceitar."""
     if not metodo:
-        return LINEAR
+        return None
     bruto = _normalizar(metodo)
-    if bruto in {_normalizar(chave) for chave in METODOS_VALIDOS}:
-        return next(c for c in METODOS_VALIDOS if _normalizar(c) == bruto)
-    apelidos = {
-        "linear": LINEAR, "linha reta": LINEAR, "quotas constantes": LINEAR, "constante": LINEAR,
-        "saldo decrescente": SALDO_DECRESCENTE, "acelerada": SALDO_DECRESCENTE,
-        "decrescente": SALDO_DECRESCENTE, "saldo decrescente em dobro": SALDO_DECRESCENTE,
-        "soma dos digitos": SOMA_DIGITOS, "soma de digitos": SOMA_DIGITOS, "digitos": SOMA_DIGITOS,
-        "unidades produzidas": UNIDADES_PRODUZIDAS, "unidades": UNIDADES_PRODUZIDAS,
-        "por uso": UNIDADES_PRODUZIDAS, "horas": UNIDADES_PRODUZIDAS,
-    }
-    return apelidos.get(bruto, LINEAR)
+    for chave in METODOS_VALIDOS:
+        if _normalizar(chave) == bruto:
+            return chave
+    return _APELIDOS_METODO.get(bruto)
+
+
+def metodo_normalizado(metodo: str | None) -> str:
+    """Método do item, sempre um dos METODOS_VALIDOS. É a versão TOLERANTE —
+    quem CALCULA usa esta.
+
+    Vazio/desconhecido cai em LINEAR: é o comportamento histórico (o campo
+    era texto livre e nunca foi lido pelo cálculo; todo item existente
+    deprecia linear hoje), então o default preserva o número que o usuário
+    já vê na tela. Dado que JÁ ESTÁ no banco nunca deve travar um relatório
+    — por isso aqui não há None; a recusa acontece na entrada, em
+    `resolver_metodo`."""
+    return resolver_metodo(metodo) or LINEAR
 
 
 # ---------------------------------------------------------------------------

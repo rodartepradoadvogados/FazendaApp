@@ -405,3 +405,38 @@ class TestColisaoVidaUtil:
         })
         depois = client.get("/financeiro/patrimonio").json()["itens"][0]
         assert (depois["vida_util_anos"], depois["vida_util_meses"]) == (10, 6)
+
+
+class TestMetodoLegado:
+    """Regressão: a validação da lista fechada rejeitava o rótulo por extenso
+    ("Linear") que o CSV do Ideagri e integrações antigas mandam — apesar de o
+    CÁLCULO sempre ter sabido lê-lo. Entender um texto e recusá-lo na gravação
+    é incoerente, e quebrava um cadastro que funcionava antes desta onda."""
+
+    def test_aceita_o_rotulo_por_extenso_do_legado(self, client):
+        r = client.post("/financeiro/patrimonio", json={
+            "nome": "Trator", "metodo_depreciacao": "Linear", "vida_util": "10 Anos",
+            "valor_residual": 5000, "valor_total": 150000,
+        })
+        assert r.status_code == 201, r.text
+
+    def test_grava_a_chave_canonica_e_nao_a_grafia_recebida(self, client):
+        """Senão o banco acumula "Linear", "linear", "linha reta" e "LINEAR"
+        para o mesmo método, e filtrar por método deixa de funcionar."""
+        item = client.post("/financeiro/patrimonio", json={
+            "nome": "Trator", "metodo_depreciacao": "linha reta", "valor_total": 1000,
+        }).json()
+        assert item["metodo_depreciacao"] == LINEAR
+
+    def test_continua_rejeitando_texto_que_nao_e_metodo(self, client):
+        r = client.post("/financeiro/patrimonio", json={"nome": "X", "metodo_depreciacao": "INVENTADO"})
+        assert r.status_code == 400
+
+    def test_resolver_e_estrito_onde_normalizado_e_tolerante(self):
+        """As duas funções existem de propósito: `resolver_metodo` recusa o
+        desconhecido (entrada); `metodo_normalizado` cai em LINEAR (leitura de
+        dado que já está no banco, que nunca deve travar um relatório)."""
+        from fazenda.rules.patrimonio import resolver_metodo
+        assert resolver_metodo("Linear") == LINEAR
+        assert resolver_metodo("INVENTADO") is None
+        assert metodo_normalizado("INVENTADO") == LINEAR
