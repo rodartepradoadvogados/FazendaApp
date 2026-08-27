@@ -1988,10 +1988,12 @@ def ajustar_proxima_aplicacao_bst(
     lido por agenda.py)."""
     from fazenda.rules.parametros import intervalo_bst
 
-    aplicacoes = [
-        s for s in session.exec(select(Sanidade)).all()
-        if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
-    ]
+    # Mesma âncora usada em GET /agenda/ (ver `sanidades_bst_rotina` em
+    # agenda.py): só a rotina de BST do rebanho (atividade == "BST") conta
+    # como "última aplicação registrada" — doses de indução de lactação ou
+    # avulsas não têm o condão de mudar o intervalo/próxima data da rotina,
+    # mesmo usando um produto BST.
+    aplicacoes = [s for s in session.exec(select(Sanidade)).all() if s.atividade == "BST"]
     datas_bst = [s.data_aplicacao for s in aplicacoes if s.data_aplicacao]
     intervalo_atual = intervalo_bst()
     hoje = date.today()
