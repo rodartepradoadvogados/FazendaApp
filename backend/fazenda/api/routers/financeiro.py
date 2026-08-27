@@ -38,6 +38,8 @@ from fazenda.rules.patrimonio import (
     calcular_depreciacao, eh_tipo_nao_depreciavel, proxima_atualizacao_valor_mercado,
     somar_meses, status_manutencao, valor_base_aquisicao,
 )
+from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
+from fazenda.rules.dre import LINHAS_DRE_VALIDAS, montar_cascata_dre
 from fazenda.rules.parametros import meta_rmca, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.config import settings
@@ -446,21 +448,17 @@ def _proximo_numero_lancamento(session: Session, ano: int) -> str:
     return f"{prefixo}{maior + 1:05d}"
 
 
-@router.get("/dre")
-def dre(
-    data_inicio: date = Query(..., description="Data inicial (competência)"),
-    data_fim: date = Query(..., description="Data final (competência)"),
-    centro_custo: Optional[str] = Query(None),
-    regime: str = Query("competencia", description="'competencia' ou 'caixa'"),
-    session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
-) -> dict:
-    """
-    Retorna DRE (Demonstrativo de Resultado) por regime de competência ou caixa.
-    """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    campo_data = "data_competencia" if regime == "competencia" else "data_pagamento"
-
+def _periodo_filtradas_dre(
+    session: Session, data_inicio: date, data_fim: date, centro_custo: Optional[str], regime: str,
+    fazenda_id: int | None,
+) -> tuple[list[ContaGerencial], dict[int, float]]:
+    """Contas do período (por competência ou caixa) já com o valor gerencial
+    de cada uma calculado — vale de funcionário/empreiteiro descontado
+    (ver rules/vale_item.py — vale nunca é despesa da fazenda, nos dois
+    regimes) e, quando há filtro de centro de custo, já rateado pelos itens
+    com override (ver rules/centro_custo.py). Base compartilhada por GET
+    /financeiro/dre e GET /financeiro/dre/conferencia — a MESMA lista/valores
+    que sustentam `receitas_total`/`despesas_total` sustentam a cascata."""
     query = select(ContaGerencial)
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
@@ -472,23 +470,153 @@ def dre(
         if data_ref and data_inicio <= data_ref <= data_fim:
             periodo.append(c)
 
-    # Vale de funcionário/empreiteiro lançado a partir de um item desta nota
-    # não é despesa da fazenda (é adiantamento a receber da pessoa) — vale
-    # nos DOIS regimes (competência e caixa), porque o DRE é resultado
-    # gerencial e vale nunca é despesa em regime nenhum (ver rules/vale_item.py).
     ajustes = ajuste_vale_por_conta(session, periodo, fazenda_id)
-    # Quando um item da nota tem centro de custo próprio (override, ver
-    # Financeiro > lançamento), o valor daquela conta/parcela é rateado entre
-    # os centros de custo dos itens em vez de cair inteiro no centro de custo
-    # da nota — ver valor_gerencial_por_centro_custo.
     valores = valor_gerencial_por_centro_custo(session, periodo, centro_custo, ajustes)
     filtradas = periodo if centro_custo is None else [c for c in periodo if valores.get(c.id, 0.0) != 0]
+    return filtradas, valores
+
+
+def _registros_dre_para_cascata(
+    session: Session, filtradas: list[ContaGerencial], valores: dict[int, float],
+    centro_custo: Optional[str], fazenda_id: int | None,
+) -> tuple[list[dict], list[dict]]:
+    """Achata `filtradas` em registros por CONTA GERENCIAL DO ITEM
+    (LancamentoItem), não pelo código resumido da nota
+    (`ContaGerencial.codigo_conta`) — é isso que resolve o buraco de uma nota
+    com 2+ itens virando "Sem classificação" (ver `criar_lancamento`:
+    `codigo_resumo = ... if len(itens) == 1 else None`), sem precisar migrar
+    nenhum dado histórico.
+
+    Cada parcela em `filtradas` já carrega em `valores[c.id]` o valor
+    gerencial final (vale descontado, fatia do centro de custo já aplicada
+    — ver `_periodo_filtradas_dre`); esse valor é redistribuído entre os
+    itens da nota (ligados por numero_lancamento, nunca por parcela — uma
+    nota parcelada tem um só conjunto de itens para todas as parcelas)
+    proporcionalmente ao peso (valor_total) de cada item, no mesmíssimo
+    espírito do rateio por centro de custo de
+    `valor_gerencial_por_centro_custo`. Item de vale nunca entra (mesma
+    regra de `eh_item_de_vale` — ver rules/vale_item.py).
+
+    Nota antiga sem NENHUM LancamentoItem (import de CSV, alguns fluxos
+    legados) — ou cujos itens não sobraram depois do filtro de centro de
+    custo/vale — cai no `codigo_conta` da nota inteira como fallback,
+    sinalizado no segundo valor de retorno (`fallback_notas`) para
+    transparência: a classificação por item não pôde ser aplicada ali."""
+    numeros = {c.numero_lancamento for c in filtradas if c.numero_lancamento}
+    itens_por_numero: dict[str, list[LancamentoItem]] = {}
+    if numeros:
+        query_itens = select(LancamentoItem).where(LancamentoItem.numero_lancamento.in_(numeros))
+        if fazenda_id is not None:
+            query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
+        for it in session.exec(query_itens).all():
+            if eh_item_de_vale(it):
+                continue
+            itens_por_numero.setdefault(it.numero_lancamento, []).append(it)
+
+    registros: list[dict] = []
+    fallback_notas: list[dict] = []
+
+    for c in filtradas:
+        valor_c = valores.get(c.id, 0.0)
+        if not valor_c:
+            continue
+        itens_da_nota = itens_por_numero.get(c.numero_lancamento) if c.numero_lancamento else None
+        if centro_custo is not None and itens_da_nota:
+            # Mesmo critério de "centro efetivo" de valor_gerencial_por_centro_custo:
+            # override do item, senão o da nota inteira.
+            itens_da_nota = [it for it in itens_da_nota if (it.centro_custo or c.centro_custo) == centro_custo]
+
+        if not itens_da_nota:
+            registros.append({
+                "codigo_conta": c.codigo_conta, "tipo": c.tipo, "valor": valor_c,
+                "descricao": c.descricao, "origem": "fallback_conta",
+            })
+            fallback_notas.append({
+                "numero_lancamento": c.numero_lancamento, "codigo_conta": c.codigo_conta, "valor": valor_c,
+            })
+            continue
+
+        total_itens = round(sum(it.valor_total or 0 for it in itens_da_nota), 2)
+        if total_itens <= 0:
+            continue
+        itens_ordenados = sorted(itens_da_nota, key=lambda it: it.id or 0)
+        acumulado = 0.0
+        for i, it in enumerate(itens_ordenados):
+            if i < len(itens_ordenados) - 1:
+                fatia = round(valor_c * (it.valor_total or 0) / total_itens, 2)
+            else:
+                fatia = round(valor_c - acumulado, 2)
+            acumulado = round(acumulado + fatia, 2)
+            if fatia == 0:
+                continue
+            registros.append({
+                "codigo_conta": it.codigo_conta_gerencial,
+                "tipo": it.tipo or c.tipo,
+                "valor": fatia,
+                "descricao": it.nome_conta_gerencial or it.produto,
+                "origem": "item",
+            })
+
+    return registros, fallback_notas
+
+
+def _mapa_linha_por_codigo(session: Session, fazenda_id: int | None) -> dict[str, str]:
+    """{codigo: linha_dre} só das contas já classificadas (linha_dre
+    preenchida) — a herança por prefixo é resolvida em
+    fazenda.rules.dre.resolver_linha_dre, não aqui."""
+    query = select(PlanoContaGerencial.codigo, PlanoContaGerencial.linha_dre).where(
+        PlanoContaGerencial.linha_dre.is_not(None)
+    )
+    if fazenda_id is not None:
+        query = query.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    return {codigo: linha for codigo, linha in session.exec(query).all()}
+
+
+def _depreciacao_periodo_fazenda(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+) -> dict:
+    """Depreciação/amortização/exaustão DO PERÍODO (não a acumulada) de todo
+    o patrimônio da fazenda — ver fazenda/rules/depreciacao_periodo.py.
+    ATENÇÃO: isto é só o patrimônio (bem tangível/intangível/recurso
+    natural) — principal de financiamento NUNCA passa por aqui, não é
+    despesa nenhuma (ver ADR em fazenda/rules/dre.py)."""
+    query = select(Patrimonio)
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    itens = [p.model_dump() for p in session.exec(query).all()]
+    return calcular_depreciacao_periodo(itens, data_inicio, data_fim)
+
+
+@router.get("/dre")
+def dre(
+    data_inicio: date = Query(..., description="Data inicial (competência)"),
+    data_fim: date = Query(..., description="Data final (competência)"),
+    centro_custo: Optional[str] = Query(None),
+    regime: str = Query("competencia", description="'competencia' ou 'caixa'"),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    DRE Gerencial em cascata (as 15 linhas clássicas — receita de vendas até
+    resultado líquido, ver fazenda/rules/dre.py) por regime de competência
+    ou caixa.
+
+    Mantém os campos legados `receitas_total`/`despesas_total`/`resultado`/
+    `por_conta` com o MESMO cálculo de antes (o Portal ainda os consome para
+    o e-mail de relatório — ver fazenda/api/routers/portal.py, não pode
+    quebrar); a cascata (`cascata`, `nao_classificado`, `fora_da_dre`,
+    `depreciacao_periodo`, `fallback_notas_sem_item`) é a novidade desta
+    onda — ver contrato completo na docstring do módulo fazenda/rules/dre.py.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
 
     receitas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "receita")
     despesas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "despesa")
     resultado = receitas - despesas
 
-    # Agrupa por código de conta
+    # Agrupa por código de conta (legado — mantido tal qual para não quebrar
+    # nenhum consumidor que ainda olhe este campo, ver docstring acima).
     por_conta: dict[str, dict] = {}
     for c in filtradas:
         codigo = c.codigo_conta or "Sem classificação"
@@ -500,6 +628,11 @@ def dre(
         else:
             por_conta[nivel1]["despesas"] += valores.get(c.id, 0.0)
 
+    registros, fallback_notas = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id)
+    mapa_linha = _mapa_linha_por_codigo(session, fazenda_id)
+    depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
+    cascata = montar_cascata_dre(registros, mapa_linha, depreciacao["total"])
+
     return {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
         "regime": regime,
@@ -508,6 +641,45 @@ def dre(
         "despesas_total": round(despesas, 2),
         "resultado": round(resultado, 2),
         "por_conta": por_conta,
+        "cascata": cascata["linhas"],
+        "nao_classificado": cascata["nao_classificado"],
+        "fora_da_dre": cascata["fora_da_dre"],
+        "depreciacao_periodo": {"total": depreciacao["total"], "inconsistencias": depreciacao["inconsistencias"]},
+        "fallback_notas_sem_item": fallback_notas,
+    }
+
+
+@router.get("/dre/conferencia")
+def dre_conferencia(
+    data_inicio: date = Query(..., description="Data inicial (competência)"),
+    data_fim: date = Query(..., description="Data final (competência)"),
+    centro_custo: Optional[str] = Query(None),
+    regime: str = Query("competencia", description="'competencia' ou 'caixa'"),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Tela de conferência da DRE Gerencial: quais contas gerenciais SEM
+    `linha_dre` (nem própria, nem herdada de um ancestral — ver
+    fazenda.rules.dre.resolver_linha_dre) tiveram movimento no período, com
+    o valor parado em cada uma. É o que falta o usuário classificar (PUT
+    /financeiro/plano-contas/{codigo}/linha-dre) para a cascata de GET
+    /financeiro/dre parar de jogar essas contas no balde `nao_classificado`.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
+    registros, _fallback_notas = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id)
+    mapa_linha = _mapa_linha_por_codigo(session, fazenda_id)
+    # Depreciação não é conta do plano — não participa da conferência de
+    # classificação, só entra na cascata em si (GET /financeiro/dre).
+    resultado = montar_cascata_dre(registros, mapa_linha)
+
+    return {
+        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "regime": regime,
+        "centro_custo": centro_custo,
+        "total": resultado["nao_classificado"]["total"],
+        "contas": resultado["nao_classificado"]["contas"],
     }
 
 
@@ -959,6 +1131,12 @@ def plano_contas(
                 "rmca_receita_leite": c.rmca_receita_leite, "rmca_custo_alimentacao": c.rmca_custo_alimentacao,
                 "natureza": c.natureza,
                 "pede_vinculo_sanitario_reprodutivo": c.pede_vinculo_sanitario_reprodutivo,
+                # Classificação PRÓPRIA desta conta na DRE em cascata (ver
+                # fazenda/rules/dre.py) — None aqui não quer dizer "fora da
+                # DRE", pode estar herdando de um ancestral (ver
+                # resolver_linha_dre); quem precisar do valor JÁ RESOLVIDO
+                # usa GET /financeiro/dre ou GET /financeiro/dre/conferencia.
+                "linha_dre": c.linha_dre,
             }
             for c in plano
         ],
@@ -1326,6 +1504,46 @@ def atualizar_conta_gerencial(
         raise HTTPException(status_code=404, detail="Conta gerencial não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(conta, campo, valor)
+    session.add(conta)
+    session.commit()
+    session.refresh(conta)
+    return conta.model_dump()
+
+
+class LinhaDreIn(BaseModel):
+    # None = desclassifica (volta a herdar do ancestral mais próximo, ou cai
+    # em `nao_classificado` — ver GET /financeiro/dre/conferencia).
+    linha_dre: Optional[str] = None
+
+
+@router.put("/plano-contas/{codigo}/linha-dre")
+def atualizar_linha_dre(
+    codigo: str, dados: LinhaDreIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """
+    Classifica (ou reclassifica) uma conta gerencial numa das 9 linhas
+    atribuíveis da DRE em cascata, ou marca `NAO_ENTRA_NA_DRE` para uma
+    conta que legitimamente fica fora do resultado — ex.: PRINCIPAL de
+    financiamento, que é saída de caixa mas NUNCA despesa (só o juros é; ver
+    o ADR completo no topo de fazenda/rules/dre.py sobre por que isso jamais
+    pode cair em DEPRECIACAO_AMORT_EXAUSTAO nem em nenhuma outra linha de
+    despesa). Endpoint DEDICADO — não faz parte do PUT genérico de plano de
+    contas (`PUT /financeiro/plano-contas/{conta_id}` acima) de propósito:
+    classificar a DRE é decisão gerencial, não cadastro de rotina, e por
+    isso é restrita a admin (mesmo padrão de admin-only já usado nos
+    endpoints vizinhos de Patrimônio, ver GET/POST/PUT /financeiro/patrimonio).
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if dados.linha_dre is not None and dados.linha_dre not in LINHAS_DRE_VALIDAS:
+        raise HTTPException(status_code=400, detail=f"linha_dre inválida: {dados.linha_dre}")
+    query = select(PlanoContaGerencial).where(PlanoContaGerencial.codigo == codigo)
+    if fazenda_id is not None:
+        query = query.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    conta = session.exec(query).first()
+    if not conta:
+        raise HTTPException(status_code=404, detail="Conta gerencial não encontrada")
+    conta.linha_dre = dados.linha_dre
     session.add(conta)
     session.commit()
     session.refresh(conta)
