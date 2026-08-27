@@ -106,10 +106,20 @@ def listar_animais(
         numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
     }
     ult_parto: dict[str, object] = {}
+    # Só para `data_ult_parto` (auditoria/histórico): a data do último `Parto`
+    # da matriz, QUALQUER tipo — inclusive aborto sem abertura de lactação.
+    # "Esta matriz encerrou uma gestação, foi quando?" é uma pergunta
+    # diferente de "esta matriz pariu de verdade?" (ver `ult_parto_produtivo`
+    # abaixo) — mistura-las aqui faria a data existir mas o resto da tela
+    # (DEL/categoria) discordar dela sem motivo aparente para quem só olha
+    # este campo isolado.
+    ult_parto_produtivo: dict[str, object] = {}
     for p in partos_todos:
         d = p.data_parto
         if d and (p.numero_matriz not in ult_parto or d > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = d
+        if d and eh_parto_produtivo(p) and (p.numero_matriz not in ult_parto_produtivo or d > ult_parto_produtivo[p.numero_matriz]):
+            ult_parto_produtivo[p.numero_matriz] = d
     ult_secagem: dict[str, object] = {}
     for s in session.exec(query_secagem).all():
         d = s.data_secagem
@@ -138,20 +148,24 @@ def listar_animais(
         d = a.model_dump()
         sp = ult_pos.get(a.numero)
         pp = ult_parto.get(a.numero)
+        pp_produtivo = ult_parto_produtivo.get(a.numero)
         sec = ult_secagem.get(a.numero)
         lact = lactacoes_abertas.get(a.numero)
         d["data_ult_servico_pos"] = sp.isoformat() if sp else None
         d["data_ult_parto"] = pp.isoformat() if pp else None
         d["em_lactacao"] = lact is not None
         d["lactacao_inicio"] = lact.data_inicio.isoformat() if lact else None
-        d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp, sec, hoje)
+        # DEL e categoria usam SÓ o parto produtivo (`pp_produtivo`), nunca o
+        # `pp` bruto: um aborto sem abertura de lactação não deve dar DEL
+        # nenhum nem virar novilha em vaca (matriz 108, relatado 30/05/2026).
+        d["del_dias"] = _del_dias_ao_vivo(d["del_dias"], pp_produtivo, sec, hoje)
         if lact is not None:
             # Com lactação materializada, o DEL sai dela — inclusive nos
             # casos em que `_del_dias_ao_vivo` não tem o que responder
             # (lactação aberta por aborto ou indução, que não têm parto
             # produtivo por trás).
             d["del_dias"] = (hoje - lact.data_inicio).days
-        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp, sec)
+        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp_produtivo, sec)
         producao_kg, producao_data = com_fallback_animal(a.numero, producao_ao_vivo, a)
         d["producao_kg"] = producao_kg
         d["producao_data"] = producao_data.isoformat() if producao_data else None
@@ -196,9 +210,13 @@ def estratificacao_rebanho(
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     partos_todos = session.exec(query_parto).all()
     servicos_todos = session.exec(query_servico).all()
+    # Só o parto PRODUTIVO decide se a fêmea vira "vaca" no gráfico: uma
+    # novilha cujo único `Parto` é um aborto sem abertura de lactação não
+    # pariu de verdade (ver fazenda.rules.parto) e deve continuar nos
+    # estratos de idade (aleitamento/recria/novilhas), não em vacas_*.
     ult_parto: dict[str, date] = {}
     for p in partos_todos:
-        if p.data_parto and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
+        if p.data_parto and eh_parto_produtivo(p) and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = p.data_parto
     # Serviço vigente positivo por matriz — mesmo critério de listar_animais
     # acima (ver fazenda.rules.perda_prenhez): não conta uma prenhez já
@@ -381,6 +399,12 @@ def ficha_animal(
     ordem_corrente = 0
     for p in partos:
         d = p.model_dump()
+        # Coluna auxiliar da tabela de Partos da Ficha ("Considerar ordem de
+        # parto/lactação?") — mesmo critério de `eh_parto_produtivo` usado
+        # acima para "X de N", exposto explicitamente por linha para quem
+        # olha o histórico bruto e quer saber, sem fazer conta, se ESTE
+        # evento específico contou ou não.
+        d["conta_ordem_parto_lactacao"] = eh_parto_produtivo(p)
         if eh_parto_produtivo(p):
             ordem_corrente += 1
             d["ordem_parto"] = f"{ordem_corrente} de {total_partos}"
@@ -683,9 +707,20 @@ def ficha_animal(
     # usar o valor cru aqui fazia um animal recém-parido pelo app nunca
     # ganhar previsão de secagem, e um animal recém-secado pelo app nunca
     # perder a previsão (ver auditoria ago/2026).
+    # `ultimo_parto_data` (QUALQUER `Parto`, inclusive aborto sem lactação) só
+    # serve para decidir se uma gestação "acabou" — usado abaixo no filtro de
+    # `servicos_positivos` ("gestação em curso" é o serviço positivo posterior
+    # ao último fim de gestação, seja qual for o tipo). Já `del_dias_vivo` e a
+    # categoria ao vivo (mais abaixo) precisam do parto PRODUTIVO: um aborto
+    # sem abertura de lactação não é "esta matriz pariu", e não deve zerar/
+    # mover o DEL nem virar novilha em vaca (matriz 108, relatado 30/05/2026 —
+    # mesmo bug de `listar_animais`, ver `ult_parto_produtivo` lá).
     ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
+    ultimo_parto_produtivo_data = next(
+        (p["data_parto"] for p in reversed(partos_dump) if p["conta_ordem_parto_lactacao"]), None,
+    )
     ultima_secagem_data = secagens[-1].data_secagem if secagens else None
-    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_data, ultima_secagem_data, date.today())
+    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_produtivo_data, ultima_secagem_data, date.today())
 
     # Previsão de parto / secagem: gestação em curso = último serviço positivo
     # (sem perda registrada) posterior ao último parto — mesma regra usada nas
@@ -709,10 +744,11 @@ def ficha_animal(
             previsao_secagem = concepcao + timedelta(days=gestacao_do_animal - seco)
             # Atraso implausível (parto/secagem que não foi lançado a tempo,
             # ver LIMITE_SECAGEM_RETROATIVA_DIAS) — mostra a data em que
-            # deveria ter secado (60 dias antes do último parto) em vez da
-            # projeção de gestação, sem seguir cobrando retroativo.
-            if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_data:
-                previsao_secagem = ultimo_parto_data - timedelta(days=seco)
+            # deveria ter secado (60 dias antes do último parto PRODUTIVO,
+            # que é quem abriu a lactação em aberto) em vez da projeção de
+            # gestação, sem seguir cobrando retroativo.
+            if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_produtivo_data:
+                previsao_secagem = ultimo_parto_produtivo_data - timedelta(days=seco)
 
     # Card "Precisão de parto": só existe com gestação em aberto (mesma
     # condição de `servicos_positivos` acima — último serviço com diagnóstico
@@ -734,7 +770,7 @@ def ficha_animal(
     animal_dump = animal.model_dump()
     animal_dump["del_dias"] = del_dias_vivo
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
-        animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_data, ultima_secagem_data,
+        animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_produtivo_data, ultima_secagem_data,
     )
 
     # Mãe: prioridade 1 é o cadastro manual (Animal.mae_numero, preenchido em

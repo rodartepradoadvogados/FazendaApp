@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Parto, Secagem
+from fazenda.models import Animal, Lactacao, Parto, Secagem
 
 
 @pytest.fixture
@@ -100,6 +100,116 @@ class TestListarAnimaisAoVivo:
         assert animal["del_dias"] is None
         assert animal["categoria_completa"] == "Novilha"
 
+    def test_novilha_aborto_sem_lactacao_nao_vira_vaca_nem_ganha_del(self, client):
+        """Bug relatado: matriz 108 (novilha) abortou SEM abrir lactação e a
+        tela passou a mostrá-la como "Vaca em lactação" com um DEL calculado a
+        partir da data do aborto — errado nos dois campos, porque um aborto
+        sem lactação não é parto produtivo (ver fazenda.rules.parto,
+        eh_parto_produtivo) e não deveria influenciar nem DEL nem categoria."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(
+                numero="108", sexo="F", ativo=True, del_dias=None,
+                categoria_completa="Novilha inseminada", categoria_abrev="Nov. insem.",
+            ))
+            s.add(Parto(
+                numero_matriz="108", data_parto=hoje - timedelta(days=5),
+                tipo_parto="Aborto", abriu_lactacao=False,
+            ))
+            s.commit()
+
+        r = c.get("/animais/", params={"ativo": True})
+        animal = next(a for a in r.json() if a["numero"] == "108")
+        assert animal["del_dias"] is None
+        assert animal["categoria_completa"] == "Novilha inseminada"
+        assert animal["categoria_abrev"] == "Nov. insem."
+
+    def test_novilha_aborto_com_lactacao_vira_vaca_e_del_vem_da_lactacao(self, client):
+        """Contraponto do teste acima: aborto que ABRE lactação conta como
+        parto produtivo (pedido do usuário, 27/08/2026) — a categoria deve
+        virar "Vaca em lactação" e o DEL sai da `Lactacao` materializada (não
+        de `_del_dias_ao_vivo`/`ult_parto_produtivo`, que também serviriam,
+        mas a `Lactacao` aberta tem prioridade — ver `lact is not None` em
+        `listar_animais`)."""
+        c, engine = client
+        hoje = date.today()
+        data_aborto = hoje - timedelta(days=8)
+        with Session(engine) as s:
+            animal = Animal(
+                numero="109", sexo="F", ativo=True, del_dias=None,
+                categoria_completa="Novilha inseminada", categoria_abrev="Novilha insem.",
+            )
+            s.add(animal)
+            s.commit()
+            s.refresh(animal)
+            parto = Parto(
+                numero_matriz="109", data_parto=data_aborto,
+                tipo_parto="Aborto", abriu_lactacao=True, animal_id=animal.id,
+            )
+            s.add(parto)
+            s.commit()
+            s.refresh(parto)
+            s.add(Lactacao(
+                numero_matriz="109", data_inicio=data_aborto, origem="aborto",
+                parto_id=parto.id, animal_id=animal.id, numero_lactacao=1,
+            ))
+            s.commit()
+
+        r = c.get("/animais/", params={"ativo": True})
+        animal_resp = next(a for a in r.json() if a["numero"] == "109")
+        assert animal_resp["del_dias"] == 8
+        assert animal_resp["categoria_completa"] == "Vaca em lactação"
+        assert animal_resp["categoria_abrev"] == "Vaca em lactação"
+
+
+class TestEstratificacaoRebanhoAoVivo:
+    def test_novilha_aborto_sem_lactacao_fica_no_estrato_de_idade(self, client):
+        """Mesmo bug da matriz 108, agora no gráfico de composição do rebanho
+        (Capa/Rebanho): uma novilha cujo único `Parto` é um aborto sem
+        abertura de lactação não pariu de verdade e deve continuar nos
+        estratos por idade (recria/novilhas), não em vacas_*."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            # ~18 meses — cai em recria_12_24m se não for tratada como "vaca".
+            s.add(Animal(numero="108", sexo="F", ativo=True, data_nasc=hoje - timedelta(days=550)))
+            s.add(Parto(
+                numero_matriz="108", data_parto=hoje - timedelta(days=5),
+                tipo_parto="Aborto", abriu_lactacao=False,
+            ))
+            s.commit()
+
+        r = c.get("/animais/estratificacao")
+        assert r.status_code == 200
+        corpo = r.json()
+        assert "108" in corpo["numeros"]["recria_12_24m"]
+        assert "108" not in corpo["numeros"]["vacas_lactacao"]
+        assert "108" not in corpo["numeros"]["vacas_secas"]
+        assert "108" not in corpo["numeros"]["vacas_pre_parto"]
+
+    def test_novilha_aborto_com_lactacao_entra_no_estrato_de_vaca(self, client):
+        """Contraponto: aborto que abre lactação É parto produtivo — deve
+        classificar a matriz como vaca no gráfico, não em estrato de idade."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(
+                numero="109", sexo="F", ativo=True, data_nasc=hoje - timedelta(days=550),
+                grupo_primario="01 - Lactação Alta",
+            ))
+            s.add(Parto(
+                numero_matriz="109", data_parto=hoje - timedelta(days=5),
+                tipo_parto="Aborto", abriu_lactacao=True,
+            ))
+            s.commit()
+
+        r = c.get("/animais/estratificacao")
+        assert r.status_code == 200
+        corpo = r.json()
+        assert "109" in corpo["numeros"]["vacas_lactacao"]
+        assert "109" not in corpo["numeros"]["recria_12_24m"]
+
 
 class TestFichaAnimalAoVivo:
     def test_ficha_corrige_del_e_categoria_apos_parto(self, client):
@@ -118,3 +228,55 @@ class TestFichaAnimalAoVivo:
         animal = r.json()["animal"]
         assert animal["del_dias"] == 20
         assert animal["categoria_abrev"] == "Vaca em lactação"
+
+    def test_ficha_aborto_sem_lactacao_nao_corrige_del_nem_categoria(self, client):
+        """Mesmo bug da matriz 108, na Ficha do animal: um aborto sem abertura
+        de lactação não deve fazer `_del_dias_ao_vivo`/`_categoria_ao_vivo`
+        tratarem a data do aborto como se fosse um parto de verdade."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(
+                numero="108", sexo="F", ativo=True, del_dias=None,
+                categoria_completa="Novilha inseminada", categoria_abrev="Nov. insem.",
+            ))
+            s.add(Parto(
+                numero_matriz="108", data_parto=hoje - timedelta(days=5),
+                tipo_parto="Aborto", abriu_lactacao=False,
+            ))
+            s.commit()
+
+        r = c.get("/animais/108/ficha")
+        assert r.status_code == 200
+        corpo = r.json()
+        animal = corpo["animal"]
+        assert animal["del_dias"] is None
+        assert animal["categoria_abrev"] == "Nov. insem."
+        # Coluna nova da tabela de Partos bruta: este aborto NÃO conta.
+        assert corpo["partos"][0]["conta_ordem_parto_lactacao"] is False
+
+    def test_ficha_partos_marca_conta_ordem_parto_lactacao_por_linha(self, client):
+        """Campo novo `conta_ordem_parto_lactacao` no histórico bruto de
+        Partos da Ficha: True para parto normal e aborto-com-lactação, False
+        para aborto sem lactação — alimenta a coluna "Considerar ordem de
+        parto/lactação" da tela."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(numero="777", sexo="F", ativo=True))
+            s.add(Parto(numero_matriz="777", data_parto=hoje - timedelta(days=400), tipo_parto="Parto normal"))
+            s.add(Parto(
+                numero_matriz="777", data_parto=hoje - timedelta(days=200),
+                tipo_parto="Aborto", abriu_lactacao=False,
+            ))
+            s.add(Parto(
+                numero_matriz="777", data_parto=hoje - timedelta(days=30),
+                tipo_parto="Aborto", abriu_lactacao=True,
+            ))
+            s.commit()
+
+        r = c.get("/animais/777/ficha")
+        assert r.status_code == 200
+        partos = {p["data_parto"]: p["conta_ordem_parto_lactacao"] for p in r.json()["partos"]}
+        valores = list(partos.values())
+        assert valores == [True, False, True]
