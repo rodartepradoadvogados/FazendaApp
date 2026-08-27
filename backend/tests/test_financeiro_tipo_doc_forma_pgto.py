@@ -13,7 +13,19 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContaGerencial, FormaPagamentoCadastro, TipoDocumento
+from fazenda.models import ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Fazenda, FormaPagamentoCadastro, TipoDocumento
+from fazenda.models.planos import MODULOS_COMERCIAIS
+
+
+def _ativar_fazenda(session: Session, fazenda_id: int, nome: str) -> None:
+    """Fazenda + contrato ativo com todos os módulos — sem isso, GET
+    /financeiro/opcoes com uma fazenda real (fazenda_id != None) dá 403
+    (sem assinatura), diferente do caso sem-fazenda usado nos outros testes
+    deste arquivo."""
+    session.add(Fazenda(id=fazenda_id, nome=nome))
+    session.add(ContratoFazenda(fazenda_id=fazenda_id, status="ativo"))
+    for modulo in MODULOS_COMERCIAIS:
+        session.add(ContratoFazendaModulo(fazenda_id=fazenda_id, modulo=modulo, preco=0.0, ativo=True))
 
 
 @pytest.fixture
@@ -106,3 +118,77 @@ def test_lancamento_ja_pago_grava_forma_pagamento(client):
         registro = session.exec(select(ContaGerencial)).first()
         assert registro is not None
         assert registro.forma_pagamento == "pix"
+
+
+class TestSeedComprovanteBackfillFazenda1:
+    """Bug real de produção: a fazenda #1 foi 'grandfathered' com fazenda_id=1
+    nos cadastros de tipo de documento pela migração e3f4a5b6c7d8 ANTES de
+    "Comprovante"/"Orçamento" entrarem em SEED_TIPOS_DOCUMENTO (Central de
+    Documentos, #507) — o seed rodado depois só cria o que falta com
+    fazenda_id=None, que o GET /financeiro/opcoes nunca enxerga pra quem já
+    tem cadastro próprio. Sem o backfill em seed_tipos_documento_formas_pagamento,
+    "Comprovante" nunca aparece no anexo inicial do lançamento pra essa fazenda."""
+
+    def test_seed_acrescenta_comprovante_na_fazenda_1_que_ja_tinha_cadastro_proprio(self, client):
+        # Estado real de uma fazenda #1 já em produção antes da Central de
+        # Documentos: tem cadastro próprio (fazenda_id=1), sem "Comprovante".
+        with Session(client.engine) as session:
+            _ativar_fazenda(session, 1, "Fazenda 1")
+            session.add(TipoDocumento(nome="Nota fiscal", fazenda_id=1))
+            session.add(TipoDocumento(nome="Recibo", fazenda_id=1))
+            session.commit()
+
+        from fazenda.api.routers.financeiro import seed_tipos_documento_formas_pagamento
+        with Session(client.engine) as session:
+            seed_tipos_documento_formas_pagamento(session)
+
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        try:
+            resp = client.get("/financeiro/opcoes")
+            assert resp.status_code == 200
+            tipos = resp.json()["tipos_documento"]
+            assert "Comprovante" in tipos
+            # Não perde o que a fazenda já tinha cadastrado antes.
+            assert "Nota fiscal" in tipos
+            assert "Recibo" in tipos
+        finally:
+            main.app.dependency_overrides.pop(get_fazenda_atual_id, None)
+
+    def test_seed_e_idempotente_na_fazenda_1(self, client):
+        with Session(client.engine) as session:
+            _ativar_fazenda(session, 1, "Fazenda 1")
+            session.commit()
+
+        from fazenda.api.routers.financeiro import seed_tipos_documento_formas_pagamento
+        with Session(client.engine) as session:
+            seed_tipos_documento_formas_pagamento(session)
+        with Session(client.engine) as session:
+            seed_tipos_documento_formas_pagamento(session)  # roda de novo — não deve duplicar
+
+        with Session(client.engine) as session:
+            nomes = [t.nome for t in session.exec(select(TipoDocumento).where(TipoDocumento.fazenda_id == 1)).all()]
+        assert nomes.count("Comprovante") == 1
+
+    def test_seed_nao_mexe_em_outra_fazenda(self, client):
+        with Session(client.engine) as session:
+            _ativar_fazenda(session, 1, "Fazenda 1")
+            _ativar_fazenda(session, 2, "Fazenda 2")
+            session.add(TipoDocumento(nome="Recibo customizado", fazenda_id=2))
+            session.commit()
+
+        from fazenda.api.routers.financeiro import seed_tipos_documento_formas_pagamento
+        with Session(client.engine) as session:
+            seed_tipos_documento_formas_pagamento(session)
+
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 2
+        try:
+            resp = client.get("/financeiro/opcoes")
+            # Fazenda 2 não recebeu o backfill (só a #1, grandfathered) — segue
+            # vendo só o que ela mesma cadastrou.
+            assert resp.json()["tipos_documento"] == ["Recibo customizado"]
+        finally:
+            main.app.dependency_overrides.pop(get_fazenda_atual_id, None)

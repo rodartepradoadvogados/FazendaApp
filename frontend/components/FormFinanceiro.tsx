@@ -1096,11 +1096,20 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     setSalvando(true);
     try {
       const r = await criarLancamentoFinanceiro(montarPayload());
+      // O lançamento em si já está salvo neste ponto — cada anexo é
+      // pego individualmente (nunca deixa o catch propagar) para que uma
+      // falha aqui (rede caindo bem no meio do upload, mais exposto que o
+      // POST do lançamento por mexer com arquivo maior) NUNCA apareça pro
+      // usuário como se o lançamento inteiro tivesse falhado.
       let avisoAnexo = "";
       const falhasAnexo = (await Promise.all(
         anexosStaged.map((f) => anexarArquivoLancamento(r.numero_lancamento, f.file, f.categoria || undefined, f.numero_documento || undefined, f.data_documento || undefined).then(() => null).catch(() => f.file.name)),
       )).filter(Boolean);
-      if (falhasAnexo.length) avisoAnexo = ` (não foi possível anexar: ${falhasAnexo.join(", ")})`;
+      if (falhasAnexo.length) {
+        avisoAnexo = falhasAnexo.length === 1
+          ? ` O anexo ${falhasAnexo[0]} não pôde ser enviado — tente anexar de novo.`
+          : ` Estes anexos não puderam ser enviados — tente anexar de novo: ${falhasAnexo.join(", ")}.`;
+      }
       // avisos_estoque: ex. "X não está no estoque desta fazenda" — o backend
       // já calcula, mas até aqui ninguém no frontend lia a resposta pra
       // mostrar isso ao usuário (a nota salvava normal, o aviso se perdia).

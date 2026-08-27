@@ -5541,23 +5541,34 @@ export async function atualizarClassificacao(id: number, dados: { nome: string; 
 }
 
 export async function criarLancamentoFinanceiro(dados: any) {
-  // Mesma chave nas duas tentativas: se a 1ª chegou a gravar no servidor mas
-  // a resposta se perdeu no caminho de volta (o "Failed to fetch" que
-  // aparece com o lançamento já salvo), o backend reconhece a chave repetida
-  // e devolve o mesmo lançamento em vez de duplicar (ver Idempotency-Key).
+  // Mesma chave em todas as tentativas: se uma delas chegou a gravar no
+  // servidor mas a resposta se perdeu no caminho de volta (o "Failed to
+  // fetch" que aparece com o lançamento já salvo — relato real de usuário em
+  // conexão rural instável), o backend reconhece a chave repetida e devolve
+  // o mesmo lançamento em vez de duplicar (ver Idempotency-Key). Uma única
+  // retentativa IMEDIATA cai no mesmo blackout de poucos segundos que
+  // derrubou a 1ª — até 2 retentativas, com uma pequena pausa entre elas,
+  // dão tempo da conexão se recuperar antes de desistir e mostrar erro pro
+  // usuário como se nada tivesse sido salvo.
   const chave = gerarChaveIdempotencia();
   const post = () => authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": chave },
     body: JSON.stringify(dados),
   });
-  let res: Response;
-  try {
-    res = await post();
-  } catch (e) {
-    if (!(e instanceof TypeError)) throw netError(e);
-    res = await post().catch((e2) => { throw netError(e2); }); // 1 nova tentativa, mesma chave
+  let res: Response | undefined;
+  let ultimoErro: unknown;
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      res = await post();
+      break;
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw netError(e);
+      ultimoErro = e;
+      if (tentativa < 2) await new Promise((r) => setTimeout(r, 600 * (tentativa + 1)));
+    }
   }
+  if (!res) throw netError(ultimoErro);
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
     // Preserva `detail`/`status` (padrão `criarVale`) — o 409 de "estourou 40%

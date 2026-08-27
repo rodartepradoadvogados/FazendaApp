@@ -261,3 +261,38 @@ class TestIsolamentoPorFazenda:
         _como_fazenda(2)
         r = c.post(f"/cadastro/vales/funcionario/{vale_id}/comprovante", files=_pdf())
         assert r.status_code == 404
+
+
+class TestAnexoNoFluxoDeCriarVale:
+    """Bug real de produção: o formulário "Novo vale" (adiantamento a
+    funcionário) não oferecia NENHUMA opção de anexar comprovante — apesar
+    de o mecanismo de comprovante (rotas acima) já existir para vale editado
+    depois. A correção no frontend reaproveita esse mesmo mecanismo, usando
+    o `id` devolvido por POST /cadastro/vales (criar_vale) para anexar em
+    seguida — é essa sequência criar→anexar que este teste garante."""
+
+    def test_vale_recem_criado_aceita_comprovante_na_hora(self, client):
+        c, engine = client
+        _como_fazenda(1)
+        with Session(engine) as s:
+            pessoa = Pessoa(nome="Ciclano", tipo="Funcionário", fazenda_id=1, salario_base=2000.0)
+            s.add(pessoa)
+            s.commit()
+            s.refresh(pessoa)
+            pessoa_id = pessoa.id
+
+        resp = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "desconto_integral_folha",
+            "data_pagamento": "2026-08-01", "parcelas": 1, "competencia_inicio": "2026-08",
+        })
+        assert resp.status_code == 200, resp.text
+        vale_id = resp.json()["id"]
+        assert isinstance(vale_id, int)
+
+        # Mesmo id, na sequência — sem precisar reabrir o vale depois de
+        # editado — já aceita o comprovante.
+        r = c.post(f"/cadastro/vales/funcionario/{vale_id}/comprovante", files=_pdf("recibo_vale.pdf"))
+        assert r.status_code == 201, r.text
+
+        lista = c.get(f"/cadastro/vales/funcionario/{vale_id}/comprovante").json()
+        assert len(lista) == 1 and lista[0]["nome_arquivo"] == "recibo_vale.pdf"
