@@ -217,6 +217,22 @@ class PlanoContaGerencial(SQLModel, table=True):
     # popup de vínculo sanitário/reprodutivo em FormFinanceiro.
     pede_vinculo_sanitario_reprodutivo: Optional[bool] = None
 
+    # Em qual das 15 linhas da DRE Gerencial em cascata esta conta se
+    # classifica (ver fazenda.rules.dre.LINHAS_DRE_VALIDAS) — None = ainda
+    # não classificada (aparece em GET /financeiro/dre/conferencia) OU herda
+    # a linha do ancestral mais próximo que tiver uma (código por prefixo,
+    # ver fazenda.rules.dre.resolver_linha_dre). Gravado só por PUT
+    # /financeiro/plano-contas/{codigo}/linha-dre (admin), nunca pelo
+    # POST/PUT genérico de plano de contas — ver ADR no router.
+    #
+    # Um valor especial, "NAO_ENTRA_NA_DRE", existe para conta que
+    # LEGITIMAMENTE fica fora do resultado (ex.: principal de financiamento,
+    # transferência entre contas, aporte de sócio) — ver o ADR grande no
+    # topo de fazenda/rules/dre.py sobre por que principal de financiamento
+    # NUNCA é despesa (só o juros é) e por isso nunca pode cair na linha de
+    # depreciação nem em nenhuma outra linha de despesa.
+    linha_dre: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
