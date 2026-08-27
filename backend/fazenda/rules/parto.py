@@ -17,12 +17,17 @@ de "esta gestação acabou?" (estado reprodutivo, DEL ao vivo, categoria ao
 vivo, PEV, corte de serviços da lactação anterior) sem precisar ensinar cada
 um deles a também consultar uma tabela nova.
 
-Mas um aborto **não é** um parto produtivo: não gera cria, não avança a
-ordem de parto, não entra no IEP, não conta no "3ª de 5 crias" da Ficha nem
-na média de ordem de parto do rebanho. A distinção física é `ordem_parto`:
+Mas um aborto **não é**, em geral, um parto produtivo: não gera cria, não
+avança a ordem de parto, não entra no IEP, não conta no "3ª de 5 crias" da
+Ficha nem na média de ordem de parto do rebanho. Exceção: um aborto que abre
+lactação (`Parto.abriu_lactacao=True`, gravado quando o usuário responde
+"sim" ao popup de abertura de lactação no encerramento de gestação) É
+produtivo — a vaca entrou em lactação de verdade, funcionalmente equivalente
+a uma cria para fins de contagem. A distinção física é `ordem_parto`:
 
-    parto produtivo  -> ordem_parto = 1, 2, 3 … (sequência da matriz)
-    aborto           -> ordem_parto = NULL
+    parto produtivo            -> ordem_parto = 1, 2, 3 … (sequência da matriz)
+    aborto sem abrir lactação  -> ordem_parto = NULL
+    aborto que abre lactação   -> ordem_parto = 1, 2, 3 … (conta na sequência)
 
 `eh_parto_produtivo` é o ÚNICO lugar que decide isso. Nenhum consumidor de
 `Parto` deve inventar seu próprio critério (ex.: comparar `tipo_parto` com a
@@ -97,17 +102,29 @@ def eh_natimorto(parto: Any) -> bool:
 
 def eh_parto_produtivo(parto: Any) -> bool:
     """True quando este `Parto` conta como uma cria/lactação na vida
-    produtiva da matriz — ou seja, tudo que NÃO é aborto.
+    produtiva da matriz — ou seja, tudo que NÃO é aborto, MAIS o aborto que
+    abriu lactação (`Parto.abriu_lactacao`).
 
     Usado por todo consumidor que conta partos: ordem de parto (a próxima
-    ordem é `max(ordem dos produtivos) + 1`), "N de M crias" da Ficha, quadro
-    por parto, IEP, ordem média do rebanho.
+    ordem é a CONTAGEM dos produtivos, ver `proxima_ordem_parto`), "N de M
+    crias" da Ficha, quadro por parto, IEP, ordem média do rebanho.
+
+    Um aborto que abre lactação é, para fins de contagem, funcionalmente
+    equivalente a uma cria: a vaca entrou em lactação, e a próxima gestação
+    dela vai contar como a cria seguinte tanto quanto contaria depois de um
+    parto normal (pedido explícito do usuário, 27/08/2026). A informação de
+    que ESTE aborto específico abriu lactação vive em `Lactacao.origem`
+    (`ORIGEM_ABORTO`), não em `Parto` — por isso `Parto.abriu_lactacao` é
+    gravado UMA VEZ, no momento da criação do `Parto`, em vez desta função
+    consultar `Lactacao` (que quebraria a pureza do módulo — ver docstring
+    do arquivo).
 
     Deliberadamente NÃO olha só `ordem_parto is None`: partos importados de
     planilha legada podem vir sem ordem gravada e ainda assim serem partos de
-    verdade. O critério é o TIPO do evento.
+    verdade. O critério é o TIPO do evento (mais o flag acima para o caso do
+    aborto com lactação).
     """
-    return not eh_aborto(parto)
+    return not eh_aborto(parto) or bool(_get(parto, "abriu_lactacao"))
 
 
 T = TypeVar("T")
@@ -119,22 +136,31 @@ def partos_produtivos(partos: Iterable[T]) -> list[T]:
 
 
 def proxima_ordem_parto(partos: Iterable[Any]) -> int:
-    """A ordem do PRÓXIMO parto produtivo da matriz, a partir do histórico
-    dela.
+    """A ordem do PRÓXIMO parto produtivo da matriz: `len(produtivos) + 1`,
+    SEMPRE — nunca `max(ordem_parto já gravado) + 1`, nem "`ordem_parto` do
+    mais recente + 1".
 
-    `max(...) + 1` sobre os produtivos, e não `len(partos) + 1` nem
-    "`ordem_parto` do mais recente + 1": o primeiro conta abortos, e o
-    segundo depende de ordenar por uma coluna que agora é NULL em parte das
-    linhas — em Postgres, `ORDER BY ordem_parto DESC` devolve os NULLs
-    PRIMEIRO (ao contrário do SQLite), o que faria toda matriz com um aborto
-    no histórico recomeçar a contagem do 1.
+    Havia uma versão anterior que confiava no `max()` do que já estava
+    gravado, e só caía na contagem quando NENHUM parto anterior tinha ordem.
+    Isso é exatamente o bug: o histórico importado do Ideagri TEM
+    `ordem_parto` gravado, só que numa convenção diferente da deste app (a
+    planilha usa base 0 — "0" para a 1ª cria —, aqui é base 1). Uma matriz
+    com o 1º parto importado (`ordem_parto=0`, errado) que pare de novo AO
+    VIVO pelo app pegava `max([0]) + 1 = 1` — o SEGUNDO parto, lançado
+    corretamente, gravava ordem 1 também, e o erro nunca parava de se
+    propagar para a frente.
 
-    Sem nenhuma ordem gravada (histórico importado de planilha que não
-    trouxe a coluna), cai na CONTAGEM dos produtivos — melhor que o antigo
-    `(ordem or 0) + 1`, que devolvia 1 para uma vaca de cinco crias.
+    Por isso a regra agora é: NUNCA confiar em `ordem_parto` armazenado (seja
+    de import, seja de um parto anterior) para decidir o próximo — sempre
+    CONTAR os produtivos do zero. É também o motivo de `len(...)`, e não
+    "`ordem_parto` do mais recente + 1" ordenado por essa coluna: esta
+    dependeria de como o banco ordena NULLs (abortos sem lactação ficam com
+    `ordem_parto=None` — em Postgres, `ORDER BY ordem_parto DESC` devolve os
+    NULLs PRIMEIRO, ao contrário do SQLite, o que faria toda matriz com um
+    aborto no histórico recomeçar a contagem do 1).
+
+    Dado histórico sujo (import com convenção errada) se corrige com a
+    ferramenta administrativa de reconstrução de `Parto.ordem_parto`
+    (Configurações > Cadastro > Ordem de Parto), não confiando nele aqui.
     """
-    produtivos = partos_produtivos(partos)
-    ordens = [o for o in (_get(p, "ordem_parto") for p in produtivos) if o is not None]
-    if ordens:
-        return max(ordens) + 1
-    return len(produtivos) + 1
+    return len(partos_produtivos(partos)) + 1

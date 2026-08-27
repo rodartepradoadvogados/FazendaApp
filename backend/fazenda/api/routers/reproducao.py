@@ -1370,7 +1370,7 @@ def _gravar_parto_e_crias(
     session: Session, mae: Animal, *, data_parto: date, tipo_parto: str | None,
     crias: list[CriaIn], retencao_placenta: bool | None, gemelar: bool | None,
     gemelar_sexo: str | None, ordem_parto: int | None, usuario_id: int | None,
-    fazenda_id: int | None,
+    fazenda_id: int | None, abriu_lactacao: bool = False,
 ) -> tuple[Parto, list[str], list[str]]:
     """Cria o `Parto`, cadastra as crias nascidas vivas e agenda a avaliação
     de retenção de placenta — SEM commit.
@@ -1380,8 +1380,11 @@ def _gravar_parto_e_crias(
     mesmo `Parto`, e ter duas cópias dessa gravação é como o aborto acabou
     sem `Parto` nenhum em primeiro lugar.
 
-    `ordem_parto=None` marca um fim de gestação NÃO produtivo (aborto) — ver
-    `fazenda.rules.parto`.
+    `ordem_parto=None` marca um fim de gestação NÃO produtivo (aborto sem
+    abertura de lactação) — ver `fazenda.rules.parto`. `abriu_lactacao=True`
+    é o registro, no próprio `Parto`, de que este aborto específico abriu
+    lactação (True só chega aqui vindo de `encerrar_gestacao`, nunca de
+    `registrar_parto` — só o aborto pode ser não-produtivo).
     """
     if not gemelar_sexo and len(crias) >= 2:
         combo = "".join(sorted((crias[0].sexo or "").upper() + (crias[1].sexo or "").upper()))
@@ -1400,6 +1403,7 @@ def _gravar_parto_e_crias(
         gemelar=gemelar if gemelar is not None else len(crias) > 1,
         gemelar_sexo=gemelar_sexo,
         retencao_placenta=retencao_placenta,
+        abriu_lactacao=abriu_lactacao,
         usuario_id=usuario_id,
         fazenda_id=fazenda_id,
     )
@@ -1570,8 +1574,11 @@ def encerrar_gestacao(
     Encerra a gestação de uma matriz — parto, aborto ou natimorto — numa
     única transação:
 
-    1. cria o `Parto` (nos TRÊS casos; no aborto com `ordem_parto` NULL, que
-       é o que o mantém fora do IEP/ordem de parto — ver rules/parto.py);
+    1. cria o `Parto` (nos TRÊS casos; no aborto SEM abertura de lactação,
+       `ordem_parto` fica NULL, que é o que o mantém fora do IEP/ordem de
+       parto — ver rules/parto.py). Aborto COM abertura de lactação
+       (`abrir_lactacao=True`) é produtivo — recebe `ordem_parto` e grava
+       `Parto.abriu_lactacao=True`, a mesma exceção de `eh_parto_produtivo`;
     2. carimba a perda de prenhez no serviço VIGENTE POSITIVO certo (aborto e
        natimorto), usando `rules.perda_prenhez.servico_esta_positivo_vigente`
        em vez de "o serviço mais recente por data", que podia carimbar a
@@ -1597,13 +1604,18 @@ def encerrar_gestacao(
 
     # (1) O Parto. Aborto -> ordem_parto NULL: a gestação acabou (e todo o
     # motor ao vivo que pergunta "existe parto?" passa a enxergar isso), mas
-    # não houve cria e a ordem de parto da matriz não avança.
-    produtivo = dados.tipo != "aborto"
+    # não houve cria e a ordem de parto da matriz não avança. EXCEÇÃO: aborto
+    # que abre lactação (`dados.abrir_lactacao=True`) é produtivo — a vaca
+    # entrou em lactação de verdade, funcionalmente equivalente a uma cria
+    # para fins de contagem de ordem de parto (pedido explícito do usuário).
+    abriu_lactacao_no_aborto = dados.tipo == "aborto" and dados.abrir_lactacao
+    produtivo = dados.tipo != "aborto" or dados.abrir_lactacao
     ordem_parto = proxima_ordem_parto(partos_anteriores) if produtivo else None
     parto, crias_criadas, crias_baixadas = _gravar_parto_e_crias(
         session, mae, data_parto=dados.data, tipo_parto=dados.tipo_parto or ROTULO_TIPO_PARTO[dados.tipo],
         crias=dados.crias, retencao_placenta=dados.retencao_placenta, gemelar=dados.gemelar,
         gemelar_sexo=dados.gemelar_sexo, ordem_parto=ordem_parto, usuario_id=usuario_id, fazenda_id=fazenda_id,
+        abriu_lactacao=abriu_lactacao_no_aborto,
     )
 
     # (2) A perda de prenhez — só quando de fato houve perda. Um parto normal

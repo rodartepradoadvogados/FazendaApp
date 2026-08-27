@@ -4475,6 +4475,39 @@ export async function fetchControles() {
   return res.json();
 }
 
+// Reconstrução de Parto.ordem_parto — a FONTE do dado (não o derivado em
+// ControleLeiteiro, logo abaixo). Ver fazenda/api/routers/producao.py (seção
+// "Reconstrução de Parto.ordem_parto") e rules/parto.py para o porquê
+// completo. Rode esta ANTES da de Controles: aquela lê Parto.ordem_parto
+// como fonte de verdade. GET nunca grava nada; POST só grava com
+// `confirmar: true` explícito.
+export type AmostraDivergenciaOrdemPartoPartos = {
+  numero_matriz: string;
+  data_parto: string | null;
+  ordem_hoje: number | null;
+  ordem_correta: number | null;
+};
+export type DivergenciasOrdemPartoPartos = {
+  partos: number;
+  matrizes_com_parto: number;
+  muda: number;
+  vira_desconhecido: number;
+  periodo_partos: [string, string] | null;
+  amostra: AmostraDivergenciaOrdemPartoPartos[];
+};
+export async function fetchDivergenciasOrdemPartoPartos(): Promise<DivergenciasOrdemPartoPartos> {
+  const res = await authFetch(`${API}/producao/ordem-parto/partos/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de ordem de parto"); }
+  return res.json();
+}
+export async function reconstruirOrdemPartoPartos(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/ordem-parto/partos/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir a ordem de parto"); }
+  return res.json();
+}
+
 // Reconstrução de ControleLeiteiro.ordem_parto — ferramenta de correção de
 // dados histórica, ver fazenda/api/routers/producao.py (seção "Reconstrução
 // de ControleLeiteiro.ordem_parto") e rules/ordem_parto_historica.py para o

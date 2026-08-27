@@ -12,6 +12,7 @@ import ImportarDados from "@/components/ImportarDados";
 import { AprovacoesView } from "@/components/AprovacoesView";
 import { AuditoriaCowDataView } from "@/components/AuditoriaCowDataView";
 import { OrdemPartoReconstrucaoView } from "@/components/OrdemPartoReconstrucaoView";
+import { OrdemPartoPartosReconstrucaoView } from "@/components/OrdemPartoPartosReconstrucaoView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
@@ -142,7 +143,16 @@ export default function ConfiguracoesPage() {
         {aba === "importar" && <ImportarDados />}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
         {aba === "auditoria-cowdata" && <div className="px-6"><AuditoriaCowDataView /></div>}
-        {aba === "ordem-parto" && <div className="px-6"><OrdemPartoReconstrucaoView /></div>}
+        {aba === "ordem-parto" && (
+          <div className="px-6">
+            {/* Ordem de execução importa: Partos corrige a FONTE do dado
+                (Parto.ordem_parto); Controles, logo abaixo, lê essa fonte
+                como verdade — rodar Partos primeiro é o que faz Controles
+                voltar a mostrar os números certos, sem precisar mexer nela. */}
+            <OrdemPartoPartosReconstrucaoView />
+            <OrdemPartoReconstrucaoView />
+          </div>
+        )}
       </div>
     </div>
   );

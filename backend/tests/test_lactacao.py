@@ -100,6 +100,30 @@ def test_proxima_ordem_sem_ordem_gravada_usa_contagem():
     assert proxima_ordem_parto(partos) == 4
 
 
+def test_proxima_ordem_nunca_confia_no_max_gravado():
+    """Regressão do bug real relatado pelo usuário (matriz 432 e outras): o
+    1º parto veio da importação de planilha do Ideagri com `ordem_parto=0`
+    (a planilha usa convenção base 0 — 0 = 1ª cria —, diferente da deste app,
+    que é base 1). A versão ANTIGA de `proxima_ordem_parto` fazia
+    `max(ordens) + 1` sobre os produtivos: com `ordens=[0]`, devolvia
+    `max([0]) + 1 = 1` para o SEGUNDO parto — o mesmo número do primeiro,
+    errado. A versão corrigida NUNCA olha o valor gravado: conta os
+    produtivos do zero, sempre, e por isso devolve `2`, o certo,
+    independente de o histórico trazer `ordem_parto=0`, `5` ou qualquer outra
+    coisa."""
+    partos = [{"tipo_parto": "Parto normal", "ordem_parto": 0}]   # 1º parto "importado", ordem errada
+    assert proxima_ordem_parto(partos) == 2   # não 1 — é aqui que o bug antigo propagava o erro
+
+
+def test_abriu_lactacao_no_aborto_conta_como_produtivo():
+    """Aborto COM abertura de lactação é produtivo (pedido explícito do
+    usuário) — funcionalmente equivalente a uma cria para fins de ordem de
+    parto. Aborto SEM abertura de lactação continua fora da contagem."""
+    assert eh_parto_produtivo({"tipo_parto": "Aborto", "abriu_lactacao": True})
+    assert not eh_parto_produtivo({"tipo_parto": "Aborto", "abriu_lactacao": False})
+    assert not eh_parto_produtivo({"tipo_parto": "Aborto"})           # campo ausente = False
+
+
 # ---------------------------------------------------------------------------
 # lactacao_aberta / del_vivo
 # ---------------------------------------------------------------------------
@@ -314,7 +338,12 @@ def test_listagem_de_animais_expoe_em_lactacao(client, engine):
 def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
     """(c) do plano — o caso da matriz 14 do relatório, ponta a ponta, com
     data RETROATIVA para provar que o DEL sai do evento e não do dia do
-    lançamento."""
+    lançamento.
+
+    Aborto COM abertura de lactação é produtivo (pedido explícito do
+    usuário, 27/08/2026): a vaca entrou em lactação de verdade, o que conta
+    como uma cria para fins de ordem de parto — ver
+    `fazenda.rules.parto.eh_parto_produtivo`."""
     data_aborto = HOJE - timedelta(days=25)
     _add(
         engine,
@@ -331,7 +360,7 @@ def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
     })
     assert r.status_code == 200
     corpo = r.json()
-    assert corpo["ordem_parto"] is None          # aborto não avança a ordem de parto
+    assert corpo["ordem_parto"] == 1              # aborto COM lactação avança a ordem de parto
     assert corpo["lactacao_aberta"] is True
     assert corpo["del_dias"] == 25               # data REAL do evento, não o dia do lançamento
     assert corpo["sugerir_lote"] is True
@@ -339,7 +368,8 @@ def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
     with Session(engine) as s:
         parto = s.exec(select(Parto)).one()
         assert parto.tipo_parto == TIPO_PARTO_ABORTO
-        assert parto.ordem_parto is None
+        assert parto.ordem_parto == 1
+        assert parto.abriu_lactacao is True
         assert parto.data_parto == data_aborto
 
         lact = s.exec(select(Lactacao)).one()
@@ -367,8 +397,12 @@ def test_aborto_sem_abrir_lactacao_ainda_cria_o_parto(client, engine):
     })
     assert r.status_code == 200
     assert r.json()["lactacao_aberta"] is False
+    assert r.json()["ordem_parto"] is None        # sem lactação, aborto continua fora da contagem
     with Session(engine) as s:
-        assert s.exec(select(Parto)).one().tipo_parto == TIPO_PARTO_ABORTO
+        parto = s.exec(select(Parto)).one()
+        assert parto.tipo_parto == TIPO_PARTO_ABORTO
+        assert parto.ordem_parto is None
+        assert parto.abriu_lactacao is False
         assert s.exec(select(Lactacao)).first() is None
 
 
@@ -389,6 +423,82 @@ def test_encerramento_tipo_parto_nao_carimba_perda_de_prenhez(client, engine):
     assert r.json()["crias_criadas"] == ["16A"]
     with Session(engine) as s:
         assert s.exec(select(Servico)).one().data_perda_prenhez is None
+
+
+# ---------------------------------------------------------------------------
+# Regressão do bug real relatado pelo usuário — matriz com 1º parto vindo da
+# importação do Ideagri (ordem_parto=0, convenção base 0 da planilha) e 2º
+# parto lançado ao vivo pelo app.
+# ---------------------------------------------------------------------------
+def test_matriz_432_parto_importado_com_ordem_zero_nao_contamina_o_proximo(client, engine):
+    """Simula exatamente o cenário relatado: o 1º parto foi inserido como um
+    import faria (`Parto.ordem_parto=0`, direto no banco, sem passar pelo
+    endpoint). O 2º parto é lançado ao vivo via
+    POST /reproducao/encerramento-gestacao (tipo="parto") e precisa sair com
+    `ordem_parto=2` — não `1`, que é o que a versão antiga do bug (confiando
+    em `max(ordem gravada) + 1`) devolvia."""
+    _add(
+        engine,
+        Animal(numero="432", sexo="F", ativo=True, data_nasc=HOJE - timedelta(days=1200)),
+        Parto(numero_matriz="432", data_parto=HOJE - timedelta(days=300), ordem_parto=0, tipo_parto="Parto normal"),
+    )
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "432", "data": HOJE.isoformat(), "tipo": "parto",
+        "crias": [{"numero": "432A", "sexo": "F", "nasceu_viva": True}],
+    })
+    assert r.status_code == 200
+    assert r.json()["ordem_parto"] == 2   # não 1 — é aqui que o bug antigo propagava o erro
+
+    with Session(engine) as s:
+        ordens = sorted(
+            p.ordem_parto for p in s.exec(select(Parto).where(Parto.numero_matriz == "432")).all()
+        )
+        # O 1º parto (importado) continua gravado como 0 — dado histórico sujo,
+        # corrigido pela ferramenta administrativa de reconstrução (ver
+        # test_ordem_parto_partos_reconstrucao.py), não retroativamente aqui.
+        assert ordens == [0, 2]
+
+
+def test_aborto_com_lactacao_depois_parto_de_verdade_ordem_correta(client, engine):
+    """Aborto COM abertura de lactação conta como 1ª cria; o parto de verdade
+    que vem depois é a 2ª — não a 1ª, que seria o resultado se o aborto
+    continuasse fora da contagem."""
+    _add(engine, Animal(numero="700", sexo="F", ativo=True))
+    r1 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "700", "data": (HOJE - timedelta(days=200)).isoformat(), "tipo": "aborto",
+        "abrir_lactacao": True, "motivo": "aborto",
+    })
+    assert r1.json()["ordem_parto"] == 1
+
+    r2 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "700", "data": HOJE.isoformat(), "tipo": "parto",
+        "crias": [{"numero": "700A", "sexo": "F", "nasceu_viva": True}],
+    })
+    assert r2.status_code == 200
+    assert r2.json()["ordem_parto"] == 2
+
+    with Session(engine) as s:
+        partos = sorted(s.exec(select(Parto).where(Parto.numero_matriz == "700")).all(), key=lambda p: p.data_parto)
+        assert [p.ordem_parto for p in partos] == [1, 2]
+        assert partos[0].abriu_lactacao is True
+        assert partos[1].abriu_lactacao is False
+
+
+def test_aborto_sem_lactacao_depois_parto_de_verdade_fica_fora_da_contagem(client, engine):
+    """Contraste com o teste acima: aborto SEM abertura de lactação não
+    conta — o parto de verdade que vem depois é a 1ª cria."""
+    _add(engine, Animal(numero="701", sexo="F", ativo=True))
+    r1 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "701", "data": (HOJE - timedelta(days=200)).isoformat(), "tipo": "aborto",
+        "abrir_lactacao": False, "motivo": "aborto",
+    })
+    assert r1.json()["ordem_parto"] is None
+
+    r2 = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "701", "data": HOJE.isoformat(), "tipo": "parto",
+        "crias": [{"numero": "701A", "sexo": "F", "nasceu_viva": True}],
+    })
+    assert r2.json()["ordem_parto"] == 1
 
 
 def test_parto_normal_tambem_abre_lactacao(client, engine):
