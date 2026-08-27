@@ -596,6 +596,52 @@ class TestTipoPessoa:
         assert r.status_code == 200
         assert r.json()["tipos"] == ["Contador"]
 
+    def test_validar_tipos_backfill_administrador_contador_fazenda_antiga(self):
+        # Reproduz o bug relatado em produção: uma fazenda cujo
+        # seed_tipos_pessoa já rodou ANTES de Administrador/Contador
+        # existirem em TIPOS_PESSOA (ago/2026) tem o SeedFlag
+        # "tipos_pessoa_v1_fazenda_1" já marcado, mas nunca ganhou essas
+        # duas linhas em TipoPessoa — chamar seed_tipos_pessoa de novo não
+        # adianta nada, porque a flag já existe e a função retorna sem
+        # fazer nada. Sem o backfill (seed_tipos_papel_administrativo),
+        # _validar_tipos(["Administrador"]) falha com "Tipo inválido" para
+        # sempre nessa fazenda, mesmo autossemeando a cada chamada.
+        from fazenda.api.routers.cadastro.pessoas import _validar_tipos
+        from fazenda.models import SeedFlag, TipoPessoa
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add(SeedFlag(chave="tipos_pessoa_v1_fazenda_1"))
+            s.add(TipoPessoa(nome="Funcionário", fazenda_id=1))
+            s.add(TipoPessoa(nome="Geral", fazenda_id=1))
+            s.commit()
+
+        with Session(engine) as s:
+            nomes = {t.nome for t in s.exec(select(TipoPessoa)).all()}
+            assert "Administrador" not in nomes  # fazenda "antiga" simulada
+
+            # Antes da correção este raise era exatamente o bug relatado em
+            # produção: "Tipo inválido" mesmo a fazenda tendo passado pelo
+            # seed. Depois da correção (seed_tipos_papel_administrativo
+            # chamada dentro de _validar_tipos), o backfill acontece na
+            # hora e a chamada funciona normalmente.
+            resultado = _validar_tipos(s, ["Administrador"], fazenda_id=1)
+            assert resultado == "Administrador"
+
+        with Session(engine) as s:
+            # Backfill não duplica nem mexe no que já existia.
+            nomes_finais = [t.nome for t in s.exec(
+                select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)
+            ).all()]
+            assert nomes_finais.count("Administrador") == 1
+            assert nomes_finais.count("Contador") == 1
+            assert nomes_finais.count("Funcionário") == 1
+            assert nomes_finais.count("Geral") == 1
+
+            # E o Contador do mesmo backfill também passa a validar.
+            assert _validar_tipos(s, ["Contador"], fazenda_id=1) == "Contador"
+
     def test_cria_novo_tipo_e_usa_na_pessoa(self, client):
         c, engine = client
         r = c.post("/cadastro/pessoas/tipos", json={"nome": "Consultor"})

@@ -100,7 +100,8 @@ from fazenda.api.routers.cadastro import (
     seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
-    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
+    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_tipos_papel_administrativo,
+    seed_inducao_lactacao_ativos1_d0,
     seed_cadastros_estoque,
 )
 from fazenda.api.routers.estoque import (
@@ -218,6 +219,10 @@ async def lifespan(app: FastAPI):
         # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não
         # tem um papel técnico específico (Veterinário/Zootecnista) nem é admin.
         seed_tipo_geral(session, fazenda_id=1)
+        # Backfill de Administrador/Contador (ago/2026) — cobre a fazenda #1
+        # do piloto legado mesmo que o seed original já tenha rodado antes
+        # desses dois tipos existirem (ver seed_tipos_papel_administrativo).
+        seed_tipos_papel_administrativo(session, fazenda_id=1)
         seed_pessoas(session)
         # Identidade de cadastro para o robô de automação (Telegram/MilkNews) —
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.

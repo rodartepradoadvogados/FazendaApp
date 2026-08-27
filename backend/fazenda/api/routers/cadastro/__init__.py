@@ -43,7 +43,9 @@ from .genetica import (
     seed_estoque_semen_inicial,
     seed_semen_categorias,
 )
-from .pessoas import seed_pessoa_robo_milknews, seed_pessoas, seed_tipo_geral, seed_tipos_pessoa
+from .pessoas import (
+    seed_pessoa_robo_milknews, seed_pessoas, seed_tipo_geral, seed_tipos_papel_administrativo, seed_tipos_pessoa,
+)
 from .protocolos_sanitarios import (
     seed_inducao_lactacao_ativos1_d0,
     seed_protocolos_inducao_lactacao,
@@ -92,6 +94,7 @@ __all__ = [
     "seed_pessoa_robo_milknews",
     "seed_tipos_pessoa",
     "seed_tipo_geral",
+    "seed_tipos_papel_administrativo",
     "seed_motivos_baixa",
     "seed_motivos_venda",
     "seed_racas_grau_sangue",
