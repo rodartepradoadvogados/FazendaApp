@@ -144,7 +144,11 @@ def _valor_exibido(receita: float, despesa: float, operador: str) -> float:
     OUTRAS_REC_DESP): devolve o líquido tal qual — pode ser negativo, e é
     exatamente esse líquido (com sinal) que soma na cascata."""
     liquido = round(receita - despesa, 2)
-    return round(-liquido, 2) if operador == "-" else liquido
+    valor = round(-liquido, 2) if operador == "-" else liquido
+    # `+ 0.0` normaliza o zero negativo: em IEEE 754, negar 0.0 dá -0.0, e a
+    # linha vazia (ex.: "Tributos" numa fazenda que não apura IRPJ) chegava
+    # na tela como "-0,00" — que o usuário lê como defeito, não como zero.
+    return valor + 0.0
 
 
 def montar_cascata_dre(
