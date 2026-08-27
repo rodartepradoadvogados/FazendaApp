@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fazenda.models import Patrimonio
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float
+from fazenda.rules.patrimonio import eh_tipo_nao_depreciavel
 
 
 def _get(row: dict, *chaves: str) -> str:
@@ -23,8 +24,9 @@ def parse_patrimonio(content: bytes) -> list[Patrimonio]:
         nome = _get(row, "Nome Patr", "Nome").strip()
         if not nome:
             continue
+        tipo = _get(row, "Tipo patr", "Tipo").strip() or None
         itens.append(Patrimonio(
-            tipo=(_get(row, "Tipo patr", "Tipo").strip() or None),
+            tipo=tipo,
             nome=nome,
             numero=(_get(row, "N° patr", "Nº patr", "N. patr").strip() or None),
             atividade_cultura=(_get(row, "Ativ. cul", "Ativ cul").strip() or None),
@@ -36,5 +38,12 @@ def parse_patrimonio(content: bytes) -> list[Patrimonio]:
             unidade=(_get(row, "Uni.", "Unidade").strip() or None),
             valor_total=parse_float(_get(row, "Vlr. tot", "Vlr tot")),
             data_baixa=parse_date(_get(row, "Dt. baixa", "Dt baixa")),
+            # O CSV não traz uma coluna de depreciabilidade — sem isto, TODO
+            # item (inclusive Terra) nascia com o default True do model e
+            # entrava no cálculo de depreciação normal, disparando a
+            # inconsistência de "vida útil não reconhecida" pra terra (que
+            # nunca tem vida útil cadastrada, porque não deprecia). Ver
+            # `eh_tipo_nao_depreciavel` para o porquê contábil.
+            depreciavel=not eh_tipo_nao_depreciavel(tipo),
         ))
     return itens

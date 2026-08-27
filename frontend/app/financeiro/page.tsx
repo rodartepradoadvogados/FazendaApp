@@ -1603,7 +1603,11 @@ function PatrimonioView() {
 }
 
 function PatrimonioViewAdmin() {
-  const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number; inconsistencias: InconsistenciaPatrimonio[] } | null>(null);
+  const [dados, setDados] = useState<{
+    itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number;
+    valor_atual_total_inconsistentes: number; itens_inconsistentes: number;
+    inconsistencias: InconsistenciaPatrimonio[];
+  } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
   const [itemEditando, setItemEditando] = useState<ItemPatrimonio | "novo" | null>(null);
@@ -1650,7 +1654,15 @@ function PatrimonioViewAdmin() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(dados.total)} l="Itens" />
         <KPI v={formatBRL(dados.valor_total)} l="Valor total (histórico)" c="var(--text-muted)" />
-        <KPI v={formatBRL(dados.valor_atual_total)} l="Valor atual (após depreciação)" c="var(--dourado-light)" />
+        <KPI
+          v={formatBRL(dados.valor_atual_total)}
+          l={
+            dados.itens_inconsistentes > 0
+              ? `Valor atual (após depreciação) — ${dados.itens_inconsistentes} item(ns) fora deste total, ver inconsistências`
+              : "Valor atual (após depreciação)"
+          }
+          c="var(--dourado-light)"
+        />
         <KPI v={String(dados.itens.filter((i) => i.data_baixa).length)} l="Com baixa" c="var(--text-muted)" />
       </div>
       {(vencidas > 0 || proximas > 0) && (
@@ -1667,6 +1679,12 @@ function PatrimonioViewAdmin() {
       {dados.inconsistencias.length > 0 && (
         <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
           <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Inconsistências na depreciação ({dados.inconsistencias.length})</div>
+          {dados.itens_inconsistentes > 0 && (
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              {formatBRL(dados.valor_atual_total_inconsistentes)} em valor de aquisição (não depreciado) destes itens
+              ficam FORA do KPI "Valor atual" acima — corrija o cadastro para incluí-los.
+            </p>
+          )}
           <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", paddingLeft: "1.2rem" }}>
             {dados.inconsistencias.map((inc, i) => (
               <li key={i}>{inc.item}{inc.numero ? ` (Nº ${inc.numero})` : ""}: {inc.motivo}</li>

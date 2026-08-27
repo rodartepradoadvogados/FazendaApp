@@ -34,7 +34,10 @@ from fazenda.rules.casamento_cadastro import normalizar
 from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
-from fazenda.rules.patrimonio import calcular_depreciacao, proxima_atualizacao_valor_mercado, somar_meses, status_manutencao
+from fazenda.rules.patrimonio import (
+    calcular_depreciacao, eh_tipo_nao_depreciavel, proxima_atualizacao_valor_mercado,
+    somar_meses, status_manutencao, valor_base_aquisicao,
+)
 from fazenda.rules.parametros import meta_rmca, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.config import settings
@@ -298,6 +301,11 @@ class PatrimonioIn(BaseModel):
     quantidade: Optional[float] = None
     unidade: Optional[str] = None
     valor_total: Optional[float] = None
+    # False (padrão) preserva o comportamento histórico: valor_total já é o
+    # valor do lote inteiro. True: valor_total é o valor de UMA unidade —
+    # ver rules.patrimonio.valor_base_aquisicao (a única função que deve
+    # combinar valor_total x quantidade; a UI de fato para isso é Onda 2).
+    valor_por_unidade: bool = False
     # depreciavel=True (padrão): informe metodo_depreciacao/vida_util/valor_residual.
     # depreciavel=False (ex.: terra): informe valor_mercado_atual no lugar de
     # valor_total (se vazio, valor_total é usado como valor de mercado inicial)
@@ -1624,7 +1632,14 @@ def listar_patrimonio(
     itens: list[dict] = []
     inconsistencias: list[dict] = []
     valor_total_bruto = 0.0
+    # Separado em consistente x inconsistente (em vez de um único total) —
+    # nos itens com inconsistência, "valor_atual" é só o valor de aquisição
+    # cheio (a depreciação não pôde ser calculada), não um valor depreciado
+    # de verdade. Somar os dois juntos num único KPI produzia um número que
+    # não era nem o histórico nem o depreciado, sem nenhum aviso na tela.
     valor_atual_total = 0.0
+    valor_atual_total_inconsistentes = 0.0
+    itens_inconsistentes = 0
     for i in itens_raw:
         d = i.model_dump()
         dep = calcular_depreciacao(d, hoje)
@@ -1634,16 +1649,107 @@ def listar_patrimonio(
         d["proxima_atualizacao_valor_mercado"] = prox_valor_mercado.isoformat() if prox_valor_mercado else None
         itens.append(d)
         if not i.data_baixa:
-            valor_total_bruto += i.valor_total or 0
-            valor_atual_total += dep["valor_atual"] or 0
+            valor_total_bruto += valor_base_aquisicao(d)
+            if dep["inconsistencia"]:
+                valor_atual_total_inconsistentes += dep["valor_atual"] or 0
+                itens_inconsistentes += 1
+            else:
+                valor_atual_total += dep["valor_atual"] or 0
         if dep["inconsistencia"]:
             inconsistencias.append({"item": i.nome, "numero": i.numero, "motivo": dep["inconsistencia"]})
     return {
         "itens": itens, "total": len(itens_raw),
         "valor_total": round(valor_total_bruto, 2),
         "valor_atual_total": round(valor_atual_total, 2),
+        "valor_atual_total_inconsistentes": round(valor_atual_total_inconsistentes, 2),
+        "itens_inconsistentes": itens_inconsistentes,
         "inconsistencias": inconsistencias,
     }
+
+
+@router.get("/patrimonio/depreciavel-divergencias")
+def divergencias_depreciavel_patrimonio(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Relatório somente leitura (report-first, mesmo padrão das
+    reconstruções de ordem de parto em producao.py): lista os itens JÁ no
+    banco com `depreciavel=True` (o default do model) cujo TIPO indica um
+    bem que não deprecia (ver rules.patrimonio.eh_tipo_nao_depreciavel —
+    Terra/Fazenda/Terreno). Acontece com todo item importado ANTES da
+    correção do parser (o CSV não tem coluna de depreciabilidade; o parser
+    antigo nunca preenchia `depreciavel`, então esses itens nasceram com o
+    default True e ficam gerando a inconsistência "vida útil não
+    reconhecida" na tela). NÃO grava nada — ver POST .../depreciavel-corrigir."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Patrimonio).where(Patrimonio.depreciavel == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    candidatos = [i for i in session.exec(query).all() if eh_tipo_nao_depreciavel(i.tipo)]
+    return {
+        "muda": len(candidatos),
+        "itens": [{"id": i.id, "nome": i.nome, "tipo": i.tipo, "numero": i.numero} for i in candidatos],
+    }
+
+
+class CorrigirDepreciavelIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/patrimonio/depreciavel-corrigir")
+def corrigir_depreciavel_patrimonio(
+    dados: CorrigirDepreciavelIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Marca `depreciavel=False` nos itens levantados por GET
+    .../depreciavel-divergencias — mesma trava report-first das
+    reconstruções de producao.py: sem `confirmar: true` é NO-OP, com 400
+    explicando o porquê. Item corrigido sem valor de mercado ainda cadastrado
+    recebe o valor de aquisição como ponto de partida (mesmo fallback de
+    POST /financeiro/patrimonio)."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /financeiro/patrimonio/depreciavel-divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Patrimonio).where(Patrimonio.depreciavel == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    n = 0
+    for item in session.exec(query).all():
+        if not eh_tipo_nao_depreciavel(item.tipo):
+            continue
+        item.depreciavel = False
+        if item.valor_mercado_atual is None:
+            item.valor_mercado_atual = valor_base_aquisicao(item.model_dump())
+        session.add(item)
+        n += 1
+    session.commit()
+    return {"corrigidos": n}
+
+
+def _validar_valor_residual_patrimonio(dados: PatrimonioIn) -> None:
+    """Valor residual maior que o valor do bem é sempre um erro de cadastro
+    (base depreciável negativa) — sem esta checagem o item nascia com
+    depreciação 0 e SEM nenhuma inconsistência sinalizada (ver
+    rules.patrimonio.calcular_depreciacao, que também detecta o mesmo
+    problema para o dado legado que já esteja assim no banco)."""
+    if dados.depreciavel and dados.valor_residual is not None and dados.valor_total is not None:
+        if dados.valor_residual > dados.valor_total:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Valor residual (R$ {dados.valor_residual:,.2f}) não pode ser maior que o "
+                    f"valor total do bem (R$ {dados.valor_total:,.2f})."
+                ),
+            )
 
 
 @router.post("/patrimonio", status_code=201)
@@ -1658,11 +1764,12 @@ def criar_patrimonio(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_valor_residual_patrimonio(dados)
     item = Patrimonio(
         **dados.model_dump(exclude={"nome"}), nome=dados.nome.strip(), fazenda_id=fazenda_id,
     )
     if not item.depreciavel and item.valor_mercado_atual is None:
-        item.valor_mercado_atual = item.valor_total
+        item.valor_mercado_atual = valor_base_aquisicao(item.model_dump())
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -1680,7 +1787,15 @@ def atualizar_patrimonio(
         raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    for campo, valor in dados.model_dump(exclude={"nome"}).items():
+    _validar_valor_residual_patrimonio(dados)
+    # exclude_unset (não só exclude={"nome"}) — o formulário de edição não
+    # envia todo campo do schema (ex.: valor_mercado_atual/atividade_cultura
+    # não fazem parte do form "editar patrimônio depreciável"); usar
+    # model_dump() puro aplicava o default (None) desses campos por cima do
+    # que já estava salvo, apagando valor de mercado a cada edição de um
+    # item não depreciável. Campo que o formulário de fato envia sempre
+    # (mesmo vazio) continua podendo ser limpo normalmente.
+    for campo, valor in dados.model_dump(exclude={"nome"}, exclude_unset=True).items():
         setattr(item, campo, valor)
     item.nome = dados.nome.strip()
     session.add(item)
@@ -2102,7 +2217,7 @@ def criar_lancamento(
             **pat.model_dump(exclude={"nome"}), nome=pat.nome.strip(), fazenda_id=fazenda_id,
         )
         if not item_patrimonio.depreciavel and item_patrimonio.valor_mercado_atual is None:
-            item_patrimonio.valor_mercado_atual = item_patrimonio.valor_total
+            item_patrimonio.valor_mercado_atual = valor_base_aquisicao(item_patrimonio.model_dump())
         session.add(item_patrimonio)
         session.commit()
         session.refresh(item_patrimonio)
