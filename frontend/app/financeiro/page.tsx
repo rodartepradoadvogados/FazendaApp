@@ -1573,7 +1573,17 @@ type ItemPatrimonio = {
   atividade_cultura: string | null; data_imobilizacao: string | null;
   metodo_depreciacao: string | null; vida_util: string | null; valor_residual: number | null;
   quantidade: number | null; unidade: string | null; valor_total: number | null; data_baixa: string | null;
-  depreciacao_acumulada: number | null; valor_atual: number | null; vida_util_anos: number | null; inconsistencia: string | null;
+  depreciacao_acumulada: number | null; valor_atual: number | null; inconsistencia: string | null;
+  // Onda 2: `vida_util_anos`/`vida_util_meses` são os campos do CADASTRO (os
+  // steppers); `vida_util_total_anos` é o total calculado (10 anos e 6 meses
+  // = 10,5), usado para exibir e ordenar. Nomes distintos de propósito — ver
+  // o comentário em listar_patrimonio no backend.
+  vida_util_anos: number | null; vida_util_meses: number | null; vida_util_total_anos: number | null;
+  codigo: string | null; metodo_rotulo: string | null;
+  fator_saldo_decrescente: number | null;
+  unidades_vida_util_total: number | null; unidades_consumidas: number | null; unidade_uso: string | null;
+  motivo_baixa: string | null; valor_baixa: number | null;
+  baixa: { motivo: string | null; data_baixa: string; valor_recebido: number; valor_contabil: number; resultado: number; estimado: boolean } | null;
   frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
   data_proxima_manutencao: string | null; observacao_manutencao: string | null;
   situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
@@ -1618,12 +1628,14 @@ function PatrimonioViewAdmin() {
   const [dados, setDados] = useState<{
     itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number;
     valor_atual_total_inconsistentes: number; itens_inconsistentes: number;
-    inconsistencias: InconsistenciaPatrimonio[];
+    inconsistencias: InconsistenciaPatrimonio[]; sem_codigo: number;
   } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
   const [itemEditando, setItemEditando] = useState<ItemPatrimonio | "novo" | null>(null);
   const [itemValorMercado, setItemValorMercado] = useState<ItemPatrimonio | null>(null);
+  const [itemBaixa, setItemBaixa] = useState<ItemPatrimonio | null>(null);
+  const [gerandoCodigos, setGerandoCodigos] = useState(false);
 
   const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
   useEffect(carregar, []);
@@ -1635,7 +1647,8 @@ function PatrimonioViewAdmin() {
     tipo: (i) => (i.tipo || "").toLowerCase(),
     nome: (i) => (i.nome || "").toLowerCase(),
     numero: (i) => (i.numero || "").toLowerCase(),
-    vidaUtil: (i) => i.vida_util_anos ?? -1,
+    codigo: (i) => i.codigo || "",
+    vidaUtil: (i) => i.vida_util_total_anos ?? -1,
     valorResidual: (i) => i.valor_residual ?? -1,
     quantidade: (i) => i.quantidade ?? -1,
     valorTotal: (i) => i.valor_total ?? -1,
@@ -1688,6 +1701,36 @@ function PatrimonioViewAdmin() {
           </p>
         </div>
       )}
+      {/* Onda 2 — bens que nasceram sem código PAT (todo o legado). O backfill
+          é report-first: a prévia não grava nada. */}
+      {dados.sem_codigo > 0 && (
+        <div className="card mb-4" style={{ borderColor: "var(--dourado-light)" }}>
+          <div className="flex items-center justify-between gap-3" style={{ flexWrap: "wrap" }}>
+            <p style={{ fontSize: "0.82rem", margin: 0 }}>
+              <strong>{dados.sem_codigo} bem(ns) sem código.</strong>{" "}
+              <span style={{ color: "var(--text-muted)" }}>
+                O código (PAT-0001) é como você identifica o bem no dia a dia — “baixa o PAT-0007”.
+                Os itens importados antes desta versão ainda não têm um.
+              </span>
+            </p>
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} disabled={gerandoCodigos}
+              onClick={async () => {
+                setGerandoCodigos(true);
+                try {
+                  const previa = await gerarCodigosPatrimonio(false);
+                  const ok = confirm(
+                    `Gerar ${previa.total} código(s), de ${previa.primeiro} a ${previa.ultimo}?\n\n` +
+                    `A ordem segue a data de imobilização de cada bem. Nada foi gravado ainda.`
+                  );
+                  if (ok) { await gerarCodigosPatrimonio(true); carregar(); }
+                } catch (e: any) { setErro(e.message); } finally { setGerandoCodigos(false); }
+              }}>
+              {gerandoCodigos ? "Gerando…" : "Gerar códigos"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {dados.inconsistencias.length > 0 && (
         <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
           <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Inconsistências na depreciação ({dados.inconsistencias.length})</div>
@@ -1715,6 +1758,7 @@ function PatrimonioViewAdmin() {
           <table className="fazenda-table">
             <thead>
               <tr>
+                <ThOrd rotulo="Código" chave="codigo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Nome" chave="nome" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Nº" chave="numero" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
@@ -1734,6 +1778,7 @@ function PatrimonioViewAdmin() {
             <tbody>
               {bensOrdenados.map((i) => (
                 <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
+                  <td style={{ fontSize: "0.76rem", fontFamily: "var(--font-mono, monospace)", color: "var(--dourado-light)", whiteSpace: "nowrap" }}>{i.codigo || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
                   <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
                     {i.nome}
@@ -1741,8 +1786,23 @@ function PatrimonioViewAdmin() {
                   </td>
                   <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_depreciacao || "—") : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.vida_util || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_rotulo || i.metodo_depreciacao || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>
+                    {!i.depreciavel ? "—"
+                      : i.vida_util_anos != null || i.vida_util_meses != null
+                        // Cadastro novo (steppers): mostra exatamente o que foi digitado.
+                        ? [i.vida_util_anos ? `${i.vida_util_anos}a` : null, i.vida_util_meses ? `${i.vida_util_meses}m` : null].filter(Boolean).join(" ") || "—"
+                        // Legado: o texto livre, com o total interpretado ao lado, para
+                        // o usuário ver COMO o sistema entendeu o que está escrito.
+                        : i.vida_util
+                          ? <span title="Cadastro antigo em texto livre — edite o bem para gravar anos e meses">
+                              {i.vida_util}
+                              {i.vida_util_total_anos != null && (
+                                <span style={{ color: "var(--text-muted)" }}> (= {i.vida_util_total_anos.toFixed(1)}a)</span>
+                              )}
+                            </span>
+                          : "—"}
+                  </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.depreciavel && i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
@@ -1750,7 +1810,19 @@ function PatrimonioViewAdmin() {
                     {!i.depreciavel ? "—" : i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
-                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
+                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {!i.data_baixa ? "—" : (
+                      <>
+                        {formatDate(i.data_baixa)}
+                        {i.baixa && (
+                          <div style={{ color: i.baixa.resultado >= 0 ? "var(--green-light)" : "var(--red)", fontWeight: 600 }}
+                               title={`Valor contábil na baixa: ${formatBRL(i.baixa.valor_contabil)} · Recebido: ${formatBRL(i.baixa.valor_recebido)}${i.baixa.estimado ? " (estimado — cadastro incompleto)" : ""}`}>
+                            {i.baixa.resultado >= 0 ? "Ganho " : "Perda "}{formatBRL(Math.abs(i.baixa.resultado))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </td>
                   <td>
                     {i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span>
                       : i.depreciavel ? <SeloManutencao item={i} />
@@ -1775,6 +1847,19 @@ function PatrimonioViewAdmin() {
                           <TrendingUp size={14} />
                         </button>
                       )}
+                      {!i.data_baixa ? (
+                        <button className="btn-ghost" title="Baixar do ativo (venda, perda, doação…)" style={{ padding: "0.25rem" }} onClick={() => setItemBaixa(i)}>
+                          <Trash2 size={14} />
+                        </button>
+                      ) : (
+                        <button className="btn-ghost" title="Estornar a baixa — o bem volta ao ativo" style={{ padding: "0.25rem" }}
+                          onClick={async () => {
+                            if (!confirm(`Estornar a baixa de ${i.nome}? O bem volta ao ativo e volta a depreciar.`)) return;
+                            try { await estornarBaixaPatrimonio(i.id); carregar(); } catch (e: any) { setErro(e.message); }
+                          }}>
+                          <Undo2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1791,6 +1876,9 @@ function PatrimonioViewAdmin() {
       )}
       {itemValorMercado && (
         <ModalValorMercadoPatrimonio item={itemValorMercado} onClose={() => setItemValorMercado(null)} onSalvo={() => { setItemValorMercado(null); carregar(); }} />
+      )}
+      {itemBaixa && (
+        <ModalBaixaPatrimonio item={itemBaixa} onClose={() => setItemBaixa(null)} onSalvo={() => { setItemBaixa(null); carregar(); }} />
       )}
     </>
   );
@@ -1811,8 +1899,18 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
   const [unidade, setUnidade] = useState(item?.unidade || "");
   const [valorTotal, setValorTotal] = useState(item?.valor_total != null ? String(item.valor_total) : "");
   const [depreciavel, setDepreciavel] = useState(item?.depreciavel ?? true);
-  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "");
-  const [vidaUtil, setVidaUtil] = useState(item?.vida_util || "");
+  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "LINEAR");
+  // Onda 2 — vida útil ESTRUTURADA. Item legado só tem o texto livre
+  // (`vida_util`), então os steppers começam vazios e o texto antigo fica
+  // visível como procedência até o usuário preencher os campos novos.
+  const [vidaUtilAnos, setVidaUtilAnos] = useState(item?.vida_util_anos != null ? String(item.vida_util_anos) : "");
+  const [vidaUtilMeses, setVidaUtilMeses] = useState(item?.vida_util_meses != null ? String(item.vida_util_meses) : "");
+  const [fatorSaldo, setFatorSaldo] = useState(item?.fator_saldo_decrescente != null ? String(item.fator_saldo_decrescente) : "");
+  const [unidadesTotal, setUnidadesTotal] = useState(item?.unidades_vida_util_total != null ? String(item.unidades_vida_util_total) : "");
+  const [unidadesConsumidas, setUnidadesConsumidas] = useState(item?.unidades_consumidas != null ? String(item.unidades_consumidas) : "");
+  const [unidadeUso, setUnidadeUso] = useState(item?.unidade_uso || "horas");
+  const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
+  useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
   const [valorResidual, setValorResidual] = useState(item?.valor_residual != null ? String(item.valor_residual) : "");
   const [frequenciaValorMercado, setFrequenciaValorMercado] = useState(
     item?.atualizacao_valor_mercado_frequencia_meses != null ? String(item.atualizacao_valor_mercado_frequencia_meses) : ""
@@ -1829,7 +1927,15 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
       valor_total: valorTotal ? Number(valorTotal) : null,
       depreciavel,
       metodo_depreciacao: depreciavel ? (metodoDepreciacao || null) : null,
-      vida_util: depreciavel ? (vidaUtil || null) : null,
+      // O texto livre é PRESERVADO como veio (procedência do dado importado);
+      // quem manda no cálculo são os campos estruturados abaixo.
+      vida_util: depreciavel ? (item?.vida_util || null) : null,
+      vida_util_anos: depreciavel && vidaUtilAnos !== "" ? Number(vidaUtilAnos) : null,
+      vida_util_meses: depreciavel && vidaUtilMeses !== "" ? Number(vidaUtilMeses) : null,
+      fator_saldo_decrescente: depreciavel && metodoDepreciacao === "SALDO_DECRESCENTE" && fatorSaldo ? Number(fatorSaldo) : null,
+      unidades_vida_util_total: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" && unidadesTotal ? Number(unidadesTotal) : null,
+      unidades_consumidas: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" && unidadesConsumidas ? Number(unidadesConsumidas) : null,
+      unidade_uso: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" ? (unidadeUso || null) : null,
       valor_residual: depreciavel && valorResidual ? Number(valorResidual) : null,
       atualizacao_valor_mercado_frequencia_meses: !depreciavel && frequenciaValorMercado ? Number(frequenciaValorMercado) : null,
     };
@@ -1869,7 +1975,18 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div style={{ gridColumn: "1 / -1" }}><label style={label}>Nome</label>
             <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Trator Massey Ferguson" /></div>
           <div><label style={label}>Tipo</label>
-            <input style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="ex.: Máquinas, Terra, Benfeitoria" /></div>
+            <select style={inputStyle} value={tipo} onChange={(e) => {
+              const novo = e.target.value;
+              setTipo(novo);
+              // Terra/Fazenda/Terreno não depreciam (CPC 27 e IN RFB 1700 não
+              // atribuem taxa a terreno). Marcar sozinho evita o cadastro
+              // incoerente que gerava a nota "vida útil não reconhecida".
+              if (["Terra", "Fazenda", "Terreno"].includes(novo)) setDepreciavel(false);
+            }}>
+              <option value="">Selecione…</option>
+              {(opcoes?.tipos || (tipo ? [tipo] : [])).map((t) => <option key={t} value={t}>{t}</option>)}
+              {tipo && !(opcoes?.tipos || []).includes(tipo) && <option value={tipo}>{tipo} (cadastro antigo)</option>}
+            </select></div>
           <div><label style={label}>Nº patrimônio</label>
             <input style={inputStyle} value={numero} onChange={(e) => setNumero(e.target.value)} /></div>
           <div><label style={label}>Data de imobilização</label>
@@ -1879,7 +1996,11 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div><label style={label}>Quantidade</label>
             <input type="number" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></div>
           <div><label style={label}>Unidade</label>
-            <input style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} /></div>
+            <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}>
+              <option value="">—</option>
+              {(opcoes?.unidades || []).map((u) => <option key={u} value={u}>{u}</option>)}
+              {unidade && !(opcoes?.unidades || []).includes(unidade) && <option value={unidade}>{unidade} (cadastro antigo)</option>}
+            </select></div>
         </div>
 
         <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
@@ -1891,10 +2012,65 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
 
         {depreciavel ? (
           <div className="grid grid-cols-2 gap-3">
-            <div><label style={label}>Método de depreciação</label>
-              <input style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)} placeholder="ex.: Linear" /></div>
-            <div><label style={label}>Vida útil</label>
-              <input style={inputStyle} value={vidaUtil} onChange={(e) => setVidaUtil(e.target.value)} placeholder="ex.: 10 Anos" /></div>
+            <div style={{ gridColumn: "1 / -1" }}><label style={label}>Método de depreciação</label>
+              <select style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)}>
+                {(opcoes?.metodos || [{ valor: "LINEAR", rotulo: "Linear (quotas constantes)", ajuda: "" }]).map((m) => (
+                  <option key={m.valor} value={m.valor}>{m.rotulo}</option>
+                ))}
+              </select>
+              {opcoes?.metodos.find((m) => m.valor === metodoDepreciacao)?.ajuda && (
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {opcoes.metodos.find((m) => m.valor === metodoDepreciacao)!.ajuda}
+                </p>
+              )}
+            </div>
+
+            {/* Vida útil em dois campos numéricos — substitui o texto livre
+                "10 Anos", que o sistema tinha que adivinhar (e adivinhava
+                errado: "10 anos e 6 meses" virava 0,83 ano). Não se aplica ao
+                método por unidades, que deprecia por uso e não por tempo. */}
+            {metodoDepreciacao !== "UNIDADES_PRODUZIDAS" && <>
+              <div><label style={label}>Vida útil — anos</label>
+                <input type="number" min={0} max={100} style={inputStyle} value={vidaUtilAnos}
+                  onChange={(e) => setVidaUtilAnos(e.target.value)} placeholder="ex.: 10" /></div>
+              <div><label style={label}>Vida útil — meses adicionais</label>
+                <input type="number" min={0} max={11} style={inputStyle} value={vidaUtilMeses}
+                  onChange={(e) => setVidaUtilMeses(e.target.value)} placeholder="ex.: 6" /></div>
+            </>}
+
+            {metodoDepreciacao === "SALDO_DECRESCENTE" && (
+              <div><label style={label}>Multiplicador da taxa</label>
+                <input type="number" min={1} step={0.5} style={inputStyle} value={fatorSaldo}
+                  onChange={(e) => setFatorSaldo(e.target.value)} placeholder="vazio = 2 (em dobro)" />
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  2 = “saldo decrescente em dobro”, a convenção mais usada.
+                </p>
+              </div>
+            )}
+
+            {metodoDepreciacao === "UNIDADES_PRODUZIDAS" && <>
+              <div><label style={label}>Unidade de uso</label>
+                <select style={inputStyle} value={unidadeUso} onChange={(e) => setUnidadeUso(e.target.value)}>
+                  <option value="horas">horas</option>
+                  <option value="km">km</option>
+                  <option value="fardos">fardos</option>
+                  <option value="toneladas">toneladas</option>
+                  <option value="ciclos">ciclos</option>
+                </select></div>
+              <div><label style={label}>Total na vida inteira</label>
+                <input type="number" min={0} style={inputStyle} value={unidadesTotal}
+                  onChange={(e) => setUnidadesTotal(e.target.value)} placeholder="ex.: 10000" /></div>
+              <div><label style={label}>Já consumido</label>
+                <input type="number" min={0} style={inputStyle} value={unidadesConsumidas}
+                  onChange={(e) => setUnidadesConsumidas(e.target.value)} placeholder="ex.: 2500" /></div>
+              <div style={{ alignSelf: "end" }}>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  O sistema não lê horímetro — atualize o “já consumido” à mão quando quiser
+                  que a depreciação acompanhe o uso.
+                </p>
+              </div>
+            </>}
+
             <div><label style={label}>Valor residual (R$)</label>
               <CampoMoeda style={inputStyle} value={Number(valorResidual) || 0} onChange={(v) => setValorResidual(v ? String(v) : "")} /></div>
           </div>
@@ -1911,6 +2087,106 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
           <button className="btn-primary" onClick={salvar} disabled={salvando}>
             {salvando ? "Salvando…" : ehCompraAgora && !item ? "Ir para o lançamento" : "Salvar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Onda 2 — baixa do bem com apuração de ganho/perda de capital.
+ *  Antes, dar baixa era preencher `data_baixa` na tela de edição: o bem sumia
+ *  dos totais e o resultado da operação não era apurado em lugar nenhum. */
+function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
+  const [dataBaixa, setDataBaixa] = useState(new Date().toISOString().slice(0, 10));
+  const [motivo, setMotivo] = useState("VENDA");
+  const [valorRecebido, setValorRecebido] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
+
+  const motivoTemVenda = (opcoes?.motivos_baixa.find((m) => m.valor === motivo)?.tem_valor_venda) ?? (motivo === "VENDA");
+  // Prévia do resultado com o valor contábil de HOJE. O número final é
+  // apurado no backend com o valor contábil na DATA DA BAIXA — se o usuário
+  // informar uma data retroativa, o resultado gravado será diferente deste.
+  const valorContabilHoje = item.valor_atual ?? 0;
+  const resultadoPrevisto = (motivoTemVenda ? Number(valorRecebido) || 0 : 0) - valorContabilHoje;
+
+  const salvar = async () => {
+    setSalvando(true); setErro("");
+    try {
+      await baixarPatrimonio(item.id, {
+        data_baixa: dataBaixa, motivo,
+        valor_recebido: motivoTemVenda && valorRecebido ? Number(valorRecebido) : null,
+        observacao: observacao || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width="560px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><label style={label}>Data da baixa</label>
+            <input type="date" style={inputStyle} value={dataBaixa} onChange={(e) => setDataBaixa(e.target.value)} /></div>
+          <div><label style={label}>Motivo</label>
+            <select style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+              {(opcoes?.motivos_baixa || [{ valor: "VENDA", rotulo: "Venda", tem_valor_venda: true }]).map((m) => (
+                <option key={m.valor} value={m.valor}>{m.rotulo}</option>
+              ))}
+            </select></div>
+          {motivoTemVenda && (
+            <div><label style={label}>Valor recebido (R$)</label>
+              <CampoMoeda style={inputStyle} value={Number(valorRecebido) || 0} onChange={(v) => setValorRecebido(v ? String(v) : "")} /></div>
+          )}
+          <div style={{ gridColumn: motivoTemVenda ? "auto" : "1 / -1" }}><label style={label}>Observação</label>
+            <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="opcional" /></div>
+        </div>
+
+        <div className="card" style={{ padding: "0.8rem 1rem" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Resultado previsto
+          </div>
+          <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{formatBRL(valorContabilHoje)}</div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor contábil hoje</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{formatBRL(motivoTemVenda ? Number(valorRecebido) || 0 : 0)}</div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor recebido</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: resultadoPrevisto >= 0 ? "var(--green-light)" : "var(--red)" }}>
+                {formatBRL(resultadoPrevisto)}
+              </div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                {resultadoPrevisto >= 0 ? "Ganho de capital" : "Perda de capital"}
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Prévia com o valor contábil de hoje. Se a data da baixa for retroativa, o valor
+            contábil daquela data é menor de depreciação — o resultado final é recalculado ao salvar.
+            Este ganho/perda é resultado do exercício e pertence à linha <strong>Outras receitas e
+            despesas</strong> da DRE.
+          </p>
+        </div>
+
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>
+            {salvando ? "Baixando…" : "Confirmar baixa"}
           </button>
         </div>
       </div>

@@ -378,3 +378,30 @@ class TestBaixa:
         listado = client.get("/financeiro/patrimonio").json()["itens"][0]
         assert listado["baixa"]["motivo"] == "VENDA"
         assert "dígitos" in listado["metodo_rotulo"].lower()
+
+
+class TestColisaoVidaUtil:
+    """`calcular_depreciacao` devolve `vida_util_anos` como o TOTAL (10 anos e
+    6 meses = 10,5); o cadastro tem um campo homônimo que é o inteiro do
+    stepper (10). Se a listagem publicar o total sob o nome do campo, abrir a
+    edição mostra 10,5 no campo de anos e salvar grava outra vida útil — sem
+    nenhum erro visível."""
+
+    def test_listagem_separa_campo_do_cadastro_e_total_calculado(self, client):
+        item = _criar(client, vida_util_anos=10, vida_util_meses=6, metodo_depreciacao=LINEAR)
+        listado = client.get("/financeiro/patrimonio").json()["itens"][0]
+        assert listado["vida_util_anos"] == 10, "campo do cadastro, como digitado"
+        assert listado["vida_util_meses"] == 6
+        assert listado["vida_util_total_anos"] == pytest.approx(10.5), "total calculado"
+
+    def test_editar_sem_mexer_na_vida_util_nao_altera_o_cadastro(self, client):
+        """Ida e volta pela tela de edição tem que preservar 10 anos e 6 meses."""
+        item = _criar(client, vida_util_anos=10, vida_util_meses=6)
+        listado = client.get("/financeiro/patrimonio").json()["itens"][0]
+        client.put(f"/financeiro/patrimonio/{item['id']}", json={
+            "nome": item["nome"],
+            "vida_util_anos": listado["vida_util_anos"],
+            "vida_util_meses": listado["vida_util_meses"],
+        })
+        depois = client.get("/financeiro/patrimonio").json()["itens"][0]
+        assert (depois["vida_util_anos"], depois["vida_util_meses"]) == (10, 6)

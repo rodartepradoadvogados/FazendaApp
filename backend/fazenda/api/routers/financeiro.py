@@ -2011,6 +2011,15 @@ def listar_patrimonio(
         d = i.model_dump()
         dep = calcular_depreciacao(d, hoje)
         d.update(dep)
+        # `calcular_depreciacao` devolve `vida_util_anos` como o TOTAL em anos
+        # (10 anos e 6 meses = 10,5) — nome que COLIDE com o campo homônimo do
+        # cadastro, que é o inteiro do stepper (10). O update acima acabou de
+        # sobrescrever o campo com o total; devolvemos o valor cadastrado e
+        # publicamos o total sob outro nome. Sem isto, abrir a edição de um bem
+        # de "10 anos e 6 meses" mostraria 10,5 no campo de anos e, ao salvar,
+        # gravaria uma vida útil diferente da que estava lá.
+        d["vida_util_total_anos"] = dep["vida_util_anos"]
+        d["vida_util_anos"] = i.vida_util_anos
         d.update(status_manutencao(d, hoje))
         prox_valor_mercado = proxima_atualizacao_valor_mercado(d, frequencia_padrao)
         d["proxima_atualizacao_valor_mercado"] = prox_valor_mercado.isoformat() if prox_valor_mercado else None
