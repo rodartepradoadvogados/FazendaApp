@@ -2246,6 +2246,164 @@ def equivalente_maduro_do_animal(
 
 
 # ---------------------------------------------------------------------------
+# Reconstrução de Parto.ordem_parto — a FONTE do dado, não o derivado em
+# ControleLeiteiro (ver seção seguinte). Ver fazenda/rules/parto.py para o
+# "porquê" completo: o histórico importado do Ideagri traz `ordem_parto` numa
+# convenção diferente da deste app (planilha usa base 0 — "0" para a 1ª cria
+# —, aqui é base 1), e a versão antiga de `proxima_ordem_parto` confiava no
+# `max()` do que já estava gravado, propagando esse erro para todo parto
+# lançado depois pelo app. `proxima_ordem_parto` já foi corrigida para nunca
+# mais confiar em `ordem_parto` armazenado (sempre conta os produtivos do
+# zero) — mas isso só protege PARTOS NOVOS. O dado já gravado (import antigo)
+# continua errado até alguém rodar esta reconstrução.
+#
+# IMPORTANTE — ordem de execução: rode ESTA ferramenta ANTES da de Controles
+# (seção seguinte). A de Controles lê `Parto.ordem_parto` como fonte de
+# verdade (`ordem_parto_na_data`) — uma vez os Partos corrigidos, a
+# reconstrução de Controles volta a mostrar os números certos na próxima vez
+# que rodar, sem precisar de nenhuma mudança nela.
+#
+# Mesmo padrão report-first das demais ferramentas desta seção: GET
+# .../divergencias nunca escreve nada; POST .../reconstruir só grava com
+# `confirmar: true` explícito.
+# ---------------------------------------------------------------------------
+def _levantar_ordem_parto_partos(session: Session, fazenda_id: int | None, exemplos: int) -> dict:
+    """Para cada matriz, ordena os partos dela cronologicamente (data do
+    parto; em empate ou parto sem data, o `id` de criação como desempate
+    estável) e atribui 1, 2, 3... só aos produtivos (`eh_parto_produtivo`,
+    já com a exceção do aborto que abriu lactação) — os demais (aborto sem
+    lactação) ficam com `ordem_parto=None`. Compara com o que está gravado
+    hoje e reporta as divergências, sem gravar nada."""
+    q_partos = select(Parto)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(q_partos).all()
+
+    por_animal: dict[str, list[Parto]] = defaultdict(list)
+    for p in partos:
+        por_animal[p.numero_matriz].append(p)
+
+    muda = 0
+    vira_desconhecido = 0
+    amostra = []
+    for numero, ps in por_animal.items():
+        ordenados = sorted(ps, key=lambda p: (p.data_parto is None, p.data_parto or date.min, p.id or 0))
+        contador = 0
+        for p in ordenados:
+            if eh_parto_produtivo(p):
+                contador += 1
+                correta = contador
+            else:
+                correta = None
+            if p.ordem_parto == correta:
+                continue
+            muda += 1
+            if correta is None:
+                vira_desconhecido += 1
+            if len(amostra) < exemplos:
+                amostra.append((numero, p.data_parto, p.ordem_parto, correta))
+
+    datas_p = [p.data_parto for p in partos if p.data_parto]
+    return {
+        "partos": len(partos),
+        "matrizes_com_parto": len(por_animal),
+        "muda": muda,
+        "vira_desconhecido": vira_desconhecido,
+        "amostra": amostra,
+        "periodo_partos": (min(datas_p), max(datas_p)) if datas_p else None,
+    }
+
+
+def _gravar_ordem_parto_partos(session: Session, fazenda_id: int | None) -> int:
+    """Grava a contagem cronológica calculada acima em `Parto.ordem_parto` —
+    mesma lógica de `_levantar_ordem_parto_partos`, sem o relatório."""
+    q_partos = select(Parto)
+    if fazenda_id is not None:
+        q_partos = q_partos.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(q_partos).all()
+
+    por_animal: dict[str, list[Parto]] = defaultdict(list)
+    for p in partos:
+        por_animal[p.numero_matriz].append(p)
+
+    n = 0
+    for ps in por_animal.values():
+        ordenados = sorted(ps, key=lambda p: (p.data_parto is None, p.data_parto or date.min, p.id or 0))
+        contador = 0
+        for p in ordenados:
+            if eh_parto_produtivo(p):
+                contador += 1
+                correta = contador
+            else:
+                correta = None
+            if p.ordem_parto != correta:
+                p.ordem_parto = correta
+                session.add(p)
+                n += 1
+    session.commit()
+    return n
+
+
+@router.get("/ordem-parto/partos/divergencias")
+def divergencias_ordem_parto_partos(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Relatório somente leitura: quantos `Parto.ordem_parto` mudariam se a
+    contagem cronológica (POST .../partos/reconstruir) fosse aplicada. NÃO
+    grava nada — ver nota no topo desta seção sobre rodar esta ferramenta
+    ANTES da de Controles, logo abaixo."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = _levantar_ordem_parto_partos(session, fazenda_id, exemplos=40)
+    return {
+        "partos": r["partos"],
+        "matrizes_com_parto": r["matrizes_com_parto"],
+        "muda": r["muda"],
+        "vira_desconhecido": r["vira_desconhecido"],
+        "periodo_partos": [d.isoformat() for d in r["periodo_partos"]] if r["periodo_partos"] else None,
+        "amostra": [
+            {
+                "numero_matriz": numero,
+                "data_parto": data.isoformat() if data else None,
+                "ordem_hoje": hoje,
+                "ordem_correta": correta,
+            }
+            for numero, data, hoje, correta in r["amostra"]
+        ],
+    }
+
+
+class ReconstruirOrdemPartoPartosIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/ordem-parto/partos/reconstruir")
+def reconstruir_ordem_parto_partos(
+    dados: ReconstruirOrdemPartoPartosIn,
+    session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava a ordem de parto correta em `Parto` — contagem cronológica dos
+    partos produtivos de cada matriz, do zero, ignorando qualquer valor já
+    gravado (importado ou não). Restrito a administrador/dono, escopado à
+    fazenda de quem chama.
+
+    Sem `confirmar: true` é NO-OP de propósito, com 400 explicando o porquê
+    — mesma trava report-first da ferramenta de Controles."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /producao/ordem-parto/partos/divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    n = _gravar_ordem_parto_partos(session, fazenda_id)
+    return {"gravados": n}
+
+
+# ---------------------------------------------------------------------------
 # Reconstrução de ControleLeiteiro.ordem_parto — ver rules/ordem_parto_historica.py
 # para o "porquê" completo do problema. O campo nunca é gravado por nenhuma
 # das quatro vias de entrada do controle leiteiro; a tela caía num atalho (a

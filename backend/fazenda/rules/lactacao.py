@@ -49,6 +49,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, select
 
 from fazenda.models import Animal, Lactacao, Parto, Secagem
@@ -306,8 +307,24 @@ def backfill_lactacoes(session: Session, *, fazenda_id: int | None = None) -> di
 
     Não dá commit — quem chama decide quando (a migração Alembic commita a
     transação dela).
+
+    `Parto.abriu_lactacao` (ver `fazenda.rules.parto`) só existe a partir da
+    migração `3bd371891acd`, mas esta função também é chamada por UMA
+    migração ANTERIOR na cadeia (`c1a2b3d4e5f6_lactacao.py`, que reconstrói
+    o histórico de lactações a partir dos partos já gravados) — um
+    `alembic upgrade` do ZERO replaya essa chamada ANTES de a coluna existir
+    fisicamente na tabela. `select(Parto)` lista TODAS as colunas mapeadas
+    pela classe Python ATUAL, então confere o schema de verdade primeiro:
+    sem isso, todo `alembic upgrade` do zero quebraria ao re-executar aquela
+    migração antiga assim que `Parto` ganhasse qualquer coluna nova.
     """
-    partos = [p for p in session.exec(_escopo(select(Parto), Parto, fazenda_id)).all()
+    tem_abriu_lactacao = "abriu_lactacao" in {
+        c["name"] for c in sa_inspect(session.get_bind()).get_columns("parto")
+    }
+    query_partos = select(Parto) if tem_abriu_lactacao else select(
+        Parto.id, Parto.numero_matriz, Parto.data_parto, Parto.tipo_parto, Parto.animal_id, Parto.fazenda_id,
+    )
+    partos = [p for p in session.exec(_escopo(query_partos, Parto, fazenda_id)).all()
               if p.data_parto and eh_parto_produtivo(p)]
     secagens = session.exec(_escopo(select(Secagem), Secagem, fazenda_id)).all()
 
