@@ -583,6 +583,8 @@ export default function FolhaPagamentoView() {
     }
   }
 
+  const ordGuias = useOrdenacao(guias ?? []);
+
   const valesAvulsosFiltrados = useMemo(() => (valesAvulsos || []).filter((v: any) =>
     (!fValeDe || v.data_pagamento >= fValeDe) &&
     (!fValeAte || v.data_pagamento <= fValeAte) &&
@@ -1404,9 +1406,20 @@ export default function FolhaPagamentoView() {
         ) : (
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Tipo</th><th>Competência</th><th>Cód. receita</th><th style={{ textAlign: "right" }}>Principal</th><th style={{ textAlign: "right" }}>Multa</th><th style={{ textAlign: "right" }}>Juros</th><th style={{ textAlign: "right" }}>Total</th><th>Vencimento</th><th>Origem</th><th>Ações</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Tipo" campo="tipo" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Competência" campo="competencia" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Cód. receita" campo="codigo_receita" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Principal" campo="valor_principal" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Multa" campo="valor_multa" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Juros" campo="valor_juros" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Total" campo="valor_total" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} alinhar="right" />
+                <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <ThOrdenavel label="Origem" campo="origem" coluna={ordGuias.coluna} dir={ordGuias.dir} ordenar={ordGuias.ordenar} />
+                <th>Ações</th>
+              </tr></thead>
               <tbody>
-                {guias.map((g) => (
+                {ordGuias.linhasOrdenadas.map((g) => (
                   <Fragment key={g.id}>
                   <tr>
                     <td>{g.tipo === "fgts" ? "FGTS" : "DCTF"}</td>
