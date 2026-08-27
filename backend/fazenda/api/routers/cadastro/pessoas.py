@@ -88,6 +88,7 @@ def seed_pessoa_robo_milknews(session: Session, fazenda_id: int | None = None) -
     de sistema a essa identidade, como qualquer outra pessoa (get-or-create;
     roda sempre, ao contrário de seed_pessoas, que só semeia tabela vazia)."""
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
     query_pessoa = select(Pessoa).where(Pessoa.nome == NOME_PESSOA_ROBO_MILKNEWS)
     if fazenda_id is not None:
         query_pessoa = query_pessoa.where(Pessoa.fazenda_id == fazenda_id)
@@ -127,18 +128,53 @@ def seed_tipos_pessoa(session: Session, fazenda_id: int | None = None) -> None:
     session.commit()
 
 
+def _seed_tipos_get_or_create(session: Session, nomes: list[str], fazenda_id: int | None = None) -> None:
+    """Get-or-create para uma lista de nomes de TipoPessoa — roda SEMPRE,
+    nunca gated por SeedFlag (ao contrário de seed_tipos_pessoa). Base comum
+    de seed_tipo_geral e seed_tipos_papel_administrativo: qualquer tipo que
+    precise existir em toda fazenda, inclusive nas que já passaram pelo seed
+    original antes desse tipo ser criado, usa este helper em vez de entrar
+    em SEED_TIPOS_PESSOA (que só é aplicada uma vez por fazenda)."""
+    algum_criado = False
+    for nome in nomes:
+        query = select(TipoPessoa).where(TipoPessoa.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(TipoPessoa.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(TipoPessoa(nome=nome, fazenda_id=fazenda_id))
+            algum_criado = True
+    if algum_criado:
+        session.commit()
+
+
 def seed_tipo_geral(session: Session, fazenda_id: int | None = None) -> None:
     """Garante a existência do tipo "Geral" para a `fazenda_id` informada —
     usado para liberar acesso a Portal > Comunicação > Delegar tarefa (#515) a
     pessoas sem um papel técnico específico. Get-or-create (roda sempre, como
     seed_pessoa_robo_milknews), ao contrário de seed_tipos_pessoa, que só
     semeia uma vez por fazenda."""
-    query = select(TipoPessoa).where(TipoPessoa.nome == "Geral")
-    if fazenda_id is not None:
-        query = query.where(TipoPessoa.fazenda_id == fazenda_id)
-    if not session.exec(query).first():
-        session.add(TipoPessoa(nome="Geral", fazenda_id=fazenda_id))
-        session.commit()
+    _seed_tipos_get_or_create(session, ["Geral"], fazenda_id=fazenda_id)
+
+
+# Administrador/Contador entraram em TIPOS_PESSOA em ago/2026 (ver comentário
+# acima) — mas seed_tipos_pessoa só semeia os tipos padrão de uma fazenda UMA
+# VEZ (SeedFlag). Toda fazenda cujo seed já tinha rodado antes dessa data
+# nunca ganhou essas duas linhas em TipoPessoa e passou a receber "Tipo
+# inválido" ao tentar marcar alguém como Administrador/Contador — mesmo
+# problema que seed_tipo_geral já resolve para "Geral" (#515).
+TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL = ["Administrador", "Contador"]
+
+
+def seed_tipos_papel_administrativo(session: Session, fazenda_id: int | None = None) -> None:
+    """Garante a existência de "Administrador"/"Contador" para a `fazenda_id`
+    informada — get-or-create, roda SEMPRE (mesmo padrão de seed_tipo_geral),
+    ao contrário de seed_tipos_pessoa. Backfill transparente para fazendas
+    antigas que nunca receberam esses dois tipos (ver comentário acima de
+    TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL) — sem precisar de migração de dados
+    nem script manual: a primeira chamada a qualquer rota que já semeava tipo
+    de pessoa (_validar_tipos, listar_tipos_pessoa, provisionamento de
+    fazenda nova) resolve sozinha."""
+    _seed_tipos_get_or_create(session, TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL, fazenda_id=fazenda_id)
 
 
 
@@ -233,8 +269,13 @@ def _validar_tipos(session: Session, tipos: list[str], fazenda_id: int | None = 
     (cadastrável via botão "+" no Cadastro de Pessoas), não mais de uma
     lista fixa, escopados pela fazenda atual. Autossemeia se a fazenda ainda
     não tiver nenhum tipo (ex.: banco de teste isolado que não passou pelo
-    seed do lifespan)."""
+    seed do lifespan). Também backfilla Administrador/Contador (ver
+    seed_tipos_papel_administrativo) — sem isso, uma fazenda cujo
+    seed_tipos_pessoa já rodou antes de ago/2026 (SeedFlag já marcada) nunca
+    ganharia esses dois tipos e ficaria travada em "Tipo inválido" para
+    sempre, mesmo autossemeando."""
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
     query = select(TipoPessoa).where(TipoPessoa.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(TipoPessoa.fazenda_id == fazenda_id)
@@ -255,6 +296,7 @@ def listar_tipos_pessoa(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
     query = select(TipoPessoa)
     if fazenda_id is not None:
         query = query.where(TipoPessoa.fazenda_id == fazenda_id)

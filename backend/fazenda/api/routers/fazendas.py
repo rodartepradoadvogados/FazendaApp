@@ -30,7 +30,7 @@ from fazenda.models.planos import (
 from fazenda.rules.contrato_render import render_contrato
 from fazenda.rules import zapsign
 from fazenda.api.routers.cadastro.servicos import seed_tipos_metodos_servico
-from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_pessoa
+from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_papel_administrativo, seed_tipos_pessoa
 from fazenda.api.routers.cadastro.animais import seed_motivos_baixa, seed_motivos_venda, seed_racas_grau_sangue
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.recria import seed_recria
@@ -79,6 +79,7 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     # tentativa de cadastrar uma pessoa falha com "Tipo inválido".
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
     seed_tipo_geral(session, fazenda_id=fazenda_id)
+    seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
     # Vocabulário mínimo de Rebanho/Lote (motivos de baixa/venda/movimentação,
     # raças e graus de sangue) — sem isso os seletores desses cadastros nascem
     # vazios e a fazenda não consegue nem registrar uma baixa/venda simples.
