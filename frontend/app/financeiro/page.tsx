@@ -4496,11 +4496,21 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [salvando, setSalvando] = useState<string | null>(null);
 
+  // O filtro de período da página começa VAZIO, e vazio ali significa "sem
+  // filtro — mostra tudo". O endpoint da cascata, porém, exige as duas datas:
+  // sem esta tradução, abrir a DRE disparava
+  // GET /financeiro/dre?data_inicio=&data_fim= e o backend recusava com 422 no
+  // PRIMEIRO render — a tela nascia quebrada toda vez. Uma janela bem larga
+  // reproduz exatamente o "mostra tudo" que o filtro vazio promete.
+  const semFiltroDePeriodo = !dataInicio || !dataFim;
+  const de = dataInicio || "2000-01-01";
+  const ate = dataFim || `${new Date().getFullYear() + 1}-12-31`;
+
   const carregar = useCallback(() => {
     setErro(null);
-    fetchDreCascata({ data_inicio: dataInicio, data_fim: dataFim, regime })
+    fetchDreCascata({ data_inicio: de, data_fim: ate, regime })
       .then(setDados).catch((e) => setErro(e.message));
-  }, [dataInicio, dataFim, regime]);
+  }, [de, ate, regime]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const classificar = async (codigo: string, linha: string) => {
@@ -4611,7 +4621,9 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
         {/* A cascata */}
         <div className="card mb-4">
           <div className="card-header mb-3">
-            DRE Gerencial — {new Date(dados.periodo.inicio + "T12:00:00").toLocaleDateString("pt-BR")} a {new Date(dados.periodo.fim + "T12:00:00").toLocaleDateString("pt-BR")}
+            DRE Gerencial — {semFiltroDePeriodo
+              ? "todo o período (use o filtro acima para restringir)"
+              : `${new Date(de + "T12:00:00").toLocaleDateString("pt-BR")} a ${new Date(ate + "T12:00:00").toLocaleDateString("pt-BR")}`}
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
