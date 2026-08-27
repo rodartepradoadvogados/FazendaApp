@@ -188,6 +188,21 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
             "vida_util_anos": None,
             "inconsistencia": None,
         }
+    data_baixa = item.get("data_baixa")
+    # Bem já baixado com cadastro incompleto: NÃO cobra correção. Ele está
+    # fora do ativo (não entra em nenhum total — ver listar_patrimonio) e
+    # exigir vida útil de um trator já vendido só produziria ruído na tela de
+    # inconsistências, que existe para apontar o que ainda dá para consertar.
+    # Bem baixado COM cadastro completo continua sendo calculado normalmente
+    # (proporcional até a data da baixa, mais abaixo) — o histórico correto
+    # importa para o resultado do exercício em que a baixa aconteceu.
+    cadastro_incompleto = not data_imob or not vida_util_anos or vida_util_anos <= 0 or valor_residual > valor_base
+    if data_baixa and cadastro_incompleto:
+        return {
+            "depreciacao_acumulada": None, "valor_atual": round(valor_base, 2),
+            "vida_util_anos": vida_util_anos,
+            "inconsistencia": None,
+        }
     if not data_imob:
         return {
             "depreciacao_acumulada": None, "valor_atual": round(valor_base, 2),
@@ -213,7 +228,6 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
             "inconsistencia": f'Vida útil "{item.get("vida_util") or "—"}" não reconhecida — cadastre um número (ex.: "7 anos").',
         }
 
-    data_baixa = item.get("data_baixa")
     if data_baixa:
         # Já baixado — parou de depreciar na data da baixa. Deprecia
         # proporcionalmente até lá (mesma fórmula do método normal, só

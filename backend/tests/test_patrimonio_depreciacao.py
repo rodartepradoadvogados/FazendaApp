@@ -95,6 +95,26 @@ def test_sem_baixa_deprecia_ate_hoje():
     assert dep["valor_atual"] == 108000.0
 
 
+def test_bem_baixado_com_cadastro_incompleto_nao_cobra_correcao():
+    """Bem JÁ BAIXADO (vendido/sucateado) sem vida útil ou sem data de
+    imobilização não pode gerar inconsistência: ele está fora do ativo (não
+    entra em nenhum total) e cobrar cadastro de um trator já vendido só
+    encheria de ruído a tela que existe para apontar o que ainda dá para
+    consertar. É dado legado importado — a fazenda não vai voltar atrás para
+    preencher a vida útil de um bem que não tem mais."""
+    base = {
+        "valor_total": 50000.0, "valor_residual": None, "depreciavel": True,
+        "data_imobilizacao": date(2020, 1, 1), "data_baixa": date(2023, 6, 30),
+    }
+    assert calcular_depreciacao({**base, "vida_util": None}, hoje=date(2026, 8, 27))["inconsistencia"] is None
+    assert calcular_depreciacao({**base, "vida_util": "10 Anos", "data_imobilizacao": None},
+                                hoje=date(2026, 8, 27))["inconsistencia"] is None
+    # Mas o MESMO cadastro incompleto num bem EM USO continua sendo cobrado —
+    # nesse caso a correção é possível e muda o resultado do exercício.
+    em_uso = {**base, "vida_util": None, "data_baixa": None}
+    assert calcular_depreciacao(em_uso, hoje=date(2026, 8, 27))["inconsistencia"] is not None
+
+
 def test_depreciacao_nunca_passa_do_valor_residual():
     item = {
         "valor_total": 50000.0, "valor_residual": 10000.0, "vida_util": "2 Anos",
