@@ -525,13 +525,26 @@ class Patrimonio(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     # Piloto conservador de multi-fazenda (Fase 3D) — ver PlanoContaGerencial.fazenda_id acima.
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Código do bem, "PAT-0001", sequencial POR FAZENDA (Onda 2). É o
+    # identificador que a pessoa usa para falar do bem ("baixa o PAT-0007"):
+    # `nome` se repete ("Trator") e `id` é número de banco, que muda se o
+    # dado for reimportado. Opcional porque todo o legado nasceu sem ele —
+    # ver o backfill em POST /patrimonio/codigos-gerar.
+    codigo: Optional[str] = Field(default=None, index=True)
     tipo: Optional[str] = None
     nome: str
     numero: Optional[str] = None
     atividade_cultura: Optional[str] = None
     data_imobilizacao: Optional[date] = None
     metodo_depreciacao: Optional[str] = None
-    vida_util: Optional[str] = None  # texto livre (ex.: "7 Anos")
+    vida_util: Optional[str] = None  # texto livre LEGADO (ex.: "7 Anos") — ver abaixo
+    # Vida útil ESTRUTURADA (Onda 2), preenchida pelos steppers do
+    # formulário. Tem precedência sobre o texto livre acima em
+    # rules.patrimonio.vida_util_em_anos — o texto continua existindo só
+    # para reler o que foi importado antes desta onda, e foi a origem do
+    # erro de 12x da Onda 1 ("10 anos e 6 meses" lido como 0,83 ano).
+    vida_util_anos: Optional[int] = None
+    vida_util_meses: Optional[int] = None
     valor_residual: Optional[float] = None
     quantidade: Optional[float] = None
     unidade: Optional[str] = None
@@ -543,7 +556,24 @@ class Patrimonio(SQLModel, table=True):
     # valor_base_aquisicao, a ÚNICA função que deve ler estes dois campos
     # juntos (nenhum outro ponto deve ler valor_total cru).
     valor_por_unidade: bool = False
+    # --- Baixa (Onda 2) --------------------------------------------------
+    # `data_baixa` sozinha dizia QUANDO o bem saiu, nunca POR QUÊ nem POR
+    # QUANTO — e sem o valor recebido não há como apurar ganho/perda de
+    # capital, que é resultado do exercício e vai para a linha OUTRAS
+    # RECEITAS E DESPESAS da DRE. Ver rules.patrimonio.resultado_baixa.
     data_baixa: Optional[date] = None
+    motivo_baixa: Optional[str] = None  # rules.patrimonio.MOTIVOS_BAIXA_VALIDOS
+    valor_baixa: Optional[float] = None  # valor recebido; só nos motivos com venda
+    # --- Parâmetros dos métodos acelerados / por uso (Onda 2) -------------
+    # Multiplicador do saldo decrescente; None = FATOR_SALDO_DECRESCENTE_PADRAO (2,
+    # "em dobro"). Só lido quando metodo_depreciacao = SALDO_DECRESCENTE.
+    fator_saldo_decrescente: Optional[float] = None
+    # Só lidos quando metodo_depreciacao = UNIDADES_PRODUZIDAS: o total que o
+    # bem produz na vida inteira e quanto já foi consumido. Preenchidos à mão
+    # — o sistema não rastreia horímetro (ver ADR em rules/patrimonio.py).
+    unidades_vida_util_total: Optional[float] = None
+    unidades_consumidas: Optional[float] = None
+    unidade_uso: Optional[str] = None  # "horas", "km", "fardos"...
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
     # True (padrão) = deprecia normalmente (calcular_depreciacao). False =

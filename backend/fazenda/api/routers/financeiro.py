@@ -35,8 +35,11 @@ from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugest
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
 from fazenda.rules.patrimonio import (
+    METODOS_DEPRECIACAO, METODOS_VALIDOS, MOTIVOS_BAIXA, MOTIVOS_BAIXA_COM_VENDA,
+    MOTIVOS_BAIXA_VALIDOS, TIPOS_PATRIMONIO, UNIDADES_PATRIMONIO,
     calcular_depreciacao, eh_tipo_nao_depreciavel, proxima_atualizacao_valor_mercado,
-    somar_meses, status_manutencao, valor_base_aquisicao,
+    metodo_normalizado, resultado_baixa, somar_meses, status_manutencao, valor_base_aquisicao,
+    vida_util_em_anos,
 )
 from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
 from fazenda.rules.dre import LINHAS_DRE_VALIDAS, montar_cascata_dre
@@ -316,6 +319,15 @@ class PatrimonioIn(BaseModel):
     depreciavel: bool = True
     metodo_depreciacao: Optional[str] = None
     vida_util: Optional[str] = None
+    # Vida útil estruturada (Onda 2) — tem precedência sobre o texto livre
+    # acima; ver rules.patrimonio.vida_util_em_anos.
+    vida_util_anos: Optional[int] = None
+    vida_util_meses: Optional[int] = None
+    # Parâmetros dos métodos acelerados / por uso (Onda 2).
+    fator_saldo_decrescente: Optional[float] = None
+    unidades_vida_util_total: Optional[float] = None
+    unidades_consumidas: Optional[float] = None
+    unidade_uso: Optional[str] = None
     valor_residual: Optional[float] = None
     valor_mercado_atual: Optional[float] = None
     atualizacao_valor_mercado_frequencia_meses: Optional[int] = None
@@ -1865,6 +1877,14 @@ def listar_patrimonio(
         d.update(status_manutencao(d, hoje))
         prox_valor_mercado = proxima_atualizacao_valor_mercado(d, frequencia_padrao)
         d["proxima_atualizacao_valor_mercado"] = prox_valor_mercado.isoformat() if prox_valor_mercado else None
+        # Onda 2: rótulo do método (a tela não precisa conhecer as chaves) e,
+        # para bem baixado, o ganho/perda de capital apurado.
+        d["metodo_rotulo"] = next(
+            (rotulo for chave, rotulo, _ajuda in METODOS_DEPRECIACAO
+             if chave == metodo_normalizado(i.metodo_depreciacao)),
+            None,
+        ) if i.depreciavel else None
+        d["baixa"] = resultado_baixa(d, hoje)
         itens.append(d)
         if not i.data_baixa:
             valor_total_bruto += valor_base_aquisicao(d)
@@ -1875,6 +1895,10 @@ def listar_patrimonio(
                 valor_atual_total += dep["valor_atual"] or 0
         if dep["inconsistencia"]:
             inconsistencias.append({"item": i.nome, "numero": i.numero, "motivo": dep["inconsistencia"]})
+    # Itens ainda sem código PAT (legado) — a tela usa para oferecer o
+    # backfill de POST /patrimonio/codigos-gerar sem o usuário ter que saber
+    # que o endpoint existe.
+    sem_codigo = sum(1 for i in itens_raw if not i.codigo)
     return {
         "itens": itens, "total": len(itens_raw),
         "valor_total": round(valor_total_bruto, 2),
@@ -1882,6 +1906,7 @@ def listar_patrimonio(
         "valor_atual_total_inconsistentes": round(valor_atual_total_inconsistentes, 2),
         "itens_inconsistentes": itens_inconsistentes,
         "inconsistencias": inconsistencias,
+        "sem_codigo": sem_codigo,
     }
 
 
@@ -1953,6 +1978,26 @@ def corrigir_depreciavel_patrimonio(
     return {"corrigidos": n}
 
 
+def _validar_metodo_patrimonio(dados: "PatrimonioIn") -> None:
+    """Método de depreciação tem que ser um dos 4 (Onda 2). Item legado com
+    o campo vazio continua válido — cai em LINEAR no cálculo, que é o
+    comportamento histórico; o que se rejeita é texto NOVO fora da lista,
+    vindo de um formulário adulterado ou de integração."""
+    if dados.metodo_depreciacao and dados.metodo_depreciacao not in METODOS_VALIDOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Método de depreciação inválido. Use um destes: {', '.join(METODOS_VALIDOS)}.",
+        )
+    if dados.metodo_depreciacao == "UNIDADES_PRODUZIDAS" and not dados.unidades_vida_util_total:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "O método por unidades produzidas precisa do total de unidades da vida útil "
+                "(ex.: 10.000 horas) — sem ele não há como calcular a fração já consumida."
+            ),
+        )
+
+
 def _validar_valor_residual_patrimonio(dados: PatrimonioIn) -> None:
     """Valor residual maior que o valor do bem é sempre um erro de cadastro
     (base depreciável negativa) — sem esta checagem o item nascia com
@@ -1970,6 +2015,189 @@ def _validar_valor_residual_patrimonio(dados: PatrimonioIn) -> None:
             )
 
 
+
+# ---------------------------------------------------------------------------
+# Onda 2 — código sequencial do bem (PAT-0001)
+# ---------------------------------------------------------------------------
+def _proximo_codigo_patrimonio(session: Session, fazenda_id: int | None) -> str:
+    """"PAT-0001", sequencial POR FAZENDA.
+
+    Mesma trava de corrida de `_proximo_numero_lancamento` (ver o comentário
+    longo lá): sem o advisory lock, dois cadastros simultâneos leem o mesmo
+    "maior código existente" e nascem com o MESMO código — e código repetido
+    num identificador que a pessoa usa para mandar baixar um bem é
+    exatamente o tipo de ambiguidade que este campo existe para eliminar.
+    A chave do lock inclui a fazenda porque a sequência é por fazenda."""
+    prefixo = "PAT-"
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:chave))"),
+            {"chave": f"patrimonio-codigo-{fazenda_id}"},
+        )
+    query = select(Patrimonio.codigo)
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    maior = 0
+    for codigo in session.exec(query).all():
+        if codigo and codigo.startswith(prefixo):
+            try:
+                maior = max(maior, int(codigo[len(prefixo):]))
+            except ValueError:
+                continue
+    return f"{prefixo}{maior + 1:04d}"
+
+
+@router.get("/patrimonio/opcoes")
+def opcoes_patrimonio(_: Usuario = Depends(exigir_admin)) -> dict:
+    """As listas fechadas do cadastro de patrimônio (Onda 2), servidas pelo
+    backend para que o formulário não mantenha uma cópia própria que possa
+    divergir da validação — mesmo padrão de GET /financeiro/opcoes."""
+    return {
+        "tipos": list(TIPOS_PATRIMONIO),
+        "unidades": list(UNIDADES_PATRIMONIO),
+        "metodos": [
+            {"valor": chave, "rotulo": rotulo, "ajuda": ajuda}
+            for chave, rotulo, ajuda in METODOS_DEPRECIACAO
+        ],
+        "motivos_baixa": [
+            {"valor": chave, "rotulo": rotulo, "tem_valor_venda": tem_valor}
+            for chave, rotulo, tem_valor in MOTIVOS_BAIXA
+        ],
+    }
+
+
+@router.post("/patrimonio/codigos-gerar")
+def gerar_codigos_patrimonio(
+    confirmar: bool = False, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Backfill do código PAT nos itens que nasceram sem ele (todo o legado).
+
+    Report-first, mesmo padrão de /patrimonio/depreciavel-corrigir: sem
+    `confirmar=true` só devolve quantos itens receberiam código e qual seria
+    a faixa — nada é gravado. A ordem é por data de imobilização (e id como
+    desempate) para que o código acompanhe a ordem de entrada dos bens na
+    fazenda, não a ordem acidental de inserção no banco."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Patrimonio).where(Patrimonio.codigo.is_(None))
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    sem_codigo = session.exec(query).all()
+    sem_codigo.sort(key=lambda i: (i.data_imobilizacao or date.max, i.id or 0))
+
+    if not sem_codigo:
+        return {"total": 0, "aplicado": False, "primeiro": None, "ultimo": None, "itens": []}
+
+    codigo_inicial = _proximo_codigo_patrimonio(session, fazenda_id)
+    inicio = int(codigo_inicial[len("PAT-"):])
+    previstos = [
+        {"id": item.id, "nome": item.nome, "codigo": f"PAT-{inicio + i:04d}"}
+        for i, item in enumerate(sem_codigo)
+    ]
+
+    if not confirmar:
+        return {
+            "total": len(previstos), "aplicado": False,
+            "primeiro": previstos[0]["codigo"], "ultimo": previstos[-1]["codigo"],
+            "itens": previstos[:50],
+        }
+
+    for item, previsto in zip(sem_codigo, previstos):
+        item.codigo = previsto["codigo"]
+        session.add(item)
+    session.commit()
+    return {
+        "total": len(previstos), "aplicado": True,
+        "primeiro": previstos[0]["codigo"], "ultimo": previstos[-1]["codigo"],
+        "itens": previstos[:50],
+    }
+
+
+class BaixaPatrimonioIn(BaseModel):
+    data_baixa: date
+    motivo: str
+    # Só nos motivos com venda (ver rules.patrimonio.MOTIVOS_BAIXA_COM_VENDA);
+    # nos demais é ignorado e o valor recebido é zero.
+    valor_recebido: Optional[float] = None
+    observacao: Optional[str] = None
+
+
+@router.post("/patrimonio/{item_id}/baixa")
+def baixar_patrimonio(
+    item_id: int, dados: BaixaPatrimonioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Baixa um bem do ativo, apurando ganho/perda de capital (Onda 2).
+
+    Antes desta onda a baixa era só preencher `data_baixa` pela tela de
+    edição: o bem sumia dos totais e o resultado da operação — que é
+    resultado do exercício — não era apurado em lugar nenhum. Agora o motivo
+    e o valor recebido são gravados, e `resultado_baixa` devolve o ganho ou
+    a perda para a linha OUTRAS RECEITAS E DESPESAS da DRE.
+
+    A depreciação PARA na data da baixa: o cálculo já trata isso (ver
+    calcular_depreciacao), então informar uma data retroativa recompõe o
+    valor contábil daquele momento, não o de hoje."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Patrimonio, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if item.data_baixa:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Este bem já foi baixado em {item.data_baixa.strftime('%d/%m/%Y')}.",
+        )
+    motivo = (dados.motivo or "").upper()
+    if motivo not in MOTIVOS_BAIXA_VALIDOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Motivo de baixa inválido. Use um destes: {', '.join(MOTIVOS_BAIXA_VALIDOS)}.",
+        )
+    if item.data_imobilizacao and dados.data_baixa < item.data_imobilizacao:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Data da baixa ({dados.data_baixa.strftime('%d/%m/%Y')}) é anterior à "
+                f"imobilização ({item.data_imobilizacao.strftime('%d/%m/%Y')})."
+            ),
+        )
+
+    item.data_baixa = dados.data_baixa
+    item.motivo_baixa = motivo
+    item.valor_baixa = dados.valor_recebido if motivo in MOTIVOS_BAIXA_COM_VENDA else None
+    if dados.observacao:
+        item.observacao_manutencao = (
+            f"{item.observacao_manutencao}\n" if item.observacao_manutencao else ""
+        ) + f"[baixa {dados.data_baixa.strftime('%d/%m/%Y')}] {dados.observacao}"
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return {"item": item.model_dump(), "resultado": resultado_baixa(item.model_dump())}
+
+
+@router.post("/patrimonio/{item_id}/estornar-baixa")
+def estornar_baixa_patrimonio(
+    item_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Desfaz uma baixa lançada por engano — o bem volta ao ativo e volta a
+    depreciar normalmente a partir da data de imobilização original (a
+    depreciação nunca foi "perdida": ela é sempre recalculada da data de
+    imobilização, então basta limpar a data de baixa)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Patrimonio, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if not item.data_baixa:
+        raise HTTPException(status_code=400, detail="Este bem não está baixado.")
+    item.data_baixa = None
+    item.motivo_baixa = None
+    item.valor_baixa = None
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
 @router.post("/patrimonio", status_code=201)
 def criar_patrimonio(
     dados: PatrimonioIn, session: Session = Depends(get_session),
@@ -1983,8 +2211,10 @@ def criar_patrimonio(
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     _validar_valor_residual_patrimonio(dados)
+    _validar_metodo_patrimonio(dados)
     item = Patrimonio(
         **dados.model_dump(exclude={"nome"}), nome=dados.nome.strip(), fazenda_id=fazenda_id,
+        codigo=_proximo_codigo_patrimonio(session, fazenda_id),
     )
     if not item.depreciavel and item.valor_mercado_atual is None:
         item.valor_mercado_atual = valor_base_aquisicao(item.model_dump())
@@ -2006,6 +2236,7 @@ def atualizar_patrimonio(
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     _validar_valor_residual_patrimonio(dados)
+    _validar_metodo_patrimonio(dados)
     # exclude_unset (não só exclude={"nome"}) — o formulário de edição não
     # envia todo campo do schema (ex.: valor_mercado_atual/atividade_cultura
     # não fazem parte do form "editar patrimônio depreciável"); usar
