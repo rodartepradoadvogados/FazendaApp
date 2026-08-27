@@ -177,6 +177,32 @@ def seed_tipos_papel_administrativo(session: Session, fazenda_id: int | None = N
     _seed_tipos_get_or_create(session, TIPOS_PAPEL_ADMINISTRATIVO_BACKFILL, fazenda_id=fazenda_id)
 
 
+def backfill_tipos_orfaos(session: Session, fazenda_id: int | None = None) -> None:
+    """Get-or-create de qualquer valor de `Pessoa.tipo` (CSV) que já existe
+    em produção para esta fazenda mas nunca virou uma linha `TipoPessoa`
+    correspondente — dado legado de antes da validação estrita (import, SQL
+    manual, ou um tipo que existia e foi removido/renomeado depois de já
+    gravado em alguém). Caso real: "Sócio" gravado em Pessoa.tipo sem NUNCA
+    ter sido um TipoPessoa desta fazenda — qualquer tentativa de salvar essa
+    pessoa de novo (mesmo editando um campo sem relação nenhuma com tipo)
+    falhava com "Tipo inválido", porque o formulário reenvia os tipos atuais
+    dela junto, e um deles já não validava mais. Diferente do backfill de
+    Administrador/Contador acima (que cria um tipo NOVO que ninguém ainda
+    usa, para o checkbox existir) — este cura o inverso: um tipo que já está
+    em uso mas nunca foi cadastrado como válido."""
+    query = select(Pessoa)
+    if fazenda_id is not None:
+        query = query.where(Pessoa.fazenda_id == fazenda_id)
+    nomes_em_uso = {
+        nome.strip()
+        for p in session.exec(query).all()
+        for nome in (p.tipo or "").split(",")
+        if nome.strip()
+    }
+    if nomes_em_uso:
+        _seed_tipos_get_or_create(session, sorted(nomes_em_uso), fazenda_id=fazenda_id)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -273,9 +299,13 @@ def _validar_tipos(session: Session, tipos: list[str], fazenda_id: int | None = 
     seed_tipos_papel_administrativo) — sem isso, uma fazenda cujo
     seed_tipos_pessoa já rodou antes de ago/2026 (SeedFlag já marcada) nunca
     ganharia esses dois tipos e ficaria travada em "Tipo inválido" para
-    sempre, mesmo autossemeando."""
+    sempre, mesmo autossemeando. E cura tipos órfãos já em uso (ver
+    backfill_tipos_orfaos) — ex.: "Sócio", gravado em produção sem nunca ter
+    sido um TipoPessoa válido, travava até reeditar a própria pessoa que já
+    tinha esse tipo."""
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
     seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
+    backfill_tipos_orfaos(session, fazenda_id=fazenda_id)
     query = select(TipoPessoa).where(TipoPessoa.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(TipoPessoa.fazenda_id == fazenda_id)
@@ -297,6 +327,7 @@ def listar_tipos_pessoa(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     seed_tipos_pessoa(session, fazenda_id=fazenda_id)
     seed_tipos_papel_administrativo(session, fazenda_id=fazenda_id)
+    backfill_tipos_orfaos(session, fazenda_id=fazenda_id)
     query = select(TipoPessoa)
     if fazenda_id is not None:
         query = query.where(TipoPessoa.fazenda_id == fazenda_id)
