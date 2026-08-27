@@ -664,6 +664,73 @@ class TestTipoPessoa:
         assert r.json()["ativo"] is False
 
 
+class TestBackfillTiposOrfaos:
+    """Caso real de produção: "Sócio" gravado em `Pessoa.tipo` sem NUNCA ter
+    sido um `TipoPessoa` cadastrado desta fazenda (dado legado de antes da
+    validação estrita). Diferente do backfill de Administrador/Contador
+    (cria um tipo novo que ninguém ainda usa) — aqui o tipo já ESTÁ em uso,
+    só nunca foi registrado. Sem a correção, reeditar essa MESMA pessoa (o
+    formulário reenvia os tipos atuais dela) falhava com "Tipo inválido",
+    mesmo sem tentar adicionar nada de novo — o próprio "Sócio" já gravado
+    reprovava a validação."""
+
+    def test_validar_tipos_aceita_tipo_orfao_ja_em_uso(self):
+        from fazenda.api.routers.cadastro.pessoas import _validar_tipos
+        from fazenda.models import Pessoa, SeedFlag, TipoPessoa
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add(SeedFlag(chave="tipos_pessoa_v1_fazenda_1"))
+            s.add(TipoPessoa(nome="Funcionário", fazenda_id=1))
+            # "Sócio" nunca foi um TipoPessoa desta fazenda, mas já está
+            # gravado numa pessoa real (dado legado).
+            s.add(Pessoa(nome="Jairo", tipo="Sócio", fazenda_id=1))
+            s.commit()
+
+        with Session(engine) as s:
+            nomes = {t.nome for t in s.exec(select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)).all()}
+            assert "Sócio" not in nomes  # órfão: em uso, mas não cadastrado
+
+            # Reeditar a mesma pessoa (reenviando "Sócio" + acrescentando
+            # "Administrador") não pode mais falhar por causa do próprio
+            # tipo que ela já tinha.
+            resultado = _validar_tipos(s, ["Sócio", "Administrador"], fazenda_id=1)
+            assert resultado == "Sócio,Administrador"
+
+        with Session(engine) as s:
+            nomes_finais = [t.nome for t in s.exec(select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)).all()]
+            assert nomes_finais.count("Sócio") == 1  # backfillado, sem duplicar
+
+    def test_listar_tipos_pessoa_expoe_tipo_orfao_como_opcao(self, client):
+        # Depois do backfill, "Sócio" também aparece na lista que alimenta os
+        # checkboxes do frontend — não fica só validando "por baixo dos panos".
+        c, engine = client
+        with Session(engine) as s:
+            from fazenda.models import Pessoa
+            s.add(Pessoa(nome="Jairo", tipo="Sócio"))
+            s.commit()
+
+        nomes = {t["nome"] for t in c.get("/cadastro/pessoas/tipos").json()}
+        assert "Sócio" in nomes
+
+    def test_backfill_nao_duplica_tipo_ja_cadastrado(self):
+        from fazenda.api.routers.cadastro.pessoas import backfill_tipos_orfaos
+        from fazenda.models import Pessoa, TipoPessoa
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            s.add(TipoPessoa(nome="Sócio", fazenda_id=1))
+            s.add(Pessoa(nome="Jairo", tipo="Sócio", fazenda_id=1))
+            s.commit()
+            backfill_tipos_orfaos(s, fazenda_id=1)
+
+        with Session(engine) as s:
+            nomes = [t.nome for t in s.exec(select(TipoPessoa).where(TipoPessoa.fazenda_id == 1)).all()]
+            assert nomes.count("Sócio") == 1
+
+
 class TestProporcionalAdmissao:
     def _pessoa(self, c, data_admissao=None):
         return c.post("/cadastro/pessoas", json={
