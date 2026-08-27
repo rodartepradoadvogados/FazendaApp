@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 /*
  * Rescisão contratual (CLT) — saldo de salário, aviso prévio, férias
@@ -115,6 +116,8 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
 
   const carregar = () => fetchRescisoesFuncionario().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchContasCorrentes().then(setContasCorrentes).catch(() => {}); }, []);
+
+  const ordRescisoes = useOrdenacao(itens ?? []);
 
   const pessoaSelecionada = useMemo(() => pessoas.find((p) => String(p.id) === pessoaId), [pessoas, pessoaId]);
 
@@ -549,12 +552,16 @@ export default function RescisaoView({ pessoas, onPessoaInativada }: { pessoas: 
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
                 <tr>
-                  <th>Funcionário</th><th>Modalidade</th><th>Desligamento</th>
-                  <th style={{ textAlign: "right" }}>Valor líquido</th><th>Status</th><th>Lançamento</th><th></th>
+                  <ThOrdenavel label="Funcionário" campo="pessoa_nome" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <ThOrdenavel label="Modalidade" campo="tipo_rescisao" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <ThOrdenavel label="Desligamento" campo="data_desligamento" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <ThOrdenavel label="Valor líquido" campo="valor_total" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Status" campo="status" coluna={ordRescisoes.coluna} dir={ordRescisoes.dir} ordenar={ordRescisoes.ordenar} />
+                  <th>Lançamento</th><th></th>
                 </tr>
               </thead>
               <tbody>
-                {itens.map((r) => {
+                {ordRescisoes.linhasOrdenadas.map((r) => {
                   const expandido = expandedId === r.id;
                   return (
                     <Fragment key={r.id}>
