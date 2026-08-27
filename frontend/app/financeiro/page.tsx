@@ -4538,13 +4538,35 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
       {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
       {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
-      {dados && <>
+      {dados && (() => {
+        // Frontend e backend sobem em velocidades diferentes (Vercel em ~2min;
+        // Railway recompila e roda migração). Na janela em que o site novo
+        // conversa com a API antiga, estes campos chegam indefinidos — e um
+        // `.map` em undefined derrubava a tela inteira do Financeiro, porque
+        // esta página não tem barreira de erro. Normalizar aqui faz a tela
+        // degradar com um aviso em vez de morrer, hoje e em todo deploy futuro.
+        const cascata = dados.cascata ?? [];
+        const naoClassificado = dados.nao_classificado ?? { total: 0, contas: [] };
+        const foraDaDre = dados.fora_da_dre ?? { total: 0, contas: [] };
+        const depreciacao = dados.depreciacao_periodo ?? { total: 0, inconsistencias: [] };
+        const apiAntiga = !dados.cascata;
+        return <>
+        {apiAntiga && (
+          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.85rem", color: "var(--amber)", margin: 0 }}>
+              <strong>A cascata de 15 linhas ainda não está disponível neste servidor.</strong>{" "}
+              O site já está atualizado, mas a API ainda responde na versão anterior — normalmente
+              é o servidor terminando de subir. Atualize a página em alguns minutos. O gráfico e o
+              detalhamento por conta, abaixo, seguem funcionando normalmente.
+            </p>
+          </div>
+        )}
         {/* Contas ainda sem classificação — a DRE nunca finge que fecha, então
             elas ficam FORA de todos os subtotais até serem classificadas. */}
-        {dados.nao_classificado.total !== 0 && (
+        {naoClassificado.total !== 0 && (
           <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
             <div className="card-header mb-2" style={{ color: "var(--amber)" }}>
-              Falta classificar {formatBRL(Math.abs(dados.nao_classificado.total))} em {dados.nao_classificado.contas.length} conta(s)
+              Falta classificar {formatBRL(Math.abs(naoClassificado.total))} em {naoClassificado.contas.length} conta(s)
             </div>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
               Estes valores <strong>não entram em nenhuma linha</strong> da cascata abaixo — nem nos subtotais.
@@ -4554,7 +4576,7 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <thead><tr><th>Conta</th><th style={{ textAlign: "right" }}>Valor</th><th style={{ width: "22rem" }}>Linha da DRE</th></tr></thead>
                 <tbody>
-                  {dados.nao_classificado.contas.map((c) => (
+                  {naoClassificado.contas.map((c) => (
                     <tr key={c.codigo || c.nome}>
                       <td style={{ fontSize: "0.78rem" }}>
                         {c.codigo && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{c.codigo}</span>}
@@ -4594,7 +4616,7 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
               <tbody>
-                {dados.cascata.map((linha) => {
+                {cascata.map((linha) => {
                   const temContas = (linha.contas?.length || 0) > 0;
                   const aberta = abertas.has(linha.chave);
                   const negativo = linha.valor < 0;
@@ -4657,10 +4679,10 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
               Calculada a partir do cadastro de Patrimônio pelo método de cada bem. É despesa
               que <strong>não é saída de caixa</strong> — por isso entra aqui e não no Caixa Real.
             </p>
-            <KPI v={formatBRL(dados.depreciacao_periodo.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
-            {dados.depreciacao_periodo.inconsistencias.length > 0 && (
+            <KPI v={formatBRL(depreciacao.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
+            {depreciacao.inconsistencias.length > 0 && (
               <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--amber)" }}>
-                {dados.depreciacao_periodo.inconsistencias.slice(0, 5).map((m, i) => <li key={i}>• {m}</li>)}
+                {depreciacao.inconsistencias.slice(0, 5).map((m, i) => <li key={i}>• {m}</li>)}
               </ul>
             )}
           </div>
@@ -4674,17 +4696,18 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
               é decisão registrada. Principal de financiamento é saída de caixa que{" "}
               <strong>não é despesa</strong>; só o juro é despesa, e vai em Outras receitas e despesas.
             </p>
-            <KPI v={formatBRL(dados.fora_da_dre.total)} l={`${dados.fora_da_dre.contas.length} conta(s)`} />
-            {dados.fora_da_dre.contas.length > 0 && (
+            <KPI v={formatBRL(foraDaDre.total)} l={`${foraDaDre.contas.length} conta(s)`} />
+            {foraDaDre.contas.length > 0 && (
               <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                {dados.fora_da_dre.contas.slice(0, 6).map((c) => (
+                {foraDaDre.contas.slice(0, 6).map((c) => (
                   <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
                 ))}
               </ul>
             )}
           </div>
         </div>
-      </>}
+        </>;
+      })()}
     </div>
   );
 }
@@ -4705,8 +4728,10 @@ function CaixaRealView() {
   useEffect(() => { fetchFundoReservaSugerido().then(setSugestao).catch(() => {}); }, []);
 
   // Só os dias com movimento — a série vem completa (365 pontos num ano) e
-  // listar dia vazio afogaria o que importa.
+  // listar dia vazio afogaria o que importa. O `|| []` também protege a tela
+  // quando a API ainda está na versão anterior (ver o comentário na DRE).
   const diasComMovimento = (dados?.serie || []).filter((d) => d.entradas || d.saidas);
+  const contasDoCaixa = dados?.contas || [];
 
   const formatarDia = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
@@ -4815,10 +4840,10 @@ function CaixaRealView() {
 
           <div className="card">
             <div className="card-header mb-2">Saldo por conta</div>
-            {dados.contas.length ? (
+            {contasDoCaixa.length ? (
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <tbody>
-                  {dados.contas.map((c) => (
+                  {contasDoCaixa.map((c) => (
                     <tr key={c.id}>
                       <td style={{ fontSize: "0.8rem" }}>{c.nome}</td>
                       <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: c.saldo < 0 ? "var(--red)" : undefined }}>
