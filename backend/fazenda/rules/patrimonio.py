@@ -58,6 +58,162 @@ def eh_tipo_nao_depreciavel(tipo: str | None) -> bool:
     return _normalizar(tipo) in TIPOS_NAO_DEPRECIAVEIS
 
 
+# ---------------------------------------------------------------------------
+# Onda 2 — LISTAS FECHADAS do cadastro.
+#
+# Até aqui `tipo`, `metodo_depreciacao` e `unidade` eram texto livre vindo do
+# CSV do Ideagri, e cada upload trazia uma grafia diferente da mesma coisa
+# ("Trator"/"TRATOR"/"trator "). Texto livre em campo que ALIMENTA CÁLCULO é
+# a origem da classe de bug da Onda 1 (a vida útil "10 anos e 6 meses" lida
+# como 0,83 ano): o sistema tem que adivinhar o que o usuário quis dizer.
+# Fechar a lista elimina a adivinhação na origem.
+#
+# O dado legado NÃO é rejeitado: o que já está no banco continua sendo lido e
+# exibido tal como está; a lista fechada vale para o que entra a partir de
+# agora (formulário) e para o casamento por normalização na importação.
+# ---------------------------------------------------------------------------
+
+# Tipos de bem. Os três primeiros são os não-depreciáveis (TIPOS_NAO_DEPRECIAVEIS
+# acima) — mantidos aqui na mesma ordem em que aparecem no formulário.
+TIPOS_PATRIMONIO: tuple[str, ...] = (
+    "Terra",
+    "Fazenda",
+    "Terreno",
+    "Benfeitoria",
+    "Construção",
+    "Máquina",
+    "Trator",
+    "Implemento",
+    "Veículo",
+    "Equipamento",
+    "Instalação",
+    "Móveis e utensílios",
+    "Informática",
+    "Animal de trabalho",
+    "Animal reprodutor",
+    "Cultura permanente",
+    "Outro",
+)
+
+# Unidades de medida do item. "un" cobre o caso mais comum (1 trator);
+# as demais existem para lotes (50 matrizes, 12 ha de lavoura).
+UNIDADES_PATRIMONIO: tuple[str, ...] = ("un", "cab", "ha", "m²", "m", "km", "conjunto", "lote")
+
+# ---------------------------------------------------------------------------
+# Os 4 métodos de depreciação.
+#
+# Chave (guardada em Patrimonio.metodo_depreciacao) -> rótulo exibido.
+# LINEAR é o default e o comportamento histórico: item sem método cadastrado
+# (todo o legado) deprecia linear, exatamente como antes desta onda.
+# ---------------------------------------------------------------------------
+LINEAR = "LINEAR"
+SALDO_DECRESCENTE = "SALDO_DECRESCENTE"
+SOMA_DIGITOS = "SOMA_DIGITOS"
+UNIDADES_PRODUZIDAS = "UNIDADES_PRODUZIDAS"
+
+METODOS_DEPRECIACAO: tuple[tuple[str, str, str], ...] = (
+    (
+        LINEAR,
+        "Linear (quotas constantes)",
+        "Mesma parcela todo mês. É o método da Receita Federal (IN 1700/2017) e "
+        "o padrão para quase todo bem de fazenda.",
+    ),
+    (
+        SALDO_DECRESCENTE,
+        "Saldo decrescente (acelerada)",
+        "Deprecia mais no começo e menos no fim, aplicando uma taxa fixa sobre o "
+        "saldo que ainda resta. Para bem que perde valor rápido nos primeiros anos "
+        "(veículo, informática).",
+    ),
+    (
+        SOMA_DIGITOS,
+        "Soma dos dígitos (acelerada)",
+        "Também deprecia mais no começo, mas em parcelas que caem em linha reta e "
+        "zeram exatamente no fim da vida útil.",
+    ),
+    (
+        UNIDADES_PRODUZIDAS,
+        "Unidades produzidas (por uso)",
+        "Deprecia pelo USO, não pelo tempo: você informa o total que o bem produz "
+        "na vida inteira (horas, km, fardos) e quanto já foi consumido. Um trator "
+        "parado não deprecia neste método.",
+    ),
+)
+
+METODOS_VALIDOS: tuple[str, ...] = tuple(chave for chave, _r, _d in METODOS_DEPRECIACAO)
+
+# Multiplicador padrão do saldo decrescente. 2 = "saldo decrescente em
+# dobro" (double declining balance), a convenção mais usada; o usuário pode
+# sobrescrever por item (Patrimonio.fator_saldo_decrescente).
+FATOR_SALDO_DECRESCENTE_PADRAO = 2.0
+
+
+# Grafias por extenso que o CSV legado (e integrações antigas) trazem no
+# lugar da chave. Reconhecer é diferente de adivinhar: só casa com texto que
+# corresponde de fato a um método conhecido.
+_APELIDOS_METODO: dict[str, str] = {
+    "linear": LINEAR, "linha reta": LINEAR, "quotas constantes": LINEAR, "constante": LINEAR,
+    "saldo decrescente": SALDO_DECRESCENTE, "acelerada": SALDO_DECRESCENTE,
+    "decrescente": SALDO_DECRESCENTE, "saldo decrescente em dobro": SALDO_DECRESCENTE,
+    "soma dos digitos": SOMA_DIGITOS, "soma de digitos": SOMA_DIGITOS, "digitos": SOMA_DIGITOS,
+    "unidades produzidas": UNIDADES_PRODUZIDAS, "unidades": UNIDADES_PRODUZIDAS,
+    "por uso": UNIDADES_PRODUZIDAS, "horas": UNIDADES_PRODUZIDAS,
+}
+
+
+def resolver_metodo(metodo: str | None) -> str | None:
+    """Chave canônica do método, ou None quando o texto não corresponde a
+    método nenhum. É a versão ESTRITA — quem VALIDA entrada usa esta.
+
+    Aceita a chave ("LINEAR"), a chave em qualquer caixa/acentuação e os
+    rótulos por extenso do legado ("Linear", "linha reta"). Rejeitar
+    "Linear" seria incoerente: o cálculo sempre soube lê-lo, então recusá-lo
+    na gravação faria o sistema entender um texto que se recusa a aceitar."""
+    if not metodo:
+        return None
+    bruto = _normalizar(metodo)
+    for chave in METODOS_VALIDOS:
+        if _normalizar(chave) == bruto:
+            return chave
+    return _APELIDOS_METODO.get(bruto)
+
+
+def metodo_normalizado(metodo: str | None) -> str:
+    """Método do item, sempre um dos METODOS_VALIDOS. É a versão TOLERANTE —
+    quem CALCULA usa esta.
+
+    Vazio/desconhecido cai em LINEAR: é o comportamento histórico (o campo
+    era texto livre e nunca foi lido pelo cálculo; todo item existente
+    deprecia linear hoje), então o default preserva o número que o usuário
+    já vê na tela. Dado que JÁ ESTÁ no banco nunca deve travar um relatório
+    — por isso aqui não há None; a recusa acontece na entrada, em
+    `resolver_metodo`."""
+    return resolver_metodo(metodo) or LINEAR
+
+
+# ---------------------------------------------------------------------------
+# Motivos de baixa (Onda 2).
+#
+# `data_baixa` sozinha dizia QUANDO o bem saiu, nunca POR QUÊ nem POR QUANTO —
+# e sem o valor de venda não há como apurar ganho/perda de capital, que é
+# resultado do exercício e precisa chegar na DRE (linha OUTRAS_REC_DESP).
+#
+# (chave, rótulo, tem_valor_de_venda)
+# ---------------------------------------------------------------------------
+MOTIVOS_BAIXA: tuple[tuple[str, str, bool], ...] = (
+    ("VENDA", "Venda", True),
+    ("PERDA", "Perda ou sinistro", False),
+    ("SUCATEAMENTO", "Sucateamento / fim de vida útil", False),
+    ("DOACAO", "Doação", False),
+    ("TRANSFERENCIA", "Transferência para outra fazenda", False),
+)
+
+MOTIVOS_BAIXA_VALIDOS: tuple[str, ...] = tuple(chave for chave, _r, _v in MOTIVOS_BAIXA)
+MOTIVOS_BAIXA_COM_VENDA: frozenset[str] = frozenset(
+    chave for chave, _r, tem_valor in MOTIVOS_BAIXA if tem_valor
+)
+
+
 # Vida útil "solta" (só um número, sem unidade) acima disso é claramente erro
 # de digitação/cadastro (ex.: ano de fabricação digitado no campo errado) —
 # rejeitamos como inconsistência em vez de aceitar um número absurdo em
@@ -114,6 +270,161 @@ def _vida_util_em_anos(texto: str | None) -> float | None:
     return valor
 
 
+
+def vida_util_em_anos(item: dict) -> float | None:
+    """Vida útil TOTAL do item em anos, na ordem de precedência da Onda 2:
+
+    1. Campos ESTRUTURADOS (`vida_util_anos` + `vida_util_meses`), preenchidos
+       pelos steppers do formulário novo. Não há o que interpretar — 10 anos
+       e 6 meses são 10,5 anos, ponto.
+    2. Texto livre (`vida_util`), o campo legado — todo item importado do CSV
+       antes desta onda só tem isso. Cai no parser tolerante
+       `_vida_util_em_anos`, que continua existindo exatamente para reler
+       esse dado histórico.
+
+    A precedência é essa e não a inversa: quando o usuário abre um item
+    legado e salva pelo formulário novo, os campos estruturados passam a
+    existir e viram a verdade; o texto antigo fica no registro como
+    procedência, mas não manda mais no cálculo."""
+    anos = item.get("vida_util_anos")
+    meses = item.get("vida_util_meses")
+    if anos is not None or meses is not None:
+        total = (anos or 0) + (meses or 0) / 12
+        if total <= 0 or total > VIDA_UTIL_MAX_ANOS:
+            return None
+        return total
+    return _vida_util_em_anos(item.get("vida_util"))
+
+
+def _acumulada_linear(depreciavel: float, vida_util_meses: float, meses: int) -> float:
+    """Quotas constantes: mesma parcela todo mês."""
+    if vida_util_meses <= 0:
+        return 0.0
+    return min(depreciavel / vida_util_meses * meses, depreciavel)
+
+
+def _acumulada_saldo_decrescente(
+    valor_base: float, valor_residual: float, vida_util_meses: float, meses: int, fator: float
+) -> float:
+    """Saldo decrescente: taxa fixa aplicada sobre o SALDO CONTÁBIL que ainda
+    resta, não sobre a base — por isso a parcela encolhe todo mês e o método
+    concentra depreciação no início.
+
+    Forma fechada de aplicar a taxa mensal `t` por `m` meses:
+        saldo = base * (1 - t)^m
+    A depreciação acumulada é a diferença entre a base e esse saldo, com piso
+    no valor residual: o método por natureza NUNCA zera sozinho (a curva é
+    assintótica), então sem esse piso ele depreciaria abaixo do residual e,
+    no limite, até abaixo de zero."""
+    if vida_util_meses <= 0:
+        return 0.0
+    taxa_mensal = fator / vida_util_meses
+    if taxa_mensal >= 1:
+        # Vida útil curta demais para o fator (ex.: 6 meses com fator 2 dá
+        # taxa >= 1): o bem iria a zero no primeiro mês e o expoente abaixo
+        # ficaria negativo. Deprecia tudo de uma vez, com o mesmo teto.
+        return max(valor_base - valor_residual, 0.0) if meses >= 1 else 0.0
+    saldo = valor_base * ((1 - taxa_mensal) ** meses)
+    saldo_minimo = valor_residual
+    return max(valor_base - max(saldo, saldo_minimo), 0.0)
+
+
+def _acumulada_soma_digitos(depreciavel: float, vida_util_meses: int, meses: int) -> float:
+    """Soma dos dígitos: no mês k de uma vida útil de n meses, a parcela é
+    (n - k + 1) / (1+2+...+n) da base depreciável — cai em linha reta e zera
+    exatamente no fim da vida útil (diferente do saldo decrescente, que nunca
+    zera sozinho).
+
+    Acumulada até o mês m, somando as parcelas de k=1 até m e simplificando:
+        [n(n+1) - (n-m)(n-m+1)] / [n(n+1)]
+    """
+    n = int(vida_util_meses)
+    if n <= 0:
+        return 0.0
+    m = min(int(meses), n)
+    if m <= 0:
+        return 0.0
+    restante = n - m
+    fracao = (n * (n + 1) - restante * (restante + 1)) / (n * (n + 1))
+    return min(depreciavel * fracao, depreciavel)
+
+
+def _acumulada_unidades(depreciavel: float, total_unidades: float | None, consumidas: float | None) -> float:
+    """Unidades produzidas: deprecia por USO, não por tempo. Um trator parado
+    o ano inteiro não deprecia neste método — é a diferença essencial em
+    relação aos outros três, e a razão de ele não olhar data nenhuma."""
+    if not total_unidades or total_unidades <= 0:
+        return 0.0
+    usadas = max(consumidas or 0.0, 0.0)
+    return min(depreciavel * (usadas / total_unidades), depreciavel)
+
+
+def _acumulada_por_metodo(
+    metodo: str, valor_base: float, valor_residual: float, vida_util_anos: float,
+    data_imob: date, referencia: date, item: dict,
+) -> float:
+    """Despacho único dos 4 métodos — todo cálculo de depreciação acumulada
+    do sistema passa por aqui, para que nenhum ponto reimplemente a fórmula
+    de um método (foi assim que a Onda 1 acumulou 10 divergências)."""
+    depreciavel = max(valor_base - valor_residual, 0.0)
+    vida_util_meses = vida_util_anos * 12
+
+    if metodo == UNIDADES_PRODUZIDAS:
+        return _acumulada_unidades(
+            depreciavel, item.get("unidades_vida_util_total"), item.get("unidades_consumidas")
+        )
+
+    meses = meses_cheios(data_imob, referencia)
+    if metodo == SALDO_DECRESCENTE:
+        fator = item.get("fator_saldo_decrescente") or FATOR_SALDO_DECRESCENTE_PADRAO
+        return _acumulada_saldo_decrescente(valor_base, valor_residual, vida_util_meses, meses, fator)
+    if metodo == SOMA_DIGITOS:
+        return _acumulada_soma_digitos(depreciavel, round(vida_util_meses), meses)
+    return _acumulada_linear(depreciavel, vida_util_meses, meses)
+
+
+def resultado_baixa(item: dict, hoje: date | None = None) -> dict | None:
+    """Ganho ou perda de capital da baixa de um bem — None para item que não
+    foi baixado.
+
+        resultado = valor recebido na venda - valor contábil na data da baixa
+
+    Positivo = ganho de capital (vendeu por mais do que valia nos livros);
+    negativo = perda. Nos motivos SEM venda (perda, sucateamento, doação,
+    transferência) o valor recebido é zero e o resultado é a perda do valor
+    contábil que ainda restava.
+
+    Este número é resultado do exercício e pertence à linha OUTRAS RECEITAS E
+    DESPESAS da DRE (ver rules/dre.py) — não é receita de vendas (não é a
+    atividade-fim da fazenda) nem depreciação (que é o desgaste ao longo do
+    uso, não o acerto de contas do momento da saída)."""
+    data_baixa = item.get("data_baixa")
+    if not data_baixa:
+        return None
+
+    calculo = calcular_depreciacao(item, hoje=hoje)
+    valor_base = valor_base_aquisicao(item)
+    acumulada = calculo.get("depreciacao_acumulada")
+    # Cadastro incompleto (sem vida útil/data): não dá para dizer quanto o bem
+    # já havia depreciado, então o valor contábil é a própria base. O
+    # resultado sai mesmo assim — é melhor do que esconder a baixa do
+    # usuário —, sinalizado por `estimado` para a tela poder avisar.
+    estimado = acumulada is None
+    valor_contabil = valor_base - (acumulada or 0.0)
+
+    motivo = (item.get("motivo_baixa") or "").upper()
+    tem_venda = motivo in MOTIVOS_BAIXA_COM_VENDA
+    valor_recebido = (item.get("valor_baixa") or 0.0) if tem_venda else 0.0
+
+    return {
+        "motivo": motivo or None,
+        "data_baixa": data_baixa,
+        "valor_recebido": round(valor_recebido, 2),
+        "valor_contabil": round(valor_contabil, 2),
+        "resultado": round(valor_recebido - valor_contabil, 2),
+        "estimado": estimado,
+    }
+
 def valor_base_aquisicao(item: dict) -> float:
     """Base de valor do item para QUALQUER cálculo (depreciação, valor de
     mercado inicial, KPIs de listagem) — nenhum lugar deve ler `valor_total`
@@ -153,17 +464,20 @@ def meses_cheios(inicio: date, referencia: date) -> int:
 
 
 def _depreciacao_ate(
-    valor_base: float, valor_residual: float, vida_util_anos: float, data_imob: date, referencia: date
+    valor_base: float, valor_residual: float, vida_util_anos: float, data_imob: date,
+    referencia: date, item: dict | None = None,
 ) -> float:
-    """Depreciação acumulada linear até `referencia` (hoje, para um item em
-    operação, ou a data_baixa, para um já baixado) — meses cheios (ver
-    `meses_cheios`) x depreciação mensal, com teto no valor depreciável (não
-    deprecia abaixo do residual)."""
-    depreciavel = max(valor_base - valor_residual, 0.0)
-    vida_util_meses = vida_util_anos * 12
-    dep_mensal = depreciavel / vida_util_meses if vida_util_meses else 0.0
-    meses = meses_cheios(data_imob, referencia)
-    return min(dep_mensal * meses, depreciavel)
+    """Depreciação acumulada até `referencia` (hoje, para um item em operação,
+    ou a data_baixa, para um já baixado), pelo MÉTODO cadastrado no item —
+    ver `_acumulada_por_metodo` para os 4. Sempre com teto no valor
+    depreciável (nenhum método deprecia abaixo do residual).
+
+    `item` opcional só para não quebrar chamador antigo que passava apenas os
+    números soltos: sem ele, LINEAR — que é o comportamento histórico."""
+    return _acumulada_por_metodo(
+        metodo_normalizado((item or {}).get("metodo_depreciacao")),
+        valor_base, valor_residual, vida_util_anos, data_imob, referencia, item or {},
+    )
 
 
 def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
@@ -174,7 +488,7 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
     valor_base = valor_base_aquisicao(item)
     valor_residual = item.get("valor_residual") or 0.0
     data_imob = item.get("data_imobilizacao")
-    vida_util_anos = _vida_util_em_anos(item.get("vida_util"))
+    vida_util_anos = vida_util_em_anos(item)
 
     if item.get("depreciavel") is False:
         # Só valoriza (ex.: terra/fazenda) — nunca deprecia; o "valor atual" é
@@ -234,7 +548,7 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
         # trocando "hoje" por `data_baixa`) — depreciar o valor inteiro de
         # uma vez (comportamento antigo) ignorava quando a baixa ocorreu e
         # inflava a despesa de quem baixou o bem ainda no início da vida útil.
-        acumulada = _depreciacao_ate(valor_base, valor_residual, vida_util_anos, data_imob, data_baixa)
+        acumulada = _depreciacao_ate(valor_base, valor_residual, vida_util_anos, data_imob, data_baixa, item)
         return {
             "depreciacao_acumulada": round(acumulada, 2),
             "valor_atual": round(valor_base - acumulada, 2),
@@ -242,7 +556,7 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
             "inconsistencia": None,
         }
 
-    acumulada = _depreciacao_ate(valor_base, valor_residual, vida_util_anos, data_imob, hoje)
+    acumulada = _depreciacao_ate(valor_base, valor_residual, vida_util_anos, data_imob, hoje, item)
     return {
         "depreciacao_acumulada": round(acumulada, 2),
         "valor_atual": round(valor_base - acumulada, 2),

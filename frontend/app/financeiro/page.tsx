@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
@@ -8,6 +8,11 @@ import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   atualizarPlanoManutencaoPatrimonio, fetchManutencoesPatrimonio, registrarManutencaoPatrimonio,
   criarPatrimonio, atualizarPatrimonio, atualizarValorMercadoPatrimonio, vincularLancamentoPatrimonio, fetchPatrimonioListaSimples, type PatrimonioPayload,
+  // Onda 2 — listas fechadas, código PAT e baixa do patrimônio
+  fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
+  // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
+  fetchDreCascata, classificarContaDre, type DreResposta,
+  fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, ehConsultor, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
@@ -92,10 +97,11 @@ type Lanc = {
   patrimonio_id?: number | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
-  { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
+  { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
+  { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado em cascata — receita de vendas até resultado líquido" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
   { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
@@ -715,7 +721,8 @@ export default function FinanceiroPage() {
       )}
 
       {regs && regs.length > 0 && <>
-        {rel === "patrimonio" ? <PatrimonioView />
+        {rel === "caixa_real" ? <CaixaRealView />
+          : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
           : rel === "documentos" ? <DocumentosFiscais />
           : rel === "recorrentes" ? <LancamentosRecorrentesView onFeito={recarregar} />
@@ -796,6 +803,11 @@ export default function FinanceiroPage() {
             <KPI v={String(livro.length)} l="Lançamentos" />
           </>}
         </div>
+
+        {/* Onda 3b — a cascata de 15 linhas é a leitura principal da DRE.
+            Usa o MESMO período do filtro da página (início/fim), para a tela
+            não ter dois controles de data dizendo coisas diferentes. */}
+        {rel === "dre" && <DreCascataView dataInicio={inicio} dataFim={fim} />}
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
@@ -1561,7 +1573,17 @@ type ItemPatrimonio = {
   atividade_cultura: string | null; data_imobilizacao: string | null;
   metodo_depreciacao: string | null; vida_util: string | null; valor_residual: number | null;
   quantidade: number | null; unidade: string | null; valor_total: number | null; data_baixa: string | null;
-  depreciacao_acumulada: number | null; valor_atual: number | null; vida_util_anos: number | null; inconsistencia: string | null;
+  depreciacao_acumulada: number | null; valor_atual: number | null; inconsistencia: string | null;
+  // Onda 2: `vida_util_anos`/`vida_util_meses` são os campos do CADASTRO (os
+  // steppers); `vida_util_total_anos` é o total calculado (10 anos e 6 meses
+  // = 10,5), usado para exibir e ordenar. Nomes distintos de propósito — ver
+  // o comentário em listar_patrimonio no backend.
+  vida_util_anos: number | null; vida_util_meses: number | null; vida_util_total_anos: number | null;
+  codigo: string | null; metodo_rotulo: string | null;
+  fator_saldo_decrescente: number | null;
+  unidades_vida_util_total: number | null; unidades_consumidas: number | null; unidade_uso: string | null;
+  motivo_baixa: string | null; valor_baixa: number | null;
+  baixa: { motivo: string | null; data_baixa: string; valor_recebido: number; valor_contabil: number; resultado: number; estimado: boolean } | null;
   frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
   data_proxima_manutencao: string | null; observacao_manutencao: string | null;
   situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
@@ -1606,12 +1628,14 @@ function PatrimonioViewAdmin() {
   const [dados, setDados] = useState<{
     itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number;
     valor_atual_total_inconsistentes: number; itens_inconsistentes: number;
-    inconsistencias: InconsistenciaPatrimonio[];
+    inconsistencias: InconsistenciaPatrimonio[]; sem_codigo: number;
   } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
   const [itemEditando, setItemEditando] = useState<ItemPatrimonio | "novo" | null>(null);
   const [itemValorMercado, setItemValorMercado] = useState<ItemPatrimonio | null>(null);
+  const [itemBaixa, setItemBaixa] = useState<ItemPatrimonio | null>(null);
+  const [gerandoCodigos, setGerandoCodigos] = useState(false);
 
   const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
   useEffect(carregar, []);
@@ -1623,7 +1647,8 @@ function PatrimonioViewAdmin() {
     tipo: (i) => (i.tipo || "").toLowerCase(),
     nome: (i) => (i.nome || "").toLowerCase(),
     numero: (i) => (i.numero || "").toLowerCase(),
-    vidaUtil: (i) => i.vida_util_anos ?? -1,
+    codigo: (i) => i.codigo || "",
+    vidaUtil: (i) => i.vida_util_total_anos ?? -1,
     valorResidual: (i) => i.valor_residual ?? -1,
     quantidade: (i) => i.quantidade ?? -1,
     valorTotal: (i) => i.valor_total ?? -1,
@@ -1676,6 +1701,36 @@ function PatrimonioViewAdmin() {
           </p>
         </div>
       )}
+      {/* Onda 2 — bens que nasceram sem código PAT (todo o legado). O backfill
+          é report-first: a prévia não grava nada. */}
+      {dados.sem_codigo > 0 && (
+        <div className="card mb-4" style={{ borderColor: "var(--dourado-light)" }}>
+          <div className="flex items-center justify-between gap-3" style={{ flexWrap: "wrap" }}>
+            <p style={{ fontSize: "0.82rem", margin: 0 }}>
+              <strong>{dados.sem_codigo} bem(ns) sem código.</strong>{" "}
+              <span style={{ color: "var(--text-muted)" }}>
+                O código (PAT-0001) é como você identifica o bem no dia a dia — “baixa o PAT-0007”.
+                Os itens importados antes desta versão ainda não têm um.
+              </span>
+            </p>
+            <button className="btn-primary" style={{ fontSize: "0.78rem" }} disabled={gerandoCodigos}
+              onClick={async () => {
+                setGerandoCodigos(true);
+                try {
+                  const previa = await gerarCodigosPatrimonio(false);
+                  const ok = confirm(
+                    `Gerar ${previa.total} código(s), de ${previa.primeiro} a ${previa.ultimo}?\n\n` +
+                    `A ordem segue a data de imobilização de cada bem. Nada foi gravado ainda.`
+                  );
+                  if (ok) { await gerarCodigosPatrimonio(true); carregar(); }
+                } catch (e: any) { setErro(e.message); } finally { setGerandoCodigos(false); }
+              }}>
+              {gerandoCodigos ? "Gerando…" : "Gerar códigos"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {dados.inconsistencias.length > 0 && (
         <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
           <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Inconsistências na depreciação ({dados.inconsistencias.length})</div>
@@ -1703,6 +1758,7 @@ function PatrimonioViewAdmin() {
           <table className="fazenda-table">
             <thead>
               <tr>
+                <ThOrd rotulo="Código" chave="codigo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Nome" chave="nome" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
                 <ThOrd rotulo="Nº" chave="numero" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
@@ -1722,6 +1778,7 @@ function PatrimonioViewAdmin() {
             <tbody>
               {bensOrdenados.map((i) => (
                 <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
+                  <td style={{ fontSize: "0.76rem", fontFamily: "var(--font-mono, monospace)", color: "var(--dourado-light)", whiteSpace: "nowrap" }}>{i.codigo || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
                   <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
                     {i.nome}
@@ -1729,8 +1786,23 @@ function PatrimonioViewAdmin() {
                   </td>
                   <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_depreciacao || "—") : "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.vida_util || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.depreciavel ? (i.metodo_rotulo || i.metodo_depreciacao || "—") : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>
+                    {!i.depreciavel ? "—"
+                      : i.vida_util_anos != null || i.vida_util_meses != null
+                        // Cadastro novo (steppers): mostra exatamente o que foi digitado.
+                        ? [i.vida_util_anos ? `${i.vida_util_anos}a` : null, i.vida_util_meses ? `${i.vida_util_meses}m` : null].filter(Boolean).join(" ") || "—"
+                        // Legado: o texto livre, com o total interpretado ao lado, para
+                        // o usuário ver COMO o sistema entendeu o que está escrito.
+                        : i.vida_util
+                          ? <span title="Cadastro antigo em texto livre — edite o bem para gravar anos e meses">
+                              {i.vida_util}
+                              {i.vida_util_total_anos != null && (
+                                <span style={{ color: "var(--text-muted)" }}> (= {i.vida_util_total_anos.toFixed(1)}a)</span>
+                              )}
+                            </span>
+                          : "—"}
+                  </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.depreciavel && i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
@@ -1738,7 +1810,19 @@ function PatrimonioViewAdmin() {
                     {!i.depreciavel ? "—" : i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
-                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
+                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {!i.data_baixa ? "—" : (
+                      <>
+                        {formatDate(i.data_baixa)}
+                        {i.baixa && (
+                          <div style={{ color: i.baixa.resultado >= 0 ? "var(--green-light)" : "var(--red)", fontWeight: 600 }}
+                               title={`Valor contábil na baixa: ${formatBRL(i.baixa.valor_contabil)} · Recebido: ${formatBRL(i.baixa.valor_recebido)}${i.baixa.estimado ? " (estimado — cadastro incompleto)" : ""}`}>
+                            {i.baixa.resultado >= 0 ? "Ganho " : "Perda "}{formatBRL(Math.abs(i.baixa.resultado))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </td>
                   <td>
                     {i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span>
                       : i.depreciavel ? <SeloManutencao item={i} />
@@ -1763,6 +1847,19 @@ function PatrimonioViewAdmin() {
                           <TrendingUp size={14} />
                         </button>
                       )}
+                      {!i.data_baixa ? (
+                        <button className="btn-ghost" title="Baixar do ativo (venda, perda, doação…)" style={{ padding: "0.25rem" }} onClick={() => setItemBaixa(i)}>
+                          <Trash2 size={14} />
+                        </button>
+                      ) : (
+                        <button className="btn-ghost" title="Estornar a baixa — o bem volta ao ativo" style={{ padding: "0.25rem" }}
+                          onClick={async () => {
+                            if (!confirm(`Estornar a baixa de ${i.nome}? O bem volta ao ativo e volta a depreciar.`)) return;
+                            try { await estornarBaixaPatrimonio(i.id); carregar(); } catch (e: any) { setErro(e.message); }
+                          }}>
+                          <Undo2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1779,6 +1876,9 @@ function PatrimonioViewAdmin() {
       )}
       {itemValorMercado && (
         <ModalValorMercadoPatrimonio item={itemValorMercado} onClose={() => setItemValorMercado(null)} onSalvo={() => { setItemValorMercado(null); carregar(); }} />
+      )}
+      {itemBaixa && (
+        <ModalBaixaPatrimonio item={itemBaixa} onClose={() => setItemBaixa(null)} onSalvo={() => { setItemBaixa(null); carregar(); }} />
       )}
     </>
   );
@@ -1799,8 +1899,18 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
   const [unidade, setUnidade] = useState(item?.unidade || "");
   const [valorTotal, setValorTotal] = useState(item?.valor_total != null ? String(item.valor_total) : "");
   const [depreciavel, setDepreciavel] = useState(item?.depreciavel ?? true);
-  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "");
-  const [vidaUtil, setVidaUtil] = useState(item?.vida_util || "");
+  const [metodoDepreciacao, setMetodoDepreciacao] = useState(item?.metodo_depreciacao || "LINEAR");
+  // Onda 2 — vida útil ESTRUTURADA. Item legado só tem o texto livre
+  // (`vida_util`), então os steppers começam vazios e o texto antigo fica
+  // visível como procedência até o usuário preencher os campos novos.
+  const [vidaUtilAnos, setVidaUtilAnos] = useState(item?.vida_util_anos != null ? String(item.vida_util_anos) : "");
+  const [vidaUtilMeses, setVidaUtilMeses] = useState(item?.vida_util_meses != null ? String(item.vida_util_meses) : "");
+  const [fatorSaldo, setFatorSaldo] = useState(item?.fator_saldo_decrescente != null ? String(item.fator_saldo_decrescente) : "");
+  const [unidadesTotal, setUnidadesTotal] = useState(item?.unidades_vida_util_total != null ? String(item.unidades_vida_util_total) : "");
+  const [unidadesConsumidas, setUnidadesConsumidas] = useState(item?.unidades_consumidas != null ? String(item.unidades_consumidas) : "");
+  const [unidadeUso, setUnidadeUso] = useState(item?.unidade_uso || "horas");
+  const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
+  useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
   const [valorResidual, setValorResidual] = useState(item?.valor_residual != null ? String(item.valor_residual) : "");
   const [frequenciaValorMercado, setFrequenciaValorMercado] = useState(
     item?.atualizacao_valor_mercado_frequencia_meses != null ? String(item.atualizacao_valor_mercado_frequencia_meses) : ""
@@ -1817,7 +1927,15 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
       valor_total: valorTotal ? Number(valorTotal) : null,
       depreciavel,
       metodo_depreciacao: depreciavel ? (metodoDepreciacao || null) : null,
-      vida_util: depreciavel ? (vidaUtil || null) : null,
+      // O texto livre é PRESERVADO como veio (procedência do dado importado);
+      // quem manda no cálculo são os campos estruturados abaixo.
+      vida_util: depreciavel ? (item?.vida_util || null) : null,
+      vida_util_anos: depreciavel && vidaUtilAnos !== "" ? Number(vidaUtilAnos) : null,
+      vida_util_meses: depreciavel && vidaUtilMeses !== "" ? Number(vidaUtilMeses) : null,
+      fator_saldo_decrescente: depreciavel && metodoDepreciacao === "SALDO_DECRESCENTE" && fatorSaldo ? Number(fatorSaldo) : null,
+      unidades_vida_util_total: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" && unidadesTotal ? Number(unidadesTotal) : null,
+      unidades_consumidas: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" && unidadesConsumidas ? Number(unidadesConsumidas) : null,
+      unidade_uso: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" ? (unidadeUso || null) : null,
       valor_residual: depreciavel && valorResidual ? Number(valorResidual) : null,
       atualizacao_valor_mercado_frequencia_meses: !depreciavel && frequenciaValorMercado ? Number(frequenciaValorMercado) : null,
     };
@@ -1857,7 +1975,18 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div style={{ gridColumn: "1 / -1" }}><label style={label}>Nome</label>
             <input style={inputStyle} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Trator Massey Ferguson" /></div>
           <div><label style={label}>Tipo</label>
-            <input style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="ex.: Máquinas, Terra, Benfeitoria" /></div>
+            <select style={inputStyle} value={tipo} onChange={(e) => {
+              const novo = e.target.value;
+              setTipo(novo);
+              // Terra/Fazenda/Terreno não depreciam (CPC 27 e IN RFB 1700 não
+              // atribuem taxa a terreno). Marcar sozinho evita o cadastro
+              // incoerente que gerava a nota "vida útil não reconhecida".
+              if (["Terra", "Fazenda", "Terreno"].includes(novo)) setDepreciavel(false);
+            }}>
+              <option value="">Selecione…</option>
+              {(opcoes?.tipos || (tipo ? [tipo] : [])).map((t) => <option key={t} value={t}>{t}</option>)}
+              {tipo && !(opcoes?.tipos || []).includes(tipo) && <option value={tipo}>{tipo} (cadastro antigo)</option>}
+            </select></div>
           <div><label style={label}>Nº patrimônio</label>
             <input style={inputStyle} value={numero} onChange={(e) => setNumero(e.target.value)} /></div>
           <div><label style={label}>Data de imobilização</label>
@@ -1867,7 +1996,11 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <div><label style={label}>Quantidade</label>
             <input type="number" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></div>
           <div><label style={label}>Unidade</label>
-            <input style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)} /></div>
+            <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}>
+              <option value="">—</option>
+              {(opcoes?.unidades || []).map((u) => <option key={u} value={u}>{u}</option>)}
+              {unidade && !(opcoes?.unidades || []).includes(unidade) && <option value={unidade}>{unidade} (cadastro antigo)</option>}
+            </select></div>
         </div>
 
         <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
@@ -1879,10 +2012,65 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
 
         {depreciavel ? (
           <div className="grid grid-cols-2 gap-3">
-            <div><label style={label}>Método de depreciação</label>
-              <input style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)} placeholder="ex.: Linear" /></div>
-            <div><label style={label}>Vida útil</label>
-              <input style={inputStyle} value={vidaUtil} onChange={(e) => setVidaUtil(e.target.value)} placeholder="ex.: 10 Anos" /></div>
+            <div style={{ gridColumn: "1 / -1" }}><label style={label}>Método de depreciação</label>
+              <select style={inputStyle} value={metodoDepreciacao} onChange={(e) => setMetodoDepreciacao(e.target.value)}>
+                {(opcoes?.metodos || [{ valor: "LINEAR", rotulo: "Linear (quotas constantes)", ajuda: "" }]).map((m) => (
+                  <option key={m.valor} value={m.valor}>{m.rotulo}</option>
+                ))}
+              </select>
+              {opcoes?.metodos.find((m) => m.valor === metodoDepreciacao)?.ajuda && (
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {opcoes.metodos.find((m) => m.valor === metodoDepreciacao)!.ajuda}
+                </p>
+              )}
+            </div>
+
+            {/* Vida útil em dois campos numéricos — substitui o texto livre
+                "10 Anos", que o sistema tinha que adivinhar (e adivinhava
+                errado: "10 anos e 6 meses" virava 0,83 ano). Não se aplica ao
+                método por unidades, que deprecia por uso e não por tempo. */}
+            {metodoDepreciacao !== "UNIDADES_PRODUZIDAS" && <>
+              <div><label style={label}>Vida útil — anos</label>
+                <input type="number" min={0} max={100} style={inputStyle} value={vidaUtilAnos}
+                  onChange={(e) => setVidaUtilAnos(e.target.value)} placeholder="ex.: 10" /></div>
+              <div><label style={label}>Vida útil — meses adicionais</label>
+                <input type="number" min={0} max={11} style={inputStyle} value={vidaUtilMeses}
+                  onChange={(e) => setVidaUtilMeses(e.target.value)} placeholder="ex.: 6" /></div>
+            </>}
+
+            {metodoDepreciacao === "SALDO_DECRESCENTE" && (
+              <div><label style={label}>Multiplicador da taxa</label>
+                <input type="number" min={1} step={0.5} style={inputStyle} value={fatorSaldo}
+                  onChange={(e) => setFatorSaldo(e.target.value)} placeholder="vazio = 2 (em dobro)" />
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  2 = “saldo decrescente em dobro”, a convenção mais usada.
+                </p>
+              </div>
+            )}
+
+            {metodoDepreciacao === "UNIDADES_PRODUZIDAS" && <>
+              <div><label style={label}>Unidade de uso</label>
+                <select style={inputStyle} value={unidadeUso} onChange={(e) => setUnidadeUso(e.target.value)}>
+                  <option value="horas">horas</option>
+                  <option value="km">km</option>
+                  <option value="fardos">fardos</option>
+                  <option value="toneladas">toneladas</option>
+                  <option value="ciclos">ciclos</option>
+                </select></div>
+              <div><label style={label}>Total na vida inteira</label>
+                <input type="number" min={0} style={inputStyle} value={unidadesTotal}
+                  onChange={(e) => setUnidadesTotal(e.target.value)} placeholder="ex.: 10000" /></div>
+              <div><label style={label}>Já consumido</label>
+                <input type="number" min={0} style={inputStyle} value={unidadesConsumidas}
+                  onChange={(e) => setUnidadesConsumidas(e.target.value)} placeholder="ex.: 2500" /></div>
+              <div style={{ alignSelf: "end" }}>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  O sistema não lê horímetro — atualize o “já consumido” à mão quando quiser
+                  que a depreciação acompanhe o uso.
+                </p>
+              </div>
+            </>}
+
             <div><label style={label}>Valor residual (R$)</label>
               <CampoMoeda style={inputStyle} value={Number(valorResidual) || 0} onChange={(v) => setValorResidual(v ? String(v) : "")} /></div>
           </div>
@@ -1899,6 +2087,106 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
           <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
           <button className="btn-primary" onClick={salvar} disabled={salvando}>
             {salvando ? "Salvando…" : ehCompraAgora && !item ? "Ir para o lançamento" : "Salvar"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Onda 2 — baixa do bem com apuração de ganho/perda de capital.
+ *  Antes, dar baixa era preencher `data_baixa` na tela de edição: o bem sumia
+ *  dos totais e o resultado da operação não era apurado em lugar nenhum. */
+function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
+  const [dataBaixa, setDataBaixa] = useState(new Date().toISOString().slice(0, 10));
+  const [motivo, setMotivo] = useState("VENDA");
+  const [valorRecebido, setValorRecebido] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
+
+  const motivoTemVenda = (opcoes?.motivos_baixa.find((m) => m.valor === motivo)?.tem_valor_venda) ?? (motivo === "VENDA");
+  // Prévia do resultado com o valor contábil de HOJE. O número final é
+  // apurado no backend com o valor contábil na DATA DA BAIXA — se o usuário
+  // informar uma data retroativa, o resultado gravado será diferente deste.
+  const valorContabilHoje = item.valor_atual ?? 0;
+  const resultadoPrevisto = (motivoTemVenda ? Number(valorRecebido) || 0 : 0) - valorContabilHoje;
+
+  const salvar = async () => {
+    setSalvando(true); setErro("");
+    try {
+      await baixarPatrimonio(item.id, {
+        data_baixa: dataBaixa, motivo,
+        valor_recebido: motivoTemVenda && valorRecebido ? Number(valorRecebido) : null,
+        observacao: observacao || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width="560px">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div><label style={label}>Data da baixa</label>
+            <input type="date" style={inputStyle} value={dataBaixa} onChange={(e) => setDataBaixa(e.target.value)} /></div>
+          <div><label style={label}>Motivo</label>
+            <select style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+              {(opcoes?.motivos_baixa || [{ valor: "VENDA", rotulo: "Venda", tem_valor_venda: true }]).map((m) => (
+                <option key={m.valor} value={m.valor}>{m.rotulo}</option>
+              ))}
+            </select></div>
+          {motivoTemVenda && (
+            <div><label style={label}>Valor recebido (R$)</label>
+              <CampoMoeda style={inputStyle} value={Number(valorRecebido) || 0} onChange={(v) => setValorRecebido(v ? String(v) : "")} /></div>
+          )}
+          <div style={{ gridColumn: motivoTemVenda ? "auto" : "1 / -1" }}><label style={label}>Observação</label>
+            <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="opcional" /></div>
+        </div>
+
+        <div className="card" style={{ padding: "0.8rem 1rem" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Resultado previsto
+          </div>
+          <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{formatBRL(valorContabilHoje)}</div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor contábil hoje</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700 }}>{formatBRL(motivoTemVenda ? Number(valorRecebido) || 0 : 0)}</div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Valor recebido</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: resultadoPrevisto >= 0 ? "var(--green-light)" : "var(--red)" }}>
+                {formatBRL(resultadoPrevisto)}
+              </div>
+              <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                {resultadoPrevisto >= 0 ? "Ganho de capital" : "Perda de capital"}
+              </div>
+            </div>
+          </div>
+          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+            Prévia com o valor contábil de hoje. Se a data da baixa for retroativa, o valor
+            contábil daquela data é menor de depreciação — o resultado final é recalculado ao salvar.
+            Este ganho/perda é resultado do exercício e pertence à linha <strong>Outras receitas e
+            despesas</strong> da DRE.
+          </p>
+        </div>
+
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+        <div className="flex gap-2 justify-end">
+          <button className="btn-ghost" onClick={onClose} disabled={salvando}>Cancelar</button>
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>
+            {salvando ? "Baixando…" : "Confirmar baixa"}
           </button>
         </div>
       </div>
@@ -4176,6 +4464,422 @@ function RoteiroRmcaModal({ onClose }: { onClose: () => void }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Onda 3b — DRE Gerencial em cascata (15 linhas) + classificação de contas
+// ---------------------------------------------------------------------------
+
+/** Rótulos das 9 linhas atribuíveis + o escape hatch, para o seletor de
+ *  classificação. A ordem e os textos espelham ESPECIFICACAO_LINHAS no
+ *  backend (fazenda/rules/dre.py) — quem valida é o backend; isto aqui é só
+ *  a apresentação. */
+const LINHAS_DRE_ATRIBUIVEIS: { valor: string; rotulo: string }[] = [
+  { valor: "RECEITA_VENDAS", rotulo: "Receita de vendas" },
+  { valor: "DEDUCAO_IMPOSTOS", rotulo: "Deduções de impostos" },
+  { valor: "CUSTO_VARIAVEL", rotulo: "Custo variável (CPV/CMV)" },
+  { valor: "DESPESA_VARIAVEL", rotulo: "Despesas variáveis" },
+  { valor: "GASTOS_PESSOAL", rotulo: "Gastos com pessoal" },
+  { valor: "DESPESAS_OPERACIONAIS", rotulo: "Despesas operacionais" },
+  { valor: "DEPRECIACAO_AMORT_EXAUSTAO", rotulo: "Depreciação, amortização e exaustão" },
+  { valor: "OUTRAS_REC_DESP", rotulo: "Outras receitas e despesas" },
+  { valor: "TRIBUTOS_IR_CSLL", rotulo: "Tributos (IRPJ e CSLL)" },
+  { valor: "NAO_ENTRA_NA_DRE", rotulo: "— Não entra na DRE (principal de financiamento, transferência, aporte)" },
+];
+
+function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: string }) {
+  const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
+  const [dados, setDados] = useState<DreResposta | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [abertas, setAbertas] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  const carregar = useCallback(() => {
+    setErro(null);
+    fetchDreCascata({ data_inicio: dataInicio, data_fim: dataFim, regime })
+      .then(setDados).catch((e) => setErro(e.message));
+  }, [dataInicio, dataFim, regime]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const classificar = async (codigo: string, linha: string) => {
+    setSalvando(codigo);
+    try {
+      await classificarContaDre(codigo, linha || null);
+      carregar();
+    } catch (e) { setErro((e as Error).message); } finally { setSalvando(null); }
+  };
+
+  const alternar = (chave: string) => setAbertas((atual) => {
+    const proxima = new Set(atual);
+    if (proxima.has(chave)) proxima.delete(chave); else proxima.add(chave);
+    return proxima;
+  });
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Regime da cascata</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label style={labelStyleLote}>Regime</label>
+            <select style={selStyleLote} value={regime} onChange={(e) => setRegime(e.target.value as "competencia" | "caixa")}>
+              <option value="competencia">Competência (quando aconteceu)</option>
+              <option value="caixa">Caixa (quando foi pago)</option>
+            </select>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: 0, alignSelf: "center" }}>
+            O período é o do filtro acima.
+          </p>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && <>
+        {/* Contas ainda sem classificação — a DRE nunca finge que fecha, então
+            elas ficam FORA de todos os subtotais até serem classificadas. */}
+        {dados.nao_classificado.total !== 0 && (
+          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+            <div className="card-header mb-2" style={{ color: "var(--amber)" }}>
+              Falta classificar {formatBRL(Math.abs(dados.nao_classificado.total))} em {dados.nao_classificado.contas.length} conta(s)
+            </div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Estes valores <strong>não entram em nenhuma linha</strong> da cascata abaixo — nem nos subtotais.
+              A DRE prefere mostrar o buraco a fechar com um número errado. Escolha a linha de cada conta:
+            </p>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Conta</th><th style={{ textAlign: "right" }}>Valor</th><th style={{ width: "22rem" }}>Linha da DRE</th></tr></thead>
+                <tbody>
+                  {dados.nao_classificado.contas.map((c) => (
+                    <tr key={c.codigo || c.nome}>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {c.codigo && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{c.codigo}</span>}
+                        {c.nome}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(c.valor)}</td>
+                      <td>
+                        {c.codigo ? (
+                          <select
+                            style={{ ...selStyleLote, width: "100%" }}
+                            disabled={salvando === c.codigo}
+                            defaultValue=""
+                            onChange={(e) => e.target.value && classificar(c.codigo!, e.target.value)}
+                          >
+                            <option value="">{salvando === c.codigo ? "Salvando…" : "Escolher linha…"}</option>
+                            {LINHAS_DRE_ATRIBUIVEIS.map((l) => <option key={l.valor} value={l.valor}>{l.rotulo}</option>)}
+                          </select>
+                        ) : (
+                          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                            Sem código de conta — classifique pelo plano de contas.
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* A cascata */}
+        <div className="card mb-4">
+          <div className="card-header mb-3">
+            DRE Gerencial — {new Date(dados.periodo.inicio + "T12:00:00").toLocaleDateString("pt-BR")} a {new Date(dados.periodo.fim + "T12:00:00").toLocaleDateString("pt-BR")}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <tbody>
+                {dados.cascata.map((linha) => {
+                  const temContas = (linha.contas?.length || 0) > 0;
+                  const aberta = abertas.has(linha.chave);
+                  const negativo = linha.valor < 0;
+                  return (
+                    <Fragment key={linha.chave}>
+                      <tr
+                        onClick={() => temContas && alternar(linha.chave)}
+                        style={{
+                          cursor: temContas ? "pointer" : "default",
+                          background: linha.eh_subtotal ? "var(--bg-elevated)" : undefined,
+                          borderTop: linha.eh_subtotal ? "1px solid var(--border)" : undefined,
+                        }}
+                      >
+                        <td style={{
+                          fontWeight: linha.eh_subtotal ? 700 : 400,
+                          fontSize: linha.eh_subtotal ? "0.85rem" : "0.8rem",
+                          paddingLeft: linha.eh_subtotal ? "0.75rem" : "1.75rem",
+                        }}>
+                          {temContas && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{aberta ? "▾" : "▸"}</span>}
+                          {linha.rotulo}
+                          {!linha.eh_subtotal && (
+                            <span style={{ color: "var(--text-muted)", marginLeft: "0.5rem", fontSize: "0.7rem" }}>
+                              {linha.operador === "-" ? "(subtrai)" : linha.operador === "±" ? "(líquido)" : ""}
+                            </span>
+                          )}
+                        </td>
+                        <td style={{
+                          textAlign: "right",
+                          fontWeight: linha.eh_subtotal ? 700 : 500,
+                          fontSize: linha.eh_subtotal ? "0.9rem" : "0.82rem",
+                          color: linha.eh_subtotal
+                            ? (negativo ? "var(--red)" : "var(--green-light)")
+                            : linha.operador === "-" ? "var(--red)" : undefined,
+                          whiteSpace: "nowrap",
+                        }}>
+                          {linha.operador === "-" && linha.valor !== 0 ? "− " : ""}{formatBRL(Math.abs(linha.valor))}
+                        </td>
+                      </tr>
+                      {aberta && linha.contas?.map((c) => (
+                        <tr key={`${linha.chave}-${c.codigo || c.nome}`} style={{ background: "var(--bg-base)" }}>
+                          <td style={{ paddingLeft: "3rem", fontSize: "0.74rem", color: "var(--text-muted)" }}>
+                            {c.codigo && <span style={{ marginRight: "0.4rem" }}>{c.codigo}</span>}{c.nome}
+                          </td>
+                          <td style={{ textAlign: "right", fontSize: "0.74rem", color: "var(--text-muted)" }}>{formatBRL(c.valor)}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Depreciação: o elo com o Patrimônio, que não existia antes da Onda 3 */}
+          <div className="card">
+            <div className="card-header mb-2">Depreciação do período</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Calculada a partir do cadastro de Patrimônio pelo método de cada bem. É despesa
+              que <strong>não é saída de caixa</strong> — por isso entra aqui e não no Caixa Real.
+            </p>
+            <KPI v={formatBRL(dados.depreciacao_periodo.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
+            {dados.depreciacao_periodo.inconsistencias.length > 0 && (
+              <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--amber)" }}>
+                {dados.depreciacao_periodo.inconsistencias.slice(0, 5).map((m, i) => <li key={i}>• {m}</li>)}
+              </ul>
+            )}
+          </div>
+
+          {/* Fora da DRE de propósito — o escape hatch consciente */}
+          <div className="card">
+            <div className="card-header mb-2">Fora da DRE (por decisão)</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Contas marcadas como <strong>Não entra na DRE</strong>: principal de financiamento,
+              transferência entre contas próprias, aporte de sócio. Não é "falta classificar" —
+              é decisão registrada. Principal de financiamento é saída de caixa que{" "}
+              <strong>não é despesa</strong>; só o juro é despesa, e vai em Outras receitas e despesas.
+            </p>
+            <KPI v={formatBRL(dados.fora_da_dre.total)} l={`${dados.fora_da_dre.contas.length} conta(s)`} />
+            {dados.fora_da_dre.contas.length > 0 && (
+              <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                {dados.fora_da_dre.contas.slice(0, 6).map((c) => (
+                  <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Onda 4 — Caixa Real (projeção de liquidez)
+// ---------------------------------------------------------------------------
+function CaixaRealView() {
+  const [dias, setDias] = useState(90);
+  const [dados, setDados] = useState<CaixaReal | null>(null);
+  const [sugestao, setSugestao] = useState<{ sugerido: number; meses_folga: number; atual: number } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    setErro(null);
+    fetchCaixaReal(dias).then(setDados).catch((e) => setErro(e.message));
+  }, [dias]);
+  useEffect(() => { fetchFundoReservaSugerido().then(setSugestao).catch(() => {}); }, []);
+
+  // Só os dias com movimento — a série vem completa (365 pontos num ano) e
+  // listar dia vazio afogaria o que importa.
+  const diasComMovimento = (dados?.serie || []).filter((d) => d.entradas || d.saidas);
+
+  const formatarDia = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Horizonte da projeção</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label style={labelStyleLote}>Projetar os próximos</label>
+            <select style={selStyleLote} value={dias} onChange={(e) => setDias(Number(e.target.value))}>
+              <option value={30}>30 dias</option>
+              <option value={60}>60 dias</option>
+              <option value={90}>90 dias</option>
+              <option value={180}>180 dias</option>
+              <option value={365}>365 dias</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="card mb-4" style={{ borderColor: "var(--border)" }}>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
+          <strong>Caixa Real responde “tem dinheiro?”; a DRE responde “deu lucro?”.</strong>{" "}
+          As duas não batem, e não devem bater: depreciação é despesa na DRE e não sai do caixa;
+          o principal de um financiamento sai do caixa e não é despesa. Fazenda lucrativa pode
+          quebrar por falta de caixa — é isso que esta tela antecipa.
+        </p>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && <>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <KPI v={formatBRL(dados.saldo_inicial)} l="Saldo hoje" c="var(--dourado-light)" />
+          <KPI v={formatBRL(dados.saldo_final)} l={`Saldo projetado em ${dados.dias} dias`} c={dados.saldo_final >= 0 ? "var(--green-light)" : "var(--red)"} />
+          <KPI v={formatBRL(dados.total_entradas)} l="Entradas previstas" c="var(--green-light)" />
+          <KPI v={formatBRL(dados.total_saidas)} l="Saídas previstas" c="var(--red)" />
+        </div>
+
+        {/* Os dois alertas são distintos: furar a reserva é aviso; ficar
+            negativo é falta de dinheiro. */}
+        {dados.primeiro_dia_negativo && (
+          <div className="alert-critico mb-3">
+            <span>
+              <strong>O caixa fica negativo em {new Date(dados.primeiro_dia_negativo + "T12:00:00").toLocaleDateString("pt-BR")}.</strong>{" "}
+              Nessa data falta dinheiro para honrar os compromissos já lançados.
+            </span>
+          </div>
+        )}
+        {!dados.primeiro_dia_negativo && dados.primeiro_dia_abaixo_da_reserva && (
+          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.82rem", color: "var(--amber)", margin: 0 }}>
+              O saldo fura o fundo de reserva de {formatBRL(dados.fundo_reserva)} em{" "}
+              <strong>{new Date(dados.primeiro_dia_abaixo_da_reserva + "T12:00:00").toLocaleDateString("pt-BR")}</strong>.
+              Ainda há dinheiro, mas a folga acabou.
+            </p>
+          </div>
+        )}
+        {dados.compromissos_sem_vencimento > 0 && (
+          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
+            <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: 0 }}>
+              {dados.compromissos_sem_vencimento} lançamento(s) em aberto <strong>sem data de vencimento</strong> ficaram
+              fora da projeção — não há como posicioná-los na linha do tempo. O caixa real pode ser
+              mais apertado do que o mostrado aqui.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="card">
+            <div className="card-header mb-2">Fundo de reserva</div>
+            {dados.fundo_reserva > 0 ? (
+              <>
+                <KPI v={formatBRL(dados.fundo_reserva)} l="Colchão definido" />
+                <div style={{ marginTop: "0.75rem" }}>
+                  <KPI
+                    v={formatBRL(dados.folga_minima)}
+                    l="Folga mínima na projeção"
+                    c={dados.folga_minima >= 0 ? "var(--green-light)" : "var(--red)"}
+                  />
+                </div>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
+                  A folga é o pior saldo da projeção menos a reserva. Negativa significa que a
+                  reserva é furada em algum momento, mesmo que o saldo final pareça confortável.
+                </p>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                  Nenhum fundo de reserva definido — a tela só alerta quando o caixa fica negativo.
+                </p>
+                {sugestao && sugestao.sugerido > 0 && (
+                  <p style={{ fontSize: "0.8rem" }}>
+                    Sugestão pelo seu histórico: <strong>{formatBRL(sugestao.sugerido)}</strong>{" "}
+                    ({sugestao.meses_folga} meses de custo médio). Para adotar, grave em{" "}
+                    <a href="/configuracoes?aba=parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
+                      Configurações → Parâmetros
+                    </a>, no campo “Caixa Real — fundo de reserva”.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header mb-2">Saldo por conta</div>
+            {dados.contas.length ? (
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <tbody>
+                  {dados.contas.map((c) => (
+                    <tr key={c.id}>
+                      <td style={{ fontSize: "0.8rem" }}>{c.nome}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: c.saldo < 0 ? "var(--red)" : undefined }}>
+                        {formatBRL(c.saldo)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma conta corrente cadastrada.</p>}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header mb-3">Linha do tempo — dias com movimento</div>
+          {diasComMovimento.length ? (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>Data</th><th>Compromissos</th>
+                    <th style={{ textAlign: "right" }}>Entradas</th>
+                    <th style={{ textAlign: "right" }}>Saídas</th>
+                    <th style={{ textAlign: "right" }}>Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diasComMovimento.map((d) => (
+                    <tr key={d.data} style={{ background: d.saldo < 0 ? "rgba(220,80,80,0.08)" : undefined }}>
+                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>{formatarDia(d.data)}</td>
+                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                        {d.itens.slice(0, 3).map((it, i) => (
+                          <span key={i}>
+                            {i > 0 && " · "}
+                            {it.vencido && <span style={{ color: "var(--amber)" }} title={`Venceu em ${new Date(it.data_original + "T12:00:00").toLocaleDateString("pt-BR")} e não foi pago`}>⚠ </span>}
+                            {it.descricao}
+                          </span>
+                        ))}
+                        {d.itens.length > 3 && <span> · +{d.itens.length - 3}</span>}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.entradas ? "var(--green-light)" : "var(--text-muted)" }}>
+                        {d.entradas ? formatBRL(d.entradas) : "—"}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.saidas ? "var(--red)" : "var(--text-muted)" }}>
+                        {d.saidas ? formatBRL(d.saidas) : "—"}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: d.saldo < 0 ? "var(--red)" : undefined }}>
+                        {formatBRL(d.saldo)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+              Nenhum compromisso em aberto com vencimento nos próximos {dados.dias} dias.
+            </p>
+          )}
+        </div>
+      </>}
     </div>
   );
 }

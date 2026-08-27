@@ -103,6 +103,15 @@ DEFINICOES: list[dict] = [
     {"chave": "patrimonio_atualizacao_valor_mercado_meses", "grupo": "agenda_sistema", "label": "Patrimônio não depreciável — frequência padrão de atualização do valor de mercado (0 = nunca)", "valor": 12, "unidade": "meses"},
     {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
 
+    # ---- Caixa Real (Onda 4) ---------------------------------------------------
+    # Fundo de reserva: quanto a fazenda quer manter em caixa como colchão.
+    # 0 = sem fundo definido (a tela então só alerta sobre saldo negativo, e
+    # oferece a sugestão calculada pelo histórico — ver
+    # rules.caixa_real.sugerir_fundo_reserva).
+    {"chave": "caixa_fundo_reserva", "grupo": "agenda_sistema", "label": "Caixa Real — fundo de reserva (colchão mínimo desejado em caixa; 0 = não definido)", "valor": 0, "tipo": "float", "unidade": "R$"},
+    {"chave": "caixa_meses_folga_sugestao", "grupo": "agenda_sistema", "label": "Caixa Real — meses de custo que o fundo de reserva sugerido deve cobrir", "valor": 3, "tipo": "float", "unidade": "meses"},
+    {"chave": "caixa_dias_projecao", "grupo": "agenda_sistema", "label": "Caixa Real — horizonte padrão da projeção de caixa", "valor": 90, "unidade": "dias"},
+
     # ---- Metas reprodutivas ----------------------------------------------------
     {"chave": "meta_del_max_1o_servico", "grupo": "metas_reproducao", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
     # Análogo do parâmetro acima, para quem nunca pariu: em vez de contar a
@@ -448,6 +457,26 @@ def patrimonio_atualizacao_valor_mercado_meses() -> int:
     tela) impossível de configurar."""
     valor = get_param("patrimonio_atualizacao_valor_mercado_meses", 12)
     return int(valor) if valor is not None else 12
+
+
+def caixa_fundo_reserva() -> float:
+    """Colchão mínimo desejado em caixa (Onda 4). 0 = não definido — a tela
+    então alerta só sobre saldo negativo e oferece a sugestão calculada.
+
+    Como em patrimonio_atualizacao_valor_mercado_meses, NÃO usar `or`: 0 é
+    um valor legítimo ("ainda não defini meu fundo"), e `or` o trocaria pelo
+    padrão, tornando impossível voltar ao estado não definido."""
+    valor = get_param("caixa_fundo_reserva", 0)
+    return float(valor) if valor is not None else 0.0
+
+
+def caixa_meses_folga_sugestao() -> float:
+    valor = get_param("caixa_meses_folga_sugestao", 3)
+    return float(valor) if valor is not None else 3.0
+
+
+def caixa_dias_projecao() -> int:
+    return int(get_param("caixa_dias_projecao", 90) or 90)
 
 
 def dias_contas_a_pagar_agenda() -> int:
