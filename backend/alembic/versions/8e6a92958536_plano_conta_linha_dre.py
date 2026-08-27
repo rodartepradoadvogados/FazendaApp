@@ -27,7 +27,12 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '8e6a92958536'
-down_revision: Union[str, Sequence[str], None] = '3bd371891acd'
+# Encadeada APÓS a migração de patrimônio da Onda 1 (b1c2d3e4f5a6), não
+# direto no ancestral comum: as duas ondas foram desenvolvidas em paralelo e
+# cada uma nasceu apontando para 3bd371891acd, o que deixaria a cadeia com
+# duas cabeças e quebraria `alembic upgrade head`. Não há dependência de
+# dado entre elas — é só ordenação.
+down_revision: Union[str, Sequence[str], None] = 'b1c2d3e4f5a6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
