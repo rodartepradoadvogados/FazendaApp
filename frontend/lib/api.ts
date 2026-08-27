@@ -5154,10 +5154,130 @@ export async function fetchPatrimonio() {
 export type PatrimonioPayload = {
   nome: string; tipo?: string | null; numero?: string | null; atividade_cultura?: string | null;
   data_imobilizacao?: string | null; quantidade?: number | null; unidade?: string | null;
-  valor_total?: number | null; depreciavel?: boolean; metodo_depreciacao?: string | null;
+  valor_total?: number | null; valor_por_unidade?: boolean; depreciavel?: boolean;
+  metodo_depreciacao?: string | null;
   vida_util?: string | null; valor_residual?: number | null; valor_mercado_atual?: number | null;
   atualizacao_valor_mercado_frequencia_meses?: number | null;
+  // Onda 2 — vida útil estruturada (substitui o texto livre `vida_util`) e
+  // parâmetros dos métodos acelerado / por uso.
+  vida_util_anos?: number | null; vida_util_meses?: number | null;
+  fator_saldo_decrescente?: number | null;
+  unidades_vida_util_total?: number | null; unidades_consumidas?: number | null;
+  unidade_uso?: string | null;
 };
+
+// --- Onda 2: listas fechadas, código PAT e baixa ----------------------------
+export type OpcoesPatrimonio = {
+  tipos: string[];
+  unidades: string[];
+  metodos: { valor: string; rotulo: string; ajuda: string }[];
+  motivos_baixa: { valor: string; rotulo: string; tem_valor_venda: boolean }[];
+};
+
+export async function fetchOpcoesPatrimonio(): Promise<OpcoesPatrimonio> {
+  const res = await authFetch(`${API}/financeiro/patrimonio/opcoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Opções de patrimônio: ${res.status}`);
+  return res.json();
+}
+
+/** confirmar=false devolve só a prévia (nada é gravado) — report-first. */
+export async function gerarCodigosPatrimonio(confirmar = false) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/codigos-gerar?confirmar=${confirmar}`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar códigos"); }
+  return res.json();
+}
+
+export async function baixarPatrimonio(itemId: number, dados: {
+  data_baixa: string; motivo: string; valor_recebido?: number | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/baixa`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao baixar o bem"); }
+  return res.json();
+}
+
+export async function estornarBaixaPatrimonio(itemId: number) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/estornar-baixa`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao estornar a baixa"); }
+  return res.json();
+}
+
+// --- Onda 3b: DRE Gerencial em cascata --------------------------------------
+export type LinhaDre = {
+  chave: string; rotulo: string; operador: string; eh_subtotal: boolean;
+  valor: number; contas?: { codigo: string | null; nome: string | null; valor: number }[];
+};
+
+export type ContaDre = { codigo: string | null; nome: string | null; valor: number };
+
+export type DreResposta = {
+  periodo: { inicio: string; fim: string };
+  regime: string; centro_custo: string | null;
+  receitas_total: number; despesas_total: number; resultado: number;
+  cascata: LinhaDre[];
+  nao_classificado: { total: number; contas: ContaDre[] };
+  fora_da_dre: { total: number; contas: ContaDre[] };
+  depreciacao_periodo: { total: number; inconsistencias: string[] };
+};
+
+export async function fetchDreCascata(params: {
+  data_inicio: string; data_fim: string; regime?: string; centro_custo?: string | null;
+}) {
+  const q = new URLSearchParams({
+    data_inicio: params.data_inicio, data_fim: params.data_fim,
+    regime: params.regime || "competencia",
+  });
+  if (params.centro_custo) q.set("centro_custo", params.centro_custo);
+  const res = await authFetch(`${API}/financeiro/dre?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`DRE: ${res.status}`);
+  return res.json() as Promise<DreResposta>;
+}
+
+export async function fetchDreConferencia(params: { data_inicio: string; data_fim: string; regime?: string }) {
+  const q = new URLSearchParams({
+    data_inicio: params.data_inicio, data_fim: params.data_fim,
+    regime: params.regime || "competencia",
+  });
+  const res = await authFetch(`${API}/financeiro/dre/conferencia?${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Conferência da DRE: ${res.status}`);
+  return res.json();
+}
+
+export async function classificarContaDre(codigo: string, linhaDre: string | null) {
+  const res = await authFetch(`${API}/financeiro/plano-contas/${encodeURIComponent(codigo)}/linha-dre`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ linha_dre: linhaDre }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar a conta"); }
+  return res.json();
+}
+
+// --- Onda 4: Caixa Real ------------------------------------------------------
+export type CaixaReal = {
+  saldo_inicial: number; saldo_final: number; total_entradas: number; total_saidas: number;
+  variacao: number; fundo_reserva: number; folga_minima: number; dias: number;
+  primeiro_dia_negativo: string | null; primeiro_dia_abaixo_da_reserva: string | null;
+  compromissos_sem_vencimento: number;
+  contas: { id: number; nome: string; saldo: number }[];
+  serie: {
+    data: string; entradas: number; saidas: number; saldo: number;
+    itens: { descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string }[];
+  }[];
+};
+
+export async function fetchCaixaReal(dias?: number): Promise<CaixaReal> {
+  const q = dias ? `?dias=${dias}` : "";
+  const res = await authFetch(`${API}/financeiro/caixa-real${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Caixa Real: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFundoReservaSugerido(mesesHistorico = 6) {
+  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fundo de reserva sugerido: ${res.status}`);
+  return res.json();
+}
 
 export async function criarPatrimonio(dados: PatrimonioPayload) {
   const res = await authFetch(`${API}/financeiro/patrimonio`, {
