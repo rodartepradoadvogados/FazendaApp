@@ -441,8 +441,13 @@ def cronograma_sanitario_janela_agrupamento_dias() -> int:
 def patrimonio_atualizacao_valor_mercado_meses() -> int:
     """Frequência padrão (em meses) de "atualizar valor de mercado" pra
     patrimônio não depreciável (ex.: terra) sem override próprio — ver
-    Patrimonio.atualizacao_valor_mercado_frequencia_meses. 0 = nunca."""
-    return int(get_param("patrimonio_atualizacao_valor_mercado_meses", 12) or 12)
+    Patrimonio.atualizacao_valor_mercado_frequencia_meses. 0 = nunca.
+
+    NÃO use `get_param(...) or 12` aqui — 0 é um valor válido e "or" o
+    trocaria por 12, tornando "0 = nunca" (o próprio label do parâmetro na
+    tela) impossível de configurar."""
+    valor = get_param("patrimonio_atualizacao_valor_mercado_meses", 12)
+    return int(valor) if valor is not None else 12
 
 
 def dias_contas_a_pagar_agenda() -> int:

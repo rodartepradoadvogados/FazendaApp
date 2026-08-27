@@ -6,9 +6,15 @@ ISOLAMENTO POR FAZENDA (Fase 0): quase todo tipo de upload aqui é
 "apaga tudo e reimporta" — o Ideagri sempre reenvia o histórico completo.
 Sem filtro de fazenda, subir o CSV de UMA fazenda apagava os dados de TODAS
 as outras (Servico, Sanidade, Estoque, Dieta, ControleLeiteiro,
-ContaGerencial, CurvaABC, Patrimônio, PlanoContaGerencial). Agora todo
-delete é escopado pela fazenda atual e toda linha inserida é carimbada com
-ela — ver `_escopo` e `_carimbar` abaixo.
+ContaGerencial, CurvaABC, PlanoContaGerencial). Agora todo delete é
+escopado pela fazenda atual e toda linha inserida é carimbada com ela — ver
+`_escopo` e `_carimbar` abaixo.
+
+Patrimônio é a ÚNICA exceção ao "apaga tudo e reimporta": vira upsert real
+(ver `_upsert_patrimonio`) porque o item carrega dado que só existe no app
+(depreciavel corrigido à mão, valor de mercado, plano de manutenção) e pode
+estar referenciado por `ContaGerencial.patrimonio_id` — apagar e reinserir
+destruía os dois.
 """
 from __future__ import annotations
 
@@ -154,15 +160,57 @@ async def _upsert_plano_conta_gerencial(content: bytes, session: Session, fazend
     return {"tipo": "plano_conta_gerencial", "registros": len(contas)}
 
 
+# Campos que o CSV do Ideagri realmente carrega — é só isto que uma
+# reimportação pode atualizar num item já existente. Todo o resto
+# (`depreciavel`, valor de mercado, plano de manutenção, `valor_por_unidade`)
+# só existe no app: o CSV não tem essas colunas, então sobrescrever com o
+# que "viria" de lá era sempre None/default, apagando o que o usuário já
+# tinha corrigido/cadastrado na tela — ver ADR abaixo.
+_CAMPOS_CSV_PATRIMONIO = (
+    "tipo", "nome", "numero", "atividade_cultura", "data_imobilizacao",
+    "metodo_depreciacao", "vida_util", "valor_residual", "quantidade",
+    "unidade", "valor_total", "data_baixa",
+)
+
+
 async def _upsert_patrimonio(content: bytes, session: Session, fazenda_id: int | None) -> dict:
-    itens = parse_patrimonio(content)
-    for antigo in session.exec(_escopo(select(Patrimonio), Patrimonio, fazenda_id)).all():
-        session.delete(antigo)
+    """Upsert (não mais "apaga tudo e reimporta" — ver histórico do módulo):
+    o Ideagri reenvia o LISTA_DE_PATRIMONIO.csv completo a cada exportação,
+    mas apagar tudo antes de reinserir destruía:
+    - a marcação `depreciavel` corrigida à mão (o CSV não traz essa coluna,
+      então ela nasce de novo do zero — errada — em todo item reimportado);
+    - `valor_mercado_atual`/plano de manutenção, cadastrados só no app;
+    - qualquer item cadastrado direto pelo app (sem número/linha no Ideagri
+      ainda) — reimportar o Ideagri não pode apagar o que o app criou;
+    - linhas referenciadas por `ContaGerencial.patrimonio_id`
+      (fk sem ON DELETE, ver alembic c6d7e8f9a0b1) — o DELETE quebrava esse
+      vínculo silenciosamente.
+
+    Casamento: por `numero` quando o CSV traz número (é o identificador mais
+    estável — mesmo bem, mesmo número, mesmo com nome reescrito); por
+    (`nome`, `tipo`) quando não há número. Item batido é atualizado só nos
+    campos que vêm do CSV (`_CAMPOS_CSV_PATRIMONIO`); item que existe no
+    banco e não veio nesta rodada do CSV NÃO é apagado."""
+    itens = _carimbar(parse_patrimonio(content), fazenda_id)
+
+    existentes = session.exec(_escopo(select(Patrimonio), Patrimonio, fazenda_id)).all()
+    por_numero = {e.numero: e for e in existentes if e.numero}
+    por_nome_tipo = {(e.nome, e.tipo): e for e in existentes}
+
+    inseridos, atualizados = 0, 0
+    for novo in itens:
+        existente = por_numero.get(novo.numero) if novo.numero else por_nome_tipo.get((novo.nome, novo.tipo))
+        if existente:
+            for campo in _CAMPOS_CSV_PATRIMONIO:
+                setattr(existente, campo, getattr(novo, campo))
+            session.add(existente)
+            atualizados += 1
+        else:
+            session.add(novo)
+            inseridos += 1
+
     session.commit()
-    for item in _carimbar(itens, fazenda_id):
-        session.add(item)
-    session.commit()
-    return {"tipo": "patrimonio", "registros": len(itens)}
+    return {"tipo": "patrimonio", "registros": len(itens), "inseridos": inseridos, "atualizados": atualizados}
 
 
 async def _upsert_geral(content: bytes, session: Session, fazenda_id: int | None) -> dict:

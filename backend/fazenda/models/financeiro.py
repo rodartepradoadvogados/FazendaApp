@@ -520,6 +520,13 @@ class Patrimonio(SQLModel, table=True):
     quantidade: Optional[float] = None
     unidade: Optional[str] = None
     valor_total: Optional[float] = None
+    # False (padrão) preserva o comportamento histórico: valor_total JÁ é o
+    # valor do lote inteiro. True = valor_total é o valor de UMA unidade, e a
+    # base de qualquer cálculo (depreciação, valor de mercado inicial, KPIs)
+    # passa a ser valor_total * quantidade — ver rules.patrimonio.
+    # valor_base_aquisicao, a ÚNICA função que deve ler estes dois campos
+    # juntos (nenhum outro ponto deve ler valor_total cru).
+    valor_por_unidade: bool = False
     data_baixa: Optional[date] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
