@@ -18,7 +18,7 @@ from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, g
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
-    CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
+    CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, Fazenda, FormaPagamentoCadastro, Fornecedor,
     FornecedorClienteApelido,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, TransferenciaContas, Usuario, ValeAvulso, ValeFuncionario,
@@ -1237,6 +1237,31 @@ def seed_tipos_documento_formas_pagamento(session: Session) -> None:
         if nome not in existentes_forma:
             session.add(FormaPagamentoCadastro(nome=nome))
     session.commit()
+
+    # A migração e3f4a5b6c7d8 (Fase 3B) "grandfatherou" a fazenda #1 —
+    # backfillou pra fazenda_id=1 os TipoDocumento/FormaPagamentoCadastro que
+    # já existiam no banco NAQUELE momento. Um nome novo entrando em
+    # SEED_TIPOS_DOCUMENTO depois disso (ex.: "Comprovante"/"Orçamento", da
+    # Central de Documentos) só nasce acima com fazenda_id=None — e GET
+    # /financeiro/opcoes filtra por igualdade exata de fazenda_id, então uma
+    # fazenda que já tinha cadastro próprio (fazenda_id=1) nunca o enxerga:
+    # o anexo inicial do lançamento (categoria "Comprovante") ficava faltando
+    # justamente pra quem já usava o sistema antes da Central de Documentos.
+    # Backfill idempotente na fazenda #1, só do que ainda falta nela.
+    if session.get(Fazenda, 1):
+        existentes_doc_f1 = {
+            t.nome for t in session.exec(select(TipoDocumento).where(TipoDocumento.fazenda_id == 1)).all()
+        }
+        for nome in SEED_TIPOS_DOCUMENTO:
+            if nome not in existentes_doc_f1:
+                session.add(TipoDocumento(nome=nome, fazenda_id=1))
+        existentes_forma_f1 = {
+            f.nome for f in session.exec(select(FormaPagamentoCadastro).where(FormaPagamentoCadastro.fazenda_id == 1)).all()
+        }
+        for nome in SEED_FORMAS_PAGAMENTO_CADASTRO:
+            if nome not in existentes_forma_f1:
+                session.add(FormaPagamentoCadastro(nome=nome, fazenda_id=1))
+        session.commit()
 
 
 class PlanoContaGerencialIn(BaseModel):

@@ -1974,6 +1974,10 @@ function ValeFuncionarioSection({
   const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  // Id do vale recém-lançado — só existe DEPOIS de salvo (a rota de
+  // comprovante é ancorada no id do vale), por isso o anexo aparece aqui
+  // embaixo da mensagem de sucesso, não junto dos campos do formulário.
+  const [valeRecemCriadoId, setValeRecemCriadoId] = useState<number | null>(null);
 
   async function lancar(confirmar = false) {
     setMsg(null);
@@ -1985,13 +1989,14 @@ function ValeFuncionarioSection({
     }
     setSalvando(true);
     try {
-      await criarVale({
+      const vale = await criarVale({
         pessoa_id: Number(pessoaId), valor_total: parseFloat(valorTotal), forma_pagamento: formaPagamento,
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
         observacao: observacao || undefined, numero_documento_pagamento: numeroDocumentoPagamento || undefined,
         conta_corrente_id: contaObrigatoriaVale(formaPagamento) && contaCorrenteId ? Number(contaCorrenteId) : undefined,
         confirmar,
       });
+      setValeRecemCriadoId(vale.id);
       setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
       setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao(""); setNumeroDocumentoPagamento(""); setContaCorrenteId("");
       onLancado();
@@ -2058,6 +2063,10 @@ function ValeFuncionarioSection({
       <button className="btn-primary" title="Lançar o vale" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
+      {/* Só existe depois de salvo (a rota de comprovante é ancorada no id
+          do vale) — mesmo componente/mecanismo de anexo já usado na
+          listagem de vales abaixo (ver ComprovanteVale). */}
+      {valeRecemCriadoId != null && <ComprovanteVale tipo="funcionario" valeId={valeRecemCriadoId} />}
     </div>
   );
 }
