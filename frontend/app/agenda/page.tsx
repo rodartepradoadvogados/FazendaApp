@@ -1953,10 +1953,11 @@ export default function AgendaPage() {
     estoqueAlertasRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
   };
 
-  // Compromisso "Aplicação de BST hoje" na Agenda: ao clicar, abre (não
-  // alterna) as listas BST aptos + Incluir no próximo BST e rola até elas —
-  // é a mesma informação já mostrada nos quadros/listas acima, só que o
-  // usuário chega direto nela a partir do evento do dia.
+  // Compromisso "Aplicação de BST" na Agenda (aparece com antecedência, na
+  // data real da próxima aplicação — não só no dia em que ela cai): ao
+  // clicar, abre (não alterna) as listas BST aptos + Incluir no próximo BST
+  // e rola até elas — é a mesma informação já mostrada nos quadros/listas
+  // acima, só que o usuário chega direto nela a partir do evento.
   const bstIndicadoresRef = useRef<HTMLDivElement>(null);
   const abrirListasBst = () => {
     setListaAtiva((p) => { const n = new Set(p); n.add("bstAptos"); n.add("bstNunca"); return n; });

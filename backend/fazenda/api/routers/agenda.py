@@ -710,19 +710,34 @@ def calcular_agenda(
     # Compromisso de agenda para o dia da aplicação de BST — antes disso a
     # "próxima aplicação" só existia como número informativo (proxima_visita_bst)
     # e nos indicadores/tabelas aptos-excluídos-nunca aplicados, sem nunca virar
-    # um evento cronológico de verdade no dia certo. Carrega os números dos
-    # animais direto no evento (aptas/incluir no próximo/inaptas) para que o
-    # app também consiga mostrar as três listas sem precisar de outra chamada.
+    # um evento cronológico de verdade. Carrega os números dos animais direto
+    # no evento (aptas/incluir no próximo/inaptas) para que o app também
+    # consiga mostrar as três listas sem precisar de outra chamada.
+    #
+    # IMPORTANTE: data do evento é `proxima_visita_bst_real` (a data real da
+    # próxima aplicação), NÃO a data de referência `data` da consulta — o
+    # front sempre consulta a Agenda com `data=hoje` (não existe navegação que
+    # troque essa referência; a "visão de calendário"/"linha do tempo" só
+    # filtram no cliente uma única resposta já carregada, ver
+    # frontend/app/agenda/page.tsx). Gatear a criação do evento em
+    # `proxima_visita_bst_real == data` fazia o card só existir no dia exato
+    # em que alguém abrisse a Agenda bem naquele dia — em qualquer outro dia
+    # (inclusive olhando o dia da aplicação com antecedência pela grade do
+    # calendário) o evento simplesmente não era gerado e a "próxima aplicação"
+    # ficava só no número informativo. Mesmo padrão sem piso de data já usado
+    # pela "Visita reprodutiva" (proxima_visita_iatf, ver AgendaEngine.calcular
+    # — o evento carrega sua própria data e aparece em Atrasados se passar do
+    # dia sem confirmação).
     eventos_bst = []
-    if proxima_visita_bst_real is not None and proxima_visita_bst_real == data:
+    if proxima_visita_bst_real is not None:
         total_aptos = len(result.bst_elegiveis)
         total_incluir = len(bst_nunca_aplicados)
         total_inaptos = len(result.bst_excluidos)
-        chave_bst = f"bst_aplicacao_{data.isoformat()}"
+        chave_bst = f"bst_aplicacao_{proxima_visita_bst_real.isoformat()}"
         if chave_bst not in realizados:
             eventos_bst.append({
-                "id": chave_bst, "data": data.isoformat(), "categoria": "Reprodutivo",
-                "descricao": f"Aplicação de BST hoje — {total_aptos} apta(s), {total_incluir} para incluir no próximo BST",
+                "id": chave_bst, "data": proxima_visita_bst_real.isoformat(), "categoria": "Reprodutivo",
+                "descricao": f"Aplicação de BST — {total_aptos} apta(s), {total_incluir} para incluir no próximo BST",
                 "numero_animal": None,
                 "observacao": f"Vacas em lactação inaptas (não elegíveis): {total_inaptos}. Toque para ver as listas.",
                 "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "bst_aplicacao",

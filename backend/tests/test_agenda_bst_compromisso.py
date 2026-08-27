@@ -89,11 +89,23 @@ class TestProximaAplicacaoNoDia:
         assert "300" in ev["aptas"] or "300" in ev["incluir_proximo"]
         assert isinstance(ev["inaptas"], list)
 
-    def test_nao_gera_compromisso_fora_do_dia(self, client):
+    def test_gera_compromisso_com_antecedencia_quando_a_data_ainda_nao_chegou(self, client):
+        """
+        Antes o compromisso só era gerado quando a data de REFERÊNCIA da
+        consulta (`data=`) caía exatamente no dia da próxima aplicação — como
+        o front sempre consulta com `data=hoje` (não há navegação de UI que
+        troque essa referência), o card nunca aparecia com antecedência,
+        mesmo que o usuário navegasse até o dia certo pela grade do
+        calendário (ver test_bst_evento_agenda.py para o cenário completo).
+        Agora o evento é gerado com a data REAL da próxima aplicação, mesmo
+        consultado antes dela chegar.
+        """
         c, engine = client
         hoje = date.today()
         # Última aplicação recente -> próxima aplicação está no futuro, não hoje.
         _lancar_bst(engine, "300", hoje - timedelta(days=3))
+        proxima = hoje - timedelta(days=3) + timedelta(days=12)
         r = c.get("/agenda/", params={"data": hoje.isoformat()})
         eventos_bst = [e for e in r.json()["eventos"] if e.get("tipo") == "bst_aplicacao"]
-        assert eventos_bst == []
+        assert len(eventos_bst) == 1
+        assert eventos_bst[0]["data"] == proxima.isoformat()
