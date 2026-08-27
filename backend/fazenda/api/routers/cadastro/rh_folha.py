@@ -196,6 +196,86 @@ def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) ->
         session.add(p)
 
 
+def _rescisao_fechada_antes_de(session: Session, pessoa_id: int, competencia: str) -> bool:
+    """
+    True quando a pessoa já tem uma rescisão FECHADA (a simulação sozinha não
+    conta — ver fluxo simulacao → fechada) com `data_desligamento` anterior ao
+    início de `competencia`. Usada para nunca gerar/aceitar folha de um mês em
+    que a pessoa já não trabalhava mais (bug: rescisão lançada em agosto não
+    impedia a folha de setembro em diante).
+    """
+    ano, mes = (int(x) for x in competencia.split("-"))
+    inicio_competencia = date(ano, mes, 1)
+    rescisao = session.exec(
+        select(RescisaoFuncionario).where(
+            RescisaoFuncionario.pessoa_id == pessoa_id,
+            RescisaoFuncionario.status == "fechada",
+            RescisaoFuncionario.data_desligamento < inicio_competencia,
+        )
+    ).first()
+    return rescisao is not None
+
+
+def _remover_folha_pos_rescisao(session: Session, fazenda_id: int | None) -> None:
+    """
+    Self-heal: remove (com a conta a pagar vinculada, se ainda não paga)
+    qualquer folha PENDENTE de uma competência posterior à rescisão fechada da
+    pessoa — cobre o caso de a folha já ter sido gerada (recorrência ou
+    lançamento manual) ANTES de a rescisão ser lançada/fechada no sistema.
+    Nunca mexe em folha já paga."""
+    query = select(FolhaPagamento).where(FolhaPagamento.status != "pago")
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    for registro in session.exec(query).all():
+        if not _rescisao_fechada_antes_de(session, registro.pessoa_id, registro.competencia):
+            continue
+        if registro.numero_lancamento_gerado:
+            conta = session.exec(
+                select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+            ).first()
+            if conta and conta.valor_pago is None:
+                session.delete(conta)
+        session.delete(registro)
+    session.commit()
+
+
+def _remover_folha_duplicada(session: Session, fazenda_id: int | None) -> None:
+    """
+    Self-heal: normaliza lançamentos duplicados de folha (mesma pessoa +
+    competência) que a falta de idempotência em `criar_folha_pagamento`
+    deixava acumular — mantém o pago (se houver) ou o mais recente, e remove
+    o(s) outro(s) junto com a conta a pagar vinculada (se ainda não paga).
+    Nunca exclui um lançamento já pago."""
+    query = select(FolhaPagamento)
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    por_chave: dict[tuple[int, str], list[FolhaPagamento]] = {}
+    for registro in session.exec(query).all():
+        por_chave.setdefault((registro.pessoa_id, registro.competencia), []).append(registro)
+
+    houve_remocao = False
+    for registros in por_chave.values():
+        if len(registros) <= 1:
+            continue
+        pagos = [r for r in registros if r.status == "pago"]
+        manter_id = pagos[0].id if pagos else max(registros, key=lambda r: r.id).id
+        for registro in registros:
+            if registro.id == manter_id or registro.status == "pago":
+                continue
+            if registro.numero_lancamento_gerado:
+                conta = session.exec(
+                    select(ContaGerencial).where(
+                        ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado
+                    )
+                ).first()
+                if conta and conta.valor_pago is None:
+                    session.delete(conta)
+            session.delete(registro)
+            houve_remocao = True
+    if houve_remocao:
+        session.commit()
+
+
 def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> None:
     """
     Para cada lançamento de folha marcado como recorrente (o "modelo"), gera
@@ -203,6 +283,9 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
     — tanto o registro de acompanhamento (FolhaPagamento) quanto a conta a
     pagar correspondente (ContaGerencial) — sem exigir relançamento manual
     todo mês. Mesmo padrão "lazy pull" da baixa automática de Alimentação.
+    Para de gerar a partir da competência em que a pessoa já tem rescisão
+    fechada (ver _rescisao_fechada_antes_de) — todas as competências seguintes
+    também estariam bloqueadas, então a geração deste modelo pode parar aí.
     """
     competencia_atual = date.today().strftime("%Y-%m")
     query = select(FolhaPagamento).where(FolhaPagamento.recorrente == True)  # noqa: E712
@@ -215,6 +298,8 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
             continue
         competencia = _competencia_seguinte(modelo.competencia)
         while competencia <= competencia_atual:
+            if _rescisao_fechada_antes_de(session, modelo.pessoa_id, competencia):
+                break
             existe = session.exec(
                 select(FolhaPagamento).where(
                     FolhaPagamento.pessoa_id == modelo.pessoa_id,
@@ -297,6 +382,8 @@ def listar_folha_pagamento(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _remover_folha_duplicada(session, fazenda_id)
+    _remover_folha_pos_rescisao(session, fazenda_id)
     _gerar_folha_recorrente(session, fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     query = select(FolhaPagamento)
@@ -371,6 +458,26 @@ def criar_folha_pagamento(
         raise HTTPException(status_code=400, detail="Status inválido")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
+    if _rescisao_fechada_antes_de(session, dados.pessoa_id, dados.competencia):
+        raise HTTPException(
+            status_code=400,
+            detail="Esta pessoa tem rescisão fechada anterior a esta competência — não é possível lançar folha.",
+        )
+    # Idempotência: nunca mais de uma folha por pessoa/competência (ver
+    # comentário de _valor_vale) — sem esta checagem, a mesma pessoa acabava
+    # com dois lançamentos para o mesmo mês (duplicado em Ações > Folha).
+    ja_lancada = session.exec(
+        select(FolhaPagamento).where(
+            FolhaPagamento.pessoa_id == dados.pessoa_id,
+            FolhaPagamento.competencia == dados.competencia,
+            FolhaPagamento.fazenda_id == fazenda_id,
+        )
+    ).first()
+    if ja_lancada:
+        raise HTTPException(
+            status_code=400,
+            detail="Já existe um lançamento de folha para esta pessoa nesta competência — edite o lançamento existente.",
+        )
     conta_corrente = _resolver_conta_corrente(session, dados.conta_corrente_id, fazenda_id)
     descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
     valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
