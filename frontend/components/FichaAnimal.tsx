@@ -160,6 +160,13 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
     { header: "Cria 1", key: "numero_cria_1" }, { header: "Cria 2", key: "numero_cria_2" },
     { header: "Sexo cria 1", key: "sexo_cria_1" }, { header: "Sexo cria 2", key: "sexo_cria_2" },
     { header: "Gemelar?", key: "gemelar" }, { header: "Retenção de placenta?", key: "retencao_placenta" },
+    // Coluna auxiliar: distingue, linha a linha, o parto/aborto que conta na
+    // ordem de parto e abre lactação do aborto que não conta nem abre (ver
+    // fazenda.rules.parto.eh_parto_produtivo e o campo
+    // `conta_ordem_parto_lactacao` do backend). Pequena e discreta de
+    // propósito — é um auxílio de leitura do histórico bruto, não uma
+    // métrica principal como as demais colunas.
+    { header: "Considerar ordem de parto/lactação", key: "conta_ordem_parto_lactacao" },
   ] },
   { chave: "servicos", titulo: "Reprodução — Serviço/IA e diagnóstico", colunas: [
     { header: "Data serviço", key: "data_servicoFmt" }, { header: "Tipo", key: "tipo_servico" }, { header: "Protocolo", key: "protocolo" },
@@ -271,6 +278,7 @@ function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Recor
     if ("gemelar" in nova) nova.gemelar = nova.gemelar ? "Sim" : "Não";
     if ("retencao_placenta" in nova) nova.retencao_placenta = nova.retencao_placenta ? "Sim" : "Não";
     if ("realizada" in nova) nova.realizada = nova.realizada ? "Sim" : "Não";
+    if ("conta_ordem_parto_lactacao" in nova) nova.conta_ordem_parto_lactacao = nova.conta_ordem_parto_lactacao ? "Sim" : "Não";
     // Rótulo amigável da origem (manual/sugestão confirmada/automática/passiva)
     // — badge só de leitura na Ficha, mantendo o valor bruto para ordenação.
     if (chave === "movimentos_lote") nova.origemFmt = rotuloOrigemMovimentoLote(l.origem);
