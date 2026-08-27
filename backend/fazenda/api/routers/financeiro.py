@@ -43,7 +43,11 @@ from fazenda.rules.patrimonio import (
 )
 from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
 from fazenda.rules.dre import LINHAS_DRE_VALIDAS, montar_cascata_dre
-from fazenda.rules.parametros import meta_rmca, patrimonio_atualizacao_valor_mercado_meses
+from fazenda.rules.caixa_real import projetar_caixa, sugerir_fundo_reserva
+from fazenda.rules.parametros import (
+    caixa_dias_projecao, caixa_fundo_reserva, caixa_meses_folga_sugestao,
+    meta_rmca, patrimonio_atualizacao_valor_mercado_meses,
+)
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 from fazenda.config import settings
 
@@ -1825,6 +1829,139 @@ def custo_litro_leite(
         **calcular_custo_por_litro(custo_total, litros),
     }
 
+
+
+# ---------------------------------------------------------------------------
+# Onda 4 — Caixa Real (projeção de liquidez)
+# ---------------------------------------------------------------------------
+@router.get("/caixa-real")
+def caixa_real(
+    dias: int | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Projeção de caixa: quanto a fazenda TEM hoje e como o saldo evolui
+    conforme os compromissos já lançados vencem.
+
+    NÃO confundir com a DRE (ver o ADR no topo de rules/caixa_real.py): a DRE
+    responde "deu lucro?" por competência; esta tela responde "tem dinheiro?"
+    por caixa. Fazenda lucrativa pode quebrar por falta de liquidez, e é
+    justamente esse descasamento que esta projeção antecipa.
+
+    Saldo de partida = soma das contas correntes cadastradas (a mesma conta
+    de `calcular_saldos_contas_correntes`, para os dois lugares nunca
+    divergirem). Compromissos = ContaGerencial ainda NÃO paga, na data de
+    vencimento; conta vencida e não paga entra no primeiro dia (ver o motor).
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    horizonte = dias if dias and dias > 0 else caixa_dias_projecao()
+
+    query_contas = select(ContaCorrente)
+    if fazenda_id is not None:
+        query_contas = query_contas.where(ContaCorrente.fazenda_id == fazenda_id)
+    contas = session.exec(query_contas).all()
+    saldos = calcular_saldos_contas_correntes(session, contas, fazenda_id)
+    saldo_inicial = round(sum(saldos.values()), 2)
+
+    query = select(ContaGerencial).where(ContaGerencial.data_pagamento == None)  # noqa: E711
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    em_aberto = list(session.exec(query).all())
+    # MESMO caminho de valor da DRE (ver _periodo_filtradas_dre): vale de
+    # funcionário/empreiteiro descontado — vale não é despesa da fazenda, e
+    # aqui também não é saída futura (o dinheiro saiu quando foi adiantado;
+    # contá-lo de novo duplicaria a saída). Reaproveitar a função em vez de
+    # recalcular evita que as duas telas divirjam com o tempo.
+    ajustes = ajuste_vale_por_conta(session, em_aberto, fazenda_id)
+    valores = valor_gerencial_por_centro_custo(session, em_aberto, None, ajustes)
+
+    compromissos = []
+    sem_vencimento = 0
+    for c in em_aberto:
+        valor = valores.get(c.id, 0.0)
+        if not valor:
+            continue
+        if not c.data_vencimento:
+            sem_vencimento += 1
+            continue
+        compromissos.append({
+            "data": c.data_vencimento,
+            "valor": valor,
+            "tipo": c.tipo,
+            "descricao": c.descricao or c.numero_lancamento,
+        })
+
+    projecao = projetar_caixa(
+        saldo_inicial=saldo_inicial,
+        compromissos=compromissos,
+        inicio=hoje,
+        dias=horizonte,
+        fundo_reserva=caixa_fundo_reserva(),
+    )
+    projecao["dias"] = horizonte
+    projecao["contas"] = [
+        {"id": c.id, "nome": rotulo_conta_corrente(c), "saldo": saldos.get(c.id, 0.0)}
+        for c in contas
+    ]
+    # Compromisso sem data de vencimento não pode ser posicionado na linha do
+    # tempo. Em vez de sumir em silêncio (que faria a projeção parecer mais
+    # folgada do que é), a tela mostra quantos ficaram de fora.
+    projecao["compromissos_sem_vencimento"] = sem_vencimento
+    return projecao
+
+
+@router.get("/caixa-real/fundo-reserva-sugerido")
+def fundo_reserva_sugerido(
+    meses_historico: int = 6,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Sugere um fundo de reserva a partir do custo mensal realmente pago nos
+    últimos meses fechados. Só SUGERE — quem grava é o usuário, no parâmetro
+    `caixa_fundo_reserva` (Configurações > Parâmetros): fazenda tem
+    sazonalidade forte e uma média de poucos meses erra para os dois lados,
+    então aplicar sozinho seria fingir uma precisão que o número não tem."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    primeiro_do_mes = hoje.replace(day=1)
+
+    query = select(ContaGerencial).where(
+        ContaGerencial.tipo == "despesa",
+        ContaGerencial.data_pagamento != None,  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+
+    por_mes: dict[str, float] = {}
+    candidatas: list[ContaGerencial] = []
+    for c in session.exec(query).all():
+        # Só meses JÁ FECHADOS — o mês corrente está pela metade e puxaria a
+        # média para baixo, sugerindo um fundo menor do que o necessário.
+        if not c.data_pagamento or c.data_pagamento >= primeiro_do_mes:
+            continue
+        if (primeiro_do_mes.year - c.data_pagamento.year) * 12 + (
+            primeiro_do_mes.month - c.data_pagamento.month
+        ) > meses_historico:
+            continue
+        candidatas.append(c)
+
+    ajustes = ajuste_vale_por_conta(session, candidatas, fazenda_id)
+    valores = valor_gerencial_por_centro_custo(session, candidatas, None, ajustes)
+    for c in candidatas:
+        chave = c.data_pagamento.strftime("%Y-%m")
+        por_mes[chave] = por_mes.get(chave, 0.0) + abs(valores.get(c.id, 0.0))
+
+    meses = sorted(por_mes.items())
+    folga = caixa_meses_folga_sugestao()
+    return {
+        "sugerido": sugerir_fundo_reserva([v for _m, v in meses], folga),
+        "meses_folga": folga,
+        "meses_considerados": [{"mes": m, "saidas": round(v, 2)} for m, v in meses],
+        "atual": caixa_fundo_reserva(),
+    }
 
 @router.get("/patrimonio/lista-simples")
 def listar_patrimonio_simples(
