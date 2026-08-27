@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Settings, Layers, FileSpreadsheet, Palette, CheckCheck, ExternalLink, ShieldCheck, History } from "lucide-react";
+import { Settings, Layers, FileSpreadsheet, Palette, CheckCheck, ExternalLink, ShieldCheck } from "lucide-react";
 import { podeModulo, ehAdmin, ehDono, ehContratanteAdministrador } from "@/lib/api";
 import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
@@ -11,15 +11,13 @@ import { ABAS_CADASTRO_ESTOQUE, type AbaCadastroEstoque } from "@/components/Cad
 import ImportarDados from "@/components/ImportarDados";
 import { AprovacoesView } from "@/components/AprovacoesView";
 import { AuditoriaCowDataView } from "@/components/AuditoriaCowDataView";
-import { OrdemPartoReconstrucaoView } from "@/components/OrdemPartoReconstrucaoView";
-import { OrdemPartoPartosReconstrucaoView } from "@/components/OrdemPartoPartosReconstrucaoView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 // "Parâmetros" e "News" viraram abas de primeiro nível de Administração
 // (17/08/2026, pedido explícito do usuário) — ver app/parametros/page.tsx e
 // app/news-admin/page.tsx. Não vivem mais aqui dentro.
-type Aba = "cadastro" | "upload" | "importar" | "aprovacoes" | "auditoria-cowdata" | "ordem-parto" | "aparencia";
+type Aba = "cadastro" | "upload" | "importar" | "aprovacoes" | "auditoria-cowdata" | "aparencia";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -47,15 +45,13 @@ export default function ConfiguracoesPage() {
     // Logo abaixo de Aprovações, só para o contratante-administrador (quem
     // contratou o plano) — pedido explícito do usuário.
     if (ehContratanteAdministrador()) abas.push({ id: "auditoria-cowdata", label: "Auditoria CowData", icon: ShieldCheck, title: "Acessos de suporte da CowData a esta fazenda, e compromissos de confiança/LGPD" });
-    // Ferramenta administrativa pontual de correção de dado histórico — ver
-    // OrdemPartoReconstrucaoView. Restrita a administrador, mesmo critério de
-    // Aprovações acima (rewrite de dado de produção, não é autoatendimento
-    // de qualquer operador).
-    // Mesmo critério de "Auditoria CowData" acima — não `ehAdmin()` puro:
-    // travar essa ferramenta pro próprio dono da fazenda por causa de um
-    // `papel` divergente do literal "admin" seria o bug, não a proteção
-    // (ver `exigir_admin_ou_dono` no backend, mesmo raciocínio).
-    if (ehContratanteAdministrador()) abas.push({ id: "ordem-parto", label: "Ordem de Parto", icon: History, title: "Corrige a ordem de parto histórica do controle leiteiro" });
+    // A aba "Ordem de Parto" (reconstrução de Parto.ordem_parto e do derivado
+    // em ControleLeiteiro) era uma ferramenta PONTUAL de correção do dado
+    // histórico importado do Ideagri — rodou, corrigiu 107 registros e saiu de
+    // cena em 27/08/2026. Os endpoints do backend continuam de pé (ver
+    // producao.py, seções de reconstrução de ordem de parto) caso uma nova
+    // importação legada volte a exigir a correção; para reativar a tela, basta
+    // devolver esta aba e os dois componentes de View.
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);
@@ -143,16 +139,6 @@ export default function ConfiguracoesPage() {
         {aba === "importar" && <ImportarDados />}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
         {aba === "auditoria-cowdata" && <div className="px-6"><AuditoriaCowDataView /></div>}
-        {aba === "ordem-parto" && (
-          <div className="px-6">
-            {/* Ordem de execução importa: Partos corrige a FONTE do dado
-                (Parto.ordem_parto); Controles, logo abaixo, lê essa fonte
-                como verdade — rodar Partos primeiro é o que faz Controles
-                voltar a mostrar os números certos, sem precisar mexer nela. */}
-            <OrdemPartoPartosReconstrucaoView />
-            <OrdemPartoReconstrucaoView />
-          </div>
-        )}
       </div>
     </div>
   );
