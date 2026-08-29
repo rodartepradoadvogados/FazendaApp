@@ -204,7 +204,14 @@ export function FormEstoque({ estoque, onIrParaFinanceiro, onSalvo }: { estoque:
         <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
         <Campo label="Unidade">
           <select style={inputStyle} value={unidade || item?.unidade || "unidade"} onChange={(e) => setUnidade(e.target.value)}>
-            {UNIDADES.map((u) => <option key={u}>{u}</option>)}
+            {/* A unidade DE VERDADE do item (livre, cadastrada em Configurações > Estoque —
+                "Tonelada (ton)", "Bag" etc.) pode não estar na lista fixa UNIDADES abaixo
+                (pensada só para unidade de APLICAÇÃO de medicamento). Sem isto, o <select>
+                controlado não achava a option certa e mostrava a primeira da lista ("ml")
+                como se estivesse selecionada. */}
+            {[item?.unidade, ...UNIDADES.filter((u) => u !== item?.unidade)].filter(Boolean).map((u) => (
+              <option key={u} value={u as string}>{u}</option>
+            ))}
           </select>
         </Campo>
         <Campo label="Data"><input type="date" style={inputStyle} value={dataMov} onChange={(e) => setDataMov(e.target.value)} /></Campo>
