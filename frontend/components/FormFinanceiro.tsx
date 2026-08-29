@@ -1070,7 +1070,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   }
 
   async function salvar() {
-    setErro(null); setSucesso(null);
+    setErro(null); setSucesso(null); setErroXml(null);
     const validos = itens.filter((i) => i.produto.trim());
     if (!validos.length) { setErro("Informe ao menos um produto ou serviço."); return; }
     if (!centroCusto.trim()) { setErro("Selecione o centro de custo."); return; }
