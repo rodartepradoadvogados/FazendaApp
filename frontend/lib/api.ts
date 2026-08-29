@@ -1089,6 +1089,22 @@ function netError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
+// Mesma origem de erro que netError (TypeError = "Failed to fetch"), mas para
+// chamadas de processamento pesado (OCR de documento, leitura de XML) onde a
+// causa típica é o proxy/gateway derrubando a conexão por demora, não a API
+// estar de fato fora do ar — a mensagem genérica de netError ("verifique se o
+// backend está no ar / CORS") é enganosa aqui e assustava o usuário mesmo com
+// o salvamento manual funcionando normalmente em seguida.
+function netErrorProcessamento(e: unknown, oQue: string): Error {
+  if (e instanceof TypeError) {
+    return new Error(
+      `A leitura automática ${oQue} demorou demais e a conexão caiu no meio do caminho. ` +
+        `Nada foi lançado por causa disso — pode preencher os campos manualmente ou tentar de novo.`
+    );
+  }
+  return e instanceof Error ? e : new Error(String(e));
+}
+
 // Verifica se o backend responde. Usado pelo indicador de status.
 export async function checkHealth(): Promise<boolean> {
   try {
@@ -6061,7 +6077,7 @@ export async function importarXmlFinanceiro(xml: string) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
     });
   } catch (e) {
-    throw netError(e); // "Failed to fetch" cru vira uma mensagem acionável (backend fora do ar/CORS) em vez de aparecer sem contexto.
+    throw netErrorProcessamento(e, "do XML"); // "Failed to fetch" cru vira uma mensagem acionável, sem alarme falso de "backend fora do ar".
   }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o XML"); }
   return res.json();
@@ -6073,9 +6089,10 @@ export async function importarXmlFinanceiro(xml: string) {
 // demora, Wi-Fi instável etc.), `fetch` lança um TypeError cru ("Failed to
 // fetch") — sem o try/catch abaixo, essa falha de REDE ficava indistinguível
 // de qualquer outro erro de NEGÓCIO (documento ilegível, tipo não
-// suportado...) pro usuário, que via só o texto bruto do navegador. `netError`
-// traduz isso numa mensagem clara e acionável, igual já acontece em
-// criarLancamentoFinanceiro/uploadCSV.
+// suportado...) pro usuário, que via só o texto bruto do navegador.
+// `netErrorProcessamento` traduz isso numa mensagem clara sem o alarme falso
+// de "backend fora do ar/CORS" do netError genérico — aqui a causa típica é
+// só o gateway cortando por demora, não a API estar de fato indisponível.
 export async function lerDocumentoFinanceiro(file: File) {
   const form = new FormData();
   form.append("file", file);
@@ -6083,7 +6100,7 @@ export async function lerDocumentoFinanceiro(file: File) {
   try {
     res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
   } catch (e) {
-    throw netError(e);
+    throw netErrorProcessamento(e, "do documento");
   }
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao ler o documento"); }
   return res.json();
