@@ -31,22 +31,25 @@ def _kg_por_saca_de_unidade(unidade: Optional[str]) -> Optional[float]:
 
 def resolver_kg_por_unidade(estoque_item: Optional[dict]) -> Optional[float]:
     """Quantos kg equivalem a 1 unidade de estoque do item informado — None
-    quando a unidade não é ensacada (kg/L direto) ou quando não há como
+    quando a unidade não é embalada (kg/L direto) ou quando não há como
     resolver. Mesma prioridade usada em `calcular_necessidade_mensal`: (1) o
-    trio unidade_embalagem="Saca"/medida_embalagem="kg/saca"/
-    quantidade_embalagem; (2) senão, peso extraído da própria `unidade` (ex.:
-    "saca 30kg", "saca 60kg"). Compartilhado com a baixa automática de
-    estoque (ver `_dar_baixa_automatica` em routers/alimentacao.py) — sem
-    isso, um item cadastrado em sacas tinha seu saldo debitado como se 1
-    unidade de estoque valesse 1 kg (erro de 30x/60x)."""
+    trio unidade_embalagem/medida_embalagem/quantidade_embalagem, sempre que
+    `medida_embalagem` for "kg/&lt;o que for&gt;" — cobre saca, tonelada, bag,
+    fardo etc. igual, em vez de reconhecer só o texto exato "Saca"/"kg/saca"
+    (bug real: um item cadastrado em Tonelada, com medida_embalagem="kg/ton"
+    e quantidade_embalagem=1000, caía direto no fallback de baixo e tinha o
+    consumo diário em kg debitado 1:1 como se fosse Tonelada — erro de
+    escala 1000x); (2) senão, peso extraído da própria `unidade` (ex.: "saca
+    30kg", "saca 60kg"). Compartilhado com a baixa automática de estoque (ver
+    `_dar_baixa_automatica` em routers/alimentacao.py) — sem isso, um item
+    embalado tinha seu saldo debitado como se 1 unidade de estoque valesse 1
+    kg."""
     if not estoque_item:
         return None
-    ensacado = bool(
-        estoque_item.get("unidade_embalagem") == "Saca"
-        and estoque_item.get("medida_embalagem") == "kg/saca" and estoque_item.get("quantidade_embalagem")
-    )
-    if ensacado:
-        return estoque_item.get("quantidade_embalagem")
+    medida = (estoque_item.get("medida_embalagem") or "").strip().lower()
+    fator = estoque_item.get("quantidade_embalagem")
+    if fator and medida.split("/", 1)[0].strip() == "kg":
+        return fator
     return _kg_por_saca_de_unidade(estoque_item.get("unidade"))
 
 
@@ -152,14 +155,16 @@ def calcular_necessidade_mensal(
 ) -> list[dict]:
     """
     Projeta o consumo diário para uma janela de 30 dias. Quando o ingrediente
-    tem um item de estoque vinculado embalado em sacas com peso conhecido,
-    converte kg em sacos (arredondando para cima — não dá pra comprar meio
-    saco). O peso da saca vem de duas fontes possíveis, nesta ordem: (1) o
-    trio unidade_embalagem="Saca"/medida_embalagem="kg/saca"/
-    quantidade_embalagem, quando alguém preencheu esse cadastro específico;
-    (2) senão, extraído direto da própria `unidade` do item de Estoque (ex.:
-    "saca 30kg", "saca 60kg") — o campo que normalmente já é preenchido ao
-    cadastrar o produto, sem precisar duplicar a informação em outro lugar.
+    tem um item de estoque vinculado embalado (qualquer embalagem cujo
+    `medida_embalagem` seja "kg/<algo>" — saca, tonelada, bag, fardo...) com
+    peso conhecido, converte kg em unidades de embalagem (arredondando para
+    cima — não dá pra comprar meia unidade). O fator vem de duas fontes
+    possíveis, nesta ordem, via `resolver_kg_por_unidade`: (1) o trio
+    unidade_embalagem/medida_embalagem/quantidade_embalagem, quando alguém
+    preencheu esse cadastro específico; (2) senão, extraído direto da
+    própria `unidade` do item de Estoque (ex.: "saca 30kg", "saca 60kg") — o
+    campo que normalmente já é preenchido ao cadastrar o produto, sem
+    precisar duplicar a informação em outro lugar.
 
     O vínculo com o Estoque é resolvido em duas etapas: (1) nome idêntico ao
     de um item de Estoque (comportamento histórico, mantido para não quebrar

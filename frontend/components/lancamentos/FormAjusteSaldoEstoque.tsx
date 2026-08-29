@@ -72,7 +72,7 @@ export function FormAjusteSaldoEstoque({ estoque, onSalvo }: { estoque: EstoqueI
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Produto" full>
-          <EstoquePicker itens={itensEstocaveis} value={produto} onChange={setProduto} placeholder="Buscar item…" incluirNaoEstocaveis={false} />
+          <EstoquePicker itens={itensEstocaveis} value={produto} onChange={setProduto} placeholder="Buscar item…" todasFinalidades incluirNaoEstocaveis={false} />
         </Campo>
         {item && (
           <>

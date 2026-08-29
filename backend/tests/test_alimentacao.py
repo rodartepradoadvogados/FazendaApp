@@ -214,6 +214,41 @@ class TestBaixaAutomatica:
             # 5kg/cabeça * 2 animais * 3 dias = 30kg -> 30kg / 30kg/saca = 1 saca
             assert item.quantidade == 999.0
 
+    def test_baixa_converte_kg_para_tonelada_via_quantidade_embalagem(self, client):
+        """Mesmo bug do teste acima, mas para um item cadastrado em Tonelada
+        (não "saca X kg" no texto de `unidade`) — só resolvido pelo trio
+        unidade_embalagem/medida_embalagem/quantidade_embalagem, já que o
+        texto "Tonelada (ton)" não bate no regex de saca. Antes deste fix,
+        `resolver_kg_por_unidade` só reconhecia literalmente "Saca"/"kg/saca"
+        e debitava os kg consumidos 1:1 como se fossem toneladas — erro de
+        escala 1000x, reportado com um caso real de produção."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Caroço de algodão", quantidade=5.0, unidade="kg"))
+            s.add(Estoque(
+                nome="Caroço de algodão", categoria="alimento", quantidade=40.0, unidade="Tonelada (ton)",
+                unidade_embalagem="Tonelada (ton)", medida_embalagem="kg/ton", quantidade_embalagem=1000,
+            ))
+            s.add(Lote(codigo="01", nome="Alta", modo_baixa_estoque="automatica"))
+            s.commit()
+
+        c.get("/alimentacao/")  # estabelece baseline = hoje
+        with Session(engine) as s:
+            estado = s.get(AlimentacaoEstado, 1)
+            estado.ultima_data_deducao = date.today() - timedelta(days=2)
+            s.add(estado)
+            s.commit()
+
+        r = c.get("/alimentacao/")
+        assert r.status_code == 200
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Caroço de algodão")).first()
+            # 5kg/cabeça * 2 animais * 2 dias = 20kg -> 20kg / 1000kg-por-tonelada = 0,02 tonelada.
+            # Com o bug, isso teria debitado 20 TONELADAS (item.quantidade == 20.0).
+            assert item.quantidade == pytest.approx(39.98)
+
     def test_item_nao_estocavel_nao_sofre_baixa_automatica(self, client):
         c, engine = client
         _seed(engine)
