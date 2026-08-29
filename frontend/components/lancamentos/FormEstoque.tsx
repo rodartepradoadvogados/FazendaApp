@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Dna } from "lucide-react";
-import { fetchPedido, fetchPedidos, fetchPlanoContas, movimentarEstoque, FINALIDADES_ESTOQUE } from "@/lib/api";
+import { fetchPedido, fetchPedidos, fetchPlanoContas, movimentarEstoque } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -174,7 +174,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro, onSalvo }: { estoque:
             value={produto}
             onChange={setProduto}
             placeholder="Buscar item…"
-            finalidades={FINALIDADES_ESTOQUE}
+            todasFinalidades
             incluirNaoEstocaveis={!somenteEstocaveis}
           />
           {itensFiltrados.length !== itensBase.length && (
