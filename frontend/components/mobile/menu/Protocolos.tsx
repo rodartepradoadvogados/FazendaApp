@@ -86,12 +86,9 @@ export default function Protocolos({ onVoltar }: { onVoltar: () => void }) {
         </Vazio>
       ) : (
         linhas.map((l) => {
-          // Sanitário é lançado por animal e aqui aparece só agrupado para
-          // exibição — a baixa dele segue pela Agenda.
-          const abrivel = l.origem !== "sanitario";
           return (
             <MobCard key={`${l.origem}-${l.origem_id}`} style={{ marginBottom: "0.7rem" }}
-                     onClick={abrivel ? () => setAberto({ origem: l.origem, id: l.origem_id }) : undefined}>
+                     onClick={() => setAberto({ origem: l.origem, id: l.origem_id })}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.35rem" }}>
                 <span style={{ fontWeight: 800, fontSize: "0.92rem", lineHeight: 1.3 }}>{l.nome}</span>
                 <span style={{
@@ -114,7 +111,7 @@ export default function Protocolos({ onVoltar }: { onVoltar: () => void }) {
                 {l.status === "cancelado" && <span style={{ color: "var(--mob-vermelho)" }}> · cancelado</span>}
                 {l.status === "encerrado" && <span style={{ color: "var(--mob-ambar)" }}> · encerrado</span>}
               </div>
-              {abrivel && aba === "andamento" && (
+              {aba === "andamento" && (
                 <div style={{ fontSize: "0.76rem", color: "var(--mob-acao)", marginTop: "0.35rem", fontWeight: 700 }}>
                   Toque para dar baixa →
                 </div>

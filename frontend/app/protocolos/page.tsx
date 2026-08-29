@@ -736,7 +736,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         <div className="card mt-2" style={{ background: "var(--surface-2)", border: "1px solid var(--red)" }}>
           <p style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>
             Desfazer a aplicação de <strong>{desfazerAlvo.numero_matriz}</strong> em <strong>{desfazerAlvo.rotulo}</strong>?
-            {origem === "iatf" && " O estoque consumido por esta vaca é estornado; a Sanidade já registrada na ficha permanece."}
+            {(origem === "iatf" || origem === "sanitario") && " O estoque consumido por esta vaca é estornado; a Sanidade já registrada na ficha permanece."}
           </p>
           <div className="flex gap-2">
             <button className="btn-primary" style={{ background: "var(--red)" }} onClick={confirmarDesfazer} disabled={desfazendo}>
@@ -1015,15 +1015,11 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
               </tr></thead>
               <tbody>
                 {linhasFiltradas.map((l) => {
-                  // Sanitário é lançado por animal e na Central aparece só
-                  // agrupado para exibição — abrir a grade dele exigiria
-                  // decidir o que fazer com o grupo inteiro. Segue pela Agenda.
-                  const abrivel = l.origem !== "sanitario";
                   return (
                   <tr key={`${l.origem}-${l.origem_id}`}
-                      onClick={abrivel ? () => setAberto({ origem: l.origem, id: l.origem_id }) : undefined}
-                      style={abrivel ? { cursor: "pointer" } : undefined}
-                      title={abrivel ? "Abrir a grade animal × dia, dar baixa e encerrar" : "Protocolo sanitário: baixa pela Agenda"}>
+                      onClick={() => setAberto({ origem: l.origem, id: l.origem_id })}
+                      style={{ cursor: "pointer" }}
+                      title="Abrir a grade animal × dia, dar baixa e encerrar">
                     <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{l.nome}</td>
                     <td><Pill cor={COR_TIPO[l.tipo]}>{LABEL_TIPO[l.tipo] || l.tipo}</Pill></td>
                     <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_inicio)}</td>

@@ -22,11 +22,21 @@ type ItemSemen = {
   tipo: string; doses: number; valor_unitario?: number | null;
 };
 
-const CATEGORIA_ESTOQUE: { chave: "alimentacao" | "medicamentos"; rotulo: string; finalidades: string[] }[] = [
-  { chave: "alimentacao", rotulo: "Alimentação", finalidades: ["Ração/Alimento"] },
-  { chave: "medicamentos", rotulo: "Medicamentos", finalidades: ["Medicamento"] },
-];
-type CategoriaChave = (typeof CATEGORIA_ESTOQUE)[number]["chave"] | "semen" | "outros";
+// "Ração/Alimento" é a finalidade padrão, mas a finalidade de Estoque é
+// cadastro livre (Configurações > Cadastro > Estoque > Finalidade) — uma
+// fazenda pode ter cadastrado o alimento com finalidade própria (ex.:
+// "Nutrição"). Um filtro por igualdade exata escondia esses itens da pílula
+// Alimentação (produto existia, mas "não há" na busca) — mesmo bug já
+// corrigido no seletor de estoque de Alimentos, no picker de Nova dieta
+// (site) e em Lançar Dieta (app); ver `_finalidade_indica_alimento` no
+// backend (fazenda/api/routers/alimentacao.py) e o critério idêntico em
+// LancarDieta.tsx. Vira lista de EXCLUSÃO por termo, não de permissão por
+// valor exato — cobre "Ração/Alimento" e qualquer variação customizada.
+const TERMOS_ALIMENTACAO = ["aliment", "nutri", "racao"];
+function ehFinalidadeAlimentacao(finalidade: string | null): boolean {
+  return !!finalidade && TERMOS_ALIMENTACAO.some((t) => casaBusca(finalidade, t));
+}
+type CategoriaChave = "alimentacao" | "medicamentos" | "semen" | "outros";
 
 const ROTULOS_CATEGORIA: Record<CategoriaChave, string> = {
   alimentacao: "Alimentação", medicamentos: "Medicamentos", semen: "Sêmen", outros: "Outros",
@@ -44,13 +54,13 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
   const itens = dados?.itens || [];
 
   const filtrados = useMemo(() => {
-    const cfg = CATEGORIA_ESTOQUE.find((c) => c.chave === aba);
     let base: ItemEstoque[];
-    if (cfg) {
-      base = itens.filter((i) => cfg.finalidades.includes(i.finalidade || ""));
+    if (aba === "alimentacao") {
+      base = itens.filter((i) => ehFinalidadeAlimentacao(i.finalidade));
+    } else if (aba === "medicamentos") {
+      base = itens.filter((i) => (i.finalidade || "") === "Medicamento");
     } else if (aba === "outros") {
-      const finalidadesConhecidas = new Set(CATEGORIA_ESTOQUE.flatMap((c) => c.finalidades));
-      base = itens.filter((i) => !finalidadesConhecidas.has(i.finalidade || ""));
+      base = itens.filter((i) => !ehFinalidadeAlimentacao(i.finalidade) && (i.finalidade || "") !== "Medicamento");
     } else {
       base = [];
     }
