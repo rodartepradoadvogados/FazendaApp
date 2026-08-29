@@ -51,50 +51,67 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "protocolo_sanitario_lote",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("protocolo_id", sa.Integer(), nullable=False),
-        sa.Column("nome_protocolo", sa.String(), nullable=False),
-        sa.Column("data_inicio", sa.Date(), nullable=False),
-        sa.Column("responsavel", sa.String(), nullable=True),
-        sa.Column("observacao", sa.String(), nullable=True),
-        sa.Column("encerrado_em", sa.Date(), nullable=True),
-        sa.Column("encerrado_motivo", sa.String(), nullable=True),
-        sa.Column("ativo", sa.Boolean(), nullable=False),
-        sa.Column("criado_em", sa.DateTime(), nullable=False),
-        sa.Column("usuario_id", sa.Integer(), nullable=True),
-        sa.Column("fazenda_id", sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(["protocolo_id"], ["protocolo_sanitario.id"]),
-        sa.ForeignKeyConstraint(["usuario_id"], ["usuario.id"]),
-        sa.ForeignKeyConstraint(["fazenda_id"], ["fazenda.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_protocolo_sanitario_lote_ativo"), "protocolo_sanitario_lote", ["ativo"], unique=False)
-    op.create_index(op.f("ix_protocolo_sanitario_lote_fazenda_id"), "protocolo_sanitario_lote", ["fazenda_id"], unique=False)
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
 
-    op.add_column(
-        "protocolo_sanitario_lancamento",
-        sa.Column("lote_id", sa.Integer(), nullable=True),
-    )
-    op.create_index(
-        op.f("ix_protocolo_sanitario_lancamento_lote_id"), "protocolo_sanitario_lancamento", ["lote_id"], unique=False,
-    )
-    # SQLite não suporta ADD CONSTRAINT direto (só via batch/copy-and-move) —
-    # mesmo padrão de b20df48b733a_movimento_estoque_rastreabilidade.py.
-    with op.batch_alter_table("protocolo_sanitario_lancamento") as batch_op:
-        batch_op.create_foreign_key(
-            "fk_protocolo_sanitario_lancamento_lote_id", "protocolo_sanitario_lote", ["lote_id"], ["id"],
+    # Guardas de idempotência: em produção o `create_all` de subida (ver
+    # database.py) já pode ter criado tabelas/colunas com o schema ATUAL dos
+    # models antes desta migração rodar — mesmo padrão de
+    # c1a2b3d4e5f6_lactacao.py. Sem isso, reexecutar (ou rodar por cima de um
+    # banco pré-existente) quebra com "table/column already exists".
+    if "protocolo_sanitario_lote" not in insp.get_table_names():
+        op.create_table(
+            "protocolo_sanitario_lote",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("protocolo_id", sa.Integer(), nullable=False),
+            sa.Column("nome_protocolo", sa.String(), nullable=False),
+            sa.Column("data_inicio", sa.Date(), nullable=False),
+            sa.Column("responsavel", sa.String(), nullable=True),
+            sa.Column("observacao", sa.String(), nullable=True),
+            sa.Column("encerrado_em", sa.Date(), nullable=True),
+            sa.Column("encerrado_motivo", sa.String(), nullable=True),
+            sa.Column("ativo", sa.Boolean(), nullable=False),
+            sa.Column("criado_em", sa.DateTime(), nullable=False),
+            sa.Column("usuario_id", sa.Integer(), nullable=True),
+            sa.Column("fazenda_id", sa.Integer(), nullable=True),
+            sa.ForeignKeyConstraint(["protocolo_id"], ["protocolo_sanitario.id"]),
+            sa.ForeignKeyConstraint(["usuario_id"], ["usuario.id"]),
+            sa.ForeignKeyConstraint(["fazenda_id"], ["fazenda.id"]),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        op.create_index(op.f("ix_protocolo_sanitario_lote_ativo"), "protocolo_sanitario_lote", ["ativo"], unique=False)
+        op.create_index(op.f("ix_protocolo_sanitario_lote_fazenda_id"), "protocolo_sanitario_lote", ["fazenda_id"], unique=False)
+        insp = sa.inspect(conn)  # refresh: a tabela nova precisa aparecer nas checagens abaixo
+
+    colunas_lancamento = {c["name"] for c in insp.get_columns("protocolo_sanitario_lancamento")}
+    if "lote_id" not in colunas_lancamento:
+        op.add_column(
+            "protocolo_sanitario_lancamento",
+            sa.Column("lote_id", sa.Integer(), nullable=True),
+        )
+        op.create_index(
+            op.f("ix_protocolo_sanitario_lancamento_lote_id"), "protocolo_sanitario_lancamento", ["lote_id"], unique=False,
+        )
+    nomes_fk_lancamento = {fk["name"] for fk in insp.get_foreign_keys("protocolo_sanitario_lancamento")}
+    if "fk_protocolo_sanitario_lancamento_lote_id" not in nomes_fk_lancamento:
+        # SQLite não suporta ADD CONSTRAINT direto (só via batch/copy-and-move) —
+        # mesmo padrão de b20df48b733a_movimento_estoque_rastreabilidade.py.
+        with op.batch_alter_table("protocolo_sanitario_lancamento") as batch_op:
+            batch_op.create_foreign_key(
+                "fk_protocolo_sanitario_lancamento_lote_id", "protocolo_sanitario_lote", ["lote_id"], ["id"],
+            )
+
+    colunas_aplicacao = {c["name"] for c in insp.get_columns("protocolo_sanitario_aplicacao")}
+    if "dia" not in colunas_aplicacao:
+        op.add_column("protocolo_sanitario_aplicacao", sa.Column("dia", sa.Integer(), nullable=True))
+        op.create_index(op.f("ix_protocolo_sanitario_aplicacao_dia"), "protocolo_sanitario_aplicacao", ["dia"], unique=False)
+    if "numero_matriz" not in colunas_aplicacao:
+        op.add_column("protocolo_sanitario_aplicacao", sa.Column("numero_matriz", sa.String(), nullable=True))
+        op.create_index(
+            op.f("ix_protocolo_sanitario_aplicacao_numero_matriz"), "protocolo_sanitario_aplicacao", ["numero_matriz"], unique=False,
         )
 
-    op.add_column("protocolo_sanitario_aplicacao", sa.Column("dia", sa.Integer(), nullable=True))
-    op.add_column("protocolo_sanitario_aplicacao", sa.Column("numero_matriz", sa.String(), nullable=True))
-    op.create_index(op.f("ix_protocolo_sanitario_aplicacao_dia"), "protocolo_sanitario_aplicacao", ["dia"], unique=False)
-    op.create_index(
-        op.f("ix_protocolo_sanitario_aplicacao_numero_matriz"), "protocolo_sanitario_aplicacao", ["numero_matriz"], unique=False,
-    )
-
-    _backfill(op.get_bind())
+    _backfill(conn)
 
 
 def _backfill(conn) -> None:
