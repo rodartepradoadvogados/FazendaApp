@@ -19,7 +19,7 @@ from fazenda.models import (
     Doenca, Estoque, EventoRealizado,
     EventoSanitario, ExameDefinicao, ExameResultado, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque,
     Parto, Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
-    ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, QualidadeLeite, Sanidade, Usuario,
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
@@ -34,6 +34,7 @@ from fazenda.rules.estoque_baixa import (
 )
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.unidades import unidades_compativeis
 from fazenda.rules.visibilidade import visivel
@@ -1342,10 +1343,30 @@ def lancar_protocolo(
     lancamentos_criados = []
     avisos: list[str] = []
     pulados: list[str] = []
+    # Cabeçalho do lote (ProtocoloSanitarioLote) — criado uma única vez para
+    # esta chamada, na hora do primeiro animal de fato novo (uma chamada só
+    # com animais já lançados — puro retry — não deve deixar um lote vazio
+    # para trás). É o que dá ao Sanitário a mesma grade dia×animal com
+    # marcar/desfazer/cancelar/encerrar que as outras 4 famílias já têm na
+    # Central de Protocolos (ver ProtocoloSanitarioLote e central_protocolos.py).
+    lote: ProtocoloSanitarioLote | None = None
+    dia_final_etapas = max(e.dia for e in etapas)
     for numero in numeros:
         if numero in numeros_existentes:
             pulados.append(numero)
             continue
+        if lote is None:
+            lote = ProtocoloSanitarioLote(
+                protocolo_id=dados.protocolo_id,
+                nome_protocolo=gerar_nome_lancamento(
+                    protocolo.nome, dados.data_inicio, protocolo.dia_inicial, dia_final_etapas,
+                ),
+                data_inicio=dados.data_inicio, responsavel=dados.responsavel, observacao=dados.observacao,
+                usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+            )
+            session.add(lote)
+            session.commit()
+            session.refresh(lote)
         del_no_caso = None
         ccs_ultima = None
         recidiva = None
@@ -1381,6 +1402,7 @@ def lancar_protocolo(
                         break
         lancamento = ProtocoloSanitarioLancamento(
             protocolo_id=dados.protocolo_id, numero_matriz=numero, data_inicio=dados.data_inicio,
+            lote_id=lote.id,
             responsavel=dados.responsavel, observacao=dados.observacao,
             classificacao_mastite=dados.classificacao_mastite,
             grau_mastite=dados.grau_mastite, agente=dados.agente,
@@ -1397,6 +1419,7 @@ def lancar_protocolo(
             data_prevista = dados.data_inicio + timedelta(days=etapa.dia - protocolo.dia_inicial)
             session.add(ProtocoloSanitarioAplicacao(
                 lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
+                dia=etapa.dia, numero_matriz=numero,
                 produto=produto_por_etapa.get(etapa.id), fazenda_id=fazenda_id,
             ))
         session.commit()

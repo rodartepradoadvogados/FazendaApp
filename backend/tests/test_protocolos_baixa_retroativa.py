@@ -185,11 +185,10 @@ class TestBaixaPelaCentral:
         })
         assert r.status_code == 400
 
-    def test_sanitario_nao_aceita_baixa_pela_central(self, client):
+    def test_origem_desconhecida_da_400(self, client):
         c, _ = client
-        r = c.post("/central-protocolos/sanitario/1/baixa", json={"dia": 0})
+        r = c.post("/central-protocolos/vacinacao/1/baixa", json={"dia": 0})
         assert r.status_code == 400
-        assert "sanitário" in r.json()["detail"].lower()
 
     def test_lancamento_inexistente_da_404(self, client):
         c, _ = client
@@ -294,8 +293,10 @@ class TestEncerrar:
 
 
 class TestAsOutrasDuasFamilias:
-    """A baixa pela Central vale para as três famílias com cabeçalho de lote,
-    não só IATF — indução e customizado passam pelas mesmas rotas."""
+    """A baixa pela Central vale para as 5 famílias com cabeçalho de lote,
+    não só IATF — indução, customizado, lida e sanitário passam pelas mesmas
+    rotas (sanitário com um passo a mais por causa do
+    ProtocoloSanitarioLancamento por animal — ver central_protocolos.py)."""
 
     def _inducao(self, c, engine, d0: date) -> int:
         _animais(engine, ["700"])
@@ -383,6 +384,76 @@ class TestAsOutrasDuasFamilias:
         det = c.get(f"/central-protocolos/customizado/{lid}").json()
         assert [a["numero_matriz"] for a in det["animais"]] == ["—"]
         assert c.post(f"/central-protocolos/customizado/{lid}/baixa", json={"dia": 0}).status_code == 200
+
+    def _sanitario(self, c, engine, d0: date, animais: list[str]) -> int:
+        _animais(engine, animais)
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Mastite - Protocolo padrão",
+            "etapas": [
+                {"dia": 0, "produto": "Borgal", "dosagem": 40.0, "unidade": "ml", "via": "Intramuscular"},
+                {"dia": 3, "produto": "Borgal", "dosagem": 40.0, "unidade": "ml", "via": "Intramuscular"},
+            ],
+        }).json()
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid["id"], "numeros_matriz": animais, "data_inicio": d0.isoformat(),
+        })
+        assert r.status_code == 201, r.text
+        return next(
+            l["origem_id"] for l in c.get("/central-protocolos/acompanhamento").json()
+            if l["origem"] == "sanitario"
+        )
+
+    def test_sanitario_da_baixa_com_data_real(self, client):
+        c, engine = client
+        d0 = date.today() - timedelta(days=15)
+        lid = self._sanitario(c, engine, d0, ["700", "701"])
+
+        r = c.post(f"/central-protocolos/sanitario/{lid}/baixa", json={
+            "dia": 0, "data_realizacao": d0.isoformat(),
+        })
+        assert r.status_code == 200, r.text
+        det = c.get(f"/central-protocolos/sanitario/{lid}").json()
+        assert det["etapas_realizadas"] == 2
+        for animal in det["animais"]:
+            celula = next(x for x in animal["celulas"] if x["dia"] == 0)
+            assert celula["realizada"] and celula["data_realizacao"] == d0.isoformat()
+
+    def test_sanitario_da_baixa_so_de_um_animal(self, client):
+        c, engine = client
+        lid = self._sanitario(c, engine, date.today(), ["700", "701"])
+        assert c.post(f"/central-protocolos/sanitario/{lid}/baixa", json={
+            "dia": 0, "animais": ["700"],
+        }).status_code == 200
+
+        det = c.get(f"/central-protocolos/sanitario/{lid}").json()
+        d0 = next(d for d in det["dias"] if d["dia"] == 0)
+        assert (d0["realizadas"], d0["total"]) == (1, 2)
+
+    def test_sanitario_desfaz_uma_aplicacao(self, client):
+        c, engine = client
+        lid = self._sanitario(c, engine, date.today(), ["700"])
+        c.post(f"/central-protocolos/sanitario/{lid}/baixa", json={"dia": 0})
+        assert c.get(f"/central-protocolos/sanitario/{lid}").json()["etapas_realizadas"] == 1
+
+        r = c.request("DELETE", f"/central-protocolos/sanitario/{lid}/baixa", json={
+            "dia": 0, "numero_matriz": "700",
+        })
+        assert r.status_code == 200, r.text
+        assert c.get(f"/central-protocolos/sanitario/{lid}").json()["etapas_realizadas"] == 0
+
+    def test_sanitario_encerra_e_sai_da_agenda(self, client):
+        c, engine = client
+        lid = self._sanitario(c, engine, date.today(), ["700"])
+
+        def _eventos():
+            ev = c.get("/agenda/", params={"data": date.today().isoformat(), "dias": 400}).json()["eventos"]
+            return [e for e in ev if e.get("tipo") == "protocolo_sanitario"]
+
+        assert _eventos(), "pré-condição: cobrando na Agenda"
+        assert c.post(f"/central-protocolos/sanitario/{lid}/encerrar", json={"motivo": "Curou antes"}).status_code == 200
+        assert not _eventos()
+        linha = next(l for l in c.get("/central-protocolos/historico").json() if l["origem"] == "sanitario")
+        assert linha["status"] == "encerrado" and linha["etapas_faltam"] == 2
 
 
 class TestCancelar:
@@ -498,9 +569,66 @@ class TestCancelar:
         linha = next(l for l in c.get("/central-protocolos/historico").json() if l["origem"] == "customizado")
         assert linha["status"] == "cancelado"
 
-    def test_sanitario_nao_aceita_cancelamento_pela_central(self, client):
+    def _sanitario_com_estoque(self, c, engine):
+        """Um item de estoque + um protocolo sanitário cujo D0 usa esse item —
+        mesmo padrão de `_com_estoque`, mas via /sanidade/protocolos/lancamentos."""
+        item = c.post("/estoque/", json={
+            "nome": "Borgal", "categoria": "Medicamento", "unidade": "ml", "quantidade": 100,
+        })
+        assert item.status_code in (200, 201), item.text
+        _animais(engine, ["700", "701"])
+        pid = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Mastite - Protocolo padrão",
+            "etapas": [{"dia": 0, "produto": "Borgal", "dosagem": 40.0, "unidade": "ml", "via": "Intramuscular"}],
+        }).json()
+        c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid["id"], "numeros_matriz": ["700", "701"], "data_inicio": date.today().isoformat(),
+        })
+        return next(
+            l["origem_id"] for l in c.get("/central-protocolos/acompanhamento").json()
+            if l["origem"] == "sanitario"
+        )
+
+    def test_sanitario_tambem_cancela_e_estorna_estoque(self, client):
+        c, engine = client
+        lid = self._sanitario_com_estoque(c, engine)
+        saldo_inicial = self._saldo(c, "Borgal")
+        if saldo_inicial is None:
+            pytest.skip("estoque não disponível nesta configuração de teste")
+
+        c.post(f"/central-protocolos/sanitario/{lid}/baixa", json={"dia": 0})
+        saldo_apos_baixa = self._saldo(c, "Borgal")
+        assert saldo_apos_baixa < saldo_inicial, "pré-condição: a baixa consumiu estoque"
+
+        antes = len(c.get("/animais/700/ficha").json().get("aplicacoes_sanitarias", []))
+        r = c.post(f"/central-protocolos/sanitario/{lid}/cancelar", json={"motivo": "Lançado no lote errado"})
+        assert r.status_code == 200, r.text
+
+        det = c.get(f"/central-protocolos/sanitario/{lid}").json()
+        assert det["etapas_realizadas"] == 0, "cancelar tem que desfazer as aplicações"
+        assert det["ativo"] is False
+
+        assert self._saldo(c, "Borgal") == saldo_inicial, "estoque não voltou ao original"
+
+        depois = len(c.get("/animais/700/ficha").json().get("aplicacoes_sanitarias", []))
+        assert depois == antes, "a Sanidade da aplicação sanitária não pode sumir da ficha ao cancelar"
+
+        linha = next(l for l in c.get("/central-protocolos/historico").json() if l["origem_id"] == lid and l["origem"] == "sanitario")
+        assert linha["status"] == "cancelado"
+
+    def test_sanitario_cancelar_duas_vezes_nao_infla_o_estoque(self, client):
+        c, engine = client
+        lid = self._sanitario_com_estoque(c, engine)
+        c.post(f"/central-protocolos/sanitario/{lid}/baixa", json={"dia": 0})
+        c.post(f"/central-protocolos/sanitario/{lid}/cancelar", json={})
+        saldo_1 = self._saldo(c, "Borgal")
+        r = c.post(f"/central-protocolos/sanitario/{lid}/cancelar", json={})
+        assert r.status_code == 400, "cancelar é irrepetível, igual às outras famílias"
+        assert self._saldo(c, "Borgal") == saldo_1
+
+    def test_origem_desconhecida_nao_aceita_cancelamento(self, client):
         c, _ = client
-        assert c.post("/central-protocolos/sanitario/1/cancelar", json={}).status_code == 400
+        assert c.post("/central-protocolos/vacinacao/1/cancelar", json={}).status_code == 400
 
 
 class TestNadaQuebrouNoCaminhoAntigo:

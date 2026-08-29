@@ -152,9 +152,16 @@ const CHAVES_STAT = {
 } as const;
 
 function statIatf(): string | null {
-  const dados = lerCache<{ animais: unknown[] }[]>(CHAVES_STAT.iatf);
+  const dados = lerCache<{ animais: unknown[]; concluido?: boolean }[]>(CHAVES_STAT.iatf);
   if (!dados) return null;
-  return `${dados.length} em andamento`;
+  // `dados` inclui protocolos com `concluido: true` (mantidos por mais um
+  // ciclo pelo endpoint — ver reproducao.py::listar_protocolos_iatf_ativos —
+  // para mostrar a próxima visita). Contar `dados.length` cru rotulava TODOS
+  // como "em andamento" no subtítulo do Menu, mesmo quando a própria
+  // sub-tela (ProtocolosIatf.tsx) os mostrava como "Concluído" ao abrir —
+  // a inconsistência lista×detalhe reportada. Precisa filtrar aqui também.
+  const emAndamento = dados.filter((p) => !p.concluido).length;
+  return `${emAndamento} em andamento`;
 }
 
 function statUltimosControles(): string | null {
