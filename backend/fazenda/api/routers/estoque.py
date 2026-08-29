@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import CompraSemen, Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
+from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.estoque_baixa import carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
 from fazenda.rules.visibilidade import visivel
@@ -759,8 +760,38 @@ def _criar_movimento_estoque(
     if dados.movimento in MOVIMENTOS_SOMENTE_ESTOCAVEL and item.estocavel is False:
         raise HTTPException(status_code=400, detail="Somente itens estocáveis podem ser doados ou recebidos de cortesia")
 
+    # A quantidade lançada só pode ser somada/subtraída direto de
+    # `Estoque.quantidade` se já estiver na MESMA unidade em que o saldo do
+    # item é contado (`item.unidade`) — senão o número entra cru na conta
+    # errada (ex.: usuário escolhe "kg" num item cadastrado em "Tonelada
+    # (ton)" e o saldo em tonelada pula +196 em vez de +0,196). Quando as
+    # unidades batem (caso mais comum, e o único suportado antes deste fix),
+    # segue sem conversão nenhuma. Quando divergem, só convertemos o caso que
+    # o próprio cadastro do item sabe resolver — "kg" contra uma embalagem
+    # cujo `medida_embalagem` é "kg/<algo>" (saca, tonelada, bag...), via o
+    # mesmo fator que a baixa automática da Alimentação usa
+    # (`resolver_kg_por_unidade`). Qualquer outra divergência é rejeitada em
+    # vez de aceita e somada errado — igual ao `estoque_baixa.movimentar` já
+    # faz para aplicações de produto.
+    quantidade_no_item = dados.quantidade
+    unidade_gravada = dados.unidade or item.unidade
+    if dados.unidade and item.unidade and dados.unidade.strip().lower() != item.unidade.strip().lower():
+        fator = resolver_kg_por_unidade(item.model_dump())
+        if dados.unidade.strip().lower() == "kg" and fator:
+            quantidade_no_item = dados.quantidade / fator
+            unidade_gravada = item.unidade
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'Não sei converter "{dados.unidade}" para "{item.unidade}" (a unidade de estoque de '
+                    f'"{item.nome}"). Lance a quantidade em {item.unidade}, ou cadastre a equivalência em kg '
+                    f'no item (Configurações > Cadastro > Estoque > Itens de Estoque > Unidade de medida da embalagem).'
+                ),
+            )
+
     baixa = dados.movimento in MOVIMENTOS_SAIDA
-    delta = -dados.quantidade if baixa else dados.quantidade
+    delta = -quantidade_no_item if baixa else quantidade_no_item
     incrementar_quantidade_atomico(session, "estoque", item.id, "quantidade", delta)
     session.flush()
     session.refresh(item)
@@ -785,8 +816,12 @@ def _criar_movimento_estoque(
     session.add(MovimentoEstoque(
         nome_item=dados.nome,
         movimento=dados.movimento,
-        quantidade=dados.quantidade,
-        unidade=dados.unidade or item.unidade,
+        # Gravado já convertido para a unidade do item (não a unidade que o
+        # usuário digitou) — é o que bate com o delta aplicado acima em
+        # `Estoque.quantidade`, e com o que `valor_unitario` (precificado por
+        # `item.unidade`) espera em qualquer cálculo de custo posterior (RMCA).
+        quantidade=quantidade_no_item,
+        unidade=unidade_gravada,
         data_movimento=dados.data_movimento,
         observacao=dados.observacao,
         usuario_id=usuario_id,
@@ -801,7 +836,7 @@ def _criar_movimento_estoque(
 
     if dados.pedido_item_id and not baixa:
         from fazenda.api.routers.pedidos import atualizar_status_por_movimento_estoque
-        atualizar_status_por_movimento_estoque(session, dados.pedido_item_id, dados.quantidade)
+        atualizar_status_por_movimento_estoque(session, dados.pedido_item_id, quantidade_no_item)
 
     return item
 
