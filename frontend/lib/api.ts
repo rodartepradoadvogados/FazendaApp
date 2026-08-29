@@ -3746,7 +3746,32 @@ export async function excluirAgendamentoPesagem(id: number) {
 // ── Protocolo sanitário (cadastro + lançamento) ──
 // criterio_tipo: "medicamento" (produto = item de estoque), "principio_ativo"
 // ou "classificacao" (produto = o valor do critério; medicamento escolhido no lançamento).
-export type ProtocoloEtapa = { dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null; observacao?: string | null };
+export type ProtocoloEtapa = {
+  dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string;
+  via?: string | null; observacao?: string | null;
+  // Onda "Protocolo à Mostra" — "fixa" (padrão, é o legado inteiro): `dosagem`
+  // é a dose pronta. "por_peso": `dosagem` é a dose A CADA `dose_referencia_kg`
+  // de peso vivo do animal — ver rules.dose_protocolo no backend.
+  modo_dose?: "fixa" | "por_peso"; dose_referencia_kg?: number | null;
+};
+
+/** "2 mL" (fixa) ou "2 mL a cada 15 kg PV" (por peso) — a mesma fórmula
+ * sempre exibida como texto, nunca escondida atrás de um número calculado
+ * sozinho. Usada em toda tela que lista etapas de protocolo sanitário
+ * (cadastro, lançamento, Central de Protocolos, Agenda). */
+export function formatarDoseEtapa(e: Pick<ProtocoloEtapa, "dosagem" | "unidade" | "modo_dose" | "dose_referencia_kg">): string {
+  if (e.modo_dose === "por_peso" && e.dose_referencia_kg) {
+    return `${e.dosagem}${e.unidade ? ` ${e.unidade}` : ""} a cada ${e.dose_referencia_kg}kg PV`;
+  }
+  return `${e.dosagem}${e.unidade ? ` ${e.unidade}` : ""}`;
+}
+
+/** Dose calculada para um animal de `pesoKg`, quando a etapa é "por_peso".
+ * null quando a etapa é dose fixa (nada a calcular) ou falta o peso. */
+export function calcularDoseEtapa(e: Pick<ProtocoloEtapa, "dosagem" | "modo_dose" | "dose_referencia_kg">, pesoKg: number | null | undefined): number | null {
+  if (e.modo_dose !== "por_peso" || !e.dose_referencia_kg || !pesoKg) return null;
+  return Math.round((e.dosagem * (pesoKg / e.dose_referencia_kg)) * 10) / 10;
+}
 export async function fetchProtocolosSanitarios() {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos sanitários error: ${res.status}`);

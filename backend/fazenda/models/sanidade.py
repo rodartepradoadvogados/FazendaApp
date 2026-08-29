@@ -517,8 +517,24 @@ class ProtocoloSanitarioEtapa(SQLModel, table=True):
     # guarda o critério; o medicamento real é escolhido no lançamento).
     criterio_tipo: str = Field(default="medicamento")
     produto: str  # nome do medicamento OU o valor do critério (princípio/classificação)
+    # Onda "Protocolo à Mostra" — dose FIXA (padrão, é o legado inteiro) ou
+    # POR PESO VIVO, ver fazenda.rules.dose_protocolo. Nos dois modos
+    # `dosagem` é o número e `unidade` é só a unidade de medida ("mL", "UI")
+    # — o que muda é a LEITURA: "fixa" usa `dosagem` pronta; "por_peso" lê
+    # `dosagem` como a dose A CADA `dose_referencia_kg` de peso vivo do
+    # animal (ex.: dosagem=2, dose_referencia_kg=15 → "2 mL a cada 15 kg"),
+    # calculada em rules.dose_protocolo.calcular_dose. Mesmo par de campos
+    # (dose_padrao/dose_referencia_kg) já usado em MedicamentoComercial —
+    # nome igual, mesmo conceito, para não duplicar vocabulário.
+    #
+    # Todo registro pré-existente nasceu "fixa" com a referência de peso
+    # embutida como TEXTO dentro do próprio `unidade` (ex.: "ml / 15kg PV")
+    # — nunca calculada. Ver ADR em rules/dose_protocolo.py e o backfill em
+    # POST /cadastro/protocolos-sanitarios/dose-migrar (report-first).
+    modo_dose: str = Field(default="fixa")  # "fixa" | "por_peso"
     dosagem: float
     unidade: str
+    dose_referencia_kg: Optional[float] = None  # só quando modo_dose == "por_peso"
     via: Optional[str] = None
     observacao: Optional[str] = None  # nota livre (ex.: "Se necessário", "10ml por orelha")
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
