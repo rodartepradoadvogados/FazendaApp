@@ -22,7 +22,8 @@ from fazenda.models import (
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lote, MedicamentoComercial, ParametroSugestaoMovimentacao, Parto,
     PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PortalMensagem, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
-    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
+    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, Sanidade,
     Secagem, SeedFlag, Servico,
 )
 from fazenda.api.routers.lotes import coletar_dados_criterios
@@ -788,6 +789,11 @@ def calcular_agenda(
     } if ids_etapa_necessarios else {}
     lancamentos_por_id = {l.id: l for l in session.exec(_da_fazenda(select(ProtocoloSanitarioLancamento), ProtocoloSanitarioLancamento)).all()}
     protocolos_por_id = {p.id: p for p in session.exec(_da_fazenda(select(ProtocoloSanitario), ProtocoloSanitario)).all()}
+    # Mesmo princípio de IATF/Indução (ver `.encerrado_em`/`.ativo` abaixo,
+    # linhas ~840/941): um lote sanitário encerrado ou cancelado pela Central
+    # (ProtocoloSanitarioLote, ver central_protocolos.py) para de cobrar
+    # pendência na Agenda, mesmo com etapas ainda não realizadas.
+    lotes_por_id = {lo.id: lo for lo in session.exec(_da_fazenda(select(ProtocoloSanitarioLote), ProtocoloSanitarioLote)).all()}
     eventos_protocolo = []
     for ap in aplicacoes_pendentes:
         chave = f"protocolo_sanitario_{ap.id}"
@@ -797,6 +803,9 @@ def calcular_agenda(
         lancamento = lancamentos_por_id.get(ap.lancamento_id)
         protocolo = protocolos_por_id.get(lancamento.protocolo_id) if lancamento else None
         if not etapa or not lancamento or not protocolo:
+            continue
+        lote = lotes_por_id.get(lancamento.lote_id) if lancamento.lote_id else None
+        if lote and (lote.encerrado_em or not lote.ativo):
             continue
         produto = ap.produto or etapa.produto
         eventos_protocolo.append({
@@ -1820,11 +1829,19 @@ def _aplicar_cronograma(
 
 def _baixar_protocolo_sanitario(
     session: Session, evento_id: str, fazenda_id: int | None = None, usuario_id: int | None = None,
+    data_realizacao: date | None = None,
 ) -> list[str]:
     """
     Ao marcar "realizado" um evento de protocolo sanitário: registra a
     aplicação em Sanidade e dá baixa automática do produto no Estoque (quando
     a unidade da etapa bate com a unidade de estoque do produto).
+
+    `data_realizacao` (padrão: hoje) permite baixa RETROATIVA — usado pela
+    Central de Protocolos (POST /central-protocolos/sanitario/{id}/baixa),
+    que reaproveita esta função exatamente como IATF/Indução/Customizado/Lida
+    reaproveitam suas respectivas `_marcar_*_realizado`. A confirmação normal
+    pela Agenda (POST /agenda/realizados) não passa este argumento — mantém
+    o comportamento de sempre (hoje).
     """
     aplicacao_id = int(evento_id.removeprefix("protocolo_sanitario_"))
     aplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)
@@ -1835,9 +1852,9 @@ def _baixar_protocolo_sanitario(
     if not etapa or not lancamento:
         return []
 
-    hoje = date.today()
+    data_efetiva = data_realizacao or date.today()
     aplicacao.realizada = True
-    aplicacao.data_realizacao = hoje
+    aplicacao.data_realizacao = data_efetiva
     session.add(aplicacao)
 
     # Se a etapa foi cadastrada por princípio ativo/classificação, usa o
@@ -1845,7 +1862,7 @@ def _baixar_protocolo_sanitario(
     produto = aplicacao.produto or etapa.produto
 
     session.add(Sanidade(
-        numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=produto,
+        numero_matriz=lancamento.numero_matriz, data_aplicacao=data_efetiva, produto=produto,
         dose=etapa.dosagem, unidade=etapa.unidade, via=etapa.via, responsavel=lancamento.responsavel,
         obs=f"Protocolo sanitário — D{etapa.dia}" + (f" — {lancamento.observacao}" if lancamento.observacao else ""),
         protocolo_sanitario_lancamento_id=lancamento.id, fazenda_id=fazenda_id,
@@ -1853,7 +1870,7 @@ def _baixar_protocolo_sanitario(
 
     estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto)
     avisos = estoque_baixa.baixar(
-        session, item=estoque_item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=hoje,
+        session, item=estoque_item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=data_efetiva,
         fazenda_id=fazenda_id, observacao=f"Protocolo sanitário — matriz {lancamento.numero_matriz} — D{etapa.dia}",
         usuario_id=usuario_id, origem_tipo="protocolo_sanitario", origem_id=aplicacao.id, produto=produto,
     )

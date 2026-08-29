@@ -540,6 +540,45 @@ class ProtocoloSanitarioEtapa(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class ProtocoloSanitarioLote(SQLModel, table=True):
+    """O "cabeçalho" de um lançamento de protocolo sanitário em lote — junta os
+    ProtocoloSanitarioLancamento (um por animal) criados na MESMA chamada de
+    POST /sanidade/protocolos/lancamentos, no mesmo formato/campos que
+    ProtocoloIatfLancamento/ProtocoloInducaoLancamento/etc. usam (nome_protocolo
+    já com data, responsavel/observacao, ativo/encerrado_em/encerrado_motivo)
+    — é o que permite ao Sanitário entrar em `_ORIGENS_COM_ACAO`
+    (central_protocolos.py) e ganhar a mesma grade dia×animal, com
+    marcar/desfazer/cancelar/encerrar, que IATF/Indução/Customizado/Lida já
+    tinham. Antes deste modelo, cada ProtocoloSanitarioLancamento era uma
+    linha solta sem cabeçalho — a Central AGRUPAVA por (protocolo_id,
+    data_inicio) só para exibir, sem estado próprio (ver histórico de
+    `_linhas_sanitario`); esse agrupamento por coincidência de data confundia
+    lançamentos de fato distintos que caíssem no mesmo dia. `lote_id` agora é
+    a fonte de verdade do agrupamento, carimbada no momento do lançamento.
+
+    Migração e3ad0b2a1c47 cria esta tabela e faz o backfill do histórico: cada
+    ProtocoloSanitarioLancamento existente (não tinha cabeçalho) vira um
+    "lote de 1" — decisão deliberadamente conservadora, sem tentar adivinhar
+    quais lançamentos antigos "deveriam" ter sido um lote só por coincidirem
+    na mesma data (ver docstring da migração)."""
+
+    __tablename__ = "protocolo_sanitario_lote"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
+    nome_protocolo: str
+    data_inicio: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    # Ver ProtocoloIatfLancamento.encerrado_em / .ativo — mesma semântica.
+    encerrado_em: Optional[date] = Field(default=None)
+    encerrado_motivo: Optional[str] = None
+    ativo: bool = Field(default=True, index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
 class ProtocoloSanitarioLancamento(SQLModel, table=True):
     """Aplicação de um protocolo a um animal — gera um evento na Agenda por etapa/dia."""
 
@@ -549,6 +588,11 @@ class ProtocoloSanitarioLancamento(SQLModel, table=True):
     protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
     numero_matriz: str = Field(index=True)
     data_inicio: date
+    # Cabeçalho do lote (ver ProtocoloSanitarioLote) — nullable só porque o
+    # histórico pré-existente à migração e3ad0b2a1c47 é preenchido em lotes
+    # de 1 pela própria migração; todo lançamento novo sempre grava este
+    # campo (ver sanidade.lancar_protocolo).
+    lote_id: Optional[int] = Field(default=None, foreign_key="protocolo_sanitario_lote.id", index=True)
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
     # Campos específicos de mastite — só usados quando o protocolo é de mastite.
@@ -580,6 +624,19 @@ class ProtocoloSanitarioAplicacao(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     lancamento_id: int = Field(foreign_key="protocolo_sanitario_lancamento.id")
     etapa_id: int = Field(foreign_key="protocolo_sanitario_etapa.id")
+    # `dia` e `numero_matriz` são DENORMALIZADOS de ProtocoloSanitarioEtapa.dia
+    # e ProtocoloSanitarioLancamento.numero_matriz, gravados uma vez no
+    # lançamento (ver sanidade.lancar_protocolo). Só existem para dar a esta
+    # tabela o MESMO formato de ProtocoloIatfAplicacao/ProtocoloInducaoAplicacao/
+    # ProtocoloCustomizadoAplicacao/LidaAplicacao — todo o código genérico da
+    # Central de Protocolos (central_protocolos.py: detalhe, dar_baixa,
+    # desfazer_aplicacao, cancelar) lê `.dia` e `.numero_matriz` direto da
+    # aplicação, sem saber que Sanitário tem uma camada extra por animal
+    # (ProtocoloSanitarioLancamento) que os outros não têm. Nullable só pelo
+    # histórico pré-migração e3ad0b2a1c47 (que faz o backfill); lançamento
+    # novo sempre preenche os dois.
+    dia: Optional[int] = Field(default=None, index=True)
+    numero_matriz: Optional[str] = Field(default=None, index=True)
     data_prevista: date
     # Medicamento escolhido no lançamento quando a etapa foi cadastrada por
     # princípio ativo/classificação (None = usa o produto da própria etapa).
