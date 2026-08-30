@@ -21,6 +21,9 @@ import CadastroProtocolosCustomizados from "./CadastroProtocolosCustomizados";
 import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
 import CentralSemen, { type AbaCentralSemen } from "./CentralSemen";
 import { FormExclusao } from "./FormExclusao";
+import { OrdemPartoReconstrucaoView } from "./OrdemPartoReconstrucaoView";
+import { OrdemPartoPartosReconstrucaoView } from "./OrdemPartoPartosReconstrucaoView";
+import { DelControleReconstrucaoView } from "./DelControleReconstrucaoView";
 
 // Ordem alfabética (pelo rótulo exibido). "Usuários" não vive mais aqui —
 // era um duplicado exato da aba "Controle de Acesso" (/usuarios), removido
@@ -36,6 +39,7 @@ export const ABAS_CADASTRO = [
   ["fornecedores", "Fornecedores", Truck],
   ["estoque", "Estoque", Package],
   ["lotes", "Lotes", Layers],
+  ["manutencao", "Manutenção de dados", Wrench],
   ["motivos-baixa", "Motivos de baixa", HeartCrack],
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
   ["pesagem", "Pesagem do rebanho", Scale],
@@ -115,6 +119,18 @@ export default function Cadastro({
       {aba === "sanitario" && <CadastroSanitario abaControlada={abaSanitario} onAbaChange={setAbaSanitario} />}
       {aba === "pesagem" && <CadastroPesagem />}
       {aba === "recria" && <CadastroRecria />}
+      {aba === "manutencao" && (
+        <>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", marginTop: "-0.5rem", marginBottom: "1rem" }}>
+            Ferramentas administrativas de correção de dado histórico — pontuais, cada uma pensada para ser
+            rodada uma única vez. Nenhuma altera pesagem, produção ou qualquer dado além do campo que ela mesma
+            descreve, e nenhuma grava nada sem você conferir o relatório e confirmar primeiro.
+          </p>
+          <OrdemPartoPartosReconstrucaoView />
+          <OrdemPartoReconstrucaoView />
+          <DelControleReconstrucaoView />
+        </>
+      )}
       {aba === "excluir" && (
         <>
           <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>

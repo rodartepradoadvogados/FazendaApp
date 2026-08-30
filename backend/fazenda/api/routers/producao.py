@@ -2599,6 +2599,138 @@ def reconstruir_ordem_parto(
     return {"gravados": n}
 
 
+# ---------------------------------------------------------------------------
+# Reconstrução de ControleLeiteiro.del_no_controle — mesmo problema estrutural
+# do ordem_parto acima, causa diferente. Até a correção em `_gravar_controles`
+# (ver comentário lá), este campo era copiado de `animal.del_dias` — o DEL AO
+# VIVO do animal no momento do LANÇAMENTO, não o DEL da lactação na DATA do
+# controle. `animal.del_dias` só é resincronizado em eventos pontuais (parto/
+# aborto/indução, ou upload de GERAL.csv); fora isso fica parado no último
+# valor. Resultado: todo controle lançado no mesmo intervalo "parado" herdava
+# o MESMO del_no_controle, não importa a data real de cada um — um caso real
+# tinha dois controles 13 dias distantes com DEL idêntico (21 e 21), quando o
+# real era 42 e 55.
+#
+# A gravação de controles novos já está corrigida; isto aqui é só o backfill
+# do histórico gravado antes da correção — mesmo padrão report-first do
+# ordem_parto: GET .../divergencias nunca escreve, só POST .../reconstruir
+# com {"confirmar": true} grava.
+# ---------------------------------------------------------------------------
+def _levantar_del_controle(session: Session, fazenda_id: int | None, exemplos: int) -> dict:
+    """Para cada `ControleLeiteiro`, recalcula o DEL a partir da lactação que
+    estava aberta na `data_controle` dele (`Lactacao.data_inicio`), e compara
+    com o que está gravado. Sem lactação aberta naquela data (dado incoerente
+    — controle sem parto/aborto que o justifique), a correta vira `None`
+    ("sem lactação"), nunca um palpite. NÃO grava nada."""
+    q_cl = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles = session.exec(q_cl).all()
+
+    muda = 0
+    sem_lactacao = 0
+    amostra = []
+    for c in controles:
+        lactacao = regras_lactacao.lactacao_aberta(
+            session, numero_matriz=c.numero_matriz, data=c.data_controle, fazenda_id=fazenda_id,
+        )
+        correta = (c.data_controle - lactacao.data_inicio).days if lactacao else None
+        if correta == c.del_no_controle:
+            continue
+        muda += 1
+        if correta is None:
+            sem_lactacao += 1
+        if len(amostra) < exemplos:
+            amostra.append((c.numero_matriz, c.data_controle, c.del_no_controle, correta))
+
+    datas_c = [c.data_controle for c in controles if c.data_controle]
+    return {
+        "controles": len(controles),
+        "muda": muda,
+        "sem_lactacao": sem_lactacao,
+        "amostra": amostra,
+        "periodo_controles": (min(datas_c), max(datas_c)) if datas_c else None,
+    }
+
+
+def _gravar_del_controle(session: Session, fazenda_id: int | None) -> int:
+    """Grava o DEL recalculado — mesma lógica de `_levantar_del_controle`, sem
+    o relatório. Só grava quando a lactação aberta na data existe (`correta`
+    não-None) e difere do que já está — mesma filosofia do ordem_parto: nunca
+    zera um valor existente a troco de palpite."""
+    q_cl = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        q_cl = q_cl.where(ControleLeiteiro.fazenda_id == fazenda_id)
+
+    n = 0
+    for c in session.exec(q_cl).all():
+        lactacao = regras_lactacao.lactacao_aberta(
+            session, numero_matriz=c.numero_matriz, data=c.data_controle, fazenda_id=fazenda_id,
+        )
+        correta = (c.data_controle - lactacao.data_inicio).days if lactacao else None
+        if correta is not None and c.del_no_controle != correta:
+            c.del_no_controle = correta
+            session.add(c)
+            n += 1
+    session.commit()
+    return n
+
+
+@router.get("/del-controle/divergencias")
+def divergencias_del_controle(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Relatório somente leitura: quantos `ControleLeiteiro.del_no_controle`
+    mudariam se o recálculo (POST .../reconstruir) fosse aplicado. NÃO grava
+    nada — ver nota no topo desta seção."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = _levantar_del_controle(session, fazenda_id, exemplos=40)
+    return {
+        "controles": r["controles"],
+        "muda": r["muda"],
+        "sem_lactacao": r["sem_lactacao"],
+        "periodo_controles": [d.isoformat() for d in r["periodo_controles"]] if r["periodo_controles"] else None,
+        "amostra": [
+            {
+                "numero_matriz": numero,
+                "data_controle": data.isoformat() if data else None,
+                "del_hoje": hoje,
+                "del_correto": correta,
+            }
+            for numero, data, hoje, correta in r["amostra"]
+        ],
+    }
+
+
+class ReconstruirDelControleIn(BaseModel):
+    confirmar: bool = False
+
+
+@router.post("/del-controle/reconstruir")
+def reconstruir_del_controle(
+    dados: ReconstruirDelControleIn,
+    session: Session = Depends(get_session),
+    _: Usuario = Depends(exigir_admin_ou_dono),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Grava o DEL recalculado em `ControleLeiteiro.del_no_controle` —
+    restrito a administrador/dono, escopado à fazenda de quem chama.
+
+    Sem `confirmar: true` é NO-OP de propósito, com 400 explicando o porquê —
+    mesma trava report-first do ordem_parto (ver GET .../divergencias)."""
+    if not dados.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Nada foi gravado. Confira o relatório em GET /producao/del-controle/divergencias '
+                'e, se estiver de acordo, chame esta rota de novo com {"confirmar": true}.'
+            ),
+        )
+    n = _gravar_del_controle(session, fazenda_id)
+    return {"gravados": n}
+
+
 # Calculadora avulsa — não persiste nada, mesmo padrão de
 # POST /financeiro/calcular-juros com CalculoJurosIn. Serve para avaliar um
 # animal de fora (ex.: compra) sem sujar a base. Os pontos entram por DEL
