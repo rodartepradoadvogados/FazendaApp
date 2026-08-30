@@ -4585,6 +4585,36 @@ export async function reconstruirOrdemParto(confirmar: boolean): Promise<{ grava
   return res.json();
 }
 
+// Reconstrução de ControleLeiteiro.del_no_controle — mesmo padrão report-first
+// da ordem de parto acima, ver fazenda/api/routers/producao.py (seção
+// "Reconstrução de ControleLeiteiro.del_no_controle"). GET nunca grava nada;
+// POST só grava com `confirmar: true` explícito.
+export type AmostraDivergenciaDelControle = {
+  numero_matriz: string;
+  data_controle: string | null;
+  del_hoje: number | null;
+  del_correto: number | null;
+};
+export type DivergenciasDelControle = {
+  controles: number;
+  muda: number;
+  sem_lactacao: number;
+  periodo_controles: [string, string] | null;
+  amostra: AmostraDivergenciaDelControle[];
+};
+export async function fetchDivergenciasDelControle(): Promise<DivergenciasDelControle> {
+  const res = await authFetch(`${API}/producao/del-controle/divergencias`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao levantar as divergências de DEL"); }
+  return res.json();
+}
+export async function reconstruirDelControle(confirmar: boolean): Promise<{ gravados: number }> {
+  const res = await authFetch(`${API}/producao/del-controle/reconstruir`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmar }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao reconstruir o DEL dos controles"); }
+  return res.json();
+}
+
 // Equivalente maduro — redesign "padronização por vaca" (ver nota de
 // redesign no topo de `fazenda/rules/equivalente_maduro.py`). O trio de
 // apresentação (produz hoje / produzirá / diferença) nunca aparece sozinho;
