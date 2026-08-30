@@ -1454,6 +1454,10 @@ class SecagemIn(BaseModel):
     # resposta for sim): grava no histórico da secagem mesmo quando a
     # resposta é "não", sem gerar pendência nenhuma na Agenda nesse caso.
     vacina_pre_parto: bool | None = None
+    # Resposta explícita a "esta vaca já consta como seca — substituir a data
+    # da secagem anterior ou cancelar este lançamento?" (ver popup no front):
+    # id da Secagem que o usuário escolheu SUBSTITUIR em vez de duplicar.
+    substituir_secagem_id: int | None = None
 
 
 @router.post("/secagem")
@@ -1465,6 +1469,49 @@ def registrar_secagem(
         raise HTTPException(status_code=400, detail=f"Motivo inválido (aceitos: {', '.join(MOTIVOS_SECAGEM)})")
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
         raise HTTPException(status_code=400, detail="Escore de condição corporal deve ser entre 1 e 5")
+
+    # A secagem só faz sentido para quem tem lactação aberta na data — sem
+    # esta trava, uma segunda secagem lançada para quem já constava seca
+    # (ex.: lote errado, digitação errada) entrava em silêncio e fechava a
+    # lactação DENOVO, cedo demais, sem avisar ninguém (caso relatado: 04/07
+    # secado em lote por engano, lactação fechada 16 dias antes da secagem
+    # real de 20-25/07). Pede confirmação explícita: substituir a data da
+    # secagem que já fechou esta lactação, ou cancelar o lançamento.
+    if regras_lactacao.lactacao_aberta(
+        session, numero_matriz=dados.numero_matriz, data=dados.data_secagem, fazenda_id=fazenda_id,
+    ) is None and dados.substituir_secagem_id is None:
+        query_anterior = select(Secagem).where(Secagem.numero_matriz == dados.numero_matriz)
+        if fazenda_id is not None:
+            query_anterior = query_anterior.where(Secagem.fazenda_id == fazenda_id)
+        secagem_anterior = session.exec(query_anterior.order_by(Secagem.data_secagem.desc())).first()
+        quando = dados.data_secagem.strftime("%d/%m/%Y")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "erro": "sem_lactacao_aberta",
+                "msg": f"{dados.numero_matriz} já consta como seca — não há lactação aberta em {quando}.",
+                "secagem_anterior": (
+                    {
+                        "id": secagem_anterior.id,
+                        "data_secagem": secagem_anterior.data_secagem.isoformat(),
+                        "motivo": secagem_anterior.motivo,
+                    }
+                    if secagem_anterior is not None else None
+                ),
+            },
+        )
+
+    if dados.substituir_secagem_id is not None:
+        antiga = session.get(Secagem, dados.substituir_secagem_id)
+        if antiga is not None and antiga.numero_matriz == dados.numero_matriz and (
+            fazenda_id is None or antiga.fazenda_id == fazenda_id
+        ):
+            # Desfaz o fechamento que a secagem antiga causou por engano —
+            # senão a lactação continuaria fechada na data errada mesmo
+            # depois de a secagem certa ser lançada mais adiante.
+            regras_lactacao.reabrir_lactacao_fechada_por_secagem(session, secagem_id=antiga.id, fazenda_id=fazenda_id)
+            session.delete(antiga)
+            session.flush()
 
     secagem = Secagem(
         fazenda_id=fazenda_id,

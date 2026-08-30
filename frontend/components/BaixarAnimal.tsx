@@ -81,7 +81,10 @@ export default function BaixarAnimal() {
   const clientes = useMemo(() => fornecedores.filter((f) => f.tipo === "cliente" && f.ativo).map((f) => f.nome).sort((a, b) => a.localeCompare(b)), [fornecedores]);
 
   const carregar = () => {
-    fetchAnimais().then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
+    // incluirMachos: baixa (venda/morte/descarte) vale pra qualquer animal
+    // ativo da fazenda, não só fêmeas — sem isso, touro e bezerro macho
+    // nunca apareciam pra dar baixa.
+    fetchAnimais({ incluirMachos: true }).then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
     fetchOpcoesBaixa().then(setOpcoes).catch((e) => setError(e.message));
     fetchFornecedores().then(setFornecedores).catch(() => {});
     fetchBaixas().then(setHistorico).catch(() => {});

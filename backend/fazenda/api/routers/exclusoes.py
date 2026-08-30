@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
+from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
@@ -1075,6 +1076,26 @@ def _remover_lactacao_dos_partos_excluidos(session: Session, alvos: list, fazend
             session.delete(lact)
 
 
+def _reabrir_lactacao_das_secagens_excluidas(session: Session, alvos: list, fazenda_id: int | None) -> None:
+    """A secagem é o evento que FECHA a lactação (ver rules/lactacao.py) —
+    excluir a secagem tem que desfazer esse fechamento também, senão a
+    lactação continua "fechada" para sempre por um evento que não existe
+    mais, e todo controle leiteiro lançado depois passa a ser recusado (ou,
+    pior, o relatório de correção de DEL passa a reportá-lo como "sem
+    lactação" — caso relatado: secagem lançada em lote por engano em
+    04/07/2026, fechando a lactação de vacas que na verdade só secaram
+    semanas depois).
+
+    Mesmo espírito de `_remover_lactacao_dos_partos_excluidos`, mas para
+    `Secagem`: usa `reabrir_lactacao_fechada_por_secagem`, que já sabe achar
+    a lactação certa pelo `secagem_id` e não faz nada quando esta secagem
+    não tinha fechado nenhuma (lançada para quem já constava seco)."""
+    secagens_excluidas = [obj for obj in alvos if isinstance(obj, Secagem)]
+    for s in secagens_excluidas:
+        if s.id is not None:
+            regras_lactacao.reabrir_lactacao_fechada_por_secagem(session, secagem_id=s.id, fazenda_id=fazenda_id)
+
+
 def _reajustar_del_dias_apos_excluir_parto(session: Session, alvos: list, fazenda_id: int | None) -> None:
     """`registrar_parto` zera `Animal.del_dias` da mãe no instante do parto
     (congelado dali em diante, só voltando a bater com a realidade no próximo
@@ -1195,6 +1216,7 @@ def confirmar(
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
         _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
+        _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
         _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
         for obj in alvos:
@@ -1245,6 +1267,7 @@ def aprovar_pendente(
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
     _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
+    _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
     _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
     avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
     for obj in alvos:

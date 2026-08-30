@@ -57,7 +57,10 @@ export function mensagemErroApi(detail: unknown): string | null {
  * `catch (e) { setErro(e.message) }` não muda em nada.
  */
 /** O formato do `detail` que as travas devolvem no 409. */
-type DetalheBloqueio = { motivo?: string | null; confirmavel?: boolean };
+type DetalheBloqueio = {
+  motivo?: string | null; confirmavel?: boolean; erro?: string | null;
+  secagem_anterior?: { id: number; data_secagem: string; motivo: string } | null;
+};
 
 export class ErroApi extends Error {
   status: number;
@@ -79,6 +82,13 @@ export class ErroApi extends Error {
   /** True quando reenviar com `forcar: true` destrava (bloqueio limítrofe, não erro grave). */
   get confirmavel(): boolean {
     return !!this.bloqueio?.confirmavel;
+  }
+  /** A secagem que já fechou a lactação, quando o bloqueio é
+   * "sem_lactacao_aberta" no lançamento de Secagem (ver `POST
+   * /producao/secagem`) — a tela usa isto pra oferecer "substituir a data
+   * desta secagem" em vez de só mostrar a mensagem de erro. */
+  get secagemAnterior(): { id: number; data_secagem: string; motivo: string } | null {
+    return this.bloqueio?.erro === "sem_lactacao_aberta" ? (this.bloqueio?.secagem_anterior ?? null) : null;
   }
 }
 
@@ -4912,11 +4922,16 @@ export async function criarSecagem(dados: {
   vacinas_pre_parto?: string[];
   vacina_pre_parto_aplicada_agora?: boolean;
   vacina_pre_parto?: boolean | null;
+  // Resposta a "esta vaca já consta como seca — substituir ou cancelar?"
+  // (ver `ErroApi.secagemAnterior` abaixo): id da secagem a substituir.
+  substituir_secagem_id?: number;
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao lançar secagem"); }
+  // `erroDaResposta` preserva o `detail` para a tela oferecer "substituir a
+  // secagem anterior ou cancelar" em vez de só mostrar a mensagem de erro.
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao lançar secagem");
   return res.json();
 }
 export type LoteSugeridoEvento = { codigo: string; nome: string; rotulo: string };

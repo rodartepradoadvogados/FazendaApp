@@ -46,6 +46,7 @@ parte da transação dele (o endpoint de encerramento de gestação grava
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -284,6 +285,32 @@ def fechar_lactacao_por_secagem(
     return lact
 
 
+def reabrir_lactacao_fechada_por_secagem(
+    session: Session, *, secagem_id: int, fazenda_id: int | None = None,
+) -> Lactacao | None:
+    """Desfaz o fechamento que ESTA secagem causou — devolve a `Lactacao` que
+    ela tinha fechado (`data_fim = None`, `secagem_id = None`), ou `None`
+    quando esta secagem não fechou nenhuma (lançada para quem já constava
+    seco; não é erro, só não há o que reabrir).
+
+    Usada em dois lugares: ao EXCLUIR a secagem (ver
+    `api/routers/exclusoes.py`) e ao SUBSTITUIR a data de uma secagem lançada
+    errada (ver `POST /producao/secagem`, campo `substituir_secagem_id`) —
+    nos dois casos o evento real não aconteceu (ou não naquela data), e a
+    lactação que ele fechou por engano precisa voltar a ficar aberta antes de
+    prosseguir. Não dá commit."""
+    query = select(Lactacao).where(Lactacao.secagem_id == secagem_id)
+    if fazenda_id is not None:
+        query = query.where(Lactacao.fazenda_id == fazenda_id)
+    lact = session.exec(query).first()
+    if lact is None:
+        return None
+    lact.data_fim = None
+    lact.secagem_id = None
+    session.add(lact)
+    return lact
+
+
 # ---------------------------------------------------------------------------
 # Backfill — reconstrói o histórico de lactações a partir do que já existe
 # ---------------------------------------------------------------------------
@@ -397,3 +424,39 @@ def sincronizar_del_do_animal(
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
     return del_atual
+
+
+def sincronizar_categoria_do_animal(
+    session: Session, *, numero_matriz: str, fazenda_id: int | None = None,
+) -> tuple[str | None, str | None]:
+    """Troca a palavra "gestante" por "vazia" em `Animal.categoria_completa`/
+    `categoria_abrev`, no momento em que uma gestação termina (parto, aborto
+    ou natimorto) — sem isso, os dois campos (escritos só pelo upload do
+    GERAL.csv) continuam dizendo "gestante" indefinidamente depois de um
+    aborto, mesmo com o `Parto` lançado, a lactação aberta e controle
+    leiteiro em andamento (caso relatado: novilha "14", abortou 30/07/2026,
+    categoria seguiu "Novilha gestante").
+
+    Só troca a PALAVRA "gestante" — preserva o resto do texto do Ideagri que
+    não temos como reconstruir aqui (ex.: "Vaca gestante 3ª lact." vira "Vaca
+    vazia 3ª lact.", não um texto genérico inventado). Textos que não têm a
+    palavra ficam intocados, mesmo critério conservador de `_categoria_ao_vivo`
+    (`api/routers/animais.py`) — que resolve a transição "novilha" -> "vaca"
+    mas nunca tratou esta ("gestante" -> "vazia").
+
+    Não dá commit."""
+    query = _escopo(select(Animal).where(Animal.numero == numero_matriz), Animal, fazenda_id)
+    animal = session.exec(query).first()
+    if animal is None:
+        return None, None
+
+    def _tira_gestante(texto: str | None) -> str | None:
+        if not texto or "gestante" not in texto.lower():
+            return texto
+        return re.sub("gestante", "vazia", texto, flags=re.IGNORECASE)
+
+    animal.categoria_completa = _tira_gestante(animal.categoria_completa)
+    animal.categoria_abrev = _tira_gestante(animal.categoria_abrev)
+    animal.atualizado_em = datetime.utcnow()
+    session.add(animal)
+    return animal.categoria_completa, animal.categoria_abrev

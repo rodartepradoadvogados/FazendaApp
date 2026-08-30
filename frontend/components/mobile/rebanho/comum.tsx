@@ -39,7 +39,12 @@ export function BuscaAnimal({
 
   useEffect(() => {
     let vivo = true;
-    fetchComCache<AnimalMob[]>("animais", () => fetchAnimais()).then(({ dados }) => {
+    // Chave de cache PRÓPRIA ("animais_todos"), não a "animais" compartilhada
+    // pelas telas de ação reprodutiva/produtiva (Modo Curral, Lançar, Lotes,
+    // Indicadores) — aquelas continuam só-fêmeas de propósito (bezerro/touro
+    // não entra em controle leiteiro nem protocolo). Esta busca é "achar
+    // qualquer animal da fazenda" (Ficha, drill-down) — machos incluídos.
+    fetchComCache<AnimalMob[]>("animais_todos", () => fetchAnimais({ incluirMachos: true })).then(({ dados }) => {
       if (vivo && dados) setAnimais(dados);
     });
     return () => { vivo = false; };
