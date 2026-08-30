@@ -388,6 +388,56 @@ def test_aborto_cria_parto_lactacao_e_perda_de_prenhez(client, engine):
         assert s.exec(select(Animal).where(Animal.numero == "14")).one().del_dias == 25
 
 
+def test_aborto_reescreve_categoria_de_gestante_para_vazia(client, engine):
+    """Caso relatado da novilha "14" (segunda rodada): mesmo com o Parto
+    criado, a Lactacao aberta e o DEL sincronizado, `Animal.categoria_completa/
+    categoria_abrev` continuavam dizendo "Novilha gestante" — campos escritos
+    só pelo GERAL.csv, nunca por este endpoint. Só troca a palavra "gestante"
+    por "vazia", preservando o resto do texto do Ideagri."""
+    _add(engine, Animal(
+        numero="14", sexo="F", ativo=True,
+        categoria_completa="Novilha gestante", categoria_abrev="Novilha gestante",
+    ))
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "14", "data": HOJE.isoformat(), "tipo": "aborto", "abrir_lactacao": True,
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        animal = s.exec(select(Animal).where(Animal.numero == "14")).one()
+        assert animal.categoria_completa == "Novilha vazia"
+        assert animal.categoria_abrev == "Novilha vazia"
+
+
+def test_categoria_sem_a_palavra_gestante_fica_intacta(client, engine):
+    """Texto que já não diz "gestante" (ex.: veio de um GERAL.csv mais
+    recente, ou é de uma vaca que já tinha outro estado) não é mexido — a
+    troca é conservadora de propósito, só a palavra exata."""
+    _add(engine, Animal(
+        numero="16", sexo="F", ativo=True,
+        categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+    ))
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "16", "data": HOJE.isoformat(), "tipo": "aborto", "abrir_lactacao": False,
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        animal = s.exec(select(Animal).where(Animal.numero == "16")).one()
+        assert animal.categoria_completa == "Vaca em lactação"
+        assert animal.categoria_abrev == "Vaca"
+
+
+def test_parto_normal_tambem_reescreve_categoria_de_gestante_para_vazia(client, engine):
+    """Não é exclusivo do aborto: qualquer encerramento de gestação apaga a
+    palavra "gestante" do texto congelado — ela deixou de ser verdade."""
+    _add(engine, Animal(numero="17", sexo="F", ativo=True, categoria_completa="Vaca gestante"))
+    r = client.post("/reproducao/encerramento-gestacao", json={
+        "numero_matriz": "17", "data": HOJE.isoformat(), "tipo": "parto", "crias": [],
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        assert s.exec(select(Animal).where(Animal.numero == "17")).one().categoria_completa == "Vaca vazia"
+
+
 def test_aborto_sem_abrir_lactacao_ainda_cria_o_parto(client, engine):
     """Responder "não" no popup registra o aborto do mesmo jeito — é o `Parto`
     que tira a matriz do estado "gestante" na Ficha."""
@@ -530,3 +580,89 @@ def test_secagem_pelo_endpoint_fecha_a_lactacao(client, engine):
     with Session(engine) as s:
         assert s.exec(select(Lactacao)).one().data_fim == HOJE
         assert regras.lactacao_aberta(s, numero_matriz="18", data=HOJE) is None
+
+
+def test_segunda_secagem_sem_lactacao_aberta_e_recusada_com_409(client, engine):
+    """Caso relatado: secagem lançada em lote por engano em 04/07 fechou a
+    lactação de vacas que na verdade só secariam semanas depois — e o
+    sistema deixou lançar uma "segunda secagem" mais tarde sem avisar nada.
+    Agora recusa com 409 e devolve a secagem que já fechou a lactação, pra a
+    tela oferecer "substituir ou cancelar"."""
+    _add(engine, Animal(numero="429", sexo="F", ativo=True))
+    with Session(engine) as s:
+        regras.abrir_lactacao(s, numero_matriz="429", data_inicio=HOJE - timedelta(days=295), origem=regras.ORIGEM_PARTO)
+        s.commit()
+    data_errada = (HOJE - timedelta(days=26)).isoformat()
+    r1 = client.post("/producao/secagem", json={
+        "numero_matriz": "429", "data_secagem": data_errada, "motivo": "rotina", "produtos": [],
+    })
+    assert r1.status_code == 200
+
+    data_certa = (HOJE - timedelta(days=10)).isoformat()
+    r2 = client.post("/producao/secagem", json={
+        "numero_matriz": "429", "data_secagem": data_certa, "motivo": "rotina", "produtos": [],
+    })
+    assert r2.status_code == 409
+    detalhe = r2.json()["detail"]
+    assert detalhe["erro"] == "sem_lactacao_aberta"
+    assert detalhe["secagem_anterior"]["data_secagem"] == data_errada
+
+    with Session(engine) as s:
+        # A segunda tentativa não criou NADA — nem uma segunda Secagem.
+        assert len(s.exec(select(Secagem)).all()) == 1
+
+
+def test_substituir_secagem_reabre_a_lactacao_e_fecha_na_data_nova(client, engine):
+    _add(engine, Animal(numero="430", sexo="F", ativo=True))
+    with Session(engine) as s:
+        regras.abrir_lactacao(s, numero_matriz="430", data_inicio=HOJE - timedelta(days=295), origem=regras.ORIGEM_PARTO)
+        s.commit()
+    data_errada = (HOJE - timedelta(days=26)).isoformat()
+    r1 = client.post("/producao/secagem", json={
+        "numero_matriz": "430", "data_secagem": data_errada, "motivo": "rotina", "produtos": [],
+    })
+    assert r1.status_code == 200
+    with Session(engine) as s:
+        secagem_errada_id = s.exec(select(Secagem)).one().id
+
+    data_certa = (HOJE - timedelta(days=10)).isoformat()
+    r2 = client.post("/producao/secagem", json={
+        "numero_matriz": "430", "data_secagem": data_certa, "motivo": "rotina", "produtos": [],
+        "substituir_secagem_id": secagem_errada_id,
+    })
+    assert r2.status_code == 200, r2.text
+
+    with Session(engine) as s:
+        secagens = s.exec(select(Secagem)).all()
+        assert len(secagens) == 1  # a errada foi substituída, não duplicada
+        assert secagens[0].data_secagem.isoformat() == data_certa
+        lact = s.exec(select(Lactacao)).one()
+        assert lact.data_fim.isoformat() == data_certa
+        assert lact.secagem_id == secagens[0].id
+
+
+def test_excluir_secagem_reabre_a_lactacao_que_ela_fechou(client, engine):
+    """Mesmo cuidado que excluir um Parto já tem
+    (`_remover_lactacao_dos_partos_excluidos`) — excluir a Secagem também
+    precisa desfazer o fechamento que ela causou."""
+    _add(engine, Animal(numero="431", sexo="F", ativo=True))
+    with Session(engine) as s:
+        regras.abrir_lactacao(s, numero_matriz="431", data_inicio=HOJE - timedelta(days=295), origem=regras.ORIGEM_PARTO)
+        s.commit()
+    r = client.post("/producao/secagem", json={
+        "numero_matriz": "431", "data_secagem": HOJE.isoformat(), "motivo": "rotina", "produtos": [],
+    })
+    assert r.status_code == 200
+    with Session(engine) as s:
+        secagem_id = s.exec(select(Secagem)).one().id
+        assert s.exec(select(Lactacao)).one().data_fim == HOJE
+
+    r2 = client.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id)})
+    assert r2.status_code == 200, r2.text
+
+    with Session(engine) as s:
+        assert s.exec(select(Secagem)).first() is None
+        lact = s.exec(select(Lactacao)).one()
+        assert lact.data_fim is None
+        assert lact.secagem_id is None
+        assert regras.lactacao_aberta(s, numero_matriz="431", data=HOJE) is not None

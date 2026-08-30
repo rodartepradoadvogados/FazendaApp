@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import {
   fetchSecagemInfo, criarSecagem, criarMovimentacao, fetchMedicamentos, formatDate, fetchTransferenciaLoteAutomatica,
@@ -21,6 +21,18 @@ type DadosSecagem = {
   observacao?: string; responsavel?: string; aplicado?: boolean;
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
   vacinas_pre_parto: string[]; vacina_pre_parto_aplicada_agora: boolean; vacina_pre_parto: boolean | null;
+  substituir_secagem_id?: number;
+};
+// "Esta vaca já consta como seca — substituir a data da secagem anterior ou
+// cancelar este lançamento?" (ver `ErroApi.secagemAnterior`, POST
+// /producao/secagem). Guarda o que falta pra retomar a fila depois da
+// resposta do usuário — `payloadBase` é o mesmo objeto pra todo o lote
+// (motivo, data, produtos…), só o `numero_matriz` muda a cada vaca.
+type ConflitoSecagem = {
+  numero: string;
+  secagemAnterior: { id: number; data_secagem: string; motivo: string };
+  payloadBase: Omit<DadosSecagem, "numero_matriz" | "substituir_secagem_id">;
+  restantes: string[];
 };
 // `lote_sugerido` só vem preenchido quando o envio foi síncrono (enviado !==
 // false) — na fila offline não há como saber a sugestão de lote antes do
@@ -105,6 +117,16 @@ export function FormSecagem({
   const [filaTransferencia, setFilaTransferencia] = useState<{ numero: string; lote: { codigo: string; rotulo: string } }[]>([]);
   const transferenciaPendente = filaTransferencia[0] || null;
   const [transferindo, setTransferindo] = useState(false);
+  // Acumuladores do lote em andamento — em refs (não state) porque só são
+  // lidos no fim/retomada da fila, nunca precisam disparar um re-render por
+  // si só; ficam vivos entre a pausa (popup de conflito) e a retomada.
+  const salvosRef = useRef<string[]>([]);
+  const falhadosRef = useRef<string[]>([]);
+  const puladasRef = useRef<string[]>([]);
+  const pendentesRef = useRef<{ numero: string; lote: { codigo: string; rotulo: string } }[]>([]);
+  const enfileiradoRef = useRef(false);
+  const [conflito, setConflito] = useState<ConflitoSecagem | null>(null);
+  const [resolvendoConflito, setResolvendoConflito] = useState(false);
   // Configurações > Parâmetros > "transferir para o lote sugerido
   // automaticamente" — quando ligado, pula a janela de confirmação abaixo e
   // move sozinho.
@@ -137,6 +159,82 @@ export function FormSecagem({
   const acrescentarItem = () => setItens((p) => [...p, itemSanidadeVazio()]);
   const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
 
+  // Lote por animal (mesmo padrão do Diagnóstico): registra sucesso/falha por
+  // matriz, sem perder a seleção de quem falhou. Pode PAUSAR no meio de um
+  // lote quando uma vaca já consta como seca (ver `ConflitoSecagem` acima) —
+  // por isso os acumuladores vivem em refs e a fila é retomável a partir de
+  // qualquer ponto, não só do início.
+  async function processarFilaSecagem(numeros: string[], payloadBase: ConflitoSecagem["payloadBase"]) {
+    for (let i = 0; i < numeros.length; i++) {
+      const numero = numeros[i];
+      try {
+        const r = await salvarSecagem({ numero_matriz: numero, ...payloadBase });
+        if (r.enviado === false) enfileiradoRef.current = true;
+        // Cada vaca pode ter uma sugestão diferente (ex.: alguma já está no
+        // lote das secas) — só entra na fila quem realmente precisa mudar.
+        // Sem internet, `lote_sugerido` nem vem — a sugestão só existe
+        // depois que o item sincronizar de verdade, então essa vaca
+        // simplesmente não entra na fila de transferência agora.
+        if (r.lote_sugerido && codigoGrupo(animais.find((a) => a.numero === numero)?.grupo_primario) !== r.lote_sugerido.codigo) {
+          pendentesRef.current.push({ numero, lote: r.lote_sugerido });
+        }
+        salvosRef.current.push(numero);
+      } catch (e: any) {
+        if (e?.secagemAnterior) {
+          // Pausa aqui — a decisão (substituir/cancelar) é do usuário, ver
+          // `resolverConflitoSubstituir`/`resolverConflitoCancelar` abaixo.
+          setConflito({ numero, secagemAnterior: e.secagemAnterior, payloadBase, restantes: numeros.slice(i + 1) });
+          return;
+        }
+        falhadosRef.current.push(numero);
+      }
+    }
+    await finalizarLoteSecagem();
+  }
+
+  async function finalizarLoteSecagem() {
+    const salvos = salvosRef.current, falhados = falhadosRef.current, puladas = puladasRef.current;
+    const pendentes = pendentesRef.current, algumEnfileirado = enfileiradoRef.current;
+    const sufixoPuladas = puladas.length ? ` Cancelado(s) sem lançar: ${puladas.join(", ")}.` : "";
+    if (falhados.length) {
+      setVinculo("animal"); setLotesSelecionados([]); setSelecionados(new Set(falhados));
+      if (salvos.length) {
+        setSucesso(`Secagem lançada para ${salvos.length} animal(is).`);
+        setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.${sufixoPuladas}`);
+      } else {
+        setErro(`Nenhuma secagem lançada. Falharam: ${falhados.join(", ")} — tente novamente.${sufixoPuladas}`);
+      }
+    } else {
+      setSucesso((algumEnfileirado
+        ? `Secagem guardada para ${salvos.length} animal(is) — será enviada quando conectar.`
+        : `Secagem lançada com sucesso para ${salvos.length} animal(is).`) + sufixoPuladas);
+      if (pendentes.length && transferenciaAutomatica) {
+        // "Transferir automaticamente" ligado em Configurações > Parâmetros
+        // — move sozinho, sem abrir a janela de confirmação abaixo.
+        const movidos: string[] = []; const falhasMov: string[] = [];
+        for (const p of pendentes) {
+          try {
+            const r = await salvarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: p.lote.codigo, animais: [p.numero], origem: "sugestao_automatica" });
+            if (r.enviado === false) movidos.push(`${p.numero} → ${p.lote.rotulo} (guardado, será enviado ao conectar)`);
+            else if ((r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(p.numero)) movidos.push(`${p.numero} → ${p.lote.rotulo}`);
+            else falhasMov.push(p.numero);
+          } catch { falhasMov.push(p.numero); }
+        }
+        if (movidos.length) setSucesso((s) => `${s} Transferido(s) automaticamente: ${movidos.join(", ")}.`);
+        if (falhasMov.length) setErro(`Não foi possível transferir automaticamente: ${falhasMov.join(", ")}.`);
+      } else if (pendentes.length) {
+        // Fila de confirmação, uma de cada vez — inclusive quando várias
+        // vacas foram secadas juntas, cada uma pode precisar de um lote
+        // diferente (ou nenhum, se já estiver no lote certo).
+        setFilaTransferencia(pendentes);
+      }
+      setSelecionados(new Set()); setLotesSelecionados([]);
+      setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]); setModoDosagem({});
+      setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
+    }
+    setSalvando(false);
+  }
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!numerosAlvo.size) { setErro("Selecione ao menos uma vaca (ou lote)."); return; }
@@ -155,81 +253,55 @@ export function FormSecagem({
       quantidade: modoDosagem[i.idx] === "total" && numerosAlvo.size > 1 ? Number(i.quantidade) / numerosAlvo.size : Number(i.quantidade),
       unidade: i.unidade,
     }));
+    const payloadBase: ConflitoSecagem["payloadBase"] = {
+      data_secagem: dataSecagem, motivo,
+      escore_condicao_corporal: ecc ? Number(ecc) : null,
+      observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
+      produtos: produtosParaEnvio,
+      vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
+      vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
+      vacina_pre_parto: aplicarVacinaPreParto,
+    };
 
+    salvosRef.current = []; falhadosRef.current = []; puladasRef.current = []; pendentesRef.current = [];
+    enfileiradoRef.current = false;
     setSalvando(true);
-    // Loop por animal (mesmo padrão do Diagnóstico): registra sucesso/falha por
-    // matriz, sem perder a seleção de quem falhou.
-    const salvos: string[] = [];
-    const falhados: string[] = [];
-    const pendentes: { numero: string; lote: { codigo: string; rotulo: string } }[] = [];
-    let algumEnfileirado = false;
     try {
-      for (const numero of numerosAlvo) {
-        try {
-          const r = await salvarSecagem({
-            numero_matriz: numero, data_secagem: dataSecagem, motivo,
-            escore_condicao_corporal: ecc ? Number(ecc) : null,
-            observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
-            produtos: produtosParaEnvio,
-            vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
-            vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
-            vacina_pre_parto: aplicarVacinaPreParto,
-          });
-          if (r.enviado === false) algumEnfileirado = true;
-          // Cada vaca pode ter uma sugestão diferente (ex.: alguma já está no
-          // lote das secas) — só entra na fila quem realmente precisa mudar.
-          // Sem internet, `lote_sugerido` nem vem — a sugestão só existe
-          // depois que o item sincronizar de verdade, então essa vaca
-          // simplesmente não entra na fila de transferência agora.
-          if (r.lote_sugerido && codigoGrupo(animais.find((a) => a.numero === numero)?.grupo_primario) !== r.lote_sugerido.codigo) {
-            pendentes.push({ numero, lote: r.lote_sugerido });
-          }
-          salvos.push(numero);
-        } catch {
-          falhados.push(numero);
-        }
-      }
-      if (falhados.length) {
-        setVinculo("animal"); setLotesSelecionados([]); setSelecionados(new Set(falhados));
-        if (salvos.length) {
-          setSucesso(`Secagem lançada para ${salvos.length} animal(is).`);
-          setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.`);
-        } else {
-          setErro(`Nenhuma secagem lançada. Falharam: ${falhados.join(", ")} — tente novamente.`);
-        }
-      } else {
-        setSucesso(algumEnfileirado
-          ? `Secagem guardada para ${salvos.length} animal(is) — será enviada quando conectar.`
-          : `Secagem lançada com sucesso para ${salvos.length} animal(is).`);
-        if (pendentes.length && transferenciaAutomatica) {
-          // "Transferir automaticamente" ligado em Configurações > Parâmetros
-          // — move sozinho, sem abrir a janela de confirmação abaixo.
-          const movidos: string[] = []; const falhasMov: string[] = [];
-          for (const p of pendentes) {
-            try {
-              const r = await salvarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: p.lote.codigo, animais: [p.numero], origem: "sugestao_automatica" });
-              if (r.enviado === false) movidos.push(`${p.numero} → ${p.lote.rotulo} (guardado, será enviado ao conectar)`);
-              else if ((r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(p.numero)) movidos.push(`${p.numero} → ${p.lote.rotulo}`);
-              else falhasMov.push(p.numero);
-            } catch { falhasMov.push(p.numero); }
-          }
-          if (movidos.length) setSucesso((s) => `${s} Transferido(s) automaticamente: ${movidos.join(", ")}.`);
-          if (falhasMov.length) setErro(`Não foi possível transferir automaticamente: ${falhasMov.join(", ")}.`);
-        } else if (pendentes.length) {
-          // Fila de confirmação, uma de cada vez — inclusive quando várias
-          // vacas foram secadas juntas, cada uma pode precisar de um lote
-          // diferente (ou nenhum, se já estiver no lote certo).
-          setFilaTransferencia(pendentes);
-        }
-        setSelecionados(new Set()); setLotesSelecionados([]);
-        setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]); setModoDosagem({});
-        setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
-      }
+      await processarFilaSecagem(Array.from(numerosAlvo), payloadBase);
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar secagem");
-    } finally {
       setSalvando(false);
     }
+  }
+
+  async function resolverConflitoSubstituir() {
+    if (!conflito) return;
+    setResolvendoConflito(true);
+    try {
+      const r = await salvarSecagem({
+        numero_matriz: conflito.numero, ...conflito.payloadBase, substituir_secagem_id: conflito.secagemAnterior.id,
+      });
+      if (r.enviado === false) enfileiradoRef.current = true;
+      if (r.lote_sugerido && codigoGrupo(animais.find((a) => a.numero === conflito.numero)?.grupo_primario) !== r.lote_sugerido.codigo) {
+        pendentesRef.current.push({ numero: conflito.numero, lote: r.lote_sugerido });
+      }
+      salvosRef.current.push(conflito.numero);
+    } catch {
+      falhadosRef.current.push(conflito.numero);
+    } finally {
+      setResolvendoConflito(false);
+      const { restantes, payloadBase } = conflito;
+      setConflito(null);
+      await processarFilaSecagem(restantes, payloadBase);
+    }
+  }
+
+  async function resolverConflitoCancelar() {
+    if (!conflito) return;
+    puladasRef.current.push(conflito.numero);
+    const { restantes, payloadBase } = conflito;
+    setConflito(null);
+    await processarFilaSecagem(restantes, payloadBase);
   }
 
   async function confirmarTransferenciaLote() {
@@ -508,6 +580,28 @@ export function FormSecagem({
       </div>
       </div>
       </div>
+
+      {conflito && (
+        <Modal title="Vaca já consta como seca" onClose={resolverConflitoCancelar} width="460px" zIndex={96}>
+          <p style={{ fontSize: "0.9rem", marginBottom: "0.8rem" }}>
+            A vaca <strong>{conflito.numero}</strong> já tem uma secagem lançada em{" "}
+            <strong>{formatDate(conflito.secagemAnterior.data_secagem)}</strong> ({conflito.secagemAnterior.motivo}) —
+            não há lactação aberta em {formatDate(dataSecagem)}.
+          </p>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+            Se aquela secagem foi lançada errada (data errada, lote errado), você pode substituí-la pela data de
+            agora. Se foi a secagem certa, cancele este lançamento para esta vaca — as demais do lote continuam.
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button className="btn-ghost" onClick={resolverConflitoCancelar} disabled={resolvendoConflito}>
+              Cancelar este lançamento
+            </button>
+            <button className="btn-primary" onClick={resolverConflitoSubstituir} disabled={resolvendoConflito}>
+              {resolvendoConflito ? "Substituindo…" : `Substituir a secagem de ${formatDate(conflito.secagemAnterior.data_secagem)}`}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {transferenciaPendente && (
         <Modal title="Mover para o lote das secas" onClose={pularTransferenciaLote} width="420px" zIndex={95}>

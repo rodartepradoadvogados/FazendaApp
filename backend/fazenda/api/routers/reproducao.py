@@ -1645,6 +1645,14 @@ def encerrar_gestacao(
     del_atual = regras_lactacao.sincronizar_del_do_animal(
         session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
     )
+    # A gestação acabou — "gestante" no texto congelado deixou de ser
+    # verdade, seja lá qual for o tipo (parto, aborto ou natimorto). Sem
+    # isso, `Animal.categoria_completa/categoria_abrev` continuam dizendo
+    # "gestante" até o próximo upload do GERAL.csv, que pode nunca vir (caso
+    # relatado: novilha "14", abortou, categoria seguiu "Novilha gestante").
+    regras_lactacao.sincronizar_categoria_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+    )
 
     session.commit()
     if lactacao is not None:

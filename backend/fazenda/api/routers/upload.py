@@ -46,6 +46,7 @@ from fazenda.parsers.patrimonio import parse_patrimonio
 from fazenda.parsers.plano_conta_gerencial import parse_plano_conta_gerencial
 from fazenda.parsers.reprodutivo import parse_reprodutivo
 from fazenda.parsers.sanidade import parse_sanidade
+from fazenda.rules import lactacao as regras_lactacao
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -415,7 +416,24 @@ async def _upsert_controle_leiteiro(content: bytes, session: Session, fazenda_id
         session.delete(r)
     session.commit()
 
-    for reg in _carimbar(registros, fazenda_id):
+    # Mesma trava de `_gravar_controles(estrito=False)` (POST
+    # /producao/controles) — sem lactação aberta na data, a linha é PULADA em
+    # vez de gravada. Antes deste conserto, este era o ÚNICO dos 5 pontos de
+    # entrada de ControleLeiteiro sem checagem nenhuma: uma novilha sem
+    # `Parto`/`Lactacao` (caso relatado: "14") passava direto por aqui a cada
+    # reimportação do CSV, mesmo com a trava já valendo pros outros 4
+    # caminhos (lançamento manual, planilha de confirmação, app, Telegram).
+    ignorados = 0
+    gravados: list = []
+    for reg in registros:
+        if regras_lactacao.lactacao_aberta(
+            session, numero_matriz=reg.numero_matriz, data=reg.data_controle, fazenda_id=fazenda_id,
+        ) is None:
+            ignorados += 1
+            continue
+        gravados.append(reg)
+
+    for reg in _carimbar(gravados, fazenda_id):
         animal = session.exec(
             _escopo(select(Animal).where(Animal.numero == reg.numero_matriz), Animal, fazenda_id)
         ).first()
@@ -424,5 +442,5 @@ async def _upsert_controle_leiteiro(content: bytes, session: Session, fazenda_id
         session.add(reg)
 
     session.commit()
-    vacas = len({r.numero_matriz for r in registros})
-    return {"tipo": "controle_leiteiro", "registros": len(registros), "vacas": vacas}
+    vacas = len({r.numero_matriz for r in gravados})
+    return {"tipo": "controle_leiteiro", "registros": len(gravados), "ignorados": ignorados, "vacas": vacas}

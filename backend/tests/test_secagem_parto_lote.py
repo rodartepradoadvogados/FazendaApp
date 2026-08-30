@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lote, MovimentoEstoque, Parto, Sanidade, Secagem, Servico
+from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lactacao, Lote, MovimentoEstoque, Parto, Sanidade, Secagem, Servico
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
@@ -130,6 +130,7 @@ class TestRegistrarSecagem:
         c, engine = client
         with Session(engine) as s:
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.add(Lote(codigo="05", nome="SECAS", status_lactacao="seca"))
             s.commit()
@@ -158,6 +159,7 @@ class TestRegistrarSecagem:
     def test_data_futura_programa_produto_sem_baixar_estoque(self, client):
         c, engine = client
         with Session(engine) as s:
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.commit()
 
@@ -180,6 +182,7 @@ class TestRegistrarSecagem:
     def test_nao_aplicado_programa_mesmo_com_data_de_hoje(self, client):
         c, engine = client
         with Session(engine) as s:
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.commit()
         r = c.post("/producao/secagem", json={
@@ -210,6 +213,7 @@ class TestRegistrarSecagem:
         with Session(engine) as s:
             from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
             s.commit()
 
@@ -240,6 +244,7 @@ class TestVacinaPreParto:
         with Session(engine) as s:
             from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
             s.commit()
 
@@ -265,6 +270,7 @@ class TestVacinaPreParto:
         with Session(engine) as s:
             from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
             s.commit()
 
@@ -295,6 +301,7 @@ class TestVacinaPreParto:
         c, engine = client
         with Session(engine) as s:
             s.add(Animal(numero="501", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="501", data_inicio=date(2020, 1, 1)))
             s.commit()
 
         r = c.post("/producao/secagem", json={
@@ -313,6 +320,7 @@ class TestVacinaPreParto:
         c, engine = client
         with Session(engine) as s:
             s.add(Animal(numero="502", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="502", data_inicio=date(2020, 1, 1)))
             s.commit()
 
         c.post("/producao/secagem", json={
@@ -330,6 +338,7 @@ class TestVacinaPreParto:
         c, engine = client
         with Session(engine) as s:
             s.add(Animal(numero="503", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Lactacao(numero_matriz="503", data_inicio=date(2020, 1, 1)))
             s.commit()
 
         c.post("/producao/secagem", json={"numero_matriz": "503", "data_secagem": "2026-07-08", "motivo": "rotina"})

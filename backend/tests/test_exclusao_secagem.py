@@ -21,6 +21,7 @@ from fazenda.models import (
     ContratoFazendaModulo,
     Estoque,
     Fazenda,
+    Lactacao,
     Sanidade,
     Secagem,
     SolicitacaoExclusao,
@@ -112,6 +113,7 @@ class TestExclusaoSecagemFunciona:
         _como_fazenda(1)
         with _sessao(engine) as s:
             s.add(Estoque(nome="Cefalexina LA", unidade="ml", quantidade=1000, fazenda_id=1))
+            s.add(Lactacao(numero_matriz="9001", data_inicio=date(2020, 1, 1), fazenda_id=1))
             s.commit()
 
         r = c.post("/producao/secagem", json={
@@ -163,6 +165,7 @@ class TestExclusaoSecagemFunciona:
         _como_fazenda(1)
         with _sessao(engine) as s:
             s.add(Estoque(nome="Vacina Pré-parto X", unidade="dose", quantidade=50, fazenda_id=1))
+            s.add(Lactacao(numero_matriz="9002", data_inicio=date(2020, 1, 1), fazenda_id=1))
             s.commit()
 
         data_futura = (date.today() + timedelta(days=5)).isoformat()
@@ -234,6 +237,7 @@ class TestExclusaoSecagemAprovacao:
         _como_fazenda(1)
         with _sessao(engine) as s:
             s.add(Estoque(nome="Cefalexina LA", unidade="ml", quantidade=1000, fazenda_id=1))
+            s.add(Lactacao(numero_matriz="9005", data_inicio=date(2020, 1, 1), fazenda_id=1))
             s.commit()
 
         r = c.post("/producao/secagem", json={
