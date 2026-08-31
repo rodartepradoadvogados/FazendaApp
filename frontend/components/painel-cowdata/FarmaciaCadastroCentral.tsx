@@ -7,7 +7,7 @@
 // item de Estoque correspondente em toda fazenda-cliente — inativo e não-
 // estocável, pronto pro tenant ativar se quiser (ver painel_cowdata_farmacia.py).
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Pill, Plus, Stethoscope, Syringe } from "lucide-react";
+import { AlertTriangle, Pill, Plus, Stethoscope, Syringe } from "lucide-react";
 import {
   atualizarCategoriaFarmaciaCowData, criarCategoriaFarmaciaCowData,
   criarMedicamentoFarmaciaCowData, criarPrincipioFarmaciaCowData, excluirPrincipioFarmaciaCowData,
@@ -15,6 +15,7 @@ import {
   refazerFanoutMedicamentoFarmaciaCowData,
   type CategoriaFarmaciaCowData, type MedicamentoFarmaciaCowData, type PrincipioFarmaciaCowData,
 } from "@/lib/api";
+import SeletorMultiploComBusca from "@/components/SeletorMultiploComBusca";
 
 function msgErro(e: unknown): string {
   return e instanceof Error ? e.message : "Erro inesperado";
@@ -210,8 +211,8 @@ function AbaMedicamentos() {
 
   const [nomeComercial, setNomeComercial] = useState("");
   const [laboratorio, setLaboratorio] = useState("");
-  const [principioIds, setPrincipioIds] = useState<Set<number>>(new Set());
-  const [doencaIds, setDoencaIds] = useState<Set<number>>(new Set());
+  const [principioIds, setPrincipioIds] = useState<number[]>([]);
+  const [doencaIds, setDoencaIds] = useState<number[]>([]);
   const [doseTexto, setDoseTexto] = useState("");
   const [carenciaLeite, setCarenciaLeite] = useState("");
   const [carenciaCarne, setCarenciaCarne] = useState("");
@@ -223,16 +224,10 @@ function AbaMedicamentos() {
   }
   useEffect(() => { carregar(); }, []);
 
-  function alternar(set: Set<number>, atualizar: (s: Set<number>) => void, id: number) {
-    const novo = new Set(set);
-    if (novo.has(id)) novo.delete(id); else novo.add(id);
-    atualizar(novo);
-  }
-
   async function salvar() {
     const nome = nomeComercial.trim();
     if (!nome) { setErro("Informe o nome comercial."); return; }
-    if (principioIds.size === 0) { setErro("Selecione ao menos um princípio ativo."); return; }
+    if (principioIds.length === 0) { setErro("Selecione ao menos um princípio ativo."); return; }
     setErro(null); setMensagem(null); setSalvando(true);
     try {
       const resultado = await criarMedicamentoFarmaciaCowData({
@@ -247,7 +242,7 @@ function AbaMedicamentos() {
         (resultado.fan_out.ja_existiam ? `, ${resultado.fan_out.ja_existiam} já tinha(m) um item com esse nome (mantido intocado)` : "") +
         ". Inativo e não-estocável até cada fazenda decidir ativar."
       );
-      setNomeComercial(""); setLaboratorio(""); setPrincipioIds(new Set()); setDoencaIds(new Set());
+      setNomeComercial(""); setLaboratorio(""); setPrincipioIds([]); setDoencaIds([]);
       setDoseTexto(""); setCarenciaLeite(""); setCarenciaCarne("");
       carregar();
     } catch (e) { setErro(msgErro(e)); } finally { setSalvando(false); }
@@ -285,36 +280,21 @@ function AbaMedicamentos() {
           </div>
         </div>
 
-        <label style={labelStyle}>Princípio(s) ativo(s) — pode marcar mais de um (medicamento combinado)</label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.6rem" }}>
-          {principios.map((p) => (
-            <button key={p.id} onClick={() => alternar(principioIds, setPrincipioIds, p.id)}
-              style={{
-                fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: 999, cursor: "pointer",
-                border: `1px solid ${principioIds.has(p.id) ? COR.dourado : COR.borda}`,
-                background: principioIds.has(p.id) ? COR.dourado : "transparent",
-                color: principioIds.has(p.id) ? COR.bg : COR.mudo, fontWeight: principioIds.has(p.id) ? 700 : 500,
-                display: "inline-flex", alignItems: "center", gap: "0.25rem",
-              }}>
-              {principioIds.has(p.id) && <Check size={11} />}{p.nome}
-            </button>
-          ))}
+        <div style={{ marginBottom: "0.7rem" }}>
+          <SeletorMultiploComBusca
+            label="Princípio(s) ativo(s) — pode marcar mais de um (medicamento combinado)"
+            opcoes={principios.map((p) => ({ id: p.id, nome: p.nome }))}
+            selecionados={principioIds} onChange={setPrincipioIds}
+            placeholder="Clique para selecionar…" cor={COR} />
           {principios.length === 0 && <span style={{ fontSize: "0.78rem", color: COR.mudo }}>Cadastre ao menos um princípio ativo na aba anterior.</span>}
         </div>
 
-        <label style={labelStyle}>Categoria(s)/indicação(ões) — para onde este medicamento aparece sugerido</label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginBottom: "0.6rem" }}>
-          {categorias.map((c) => (
-            <button key={c.id} onClick={() => alternar(doencaIds, setDoencaIds, c.id)}
-              style={{
-                fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: 999, cursor: "pointer",
-                border: `1px solid ${doencaIds.has(c.id) ? COR.dourado : COR.borda}`,
-                background: doencaIds.has(c.id) ? COR.dourado : "transparent",
-                color: doencaIds.has(c.id) ? COR.bg : COR.mudo, fontWeight: doencaIds.has(c.id) ? 700 : 500,
-              }}>
-              {c.nome}
-            </button>
-          ))}
+        <div style={{ marginBottom: "0.7rem" }}>
+          <SeletorMultiploComBusca
+            label="Categoria(s)/indicação(ões) — para onde este medicamento aparece sugerido"
+            opcoes={categorias.map((c) => ({ id: c.id, nome: c.nome, grupo: TIPOS.find((t) => t.valor === c.tipo)?.label }))}
+            selecionados={doencaIds} onChange={setDoencaIds}
+            placeholder="Clique para selecionar…" cor={COR} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.6rem", marginBottom: "0.8rem" }}>

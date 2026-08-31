@@ -19,7 +19,7 @@ import unicodedata
 
 from sqlmodel import Session, select
 
-from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, PrincipioAtivo, SeedFlag
+from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, ParametroMinimoFarmacia, PrincipioAtivo, SeedFlag
 from fazenda.rules.farmacia_indicacoes_seed import INDICACOES, MARCAS
 from fazenda.rules.farmacia_seed import PRINCIPIOS
 from fazenda.rules.visibilidade import visivel
@@ -512,11 +512,35 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
     agregado por princípio permanece global até essa etapa seguinte."""
     query = visivel(select(PrincipioAtivo).order_by(PrincipioAtivo.nome), PrincipioAtivo, fazenda_id)
     principios = session.exec(query).all()
-    itens = session.exec(select(Estoque)).all()
+    # Achado (31/08/2026, ao implementar mínimo por fazenda): esta consulta
+    # somava o saldo de Estoque de TODAS as fazendas-cliente juntas — cada
+    # tenant via o estoque combinado dos outros no total agregado por
+    # princípio. Filtra por fazenda quando resolvida, mas SEM excluir itens
+    # legados sem fazenda_id (`IS NULL`) — muita base real ainda não passou
+    # pela migração de fazenda_id em Estoque; excluir esses itens faria
+    # sumir saldo de verdade do painel, pior que a leitura cruzada que
+    # está sendo corrigida aqui.
+    query_itens = select(Estoque)
+    if fazenda_id is not None:
+        query_itens = query_itens.where((Estoque.fazenda_id == fazenda_id) | (Estoque.fazenda_id.is_(None)))
+    itens = session.exec(query_itens).all()
     por_pa: dict[int, list[Estoque]] = {}
     for it in itens:
         if it.principio_ativo_id is not None:
             por_pa.setdefault(it.principio_ativo_id, []).append(it)
+
+    # Mínimo em unidade de medida, por fazenda — pedido do usuário (31/08/2026):
+    # "estoque mínimo... tem que ser em unidade de medida, e não em pacotes/
+    # frascos". Vive em tabela à parte (nunca em PrincipioAtivo, que pode ser
+    # global — ver docstring de ParametroMinimoFarmacia). Sem uma linha aqui
+    # pra este princípio, cai na regra ANTIGA (apresentações) logo abaixo —
+    # nenhum dado existente muda de comportamento sozinho.
+    minimos_base: dict[int, float] = {}
+    if fazenda_id is not None:
+        overrides = session.exec(
+            select(ParametroMinimoFarmacia).where(ParametroMinimoFarmacia.fazenda_id == fazenda_id)
+        ).all()
+        minimos_base = {o.principio_ativo_id: o.estoque_minimo_base for o in overrides}
 
     saida = []
     for pa in principios:
@@ -547,14 +571,29 @@ def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[d
                 "apresentacoes": round(apres, 2) if apres is not None else None,
                 "estoque_inicializado": it.estoque_inicializado is not False,
             })
-        minimo = pa.estoque_minimo_apresentacoes if pa.estoque_minimo_apresentacoes is not None else 1.0
-        abaixo_minimo = bool(grupo) and apresentacoes < minimo
+        minimo_base = minimos_base.get(pa.id)
+        if minimo_base is not None and base_ok:
+            # Regra NOVA: mínimo em unidade de medida (ml/L/g/unidade) — só
+            # entra em vigor depois que a fazenda concilia este princípio
+            # específico no Painel de Conciliação (nunca automaticamente).
+            minimo_modo = "base"
+            abaixo_minimo = bool(grupo) and total_base < minimo_base
+        else:
+            # Regra ANTIGA: mínimo em número de apresentações (frascos/
+            # pacotes) — mantida intacta pra todo princípio ainda não
+            # conciliado, ou quando a conversão de unidade falhou.
+            minimo_modo = "apresentacoes"
+            minimo_apres = pa.estoque_minimo_apresentacoes if pa.estoque_minimo_apresentacoes is not None else 1.0
+            abaixo_minimo = bool(grupo) and apresentacoes < minimo_apres
         saida.append({
             "id": pa.id, "nome": pa.nome, "ativo": pa.ativo, "categoria": pa.categoria, "categoria_software": pa.categoria_software,
             "uso_principal": pa.uso_principal, "justificativa": pa.justificativa,
             "eh_biologico": pa.eh_biologico, "doenca_id": pa.doenca_id,
             "unidade_base": pa.unidade_base, "unidade_apresentacao": pa.unidade_apresentacao,
-            "estoque_minimo_apresentacoes": minimo,
+            "estoque_minimo_apresentacoes": pa.estoque_minimo_apresentacoes if pa.estoque_minimo_apresentacoes is not None else 1.0,
+            "estoque_minimo_base": minimo_base,
+            "minimo_modo": minimo_modo,
+            "precisa_reconciliar_minimo": bool(grupo) and minimo_base is None,
             "total_base": round(total_base, 2) if base_ok else None,
             "total_apresentacoes": round(apresentacoes, 2),
             "qtd_marcas_estoque": len(grupo),

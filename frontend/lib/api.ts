@@ -4362,10 +4362,19 @@ export type PrincipioFarmacia = {
   id: number; nome: string; ativo: boolean; categoria: string | null; categoria_software: string | null;
   uso_principal: string | null; justificativa: string | null;
   eh_biologico: boolean; doenca_id: number | null; unidade_base: string | null; unidade_apresentacao: string | null;
-  estoque_minimo_apresentacoes: number; total_base: number | null; total_apresentacoes: number;
+  estoque_minimo_apresentacoes: number; estoque_minimo_base: number | null; minimo_modo: "base" | "apresentacoes";
+  precisa_reconciliar_minimo: boolean;
+  total_base: number | null; total_apresentacoes: number;
   qtd_marcas_estoque: number; abaixo_minimo: boolean; precisa_inicializar: boolean; itens: ApresentacaoFarmacia[];
 };
 export type MarcaComercial = { id: number; principio_ativo_id: number; nome_comercial: string; laboratorio: string | null; ativo: boolean };
+export async function definirEstoqueMinimoFarmacia(principioId: number, estoqueMinimoBase: number) {
+  const res = await authFetch(`${API}/farmacia/principios/${principioId}/estoque-minimo`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estoque_minimo_base: estoqueMinimoBase }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir estoque mínimo"); }
+  return res.json() as Promise<PrincipioFarmacia>;
+}
 export async function fetchFarmaciaPrincipios() {
   const res = await authFetch(`${API}/farmacia/principios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Farmácia error: ${res.status}`);
