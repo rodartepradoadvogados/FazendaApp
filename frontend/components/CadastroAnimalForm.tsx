@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
+import { ListaFechadaPicker, type OpcaoListaFechada } from "./ListaFechadaPicker";
 import { TouroPicker, type TouroPickerItem } from "./TouroPicker";
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
@@ -25,11 +26,11 @@ import { CampoMoeda } from "@/components/CampoMoeda";
 const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Vaca", "Touro", "Bezerro"];
 // Fallback caso o cadastro (Configurações > Cadastro > Raças e grau de
 // sangue) ainda não tenha sido carregado/semeado.
-const GRAUS_SANGUE_FALLBACK = [
-  "1/2 Holandês x Gir", "3/4 Holandês", "7/8 Holandês", "15/16 Holandês",
-  "31/32 Holandês", "PCOD Holandês", "PO Holandês",
-];
-const RACAS_FALLBACK = ["Girolando", "Holandês", "Gir", "Outra"];
+const GRAUS_SANGUE_FALLBACK: OpcaoListaFechada[] = [
+  "1/2 Holandês x Gir", "3/4 Holandês x Gir", "7/8 Holandês x Gir", "15/16 Holandês x Gir",
+  "31/32 Holandês x Gir", "PCOD Holandês", "PO Holandês",
+].map((nome) => ({ nome }));
+const RACAS_FALLBACK: OpcaoListaFechada[] = ["Girolando", "Holandês", "Gir"].map((nome) => ({ nome }));
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -86,8 +87,8 @@ export default function CadastroAnimalForm() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  const [racas, setRacas] = useState<string[]>(RACAS_FALLBACK);
-  const [grausSangue, setGrausSangue] = useState<string[]>(GRAUS_SANGUE_FALLBACK);
+  const [racas, setRacas] = useState<OpcaoListaFechada[]>(RACAS_FALLBACK);
+  const [grausSangue, setGrausSangue] = useState<OpcaoListaFechada[]>(GRAUS_SANGUE_FALLBACK);
   const [naab, setNaab] = useState<Touro[]>([]);
   const [estoqueSemen, setEstoqueSemen] = useState<TouroPickerItem[]>([]);
   const [motivosBaixa, setMotivosBaixa] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
@@ -120,11 +121,11 @@ export default function CadastroAnimalForm() {
     // backend ao salvar.
     fetchMatrizesComParto().then(setMatrizes).catch(() => {});
     fetchRacas().then((d) => {
-      const ativas = d.filter((r: any) => r.ativo).map((r: any) => r.nome as string);
+      const ativas = d.filter((r: any) => r.ativo).map((r: any) => ({ nome: r.nome as string, nota: r.nota as string | null }));
       if (ativas.length) setRacas(ativas);
     }).catch(() => {});
     fetchGrausSangue().then((d) => {
-      const ativos = d.filter((g: any) => g.ativo).map((g: any) => g.nome as string);
+      const ativos = d.filter((g: any) => g.ativo).map((g: any) => ({ nome: g.nome as string, nota: g.nota as string | null }));
       if (ativos.length) setGrausSangue(ativos);
     }).catch(() => {});
     fetchTouros().then(setNaab).catch(() => {});
@@ -296,16 +297,14 @@ export default function CadastroAnimalForm() {
               </select>
             </Campo>
             <Campo label="Raça">
-              <input style={inputStyle} list="racas-cadastro" value={form.raca}
-                onChange={(e) => setForm({ ...form, raca: e.target.value })}
-                placeholder="Selecione ou digite…" />
-              <datalist id="racas-cadastro">{racas.map((r) => <option key={r} value={r} />)}</datalist>
+              <ListaFechadaPicker opcoes={racas} value={form.raca || null}
+                onChange={(v) => setForm({ ...form, raca: v || "" })}
+                placeholder="Selecionar raça…" />
             </Campo>
             <Campo label="Grau de sangue">
-              <input style={inputStyle} list="graus-sangue" value={form.grau_sangue}
-                onChange={(e) => setForm({ ...form, grau_sangue: e.target.value })}
-                placeholder="Selecione ou digite…" />
-              <datalist id="graus-sangue">{grausSangue.map((g) => <option key={g} value={g} />)}</datalist>
+              <ListaFechadaPicker opcoes={grausSangue} value={form.grau_sangue || null}
+                onChange={(v) => setForm({ ...form, grau_sangue: v || "" })}
+                placeholder="Selecionar grau de sangue…" />
             </Campo>
             <Campo label="Categoria">
               <select style={inputStyle} value={form.categoria_abrev} onChange={(e) => setForm({ ...form, categoria_abrev: e.target.value })}>

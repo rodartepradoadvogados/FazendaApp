@@ -167,6 +167,46 @@ def validar_e_vincular_mae(session: Session, fazenda_id: int | None, mae_numero:
     session.add(livre)
 
 
+def _validar_raca_grau_sangue(session: Session, fazenda_id: int | None, animal_atual: Animal | None, dados: "AnimalFichaIn") -> None:
+    """Trava Raça/Grau de sangue na lista fechada de Configurações > Cadastro
+    — sem isso, o `<input list=…>` de texto livre do formulário (ou uma
+    chamada direta à API) continua aceitando qualquer string, que era
+    exatamente o bug relatado pelo usuário (31/08/2026).
+
+    Cláusula do avô ("grandfather clause"): só barra um valor que está
+    MUDANDO para algo fora da lista ativa. Um valor que já estava gravado no
+    animal (histórico, CSV importado, ficha antiga de antes da lista
+    fechada) sempre pode ser regravado sem mudança, mesmo que hoje não
+    exista mais no cadastro — `AnimalFichaIn` é um PUT que reenvia a ficha
+    inteira a cada edição, então travar também o valor já existente
+    quebraria a edição de qualquer animal legado.
+
+    Segunda salvaguarda: só entra em vigor se a fazenda já tem pelo menos 1
+    raça/grau de sangue ATIVO cadastrado. Uma fazenda cujo cadastro está
+    vazio (nunca rodou o seed — caso do banco isolado de cada teste, que roda
+    com `FAZENDA_TESTING` e pula os ~50 seeds de produção por custo, ver
+    `lifespan` em main.py) ainda não tem lista fechada nenhuma para vender:
+    travar igual deixaria esses lançamentos permanentemente impossíveis."""
+    for campo, modelo, rotulo in ((dados.raca, Raca, "raça"), (dados.grau_sangue, GrauSangue, "grau de sangue")):
+        valor = (campo or "").strip()
+        if not valor:
+            continue
+        valor_atual = getattr(animal_atual, "raca" if modelo is Raca else "grau_sangue", None) if animal_atual else None
+        if valor == valor_atual:
+            continue
+        query_ativos = select(modelo).where(modelo.ativo == True)  # noqa: E712
+        if fazenda_id is not None:
+            query_ativos = query_ativos.where(modelo.fazenda_id == fazenda_id)
+        ativos = session.exec(query_ativos).all()
+        if not ativos:
+            continue
+        if not any(item.nome == valor for item in ativos):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{valor}' não é uma opção válida de {rotulo}. Selecione uma opção da lista em Configurações > Cadastro.",
+            )
+
+
 @router.get("/animais/matrizes")
 def listar_matrizes_com_parto(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -201,6 +241,7 @@ def criar_animal(
     existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=400, detail=f"Já existe um animal com o número {numero}")
+    _validar_raca_grau_sangue(session, fazenda_id, None, dados)
 
     animal = Animal(numero=numero, ativo=dados.data_baixa is None, fazenda_id=fazenda_id)
     for campo, valor in dados.model_dump(exclude={"numero"}).items():
@@ -225,6 +266,7 @@ def atualizar_ficha_animal(
     animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
+    _validar_raca_grau_sangue(session, fazenda_id, animal, dados)
     for campo, valor in dados.model_dump(exclude={"numero"}).items():
         setattr(animal, campo, valor)
     if dados.data_baixa is not None:
@@ -306,38 +348,102 @@ def seed_motivos_venda(session: Session, fazenda_id: int | None = None) -> None:
 # sangue é a posição na escala de absorção Holandês x Gir (0 = PO Gir, 1 = PO
 # Holandês) — usada para calcular automaticamente o grau de sangue da cria no
 # parto (ver calcular_grau_sangue_cria em fazenda.rules.genetica).
+#
+# Cada item tem uma `nota` didática curta — mostrada como subtítulo no
+# seletor de busca da ficha do animal (ListaFechadaPicker), pesquisada nas
+# fontes oficiais (Girolando/ABCGIL, Embrapa, ABCZ) pedido explícito do
+# usuário, 31/08/2026: "coloque em forma de nota uma pequena nota para cada
+# raça, cruzamento... da forma mais didática possível".
 # ---------------------------------------------------------------------------
-SEED_RACAS = ["Girolando", "Holandês", "Gir", "Jersey", "Outra"]
+SEED_RACAS: list[tuple[str, str]] = [
+    ("Holandês", "Raça leiteira por excelência — maior produção de leite por vaca do mundo. Pelagem preta e branca (ou vermelha e branca, a variante Red Holstein)."),
+    ("Jersey", "Pequena, precoce e rústica, com o leite mais rico em gordura e proteína entre as raças leiteiras — ótima em cruzamentos para melhorar sólidos do leite."),
+    ("Pardo Suíço", "Raça leiteira europeia (Brown Swiss), rústica e de boa longevidade — segundo leite mais rico em proteína/gordura depois da Jersey."),
+    ("Gir", "Zebuína indiana (Gir Leiteiro), a base leiteira do Girolando — resistente ao calor e a carrapatos, com boa habilidade materna."),
+    ("Guzerá", "Zebuína de dupla aptidão (leite e corte), rústica, usada em cruzamento com Holandês (Guzolando) em regiões mais quentes."),
+    ("Sindi", "Zebuína (Vermelho Sindi) pequena e muito rústica, com excelente adaptação ao calor — usada sobretudo no Nordeste."),
+    ("Simental", "Raça europeia de dupla aptidão (leite e corte), porte grande, usada em cruzamento industrial."),
+    ("Normando", "Raça francesa de dupla aptidão (leite e carne), tradicional no Sul do Brasil."),
+    ("Caracu", "Raça bovina brasileira (origem ibérica) de dupla aptidão, rústica e adaptada ao clima tropical."),
+    ("Girolando", "Cruzamento consolidado Holandês x Gir — a raça leiteira mais criada no Brasil, responsável por cerca de 80% do leite nacional. Ver o grau de sangue para a fração exata de cada componente."),
+    ("Guzolando", "Cruzamento consolidado Guzerá x Holandês — alternativa ao Girolando em regiões de calor mais intenso."),
+    ("Jersolando", "Cruzamento consolidado Jersey x Holandês — busca aumentar o teor de sólidos (gordura/proteína) do leite."),
+    ("SRD (Sem Raça Definida)", "Animal de composição genética não identificada ou irrelevante para o manejo — use quando não há como precisar a raça."),
+]
 
-SEED_GRAUS_SANGUE = [
-    ("PO Gir", 0.0),
-    ("1/2 Holandês x Gir", 0.5),
-    ("3/4 Holandês", 0.75),
-    ("7/8 Holandês", 0.875),
-    ("15/16 Holandês", 0.9375),
-    ("31/32 Holandês", 0.96875),
-    ("PCOD Holandês", None),
-    ("PO Holandês", 1.0),
+SEED_GRAUS_SANGUE: list[tuple[str, float | None, str]] = [
+    ("PO Holandês", 1.0, "Puro de Origem — animal Holandês registrado, nacional ou importado, sem cruzamento."),
+    ("PO Gir", 0.0, "Puro de Origem — animal Gir registrado, sem cruzamento."),
+    ("PO Jersey", None, "Puro de Origem — animal Jersey registrado, sem cruzamento."),
+    ("PO Pardo Suíço", None, "Puro de Origem — animal Pardo Suíço registrado, sem cruzamento."),
+    ("PO Guzerá", None, "Puro de Origem — animal Guzerá registrado, sem cruzamento."),
+    ("PC Holandês", 1.0, "Puro por Cruza — atingiu a pureza Holandês por cruzamento sucessivo (absorção), não por ascendência 100% registrada desde a origem."),
+    ("PC Gir", 0.0, "Puro por Cruza — atingiu a pureza Gir por cruzamento sucessivo (absorção), não por ascendência 100% registrada desde a origem."),
+    ("PCOC Holandês", 1.0, "Puro por Cruza de Origem Conhecida — absorção para Holandês com todos os ascendentes do cruzamento identificados."),
+    ("PCOC Gir", 0.0, "Puro por Cruza de Origem Conhecida — absorção para Gir com todos os ascendentes do cruzamento identificados."),
+    ("PCOD Holandês", 1.0, "Puro por Cruza de Origem Desconhecida — absorção para Holandês sem registro de quais raças entraram no cruzamento original."),
+    ("PCOD Gir", 0.0, "Puro por Cruza de Origem Desconhecida — absorção para Gir sem registro de quais raças entraram no cruzamento original."),
+    ("1/4 Holandês x Gir", 0.25, "25% de sangue Holandês e 75% Gir — grau inicial de absorção rumo ao Girolando."),
+    ("3/8 Holandês x Gir", 0.375, "37,5% de sangue Holandês e 62,5% Gir."),
+    ("1/2 Holandês x Gir", 0.5, "50% Holandês e 50% Gir — a primeira geração (F1) do cruzamento Girolando."),
+    ("5/8 Holandês x Gir", 0.625, "62,5% Holandês e 37,5% Gir — o padrão oficial do Girolando definido pela ABCGIL, o ponto de equilíbrio entre produção de leite e rusticidade."),
+    ("3/4 Holandês x Gir", 0.75, "75% de sangue Holandês e 25% Gir."),
+    ("7/8 Holandês x Gir", 0.875, "87,5% de sangue Holandês e 12,5% Gir."),
+    ("15/16 Holandês x Gir", 0.9375, "93,75% de sangue Holandês — bem próximo do Holandês puro."),
+    ("31/32 Holandês x Gir", 0.96875, "96,875% de sangue Holandês — o limiar em que o animal passa a ser considerado Puro por Cruza (PC Holandês)."),
+    ("PS Girolando", 0.625, "Puro Sintético — geração final do Girolando já fixada geneticamente no padrão 5/8 Holandês x 3/8 Gir, reproduzindo-se \"dentro da raça\" sem precisar de novo cruzamento."),
+    ("1/2 Jersey x Holandês", None, "50% Jersey e 50% Holandês — primeira geração (F1) do cruzamento Jersolando."),
+    ("1/2 Guzerá x Holandês", None, "50% Guzerá e 50% Holandês — primeira geração (F1) do cruzamento Guzolando."),
+    ("SRD (Sem Raça Definida)", None, "Composição genética não identificada ou irrelevante para o manejo."),
 ]
 
 
 def seed_racas_grau_sangue(session: Session, fazenda_id: int | None = None) -> None:
-    """Cria as raças e graus de sangue padrão uma única vez por fazenda (idempotente via SeedFlag)."""
-    chave = f"racas_grau_sangue_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "racas_grau_sangue_v1"
+    """Cria/atualiza as raças e graus de sangue padrão para uma fazenda.
+
+    Versão 2 (idempotente via SeedFlag próprio, não reaproveita a v1): a v1
+    (jul/2026) só tinha 5 raças e 8 graus de sangue, sem nota nenhuma, e
+    "Outra" como raça-curinga — o que, somado ao <input list=…> de texto
+    livre que existia no formulário, é exatamente o que produziu o
+    preenchimento livre relatado pelo usuário (31/08/2026). Roda de novo em
+    fazendas que já tinham a v1: insere o que falta (idempotente por nome,
+    como sempre) e BACKFILLA a nota de quem já existe e ainda não tinha uma
+    — sem sobrescrever `fracao_holandes`/`ativo` de item já cadastrado."""
+    chave = f"racas_grau_sangue_v2_fazenda_{fazenda_id}" if fazenda_id is not None else "racas_grau_sangue_v2"
     if session.get(SeedFlag, chave):
         return
-    for nome in SEED_RACAS:
+    for nome, nota in SEED_RACAS:
         query = select(Raca).where(Raca.nome == nome)
         if fazenda_id is not None:
             query = query.where(Raca.fazenda_id == fazenda_id)
-        if not session.exec(query).first():
-            session.add(Raca(nome=nome, fazenda_id=fazenda_id))
-    for nome, fracao in SEED_GRAUS_SANGUE:
+        existente = session.exec(query).first()
+        if existente:
+            if not existente.nota:
+                existente.nota = nota
+                session.add(existente)
+        else:
+            session.add(Raca(nome=nome, nota=nota, fazenda_id=fazenda_id))
+    # "Outra" (v1) vira escape de texto livre — não existe mais espaço para
+    # isso numa lista fechada; desativa em vez de excluir (preserva o
+    # histórico de quem já tinha essa raça gravada).
+    query_outra = select(Raca).where(Raca.nome == "Outra")
+    if fazenda_id is not None:
+        query_outra = query_outra.where(Raca.fazenda_id == fazenda_id)
+    outra = session.exec(query_outra).first()
+    if outra and outra.ativo:
+        outra.ativo = False
+        session.add(outra)
+    for nome, fracao, nota in SEED_GRAUS_SANGUE:
         query = select(GrauSangue).where(GrauSangue.nome == nome)
         if fazenda_id is not None:
             query = query.where(GrauSangue.fazenda_id == fazenda_id)
-        if not session.exec(query).first():
-            session.add(GrauSangue(nome=nome, fracao_holandes=fracao, fazenda_id=fazenda_id))
+        existente = session.exec(query).first()
+        if existente:
+            if not existente.nota:
+                existente.nota = nota
+                session.add(existente)
+        else:
+            session.add(GrauSangue(nome=nome, fracao_holandes=fracao, nota=nota, fazenda_id=fazenda_id))
     session.add(SeedFlag(chave=chave))
     session.commit()
 
@@ -354,15 +460,68 @@ router.post("/motivos-venda")(_criar_motivo_venda)
 router.put("/motivos-venda/{item_id}")(_atualizar_motivo_venda)
 
 
-_listar_racas, _criar_raca, _atualizar_raca, _ = _crud_nome_ativo(Raca, com_fazenda=True)
-router.get("/racas")(_listar_racas)
-router.post("/racas")(_criar_raca)
-router.put("/racas/{item_id}")(_atualizar_raca)
+class RacaIn(BaseModel):
+    nome: str
+    nota: Optional[str] = None
+    ativo: bool = True
+
+
+@router.get("/racas")
+def listar_racas(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Raca)
+    if fazenda_id is not None:
+        query = query.where(Raca.fazenda_id == fazenda_id)
+    return [r.model_dump() for r in session.exec(query.order_by(Raca.id)).all()]
+
+
+@router.post("/racas")
+def criar_raca(
+    dados: RacaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    query_dup = select(Raca).where(Raca.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(Raca.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
+        raise HTTPException(status_code=409, detail=f"Já existe uma raça com o nome '{nome}'")
+    obj = Raca(nome=nome, nota=dados.nota, ativo=dados.ativo, fazenda_id=fazenda_id)
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
+
+
+@router.put("/racas/{item_id}")
+def atualizar_raca(
+    item_id: int, dados: RacaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    obj = session.get(Raca, item_id)
+    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Raça não encontrada")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    obj.nome = nome
+    obj.nota = dados.nota
+    obj.ativo = dados.ativo
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
 
 
 class GrauSangueIn(BaseModel):
     nome: str
     fracao_holandes: Optional[float] = None
+    nota: Optional[str] = None
     ativo: bool = True
 
 
@@ -390,7 +549,7 @@ def criar_grau_sangue(
         query_dup = query_dup.where(GrauSangue.fazenda_id == fazenda_id)
     if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um grau de sangue com o nome '{nome}'")
-    obj = GrauSangue(nome=nome, fracao_holandes=dados.fracao_holandes, ativo=dados.ativo, fazenda_id=fazenda_id)
+    obj = GrauSangue(nome=nome, fracao_holandes=dados.fracao_holandes, nota=dados.nota, ativo=dados.ativo, fazenda_id=fazenda_id)
     session.add(obj)
     session.commit()
     session.refresh(obj)
@@ -411,6 +570,7 @@ def atualizar_grau_sangue(
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     obj.nome = nome
     obj.fracao_holandes = dados.fracao_holandes
+    obj.nota = dados.nota
     obj.ativo = dados.ativo
     session.add(obj)
     session.commit()
