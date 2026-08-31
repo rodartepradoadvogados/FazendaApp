@@ -296,6 +296,11 @@ class Raca(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
+    # Nota didática curta (ex.: "Zebuína indiana, referência mundial em
+    # leite entre as raças zebuínas — a base leiteira do Girolando.") — mostrada
+    # como subtítulo no seletor da ficha do animal, para quem não conhece a
+    # raça de cor não precisar sair da tela para pesquisar.
+    nota: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -316,6 +321,10 @@ class GrauSangue(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
+    # Nota didática curta explicando a sigla/fração (ex.: "PO = Puro de
+    # Origem — animal registrado, sem cruzamento.") — mesma finalidade da
+    # nota de Raça, acima.
+    nota: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     fracao_holandes: Optional[float] = None
     ativo: bool = True

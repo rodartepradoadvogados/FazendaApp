@@ -4,10 +4,12 @@ import { FileText, AlertTriangle, Download, Pencil, Save, X } from "lucide-react
 import {
   fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida,
   verificarMaeParto, type VerificacaoMaeParto, fetchEquivalenteMaduroDoAnimal, type TrioEquivalenteMaduro,
+  fetchRacas, fetchGrausSangue,
 } from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { ListaFechadaPicker, type OpcaoListaFechada } from "@/components/ListaFechadaPicker";
 import { SecaoRecolhivel, TabBar } from "@/components/ui";
 import { estiloSexado, rotuloOrigemMovimentoLote } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -648,8 +650,14 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
   // /reproducao/verificar-mae) antes de salvar, mostrando data/parto e
   // eventuais inconsistências.
   const [confirmMae, setConfirmMae] = useState<{ verificacao: VerificacaoMaeParto; payload: Record<string, any> } | null>(null);
+  const [racas, setRacas] = useState<OpcaoListaFechada[]>([]);
+  const [grausSangue, setGrausSangue] = useState<OpcaoListaFechada[]>([]);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchRacas().then((d) => setRacas(d.filter((r: any) => r.ativo).map((r: any) => ({ nome: r.nome as string, nota: r.nota as string | null })))).catch(() => {});
+    fetchGrausSangue().then((d) => setGrausSangue(d.filter((g: any) => g.ativo).map((g: any) => ({ nome: g.nome as string, nota: g.nota as string | null })))).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -880,8 +888,8 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                   <CampoEdit label="Lote"><input style={inpStyle} value={formAnimal.grupo_primario} onChange={(e) => setFormAnimal((f) => ({ ...f, grupo_primario: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Data de nascimento"><input type="date" style={inpStyle} value={formAnimal.data_nasc || ""} onChange={(e) => setFormAnimal((f) => ({ ...f, data_nasc: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Data de entrada"><input type="date" style={inpStyle} value={formAnimal.data_entrada || ""} onChange={(e) => setFormAnimal((f) => ({ ...f, data_entrada: e.target.value }))} /></CampoEdit>
-                  <CampoEdit label="Raça"><input style={inpStyle} value={formAnimal.raca} onChange={(e) => setFormAnimal((f) => ({ ...f, raca: e.target.value }))} /></CampoEdit>
-                  <CampoEdit label="Grau de sangue"><input style={inpStyle} value={formAnimal.grau_sangue} onChange={(e) => setFormAnimal((f) => ({ ...f, grau_sangue: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Raça"><ListaFechadaPicker opcoes={racas} value={formAnimal.raca || null} onChange={(v) => setFormAnimal((f) => ({ ...f, raca: v || "" }))} placeholder="Selecionar raça…" /></CampoEdit>
+                  <CampoEdit label="Grau de sangue"><ListaFechadaPicker opcoes={grausSangue} value={formAnimal.grau_sangue || null} onChange={(v) => setFormAnimal((f) => ({ ...f, grau_sangue: v || "" }))} placeholder="Selecionar grau de sangue…" /></CampoEdit>
                   <CampoEdit label="Mãe (nº)"><input style={inpStyle} value={formAnimal.mae_numero} onChange={(e) => setFormAnimal((f) => ({ ...f, mae_numero: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Valor (R$)"><CampoMoeda style={inpStyle} value={Number(formAnimal.valor) || 0} onChange={(v) => setFormAnimal((f) => ({ ...f, valor: v ? String(v) : "" }))} /></CampoEdit>

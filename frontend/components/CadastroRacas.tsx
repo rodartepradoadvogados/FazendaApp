@@ -7,13 +7,13 @@ import {
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
-type Raca = { id: number; nome: string; ativo: boolean };
-type RacaForm = { nome: string; ativo: boolean };
-const racaFormVazio: RacaForm = { nome: "", ativo: true };
+type Raca = { id: number; nome: string; nota: string | null; ativo: boolean };
+type RacaForm = { nome: string; nota: string; ativo: boolean };
+const racaFormVazio: RacaForm = { nome: "", nota: "", ativo: true };
 
-type Grau = { id: number; nome: string; fracao_holandes: number | null; ativo: boolean };
-type GrauForm = { nome: string; fracao_holandes: string; ativo: boolean };
-const grauFormVazio: GrauForm = { nome: "", fracao_holandes: "", ativo: true };
+type Grau = { id: number; nome: string; fracao_holandes: number | null; nota: string | null; ativo: boolean };
+type GrauForm = { nome: string; fracao_holandes: string; nota: string; ativo: boolean };
+const grauFormVazio: GrauForm = { nome: "", fracao_holandes: "", nota: "", ativo: true };
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -52,14 +52,14 @@ function RacasTab() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(racaFormVazio); setEditando("novo"); setMsg(null); };
-  const abrirEdicao = (r: Raca) => { setForm({ nome: r.nome, ativo: r.ativo }); setEditando(r.id); setMsg(null); };
+  const abrirEdicao = (r: Raca) => { setForm({ nome: r.nome, nota: r.nota || "", ativo: r.ativo }); setEditando(r.id); setMsg(null); };
   const cancelar = () => { setEditando(null); setMsg(null); };
 
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
     setSalvando(true); setMsg(null);
     try {
-      const dados = { nome: form.nome.trim(), ativo: form.ativo };
+      const dados = { nome: form.nome.trim(), nota: form.nota.trim() || null, ativo: form.ativo };
       if (editando === "novo") await criarRaca(dados);
       else if (typeof editando === "number") await atualizarRaca(editando, dados);
       setEditando(null);
@@ -89,7 +89,10 @@ function RacasTab() {
             {linhasOrdenadas.map((r) => (
               <Fragment key={r.id}>
                 <tr>
-                  <td style={{ fontWeight: 700 }}>{r.nome}{!r.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{r.nome}{!r.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</div>
+                    {r.nota && <div style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginTop: "0.15rem" }}>{r.nota}</div>}
+                  </td>
                   <td style={{ textAlign: "right" }}>
                     <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(r)}>
                       <Pencil size={13} /> Editar
@@ -122,6 +125,11 @@ function RacaFormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
       </div>
+      <div className="mb-3">
+        <label style={labelStyle}>Nota (texto didático mostrado no seletor)</label>
+        <textarea style={{ ...inputStyle, minHeight: "3.2rem", resize: "vertical" }} value={form.nota}
+          onChange={(e) => setForm({ ...form, nota: e.target.value })} placeholder="ex.: raça leiteira originária da Índia, muito rústica e resistente ao calor…" />
+      </div>
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>
@@ -148,7 +156,7 @@ function GrausTab() {
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(grauFormVazio); setEditando("novo"); setMsg(null); };
-  const abrirEdicao = (g: Grau) => { setForm({ nome: g.nome, fracao_holandes: g.fracao_holandes == null ? "" : String(g.fracao_holandes), ativo: g.ativo }); setEditando(g.id); setMsg(null); };
+  const abrirEdicao = (g: Grau) => { setForm({ nome: g.nome, fracao_holandes: g.fracao_holandes == null ? "" : String(g.fracao_holandes), nota: g.nota || "", ativo: g.ativo }); setEditando(g.id); setMsg(null); };
   const cancelar = () => { setEditando(null); setMsg(null); };
 
   const salvar = async () => {
@@ -157,7 +165,7 @@ function GrausTab() {
     if (fracao !== null && (Number.isNaN(fracao) || fracao < 0 || fracao > 1)) { setMsg("Fração de Holandês deve ser um número entre 0 e 1 (ex.: 0,75)."); return; }
     setSalvando(true); setMsg(null);
     try {
-      const dados = { nome: form.nome.trim(), fracao_holandes: fracao, ativo: form.ativo };
+      const dados = { nome: form.nome.trim(), fracao_holandes: fracao, nota: form.nota.trim() || null, ativo: form.ativo };
       if (editando === "novo") await criarGrauSangue(dados);
       else if (typeof editando === "number") await atualizarGrauSangue(editando, dados);
       setEditando(null);
@@ -187,7 +195,10 @@ function GrausTab() {
             {linhasOrdenadas.map((g) => (
               <Fragment key={g.id}>
                 <tr>
-                  <td style={{ fontWeight: 700 }}>{g.nome}{!g.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{g.nome}{!g.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</div>
+                    {g.nota && <div style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginTop: "0.15rem" }}>{g.nota}</div>}
+                  </td>
                   <td>{g.fracao_holandes == null ? <span style={{ color: "var(--text-muted)" }}>não calculável</span> : `${Math.round(g.fracao_holandes * 100)}%`}</td>
                   <td style={{ textAlign: "right" }}>
                     <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(g)}>
@@ -224,6 +235,11 @@ function GrauFormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
         </div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
+      </div>
+      <div className="mb-3">
+        <label style={labelStyle}>Nota (texto didático mostrado no seletor)</label>
+        <textarea style={{ ...inputStyle, minHeight: "3.2rem", resize: "vertical" }} value={form.nota}
+          onChange={(e) => setForm({ ...form, nota: e.target.value })} placeholder="ex.: 50% Holandês e 50% Gir — primeira geração (F1) do cruzamento Girolando…" />
       </div>
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
