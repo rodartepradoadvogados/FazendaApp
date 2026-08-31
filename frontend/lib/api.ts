@@ -4514,6 +4514,89 @@ export async function atualizarVinculoIndicacao(id: number, dados: { prioridade:
   }>;
 }
 
+// ── Painel CowData > Farmácia — cadastro CENTRAL do catálogo padrão
+// (categoria/doença, princípio ativo, medicamento) que fica visível a TODAS
+// as fazendas-cliente (catálogo global) e, no caso de medicamento, também
+// gera automaticamente o item de Estoque em cada uma (inativo/não-estocável,
+// pra o tenant ativar se quiser) — ver backend/fazenda/api/routers/
+// painel_cowdata_farmacia.py.
+export type CategoriaFarmaciaCowData = {
+  id: number; nome: string; tipo: string; descricao: string | null; ativo: boolean; fazenda_id: number | null;
+};
+export type PrincipioFarmaciaCowData = Record<string, any> & { id: number; nome: string };
+export type MedicamentoFarmaciaCowData = Record<string, any> & {
+  id: number; nome_comercial: string; principio_ativo_ids: number[]; doenca_ids: number[];
+  fan_out_fazendas: number; fan_out_total_fazendas: number;
+};
+
+export async function fetchCategoriasFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Categorias error: ${res.status}`);
+  return res.json() as Promise<CategoriaFarmaciaCowData[]>;
+}
+export async function criarCategoriaFarmaciaCowData(dados: { nome: string; tipo: string; descricao?: string | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar categoria"); }
+  return res.json() as Promise<CategoriaFarmaciaCowData>;
+}
+export async function atualizarCategoriaFarmaciaCowData(id: number, dados: { nome: string; tipo: string; descricao?: string | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/categorias/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar categoria"); }
+  return res.json() as Promise<CategoriaFarmaciaCowData>;
+}
+export async function fetchPrincipiosFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Princípios error: ${res.status}`);
+  return res.json() as Promise<PrincipioFarmaciaCowData[]>;
+}
+export async function criarPrincipioFarmaciaCowData(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar princípio ativo"); }
+  return res.json() as Promise<PrincipioFarmaciaCowData>;
+}
+export async function atualizarPrincipioFarmaciaCowData(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar princípio ativo"); }
+  return res.json() as Promise<PrincipioFarmaciaCowData>;
+}
+export async function excluirPrincipioFarmaciaCowData(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/principios/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir princípio ativo"); }
+  return res.json() as Promise<{ excluido: boolean; impacto: string[] }>;
+}
+export async function fetchMedicamentosFarmaciaCowData() {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function criarMedicamentoFarmaciaCowData(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao criar medicamento"); }
+  return res.json() as Promise<MedicamentoFarmaciaCowData & { fan_out: { criados: number; ja_existiam: number } }>;
+}
+export async function atualizarMedicamentoFarmaciaCowData(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar medicamento"); }
+  return res.json() as Promise<MedicamentoFarmaciaCowData>;
+}
+export async function refazerFanoutMedicamentoFarmaciaCowData(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}/fanout`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao propagar medicamento"); }
+  return res.json() as Promise<{ criados: number; ja_existiam: number }>;
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);

@@ -183,6 +183,35 @@ def test_modo_suporte_nao_bloqueia_leitura(client):
     assert r.status_code == 200
 
 
+def test_modo_suporte_bloqueia_mesclagem_de_estoque(client):
+    """POST .../mesclar tem que dar 403 mesmo /estoque NÃO estando nos
+    prefixos sensíveis — bloqueio é por SUFIXO exato de rota (ver
+    main.py::_bloquear_modo_suporte), pra não abrir uma mesclagem
+    irreversível de dados do cliente numa sessão de suporte."""
+    token = _token_suporte(client)
+    r = client.post("/estoque/1/mesclar", json={"perdedor_ids": [2]}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+    assert "modo suporte" in r.json()["detail"].lower()
+
+
+def test_modo_suporte_nao_bloqueia_edicao_normal_de_estoque(client):
+    """A trava do endpoint de mesclagem não pode virar um bloqueio geral de
+    /estoque — edição normal de item continua liberada em modo suporte,
+    exatamente como antes desta mudança."""
+    token = _token_suporte(client)
+    r = client.put("/estoque/999999", json={"nome": "Item de teste"}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 404  # rota respondeu de verdade (item não existe) — não foi bloqueada pelo middleware
+
+
+def test_modo_suporte_permite_restaurar_padrao(client):
+    """restaurar-padrao é a ÚNICA escrita em Estoque que só existe em modo
+    suporte — o middleware não pode bloqueá-la (a rota em si que decide,
+    via `exigir_sessao_suporte`)."""
+    token = _token_suporte(client)
+    r = client.post("/estoque/999999/restaurar-padrao", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 404  # rota respondeu de verdade (item não existe) — não foi bloqueada pelo middleware
+
+
 def test_modo_suporte_consegue_encerrar_a_propria_sessao(client):
     """A própria rota de encerrar sessão do Cofre não pode ficar bloqueada
     pelo middleware — senão quem entra em modo suporte fica preso até expirar."""

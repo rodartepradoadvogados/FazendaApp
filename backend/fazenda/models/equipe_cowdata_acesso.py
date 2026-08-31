@@ -33,6 +33,12 @@ AREAS_PAINEL_COWDATA = [
     # reprodutivos) aplicáveis a todas as fazendas-cliente de uma vez ou só
     # às selecionadas — ver fazenda.api.routers.painel_cowdata_cadastros.
     "cadastros",
+    # Farmácia padrão CowData (doença/reprodutivo/produtivo/preventivo/
+    # suporte, princípios ativos e medicamentos) — cadastro central que se
+    # propaga (catálogo global) ou faz fan-out (item de Estoque, um por
+    # fazenda) para todas as fazendas-cliente — ver
+    # fazenda.api.routers.painel_cowdata_farmacia.
+    "farmacia",
 ]
 
 # Nível de sigilo por conta — QUANTO de uma fazenda-cliente um membro da

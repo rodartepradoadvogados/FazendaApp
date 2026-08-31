@@ -133,6 +133,52 @@ class Estoque(SQLModel, table=True):
     tipo_semen: Optional[str] = None
 
 
+class EstoquePrincipioAtivo(SQLModel, table=True):
+    """Vínculo N-para-N entre item de Estoque (do tenant) e princípio ativo —
+    generaliza `Estoque.principio_ativo_id` (escalar, mantido como o
+    "princípio principal" por compatibilidade) para medicamento combinado.
+    Sem `fazenda_id` próprio: sempre herda a fazenda do `Estoque` referenciado
+    (que já é dado por-tenant, ao contrário do catálogo global de Farmácia)."""
+
+    __tablename__ = "estoque_principio_ativo"
+    __table_args__ = (UniqueConstraint("estoque_id", "principio_ativo_id", name="uq_estoque_principio"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    # Espelha (e mantém sincronizado com) Estoque.principio_ativo_id — exatamente
+    # 1 linha por item tem principal=True.
+    principal: bool = False
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EstoqueAliasMesclado(SQLModel, table=True):
+    """Registro de mesclagem de itens de Estoque (ver POST
+    /estoque/{sobrevivente_id}/mesclar): o item "perdedor" NÃO é excluído nem
+    seu nome é reescrito por cima do histórico (Sanidade.produto, protocolos,
+    financeiro...) — isso apagaria a carência que valia para aquele
+    lançamento no passado (duas marcas do mesmo princípio podem ter carências
+    diferentes; ver docstring de MedicamentoComercial em models/sanidade.py).
+    Em vez disso, o nome antigo vira um ALIAS que aponta pro item
+    sobrevivente, com a carência do perdedor CONGELADA no momento da
+    mesclagem — quem hoje resolve item/carência por nome (ver
+    rules/estoque_baixa.py) passa a também consultar esta tabela antes de
+    concluir que o item "sumiu"."""
+
+    __tablename__ = "estoque_alias_mesclado"
+    __table_args__ = (UniqueConstraint("fazenda_id", "nome_perdedor", name="uq_alias_mesclado_fazenda_nome"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome_perdedor: str = Field(index=True)
+    estoque_perdedor_id: int = Field(foreign_key="estoque.id", index=True)
+    estoque_sobrevivente_id: int = Field(foreign_key="estoque.id", index=True)
+    carencia_leite_dias_congelada: Optional[int] = None
+    carencia_carne_dias_congelada: Optional[int] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
 # ---------------------------------------------------------------------------
 # Cadastros de apoio ao item de estoque — Local de Armazenamento, Categoria,
 # Finalidade, Unidade, Unidade (embalagem) e Unidade de Medida (Configurações

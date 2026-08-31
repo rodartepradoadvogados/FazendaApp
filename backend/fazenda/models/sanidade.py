@@ -226,6 +226,31 @@ class IndicacaoTerapeutica(SQLModel, table=True):
     origem_id: Optional[int] = Field(default=None, foreign_key="indicacao_terapeutica.id", index=True)
 
 
+class MedicamentoPrincipioAtivo(SQLModel, table=True):
+    """Vínculo N-para-N entre marca comercial e princípio ativo — generaliza
+    `MedicamentoComercial.principio_ativo_id` (escalar, obrigatório, mantido
+    como o "princípio principal" por compatibilidade com todo o código que já
+    lê só ele) para o caso de medicamento combinado (mais de uma molécula na
+    mesma bula — ex.: associação antibiótico + anti-inflamatório). Mesmo
+    padrão de `IndicacaoTerapeutica` (fazenda_id entra na unique pelo mesmo
+    motivo: clonagem por fazenda ao personalizar um medicamento do catálogo)."""
+
+    __tablename__ = "medicamento_principio_ativo"
+    __table_args__ = (
+        UniqueConstraint("medicamento_comercial_id", "principio_ativo_id", "fazenda_id", name="uq_medicamento_principio_fazenda"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    # Espelha (e mantém sincronizado com) MedicamentoComercial.principio_ativo_id
+    # — exatamente 1 linha por medicamento tem principal=True.
+    principal: bool = False
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    origem_id: Optional[int] = Field(default=None, foreign_key="medicamento_principio_ativo.id", index=True)
+
+
 class ExameDefinicao(SQLModel, table=True):
     """
     Cadastro de um exame (ex.: Tuberculose, Brucelose) para o calendário
