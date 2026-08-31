@@ -331,6 +331,18 @@ def get_suporte_do_token(
     return {"ativo": True, "sessao_id": dados.get("ssid"), "nivel_sigilo": dados.get("nsig") or NIVEL_SIGILO_PADRAO}
 
 
+def exigir_sessao_suporte(authorization: str | None = Header(default=None)) -> dict:
+    """Dependência que EXIGE modo suporte CowData ativo (o oposto de todo o
+    resto do sistema) — usada só por `POST /estoque/{id}/restaurar-padrao`
+    (pedido explícito do usuário: "restaurar padrão CowData... apenas por
+    meio de acesso do suporte CowData", pra fechar a mão-dupla — um tenant
+    não pode desfazer sozinho uma personalização que ele mesmo escolheu)."""
+    info = get_suporte_do_token(authorization)
+    if not info["ativo"]:
+        raise HTTPException(status_code=403, detail="Esta ação só pode ser feita durante uma sessão de suporte CowData")
+    return info
+
+
 def token_manter_conectado(
     authorization: str | None = Header(default=None),
 ) -> bool:

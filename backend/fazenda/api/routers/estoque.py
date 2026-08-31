@@ -11,12 +11,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import CompraSemen, Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
+from fazenda.models import (
+    Alimento, CompraSemen, Estoque, EstoqueAliasMesclado, EstoquePrincipioAtivo, EstoqueSemen, Fornecedor,
+    MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, SeedFlag, Usuario,
+)
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.estoque_baixa import carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
+from fazenda.rules.farmacia_multi_principio import definir_principios_estoque, principios_do_estoque, principios_do_medicamento
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
@@ -494,9 +498,11 @@ def excluir_item_estoque(
     item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> dict:
     """Exclui um item de estoque de fato — só permitido quando não há nenhum
-    `MovimentoEstoque` vinculado (409 caso contrário, orientando a desativar
-    em vez de excluir), já que `MovimentoEstoque.estoque_id` é FK real para
-    `estoque.id` (o único FK do repo apontando pra essa tabela)."""
+    `MovimentoEstoque` nem `Alimento.estoque_preferido_id` vinculado (409
+    caso contrário, orientando a desativar em vez de excluir). Achado numa
+    varredura (31/08/2026): só `MovimentoEstoque` era checado — um item
+    marcado como "estoque preferido" de um Alimento podia ser excluído em
+    silêncio, deixando a FK órfã."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Estoque, item_id)
     if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
@@ -510,9 +516,165 @@ def excluir_item_estoque(
                 'vinculado(s) a ele. Desative o item (campo "Ativo") em vez de excluir.'
             ),
         )
+    alimentos_vinculados = session.exec(select(Alimento).where(Alimento.estoque_preferido_id == item_id)).all()
+    if alimentos_vinculados:
+        nomes = ", ".join(a.nome for a in alimentos_vinculados[:5])
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'Não é possível excluir "{item.nome}" — é o estoque preferido de {len(alimentos_vinculados)} '
+                f'alimento(s) ({nomes}). Desative o item em vez de excluir.'
+            ),
+        )
+    for vinculo in session.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.estoque_id == item_id)).all():
+        session.delete(vinculo)
     session.delete(item)
     session.commit()
     return {"excluido": True}
+
+
+# ---------------------------------------------------------------------------
+# Mesclagem de itens de Estoque — pedido do usuário (31/08/2026): ao ativar
+# um medicamento importado do padrão CowData, poder mesclar nele um ou mais
+# itens já existentes na fazenda (o mesmo princípio cadastrado com nomes
+# diferentes ao longo do tempo). Regra de ouro herdada de
+# `mesclar_estoque_semen` (o único precedente de mesclagem no repo, ver
+# routers/estoque.py — busca por esse nome): NUNCA reescreve texto histórico
+# (Sanidade.produto, protocolos, financeiro...) — isso mudaria em silêncio a
+# carência que valia pra um lançamento passado (marcas diferentes do mesmo
+# princípio têm carências diferentes, ver docstring de MedicamentoComercial).
+# Em vez disso: repointa as FKs REAIS (MovimentoEstoque.estoque_id,
+# Alimento.estoque_preferido_id) e cria um `EstoqueAliasMesclado` por
+# perdedor, com a carência dele CONGELADA — `rules/estoque_baixa.py` passa a
+# também consultar essa tabela na hora de resolver item/carência por nome.
+# ---------------------------------------------------------------------------
+class MesclarEstoqueIn(BaseModel):
+    perdedor_ids: list[int]
+
+
+@router.post("/{sobrevivente_id}/mesclar")
+def mesclar_itens_estoque(
+    sobrevivente_id: int, dados: MesclarEstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    sobrevivente = session.get(Estoque, sobrevivente_id)
+    if not sobrevivente or (fazenda_id is not None and sobrevivente.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item sobrevivente não encontrado")
+    perdedor_ids = [pid for pid in dict.fromkeys(dados.perdedor_ids) if pid != sobrevivente_id]
+    if not perdedor_ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um item perdedor, diferente do sobrevivente")
+
+    aliases_criados = 0
+    principios_unidos = set(principios_do_estoque(session, sobrevivente_id))
+    for perdedor_id in perdedor_ids:
+        perdedor = session.get(Estoque, perdedor_id)
+        if not perdedor or (fazenda_id is not None and perdedor.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail=f"Item perdedor {perdedor_id} não encontrado")
+        if perdedor.fazenda_id != sobrevivente.fazenda_id:
+            raise HTTPException(status_code=400, detail="Só é possível mesclar itens da mesma fazenda")
+
+        for mov in session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == perdedor_id)).all():
+            mov.estoque_id = sobrevivente_id
+            session.add(mov)
+        for alimento in session.exec(select(Alimento).where(Alimento.estoque_preferido_id == perdedor_id)).all():
+            alimento.estoque_preferido_id = sobrevivente_id
+            session.add(alimento)
+
+        principios_unidos.update(principios_do_estoque(session, perdedor_id))
+
+        marca_perdedor = resolver_marca_comercial(session, item=perdedor)
+        carencia = carencia_para_item(perdedor, marca_perdedor)
+        session.add(EstoqueAliasMesclado(
+            fazenda_id=sobrevivente.fazenda_id, nome_perdedor=perdedor.nome,
+            estoque_perdedor_id=perdedor_id, estoque_sobrevivente_id=sobrevivente_id,
+            carencia_leite_dias_congelada=carencia.get("leite_dias"),
+            carencia_carne_dias_congelada=carencia.get("carne_dias"),
+            usuario_id=user.id if isinstance(user, Usuario) else None,
+        ))
+        aliases_criados += 1
+
+        for vinculo in session.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.estoque_id == perdedor_id)).all():
+            session.delete(vinculo)
+        perdedor.ativo = False
+        perdedor.estocavel = False
+        session.add(perdedor)
+
+    if principios_unidos:
+        definir_principios_estoque(session, sobrevivente, sorted(principios_unidos, key=lambda pid: 0 if pid == sobrevivente.principio_ativo_id else 1))
+        session.add(sobrevivente)
+    session.commit()
+    session.refresh(sobrevivente)
+    return {"sobrevivente": sobrevivente.model_dump(), "mesclados": aliases_criados}
+
+
+@router.get("/sugestoes-mesclagem")
+def sugestoes_mesclagem(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    """Sugestões de mesclagem NUNCA autoritativas — sempre editáveis pelo
+    usuário na hora de confirmar (pedido: "sempre possível [mesclar], com
+    sugestões para mostrar o que será, inicialmente, mesclado"). Agrupa
+    itens ativos do mesmo princípio ativo principal — mesma molécula
+    cadastrada mais de uma vez costuma ser o caso real de duplicidade."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Estoque).where(Estoque.ativo != False, Estoque.principio_ativo_id.is_not(None))  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    itens = session.exec(query).all()
+    grupos: dict[int, list[Estoque]] = {}
+    for item in itens:
+        grupos.setdefault(item.principio_ativo_id, []).append(item)
+    principios_por_id = {p.id: p for p in session.exec(select(PrincipioAtivo)).all()}
+    sugestoes = []
+    for pid, grupo in grupos.items():
+        if len(grupo) < 2:
+            continue
+        grupo_ordenado = sorted(grupo, key=lambda e: e.id)
+        sobrevivente_sugerido = max(grupo, key=lambda e: (e.quantidade or 0))
+        sugestoes.append({
+            "principio_ativo_id": pid, "principio_ativo_nome": (principios_por_id.get(pid) or PrincipioAtivo(nome="?")).nome,
+            "sobrevivente_sugerido_id": sobrevivente_sugerido.id,
+            "itens": [{"id": e.id, "nome": e.nome, "quantidade": e.quantidade} for e in grupo_ordenado],
+        })
+    return sugestoes
+
+
+@router.post("/{item_id}/restaurar-padrao")
+def restaurar_padrao_cowdata(
+    item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    _suporte: dict = Depends(exigir_sessao_suporte),
+) -> dict:
+    """Restaura um item de Estoque importado do padrão CowData ao que o
+    catálogo global tem HOJE — pedido explícito do usuário: só via sessão de
+    suporte CowData (nunca o próprio tenant sozinho), pra reverter uma
+    personalização feita por engano. Nunca toca ativo/estocavel/quantidade/
+    valor/histórico — só a IDENTIDADE do item (nome, finalidade, categoria,
+    classificação, princípio(s), laboratório)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    if not item.medicamento_comercial_id:
+        raise HTTPException(status_code=400, detail="Este item não veio do catálogo padrão CowData (sem medicamento vinculado)")
+    medicamento = session.get(MedicamentoComercial, item.medicamento_comercial_id)
+    if not medicamento:
+        raise HTTPException(status_code=404, detail="Medicamento padrão CowData não encontrado")
+
+    principio_ids = principios_do_medicamento(session, medicamento.id)
+    principal = session.get(PrincipioAtivo, principio_ids[0]) if principio_ids else None
+    item.nome = medicamento.nome_comercial
+    item.finalidade = "Medicamento"
+    item.classificacao_medicamento = "Medicamentos"
+    item.laboratorio = medicamento.laboratorio
+    item.principio_ativo_id = principio_ids[0] if principio_ids else None
+    item.principio_ativo = principal.nome if principal else None
+    session.add(item)
+    if principio_ids:
+        definir_principios_estoque(session, item, principio_ids)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
 
 
 def _eh_medicamento(e: Estoque) -> bool:

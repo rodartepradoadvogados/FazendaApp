@@ -21,6 +21,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.carencia import carencia_dict
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.visibilidade import visivel
 
 router = APIRouter(prefix="/farmacia", tags=["farmacia"])
@@ -98,6 +99,24 @@ def atualizar_principio(
     session.commit()
     session.refresh(pa)
     return pa.model_dump()
+
+
+@router.delete("/principios/{principio_id}")
+def excluir_principio(
+    principio_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Exclui um princípio ativo checando impacto nas 7 tabelas que hoje têm
+    FK pra ele — mesma regra de `POST /exclusoes/impacto` (tipo=
+    principio_ativo), extraída pra rules/farmacia_multi_principio.py."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    pa = session.get(PrincipioAtivo, principio_id)
+    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
+    impacto, alvos = checar_e_desvincular_exclusao_principio(session, pa)
+    for obj in alvos:
+        session.delete(obj)
+    session.commit()
+    return {"excluido": True, "impacto": impacto}
 
 
 class MarcaIn(BaseModel):

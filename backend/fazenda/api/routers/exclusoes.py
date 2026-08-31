@@ -21,6 +21,7 @@ from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
+from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.models import (
     AgendaManual,
@@ -848,17 +849,15 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         return [f"Pessoa {pessoa.nome}"], [pessoa]
 
     if tipo == "principio_ativo":
+        # Checagem de impacto nas 7 tabelas que hoje têm FK pra
+        # principio_ativo.id (achado numa varredura, 31/08/2026 — antes só
+        # CalendarioSanitario era checado, e as outras 6 ficavam órfãs em
+        # silêncio) — extraída pra rules/farmacia_multi_principio.py porque
+        # `DELETE /farmacia/principios/{id}` usa exatamente a mesma regra.
         pa = session.get(PrincipioAtivo, int(id_))
         if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
-        vinculados = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.principio_ativo_id == pa.id)).all()
-        impacto = [f"Princípio ativo {pa.nome}"]
-        if vinculados:
-            impacto.append(f"{len(vinculados)} regra(s) do calendário sanitário perderão esse vínculo")
-            for regra in vinculados:
-                regra.principio_ativo_id = None
-                session.add(regra)
-        return impacto, [pa]
+        return checar_e_desvincular_exclusao_principio(session, pa)
 
     if tipo == "doenca":
         doenca = session.get(Doenca, int(id_))

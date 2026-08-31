@@ -59,6 +59,7 @@ from fazenda.api.routers import (
     onboarding,
     painel_cowdata,
     painel_cowdata_cadastros,
+    painel_cowdata_farmacia,
     painel_cowdata_parametros,
     painel_cowdata_usuarios,
     parametros,
@@ -533,7 +534,18 @@ async def _bloquear_modo_suporte(request, call_next):
                         "Para consultar isso, é preciso uma sessão com nível de sigilo mais alto."
                     )
             else:
-                bloquear = request.method == "DELETE" or (
+                # Mesclagem de Estoque (POST .../mesclar) é bloqueada por
+                # SUFIXO exato de rota, nunca acrescentando "/estoque" à
+                # lista de prefixos acima — isso bloquearia também toda
+                # edição legítima de Estoque em modo suporte (ex.: corrigir
+                # cadastro a pedido do cliente). "Restaurar padrão" (o
+                # oposto — reverter uma personalização ao padrão CowData) é
+                # deliberadamente PERMITIDO aqui: é a única ação de escrita
+                # em Estoque que só EXISTE em modo suporte (ver
+                # `fazenda.auth.exigir_sessao_suporte`), então não faz
+                # sentido também bloqueá-la neste middleware.
+                eh_mesclagem_estoque = request.method == "POST" and path.rstrip("/").endswith("/mesclar")
+                bloquear = request.method == "DELETE" or eh_mesclagem_estoque or (
                     request.method in ("POST", "PUT", "PATCH")
                     and any(path.startswith(p) for p in _PREFIXOS_SENSIVEIS_MODO_SUPORTE)
                 )
@@ -676,6 +688,10 @@ app.include_router(painel_cowdata_parametros.router)
 # Usuários de UMA fazenda-cliente por vez, sem entrar via modo suporte —
 # mesmo padrão exigir_area_painel_cowdata("cadastros").
 app.include_router(painel_cowdata_usuarios.router)
+# Farmácia padrão CowData (categorias/princípios ativos/medicamentos) —
+# catálogo global + fan-out de Estoque para toda fazenda-cliente, mesmo
+# padrão exigir_area_painel_cowdata("farmacia").
+app.include_router(painel_cowdata_farmacia.router)
 # Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
 app.include_router(cofre_acesso.router)
 
