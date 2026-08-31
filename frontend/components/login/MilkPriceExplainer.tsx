@@ -18,6 +18,15 @@ import { formatBRL } from "@/lib/api";
 // explica, por isso o rótulo visível segue citando só a IN 76/2018. Se numa
 // próxima rodada aparecer alteração que toque CCS/CBT/gordura/proteína, aí sim
 // o rótulo precisa passar a citar a norma alteradora.
+//
+// Checagem de 31/08/2026: reconfirmado com as duas mesmas fontes independentes
+// (MAPA IN 76/2018 e Embrapa Ater+ Digital) — nenhuma mudança. A IN 76/2018
+// segue vigente e nenhuma norma posterior (incluindo a IN 55/2020, já
+// registrada na checagem anterior) alterou os limites de CCS (500.000 CS/mL),
+// CBT/CPP (300.000 UFC/mL) ou os teores mínimos de gordura/proteína usados
+// como base de bonificação. A página da Embrapa continua descrevendo os
+// mesmos indicadores (CCS, CBT, gordura, proteína) com referência à IN 76.
+// Nenhuma divergência entre as fontes; rótulo mantido sem alteração.
 const FONTES_BONIFICACAO = [
   {
     nome: "MAPA — Instrução Normativa nº 76/2018",
@@ -28,7 +37,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.atermaisdigital.cnptia.embrapa.br/web/bovino-de-leite/indicadores-de-qualidade-do-leite",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "24/08/2026";
+const FONTES_ATUALIZADO_EM = "31/08/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
