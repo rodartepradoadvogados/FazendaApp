@@ -1,0 +1,24 @@
+[
+  {
+    "manchete": "Foremost Farms fecha fábrica de queijo em Marshfield (EUA) e corta 68 empregos",
+    "resumo": "A cooperativa norte-americana Foremost Farms USA vai encerrar as operações de sua fábrica de queijos em Marshfield, Wisconsin, eliminando os 68 empregos ligados à unidade. O fechamento está previsto para ocorrer por volta de 15 de dezembro de 2026, após notificação formal aos funcionários e ao sindicato local. Dados: WJFW/WSAW.",
+    "materia": "A Foremost Farms USA, cooperativa de laticínios sediada em Wisconsin, comunicou o fechamento definitivo de sua fábrica localizada na 4th Street, em Marshfield, cidade do centro-norte do estado. Segundo a notificação enviada ao Departamento de Desenvolvimento da Força de Trabalho de Wisconsin (DWD), a medida eliminará os 68 postos de trabalho vinculados à unidade, todos classificados como permanentes.\n\nDe acordo com a comunicação — um aviso do tipo WARN (Worker Adjustment and Retraining Notification) —, o encerramento das atividades deve ocorrer por volta de 15 de dezembro de 2026. A empresa informou que os funcionários afetados, representados pelo sindicato Teamsters Local 662, receberão salários e benefícios acordados até a data efetiva de desligamento, conforme exigido pela legislação estadual e federal sobre fechamento de empresas e demissões em massa.\n\nO fechamento da unidade de Marshfield, voltada à produção de queijo, integra um movimento mais amplo de consolidação da indústria láctea em Wisconsin, no qual fábricas menores e mais antigas têm perdido competitividade frente a operações de maior escala, capazes de diluir custos fixos sobre volumes mais altos de produção.",
+    "link": "/news#milknews-2026-08-31-01",
+    "data_publicacao": "2026-08-31",
+    "fontes": [
+      "https://www.wjfw.com/news/local/foremost-farms-closing-marshfield-cheese-plant-resulting-in-68-people-losing-jobs/article_16b707d5-6539-4101-9746-4fc674bc4c5b.html",
+      "https://www.wsaw.com/2026/08/26/foremost-farms-close-marshfield-plant-cutting-68-jobs/"
+    ]
+  },
+  {
+    "manchete": "Relatório da NAAB mostra Brasil como maior comprador de sêmen bovino dos EUA em volume em 2025",
+    "resumo": "O relatório anual da National Association of Animal Breeders (NAAB) mostra que as vendas de sêmen bovino dos Estados Unidos caíram 4% em 2025, para cerca de 66 milhões de doses, após o fechamento do mercado chinês. Apesar da queda geral, o sêmen sexado de leite cresceu 6%, e o Brasil retomou a liderança como maior comprador em volume entre os mercados de exportação. Dados: NAAB.",
+    "materia": "A National Association of Animal Breeders (NAAB), entidade que reúne cerca de 95% da indústria de inseminação artificial bovina dos Estados Unidos, divulgou seu relatório anual de vendas de sêmen referente a 2025. O total de doses comercializadas, somando leite e corte, recuou 4% em relação a 2024, para pouco menos de 66 milhões de unidades — retração atribuída principalmente ao fechamento do mercado chinês ao sêmen americano em fevereiro daquele ano.\n\nAs vendas de sêmen de leite (doméstico, exportado e coletado sob encomenda) somaram 45,8 milhões de doses, queda de 6% ante 2024. Já o sêmen sexado de leite seguiu em expansão, com alta de 6% e 10,6 milhões de doses comercializadas, respondendo por 64% do sêmen de leite usado pelos produtores americanos. O sêmen beef-on-dairy, usado para gerar bezerros de corte a partir de vacas leiteiras, manteve-se estável em 8,1 milhões de doses.\n\nNo mercado externo, apesar da perda da China como maior comprador, a NAAB registrou retomada do Brasil, que voltou à liderança entre os mercados internacionais em volume de doses importadas, à frente de México e Rússia. A entidade também destacou crescimento nas exportações para a Europa Ocidental (28%) e a Europa Oriental (19%), e informou que o sêmen americano chegou a 124 países em 2025, ante 108 no ano anterior.",
+    "link": "/news#milknews-2026-08-31-02",
+    "data_publicacao": "2026-08-31",
+    "fontes": [
+      "https://www.naab-css.org/uploads/userfiles/files/2025%20NAAB%20Regular%20Members%20Report%20Year%20End%20Semen%20Sales_FINAL.pdf",
+      "https://dairynews.today/news/us-genetic-market-signals-structural-shifts-in-global-dairy-and-beef-production-naab-report.html"
+    ]
+  }
+]
