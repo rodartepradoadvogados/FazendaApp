@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useId, useMemo, useState } from "react";
-import { Skull, AlertTriangle, Check, Search } from "lucide-react";
+import { Skull, AlertTriangle, Check, Search, X } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
@@ -105,6 +105,22 @@ export default function BaixarAnimal() {
   }, [animais, busca, filtroLote]);
   const ord = useOrdenacao(candidatos);
   const ordHistorico = useOrdenacao(historico || []);
+
+  // Resumo persistente de quem já foi selecionado — independente do filtro/
+  // busca atual da tabela. Sem isso, ao digitar o número do próximo animal
+  // na busca, os já selecionados (que não batem mais com o texto buscado)
+  // somem da tela sem deixar nenhum rastro visível, e só reaparecem
+  // marcados se o usuário limpar a busca de novo (relatado pelo usuário
+  // 31/08/2026: "só aparecem enquanto eu os seleciono").
+  const animalPorNumero = useMemo(() => {
+    const m = new Map<string, Animal>();
+    (animais || []).forEach((a) => m.set(a.numero, a));
+    return m;
+  }, [animais]);
+  const listaSelecionados = useMemo(
+    () => Array.from(selecionados).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [selecionados]
+  );
 
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
@@ -247,6 +263,32 @@ export default function BaixarAnimal() {
               </table>
             </div>
           </div>
+
+          {listaSelecionados.length > 0 && (
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", marginBottom: "1rem", background: "var(--surface-2)" }}>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>
+                Selecionados para conferência ({listaSelecionados.length}):
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {listaSelecionados.map((numero) => {
+                  const a = animalPorNumero.get(numero);
+                  return (
+                    <span key={numero} style={{
+                      display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.25rem 0.55rem",
+                      borderRadius: "999px", background: "var(--surface)", border: "1px solid var(--border)", fontSize: "0.78rem",
+                    }}>
+                      <strong>{numero}</strong>
+                      {a?.grupo_primario && <span style={{ color: "var(--text-muted)" }}>({a.grupo_primario})</span>}
+                      <button type="button" onClick={() => toggleAnimal(numero)} title="Remover da seleção"
+                        style={{ display: "flex", background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 0 }}>
+                        <X size={12} />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {modo === "a_descartar" && (
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
