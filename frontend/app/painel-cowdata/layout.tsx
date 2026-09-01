@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
-import { ehAppOuPwa } from "@/lib/nativo";
+import { ehApp, ehAppOuPwa } from "@/lib/nativo";
 import { temAreaPainelCowData, ehDono, type AreaPainelCowData } from "@/lib/api";
 import { consumirVeioDaAdministracao } from "@/lib/portalAdministracao";
 import { PainelCowDataTemaProvider, usePainelCowDataTema, type TemaPainelCowData } from "@/lib/painelCowDataTema";
@@ -187,8 +187,27 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   // botão "voltar", ver components/painel-cowdata/mobile/) em vez da barra
   // lateral/gaveta pensada pro desktop. Pedido explícito do usuário
   // (01/09/2026): "ao clicar em painel CowData no app, abra essa versão".
+  //
+  // CORRIGIDO (01/09/2026): `ehAppOuPwa()` sozinho também dá true pra um PWA
+  // instalado como atalho de DESKTOP/notebook (display-mode: standalone não
+  // tem relação nenhuma com tamanho de tela) — quem instalou o atalho no
+  // computador caía nesta casca mobile mesmo com o monitor inteiro. App
+  // nativo (Capacitor, sempre celular/tablet) continua entrando direto; PWA
+  // instalado só entra na casca mobile se a tela também for pequena — do
+  // contrário cai no layout clássico (barra lateral) mais abaixo, exatamente
+  // como pedido: "em tela de computador, notebook, no modo que já era".
   const [appMode, setAppMode] = useState(false);
-  useEffect(() => { ehAppOuPwa().then(setAppMode); }, []);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const avaliar = async () => {
+      if (await ehApp()) { setAppMode(true); return; }
+      const instalado = await ehAppOuPwa();
+      setAppMode(instalado && mq.matches);
+    };
+    avaliar();
+    mq.addEventListener("change", avaliar);
+    return () => mq.removeEventListener("change", avaliar);
+  }, []);
 
   const navConteudo = (
     <>
