@@ -23,7 +23,8 @@ import {
   fetchPrincipiosFarmaciaCowData, fetchCategoriasMedicamentoFarmaciaCowData,
   fetchClassificacoesMedicamentoFarmaciaCowData, fetchLaboratoriosFarmaciaCowData,
   fetchCategoriasFarmaciaCowData, fetchSubstitutivosPorFiltro, fetchSubstitutivosDeMedicamento,
-  fetchSugestoesMesclagem, mesclarItensEstoque, type SugestaoMesclagem,
+  fetchSugestoesMesclagem, mesclarItensEstoque, fetchEstoque, type SugestaoMesclagem,
+  fetchMedicamentoGlobalDetalhe, atualizarMedicamentoFarmaciaCowData,
   type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
   type EixoFiltroSubstitutivos, type MedicamentoFarmaciaCowData, type MedicamentoSubstituto,
 } from "@/lib/api";
@@ -349,22 +350,140 @@ function PainelMesclagem() {
   return (
     <div>
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1rem", maxWidth: "64ch" }}>
-        Itens de estoque do mesmo princípio ativo cadastrados mais de uma vez — normalmente porque um medicamento do
-        Painel CowData foi ativado com um nome diferente do que a fazenda já usava. Mesclar junta os dois num só,
-        sem perder o histórico de compra/consumo/aplicações nem o saldo em estoque: o item escolhido como
-        sobrevivente fica com tudo (inclusive lotes/frascos abertos), e ainda herda categoria, classificação,
-        laboratório e carência do padrão CowData quando um dos dois lados já vier de lá.
+        Mesclar junta dois ou mais itens de estoque do mesmo medicamento num só, sem perder o histórico de compra/
+        consumo/aplicações nem o saldo em estoque: o item escolhido pra permanecer fica com tudo (inclusive lotes/
+        frascos abertos), e ainda herda categoria, classificação, laboratório e carência do padrão CowData quando um
+        dos lados já vier de lá.
       </p>
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
-      {!sugestoes ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
-      ) : sugestoes.length === 0 ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma duplicidade encontrada.</p>
-      ) : (
-        <div className="space-y-3">
-          {sugestoes.map((s) => <GrupoMesclagem key={s.principio_ativo_id} s={s} onMudou={carregar} />)}
+      <MesclagemManual onMudou={carregar} />
+      <div style={{ marginTop: "1.6rem" }}>
+        <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.3rem" }}>Sugestões automáticas</p>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.8rem", maxWidth: "64ch" }}>
+          Itens ativos do mesmo princípio ativo cadastrados mais de uma vez — normalmente porque um medicamento do
+          Painel CowData foi ativado com um nome diferente do que a fazenda já usava.
+        </p>
+        {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+        {!sugestoes ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+        ) : sugestoes.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma duplicidade encontrada.</p>
+        ) : (
+          <div className="space-y-3">
+            {sugestoes.map((s) => <GrupoMesclagem key={s.principio_ativo_id} s={s} onMudou={carregar} />)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Seleção manual (01/09/2026) — pedido do usuário: além das sugestões
+// automáticas (que só agrupam por princípio ativo em comum), poder escolher
+// à mão 2+ medicamentos pra mesclar — útil quando o sistema não os agrupou
+// sozinho (nomes/princípios digitados de forma diferente). Só ativos por
+// padrão, com opção de incluir inativos; qual permanece é sempre escolha
+// explícita do usuário, nunca um palpite do sistema.
+function MesclagemManual({ onMudou }: { onMudou: () => void }) {
+  const [itens, setItens] = useState<any[]>([]);
+  const [incluirInativos, setIncluirInativos] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
+  const [sobreviventeId, setSobreviventeId] = useState<number | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  const carregarItens = () =>
+    fetchEstoque().then((d: any) => setItens((d.itens || []).filter((i: any) => i.finalidade === "Medicamento"))).catch(() => {});
+  useEffect(() => { carregarItens(); }, []);
+
+  const listaVisivel = useMemo(() => {
+    const termo = normalizar(busca.trim());
+    return itens
+      .filter((i) => incluirInativos || i.ativo !== false)
+      .filter((i) => !termo || normalizar(i.nome || "").includes(termo))
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
+  }, [itens, incluirInativos, busca]);
+
+  const alternarSelecao = (id: number) => {
+    setSelecionados((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(id)) { novo.delete(id); if (sobreviventeId === id) setSobreviventeId(null); }
+      else novo.add(id);
+      return novo;
+    });
+  };
+
+  const mesclar = async () => {
+    if (!sobreviventeId || selecionados.size < 2) return;
+    const perdedores = [...selecionados].filter((id) => id !== sobreviventeId);
+    if (!perdedores.length) return;
+    setSalvando(true); setErro(null); setAviso(null);
+    try {
+      const r = await mesclarItensEstoque(sobreviventeId, perdedores);
+      const partes = [`${perdedores.length} item(ns) mesclado(s) — todo o histórico de aplicações migrou pro item escolhido.`];
+      if (r.estoque_transferido) partes.push(`${r.estoque_transferido} de saldo transferido.`);
+      if (r.alinhou_padrao_cowdata) partes.push("Identidade alinhada com o padrão CowData.");
+      setAviso(partes.join(" "));
+      setSelecionados(new Set()); setSobreviventeId(null);
+      onMudou();
+      carregarItens();
+    } catch (e: any) { setErro(e.message || "Erro ao mesclar"); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.8rem 0.9rem" }}>
+      <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.4rem" }}>Selecionar manualmente</p>
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.6rem", maxWidth: "62ch" }}>
+        Escolha 2 ou mais medicamentos pra mesclar, mesmo que o sistema não os tenha agrupado sozinho. Marque qual
+        deve permanecer — ele recebe todo o histórico de aplicações/compra/consumo dos demais, que viram alias
+        inativo (nunca excluídos).
+      </p>
+      <div className="flex items-center gap-3 flex-wrap mb-2">
+        <input placeholder="Buscar por nome…" value={busca} onChange={(e) => setBusca(e.target.value)}
+          style={{ fontSize: "0.8rem", padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", minWidth: 220 }} />
+        <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--text-muted)", cursor: "pointer" }}>
+          <input type="checkbox" checked={incluirInativos} onChange={(e) => setIncluirInativos(e.target.checked)} />
+          Incluir inativos
+        </label>
+        {selecionados.size > 0 && <span style={{ fontSize: "0.76rem", color: "var(--dourado-light)" }}>{selecionados.size} selecionado(s)</span>}
+      </div>
+      <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, background: "var(--surface)" }}>
+        {listaVisivel.length === 0 ? (
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "0.6rem" }}>Nenhum medicamento encontrado.</p>
+        ) : listaVisivel.map((item) => (
+          <label key={item.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", padding: "0.4rem 0.6rem", borderBottom: "1px solid var(--border)" }}>
+            <input type="checkbox" checked={selecionados.has(item.id)} onChange={() => alternarSelecao(item.id)} />
+            <span style={{ flex: 1 }}>{item.nome}</span>
+            {item.ativo === false && <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>inativo</span>}
+            {item.quantidade != null && <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>saldo {item.quantidade}</span>}
+            {item.medicamento_comercial_id != null && (
+              <span style={{ fontSize: "0.68rem", color: "var(--dourado-light)", border: "1px solid var(--dourado)", borderRadius: 999, padding: "0.05rem 0.4rem" }}>
+                Padrão CowData
+              </span>
+            )}
+          </label>
+        ))}
+      </div>
+      {selecionados.size >= 2 && (
+        <div style={{ marginTop: "0.7rem" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>Qual deve permanecer?</p>
+          <div className="space-y-1">
+            {itens.filter((i) => selecionados.has(i.id)).map((item) => (
+              <label key={item.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+                <input type="radio" name="sobrevivente-manual" checked={sobreviventeId === item.id} onChange={() => setSobreviventeId(item.id)} />
+                {item.nome}
+              </label>
+            ))}
+          </div>
+          <button className="btn-primary mt-2" style={{ fontSize: "0.78rem" }} disabled={!sobreviventeId || salvando} onClick={mesclar}>
+            {salvando ? "Mesclando…" : `Mesclar ${selecionados.size - 1} item(ns) no escolhido`}
+          </button>
         </div>
       )}
+      {aviso && <p style={{ color: "var(--green-light)", fontSize: "0.76rem", marginTop: "0.5rem" }}>{aviso}</p>}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.76rem", marginTop: "0.5rem" }}>{erro}</p>}
     </div>
   );
 }
@@ -953,7 +1072,7 @@ function MarcaLinha({ m, principioId, onMudou, contextoGlobal, somenteLeitura }:
       </div>
 
       {editando && (
-        <FormEdicaoMarca principioId={principioId} marcaId={m.id}
+        <FormEdicaoMarca principioId={principioId} marcaId={m.id} contextoGlobal={contextoGlobal}
           onSalvo={(personalizouAutomaticamente) => { setEditando(false); onMudou(personalizouAutomaticamente); }}
           onCancelar={() => setEditando(false)} />
       )}
@@ -966,8 +1085,9 @@ function MarcaLinha({ m, principioId, onMudou, contextoGlobal, somenteLeitura }:
 // antes de editar, porque o PUT /farmacia/medicamentos/{id} substitui a marca
 // inteira: usar só os campos do catálogo (que não inclui dose_base/
 // dose_referencia_kg/ativo) apagaria esses campos ao salvar.
-function FormEdicaoMarca({ principioId, marcaId, onSalvo, onCancelar }: {
-  principioId: number; marcaId: number; onSalvo: (personalizouAutomaticamente?: boolean) => void; onCancelar: () => void;
+function FormEdicaoMarca({ principioId, marcaId, contextoGlobal, onSalvo, onCancelar }: {
+  principioId: number; marcaId: number; contextoGlobal?: boolean;
+  onSalvo: (personalizouAutomaticamente?: boolean) => void; onCancelar: () => void;
 }) {
   const [form, setForm] = useState<Record<string, any> | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -976,30 +1096,38 @@ function FormEdicaoMarca({ principioId, marcaId, onSalvo, onCancelar }: {
 
   useEffect(() => {
     let cancelado = false;
-    fetchFarmaciaDetalhe(principioId)
-      .then((d: any) => {
+    const carregar = contextoGlobal
+      ? fetchMedicamentoGlobalDetalhe(marcaId).then((full: any) => full)
+      : fetchFarmaciaDetalhe(principioId).then((d: any) => (d.marcas || []).find((mm: any) => mm.id === marcaId));
+    carregar
+      .then((full: any) => {
         if (cancelado) return;
-        const full = (d.marcas || []).find((mm: any) => mm.id === marcaId);
         if (!full) { setErro("Marca não encontrada"); return; }
         setForm({ ...full });
       })
       .catch((e: any) => !cancelado && setErro(e.message || "Erro ao carregar a marca"))
       .finally(() => !cancelado && setCarregando(false));
     return () => { cancelado = true; };
-  }, [principioId, marcaId]);
+  }, [principioId, marcaId, contextoGlobal]);
 
   const salvar = async () => {
     if (!form) return;
     setSalvando(true); setErro(null);
     try {
-      const r = await atualizarMarcaFarmacia(marcaId, {
+      const dados = {
         ...form,
         dose_padrao: form.dose_padrao === "" ? null : Number(form.dose_padrao),
         dose_referencia_kg: form.dose_referencia_kg === "" ? null : Number(form.dose_referencia_kg),
         carencia_leite_dias: form.carencia_leite_dias === "" || form.carencia_leite_dias == null ? null : Number(form.carencia_leite_dias),
         carencia_carne_dias: form.carencia_carne_dias === "" || form.carencia_carne_dias == null ? null : Number(form.carencia_carne_dias),
-      });
-      onSalvo(r.personalizou_automaticamente);
+      };
+      if (contextoGlobal) {
+        await atualizarMedicamentoFarmaciaCowData(marcaId, dados);
+        onSalvo(false);
+      } else {
+        const r = await atualizarMarcaFarmacia(marcaId, dados);
+        onSalvo(r.personalizou_automaticamente);
+      }
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar a bula");
     } finally {

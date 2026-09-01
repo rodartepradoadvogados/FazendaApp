@@ -4674,6 +4674,11 @@ export async function fetchMedicamentosFarmaciaCowData() {
   if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
   return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
 }
+export async function fetchMedicamentoGlobalDetalhe(id: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Detalhe do medicamento error: ${res.status}`); }
+  return res.json() as Promise<Record<string, any>>;
+}
 export async function criarMedicamentoFarmaciaCowData(dados: Record<string, any>) {
   const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
