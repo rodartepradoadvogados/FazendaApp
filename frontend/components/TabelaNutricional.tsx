@@ -7,11 +7,13 @@ import { X, Table2, Search, Plus, Trash2, Pencil, Download, Upload, Save } from 
 import {
   fetchTabelaNutricional, criarProdutoTabelaNutricional, renomearProdutoTabelaNutricional,
   excluirProdutoTabelaNutricional, salvarValoresTabelaNutricional, baixarModeloTabelaNutricional, importarTabelaNutricional,
+  fetchEstoque,
 } from "@/lib/api";
 import { casaBusca } from "@/lib/busca";
 
 type Dados = { alimentos: string[]; linhas: string[][] };
-type DadosEditavel = { alimentos: string[]; produto_ids: number[]; linhas: string[][] };
+type DadosEditavel = { alimentos: string[]; produto_ids: number[]; estoque_ids: (number | null)[]; linhas: string[][] };
+type ItemEstoqueSimples = { id: number; nome: string; finalidade?: string | null; ativo?: boolean };
 
 // ── Calculadora simples (aceita teclado numérico físico) ──
 function Calculadora() {
@@ -141,6 +143,9 @@ export function TabelaNutricionalCadastroInline() {
   const [dados, setDados] = useState<DadosEditavel | null>(null);
   const [grade, setGrade] = useState<Record<string, string>>({});
   const [novoProduto, setNovoProduto] = useState("");
+  const [estoqueEscolhidoId, setEstoqueEscolhidoId] = useState("");
+  const [textoLivre, setTextoLivre] = useState(false);
+  const [estoqueItens, setEstoqueItens] = useState<ItemEstoqueSimples[]>([]);
   const [novoNutriente, setNovoNutriente] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [importando, setImportando] = useState(false);
@@ -158,10 +163,25 @@ export function TabelaNutricionalCadastroInline() {
         d.produto_ids.forEach((pid, idx) => { g[chave(pid, nutriente)] = linha[idx + 1] || ""; });
       });
       setGrade(g);
-    }).catch(() => setDados({ alimentos: [], produto_ids: [], linhas: [] }));
+    }).catch(() => setDados({ alimentos: [], produto_ids: [], estoque_ids: [], linhas: [] }));
   }
 
   useEffect(() => { if (!dados) carregar(); }, [dados]);
+  useEffect(() => { fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => {}); }, []);
+
+  // Cadastro fechado de produtos de alimentação (mesmo critério de
+  // "finalidade indica alimento" usado em CadastroAlimentacao.tsx), menos os
+  // que já estão na tabela nutricional — "Nome do novo produto" deixa de ser
+  // texto livre por padrão; a flag abaixo permite voltar a digitar (produto
+  // fora do cadastro de Estoque, ex.: referência genérica de tabela).
+  const produtosDisponiveis = useMemo(() => {
+    const termosNutricao = ["aliment", "nutri", "racao"];
+    const jaNaTabela = new Set((dados?.estoque_ids || []).filter((id): id is number => id != null));
+    return estoqueItens
+      .filter((it) => it.ativo !== false)
+      .filter((it) => it.finalidade == null || termosNutricao.some((t) => casaBusca(it.finalidade!, t)))
+      .filter((it) => !jaNaTabela.has(it.id));
+  }, [estoqueItens, dados]);
 
   const nutrientes = useMemo(() => (dados?.linhas || []).map((l) => l[0]), [dados]);
 
@@ -179,11 +199,17 @@ export function TabelaNutricionalCadastroInline() {
   }
 
   async function adicionarProduto() {
-    const nome = novoProduto.trim();
-    if (!nome) return;
     try {
-      await criarProdutoTabelaNutricional(nome);
-      setNovoProduto("");
+      if (textoLivre) {
+        const nome = novoProduto.trim();
+        if (!nome) return;
+        await criarProdutoTabelaNutricional({ nome });
+        setNovoProduto("");
+      } else {
+        if (!estoqueEscolhidoId) return;
+        await criarProdutoTabelaNutricional({ estoque_id: Number(estoqueEscolhidoId) });
+        setEstoqueEscolhidoId("");
+      }
       carregar();
     } catch (e: any) { setMsg({ texto: e.message, erro: true }); }
   }
@@ -271,9 +297,21 @@ export function TabelaNutricionalCadastroInline() {
           </div>
 
           <div className="flex items-center gap-2 mt-3" style={{ flexWrap: "wrap" }}>
-            <input value={novoProduto} onChange={(e) => setNovoProduto(e.target.value)} placeholder="Nome do novo produto…"
-              style={{ ...cellInput, width: "auto", flex: "1 1 200px" }} onKeyDown={(e) => e.key === "Enter" && adicionarProduto()} />
+            {textoLivre ? (
+              <input value={novoProduto} onChange={(e) => setNovoProduto(e.target.value)} placeholder="Nome do novo produto…"
+                style={{ ...cellInput, width: "auto", flex: "1 1 200px" }} onKeyDown={(e) => e.key === "Enter" && adicionarProduto()} />
+            ) : (
+              <select value={estoqueEscolhidoId} onChange={(e) => setEstoqueEscolhidoId(e.target.value)}
+                style={{ ...cellInput, width: "auto", flex: "1 1 200px" }}>
+                <option value="">Selecione um produto de alimentação…</option>
+                {produtosDisponiveis.map((it) => <option key={it.id} value={it.id}>{it.nome}</option>)}
+              </select>
+            )}
             <button className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={adicionarProduto}><Plus size={13} /> Novo produto</button>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              <input type="checkbox" checked={textoLivre} onChange={(e) => { setTextoLivre(e.target.checked); setNovoProduto(""); setEstoqueEscolhidoId(""); }} />
+              Produto fora do cadastro (texto livre)
+            </label>
             <input value={novoNutriente} onChange={(e) => setNovoNutriente(e.target.value)} placeholder="Nome do novo nutriente…"
               style={{ ...cellInput, width: "auto", flex: "1 1 200px" }} onKeyDown={(e) => e.key === "Enter" && adicionarNutriente()} />
             <button className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={adicionarNutriente}><Plus size={13} /> Novo nutriente</button>

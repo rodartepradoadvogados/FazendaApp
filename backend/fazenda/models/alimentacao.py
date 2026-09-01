@@ -187,6 +187,10 @@ class TabelaNutricionalProduto(SQLModel, table=True):
     # Vínculo opcional com o cadastro de Alimento — quando presente, a tela de
     # cadastro do Alimento pode oferecer "cadastrar tabela nutricional" direto.
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
+    # Vínculo opcional com o item de Estoque que este produto representa —
+    # quando presente, o "nome" veio do cadastro fechado de produtos de
+    # alimentação (Estoque com finalidade Ração/Alimento) em vez de texto livre.
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id", index=True)
 
 
 class TabelaNutricionalValor(SQLModel, table=True):

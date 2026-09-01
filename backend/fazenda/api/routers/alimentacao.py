@@ -1208,11 +1208,18 @@ def obter_tabela_nutricional(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session, fazenda_id)
     linhas = [[nutriente] + [por_produto.get(p.id, {}).get(nutriente, "") for p in produtos] for nutriente in nutrientes_ordem]
-    return {"alimentos": [p.nome for p in produtos], "produto_ids": [p.id for p in produtos], "linhas": linhas}
+    return {
+        "alimentos": [p.nome for p in produtos], "produto_ids": [p.id for p in produtos],
+        "estoque_ids": [p.estoque_id for p in produtos], "linhas": linhas,
+    }
 
 
 class TabelaNutricionalProdutoIn(BaseModel):
-    nome: str
+    nome: str = ""
+    # Produto do cadastro fechado de Estoque (finalidade Ração/Alimento) —
+    # quando informado, `nome` é derivado do Estoque se não vier preenchido;
+    # None = texto livre (flag "outro produto" na tela).
+    estoque_id: int | None = None
 
 
 @router.post("/tabela-nutricional/produtos", status_code=201)
@@ -1221,6 +1228,16 @@ def criar_produto_tabela_nutricional(
 ) -> dict:
     from fazenda.models import TabelaNutricionalProduto
     nome = dados.nome.strip()
+    if dados.estoque_id is not None:
+        produto_estoque = session.get(Estoque, dados.estoque_id)
+        if not produto_estoque or (fazenda_id is not None and produto_estoque.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Produto de estoque não encontrado")
+        nome = nome or produto_estoque.nome
+        query_dup_estoque = select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.estoque_id == dados.estoque_id)
+        if fazenda_id is not None:
+            query_dup_estoque = query_dup_estoque.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+        if session.exec(query_dup_estoque).first():
+            raise HTTPException(status_code=409, detail=f'O produto "{produto_estoque.nome}" já está na tabela nutricional')
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do produto é obrigatório")
     query_dup = select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.nome == nome)
@@ -1231,7 +1248,9 @@ def criar_produto_tabela_nutricional(
     if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f'Já existe um produto chamado "{nome}" na tabela nutricional')
     maior_ordem = session.exec(query_ordem).first()
-    produto = TabelaNutricionalProduto(nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0, fazenda_id=fazenda_id)
+    produto = TabelaNutricionalProduto(
+        nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0, fazenda_id=fazenda_id, estoque_id=dados.estoque_id,
+    )
     session.add(produto)
     session.commit()
     session.refresh(produto)

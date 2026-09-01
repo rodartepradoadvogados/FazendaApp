@@ -153,6 +153,7 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
         <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: "0.8rem", minWidth: "62rem" }}>
           <thead>
             <tr>
+              <th style={{ ...th, minWidth: "9rem" }}>Produto</th>
               <th style={{ ...th, position: "sticky", left: 0, top: 0, zIndex: 3, minWidth: "12rem" }}>Ingrediente</th>
               <th style={{ ...th, minWidth: "9rem" }}>Categoria</th>
               <th style={th}>Conc. %</th>
@@ -164,12 +165,15 @@ export function GradeAlimentos({ itens, onChange }: { itens: ItemGrade[]; onChan
           </thead>
           <tbody>
             {itens.length === 0 && (
-              <tr><td colSpan={7 + CAMPOS_GRADE_PRINCIPAL.length} style={{ padding: "1.5rem" }}>
+              <tr><td colSpan={8 + CAMPOS_GRADE_PRINCIPAL.length} style={{ padding: "1.5rem" }}>
                 <div className="empty-state">Nenhum ingrediente ainda. Importe do cadastro, adicione uma linha manual ou use a biblioteca de referência acima.</div>
               </td></tr>
             )}
             {itens.map((it, idx) => (
               <tr key={idx}>
+                <td style={{ ...td, fontSize: "0.72rem", color: it.produto_nome ? "var(--text)" : "var(--text-muted)" }}>
+                  {it.produto_nome || "—"}
+                </td>
                 <td style={{ ...td, position: "sticky", left: 0, zIndex: 1, background: "var(--surface)", minWidth: "12rem" }}>
                   <button type="button" onClick={() => setDrawerIdx(idx)} title="Ver/editar todos os campos nutricionais"
                     style={{ background: "none", border: "none", padding: 0, color: "var(--text)", fontWeight: 600, cursor: "pointer", textAlign: "left" }}>
