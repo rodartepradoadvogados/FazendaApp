@@ -2734,6 +2734,22 @@ export async function atualizarAnimalFicha(numero: string, dados: Record<string,
   return res.json();
 }
 
+// Corrige o número/brinco de um animal (01/09/2026) — só admin do tenant
+// (backend: Depends(exigir_admin)); a Ficha do Animal reforça isso com um
+// cadeado que precisa ser destravado antes de mostrar o campo.
+export async function renumerarAnimal(numeroAtual: string, novoNumero: string) {
+  const res = await authFetch(`${API}/cadastro/animais/${numeroAtual}/renumerar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ novo_numero: novoNumero }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(mensagemErroApi(d.detail) || "Erro ao renumerar animal");
+    err.status = res.status;
+    throw err;
+  }
+  return res.json() as Promise<{ numero_antigo: string; numero_novo: string; tabelas_afetadas: string[] }>;
+}
+
 // Fêmeas da fazenda com pelo menos 1 parto registrado — matrizes possíveis
 // para a sugestão/autocomplete do campo "Número da mãe" na ficha do animal
 // (CadastroAnimalForm). O backend valida a compatibilidade de verdade ao
@@ -4472,6 +4488,31 @@ export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { qua
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao inicializar estoque"); }
   return res.json();
+}
+
+// Mesclagem de itens de Estoque (01/09/2026) — "o tenant alinhar com o
+// padrão CowData sem perder histórico/estoque": junta um item digitado pela
+// fazenda com o item-fantasma que o fan-out do Painel CowData criou (ou
+// dois itens duplicados quaisquer do mesmo princípio ativo), preservando
+// MovimentoEstoque, lotes/frascos abertos e saldo físico do(s) perdedor(es)
+// — ver POST /estoque/{sobrevivente_id}/mesclar.
+export type SugestaoMesclagem = {
+  principio_ativo_id: number; principio_ativo_nome: string; sobrevivente_sugerido_id: number;
+  itens: { id: number; nome: string; quantidade: number | null; medicamento_comercial_id?: number | null }[];
+};
+export async function fetchSugestoesMesclagem() {
+  const res = await authFetch(`${API}/estoque/sugestoes-mesclagem`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sugestões de mesclagem error: ${res.status}`);
+  return res.json() as Promise<SugestaoMesclagem[]>;
+}
+export async function mesclarItensEstoque(sobreviventeId: number, perdedorIds: number[]) {
+  const res = await authFetch(`${API}/estoque/${sobreviventeId}/mesclar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ perdedor_ids: perdedorIds }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao mesclar itens"); }
+  return res.json() as Promise<{
+    sobrevivente: Record<string, any>; mesclados: number; estoque_transferido: number; alinhou_padrao_cowdata: boolean;
+  }>;
 }
 
 // ── Indicações terapêuticas (substituto inteligente: princípio ↔ doença ↔ prioridade) ──

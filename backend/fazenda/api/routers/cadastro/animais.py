@@ -11,11 +11,18 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Parto, Raca, SeedFlag
+from fazenda.models import (
+    AgendaManual, Animal, AplicacaoAgendada, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro,
+    CronogramaSanitarioAnimal, ExameResultado, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa, MotivoVenda,
+    MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloCustomizadoAplicacao, ProtocoloIatfAplicacao,
+    ProtocoloInducaoAplicacao, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento, QualidadeLeite, Raca,
+    Sanidade, Secagem, SeedFlag, Servico, Usuario, VendaAnimal,
+)
 from fazenda.rules.auditoria import fazenda_id_seguro
 
 from ._comum import _crud_nome_ativo
@@ -280,6 +287,120 @@ def atualizar_ficha_animal(
     session.refresh(animal)
     return animal.model_dump()
 
+
+# ---------------------------------------------------------------------------
+# Renumerar animal — pedido do usuário (01/09/2026): "número/brinco digitado
+# errado" acontece (erro de digitação no cadastro, ou animal comprado com um
+# número que já tinha dono na fazenda) e hoje não existe correção nenhuma —
+# `AnimalFichaIn.numero` é ignorado de propósito em `atualizar_ficha_animal`
+# acima (`exclude={"numero"}`) porque `Animal.numero` é usado como CHAVE DE
+# TEXTO (não FK) em dezenas de tabelas de histórico (produção, reprodução,
+# sanidade...) sem constraint nenhuma amarrando — trocar sem cascatear
+# deixaria todo esse histórico "órfão", apontando pro número antigo que
+# deixou de existir.
+#
+# Por isso esta é uma ferramenta À PARTE, não um campo a mais no formulário
+# de edição normal: só administrador do tenant (`Depends(exigir_admin)`,
+# reforçado pelo cadeado da Ficha do Animal no frontend — ver
+# FichaAnimal.tsx), e propaga em cascata pra TODA referência por
+# numero_matriz/numero_animal conhecida, na mesma transação da troca de
+# `Animal.numero`.
+# ---------------------------------------------------------------------------
+
+# (modelo, campo) — toda tabela que guarda o número do animal por TEXTO
+# (sem FK pra Animal.id). `Animal.numero` é único globalmente (não só por
+# fazenda, ver `Animal.numero: ... unique=True`), então não precisa filtrar
+# por fazenda_id aqui: o valor antigo só pode pertencer a ESTE animal.
+_TABELAS_NUMERO_ANIMAL: list[tuple[type, str]] = [
+    (MovimentoLote, "numero_matriz"), (BaixaAnimal, "numero_animal"), (CompraAnimal, "numero_animal"),
+    (VendaAnimal, "numero_animal"), (ControleLeiteiro, "numero_matriz"), (PesagemCorporal, "numero_matriz"),
+    (QualidadeLeite, "numero_matriz"), (Secagem, "numero_matriz"), (Lactacao, "numero_matriz"),
+    (Servico, "numero_matriz"), (ProtocoloIatfAplicacao, "numero_matriz"), (Parto, "numero_matriz"),
+    (ColostragemBezerra, "numero_animal"), (Sanidade, "numero_matriz"), (AplicacaoAgendada, "numero_matriz"),
+    (ExameResultado, "numero_matriz"), (CronogramaSanitarioAnimal, "numero_matriz"),
+    (ProtocoloSanitarioLancamento, "numero_matriz"), (ProtocoloSanitarioAplicacao, "numero_matriz"),
+    (ProtocoloInducaoAplicacao, "numero_matriz"), (OcorrenciaClinica, "numero_matriz"),
+    (ProtocoloCustomizadoAplicacao, "numero_matriz"), (LidaAplicacao, "numero_matriz"),
+    # Genealogia — mãe/cria referenciados em texto livre por OUTRO animal.
+    (Animal, "mae_numero"), (Parto, "numero_cria_1"), (Parto, "numero_cria_2"),
+]
+
+
+def _renumerar_em_cascata(session: Session, numero_antigo: str, numero_novo: str) -> list[str]:
+    """Troca `numero_antigo` -> `numero_novo` em toda tabela que o referencia
+    por texto — ver `_TABELAS_NUMERO_ANIMAL`. Devolve os nomes das tabelas
+    que de fato tinham alguma linha pra trocar (só informativo)."""
+    tabelas_afetadas: list[str] = []
+    for modelo, campo in _TABELAS_NUMERO_ANIMAL:
+        linhas = session.exec(select(modelo).where(getattr(modelo, campo) == numero_antigo)).all()
+        for linha in linhas:
+            setattr(linha, campo, numero_novo)
+            session.add(linha)
+        if linhas:
+            tabelas_afetadas.append(f"{modelo.__name__}.{campo}")
+
+    # AgendaManual.numero_animal é uma lista CSV de números (evento pode
+    # estar vinculado a mais de um animal) — não dá pra trocar com um
+    # UPDATE de texto direto (um "12" dentro de "112,120" bateria errado);
+    # reescreve token a token.
+    for evento in session.exec(select(AgendaManual).where(AgendaManual.numero_animal.is_not(None))).all():
+        tokens = [t.strip() for t in (evento.numero_animal or "").split(",")]
+        if numero_antigo in tokens:
+            evento.numero_animal = ",".join(numero_novo if t == numero_antigo else t for t in tokens)
+            session.add(evento)
+            tabelas_afetadas.append("AgendaManual.numero_animal")
+
+    return sorted(set(tabelas_afetadas))
+
+
+class RenumerarAnimalIn(BaseModel):
+    novo_numero: str
+
+
+@router.post("/animais/{numero}/renumerar")
+def renumerar_animal(
+    numero: str, dados: RenumerarAnimalIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Corrige o número/brinco de um animal já cadastrado — só admin do
+    tenant, com cascata completa (ver `_renumerar_em_cascata`). Ação rara e
+    sensível: sem ela, um número digitado errado no cadastro nunca poderia
+    ser corrigido, só recadastrado do zero (perdendo o vínculo com todo o
+    histórico já lançado)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    numero_novo = dados.novo_numero.strip()
+    if not numero_novo:
+        raise HTTPException(status_code=400, detail="Informe o novo número/brinco")
+    if numero_novo == numero:
+        raise HTTPException(status_code=400, detail="O novo número é igual ao atual")
+
+    query_animal = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal não encontrado")
+
+    query_conflito = select(Animal).where(Animal.numero == numero_novo)
+    if fazenda_id is not None:
+        query_conflito = query_conflito.where(Animal.fazenda_id == fazenda_id)
+    if session.exec(query_conflito).first():
+        raise HTTPException(status_code=400, detail=f"Já existe um animal com o número {numero_novo}")
+
+    tabelas_afetadas = _renumerar_em_cascata(session, numero, numero_novo)
+    animal.numero = numero_novo
+    animal.atualizado_em = datetime.utcnow()
+    session.add(animal)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Não foi possível renumerar: \"{numero_novo}\" colide com um registro histórico existente.",
+        )
+    session.refresh(animal)
+    return {"numero_antigo": numero, "numero_novo": numero_novo, "tabelas_afetadas": tabelas_afetadas}
 
 
 # ---------------------------------------------------------------------------

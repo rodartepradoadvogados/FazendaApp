@@ -23,6 +23,7 @@ import {
   fetchPrincipiosFarmaciaCowData, fetchCategoriasMedicamentoFarmaciaCowData,
   fetchClassificacoesMedicamentoFarmaciaCowData, fetchLaboratoriosFarmaciaCowData,
   fetchCategoriasFarmaciaCowData, fetchSubstitutivosPorFiltro, fetchSubstitutivosDeMedicamento,
+  fetchSugestoesMesclagem, mesclarItensEstoque, type SugestaoMesclagem,
   type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
   type EixoFiltroSubstitutivos, type MedicamentoFarmaciaCowData, type MedicamentoSubstituto,
 } from "@/lib/api";
@@ -311,7 +312,132 @@ function statusEstoque(p: PrincipioIndicacaoCatalogo): { cor: string; label: str
 // de Conciliação de estoque mínimo, que É ação de configuração por fazenda.
 export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
   if (contextoGlobal) return <CatalogoFarmacia contextoGlobal />;
-  return <PainelEstoqueMinimo />;
+  return <PainelFarmaciaFazenda />;
+}
+
+function PainelFarmaciaFazenda() {
+  const [aba, setAba] = useState<"minimo" | "duplicados">("minimo");
+  return (
+    <div>
+      <div className="flex gap-2 mb-4">
+        <button className={aba === "minimo" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.78rem" }} onClick={() => setAba("minimo")}>
+          Estoque mínimo
+        </button>
+        <button className={aba === "duplicados" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.78rem" }} onClick={() => setAba("duplicados")}>
+          <GitCompareArrows size={13} style={{ marginRight: "0.3rem", verticalAlign: "text-bottom" }} /> Duplicados / Mesclar
+        </button>
+      </div>
+      {aba === "minimo" ? <PainelEstoqueMinimo /> : <PainelMesclagem />}
+    </div>
+  );
+}
+
+// Mesclagem de itens de Estoque (01/09/2026) — pedido do usuário: "o tenant
+// alinhar com o padrão CowData sem perder histórico/estoque". Duplicidade
+// típica: um medicamento é ativado no Painel CowData com um nome levemente
+// diferente do que a fazenda já usava pro mesmo princípio ativo — o fan-out
+// cria um item-fantasma novo (sem estoque real) em vez de reconhecer o item
+// existente. As sugestões (agrupadas por princípio ativo) nunca são
+// autoritativas — sobrevivente/perdedores continuam 100% editáveis aqui.
+function PainelMesclagem() {
+  const [sugestoes, setSugestoes] = useState<SugestaoMesclagem[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = () => fetchSugestoesMesclagem().then(setSugestoes).catch((e: any) => setErro(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1rem", maxWidth: "64ch" }}>
+        Itens de estoque do mesmo princípio ativo cadastrados mais de uma vez — normalmente porque um medicamento do
+        Painel CowData foi ativado com um nome diferente do que a fazenda já usava. Mesclar junta os dois num só,
+        sem perder o histórico de compra/consumo/aplicações nem o saldo em estoque: o item escolhido como
+        sobrevivente fica com tudo (inclusive lotes/frascos abertos), e ainda herda categoria, classificação,
+        laboratório e carência do padrão CowData quando um dos dois lados já vier de lá.
+      </p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+      {!sugestoes ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+      ) : sugestoes.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma duplicidade encontrada.</p>
+      ) : (
+        <div className="space-y-3">
+          {sugestoes.map((s) => <GrupoMesclagem key={s.principio_ativo_id} s={s} onMudou={carregar} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GrupoMesclagem({ s, onMudou }: { s: SugestaoMesclagem; onMudou: () => void }) {
+  const [sobreviventeId, setSobreviventeId] = useState<number>(s.sobrevivente_sugerido_id);
+  const [perdedoresSel, setPerdedoresSel] = useState<Set<number>>(
+    new Set(s.itens.filter((i) => i.id !== s.sobrevivente_sugerido_id).map((i) => i.id)),
+  );
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  const escolherSobrevivente = (id: number) => {
+    setSobreviventeId(id);
+    setPerdedoresSel(new Set(s.itens.filter((i) => i.id !== id).map((i) => i.id)));
+  };
+  const alternarPerdedor = (id: number) => {
+    if (id === sobreviventeId) return;
+    setPerdedoresSel((prev) => {
+      const novo = new Set(prev);
+      if (novo.has(id)) novo.delete(id); else novo.add(id);
+      return novo;
+    });
+  };
+
+  const mesclar = async () => {
+    const perdedores = [...perdedoresSel].filter((id) => id !== sobreviventeId);
+    if (!perdedores.length) return;
+    setSalvando(true); setErro(null); setAviso(null);
+    try {
+      const r = await mesclarItensEstoque(sobreviventeId, perdedores);
+      const partes = [`${perdedores.length} item(ns) mesclado(s).`];
+      if (r.estoque_transferido) partes.push(`${r.estoque_transferido} de saldo transferido pro sobrevivente.`);
+      if (r.alinhou_padrao_cowdata) partes.push("Identidade alinhada com o padrão CowData.");
+      setAviso(partes.join(" "));
+      onMudou();
+    } catch (e: any) { setErro(e.message || "Erro ao mesclar"); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.7rem 0.85rem" }}>
+      <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.5rem" }}>{s.principio_ativo_nome}</p>
+      <div className="space-y-1">
+        {s.itens.map((item) => (
+          <label key={item.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+            <input type="radio" name={`sobrevivente-${s.principio_ativo_id}`} checked={item.id === sobreviventeId} onChange={() => escolherSobrevivente(item.id)} />
+            {item.id !== sobreviventeId ? (
+              <input type="checkbox" checked={perdedoresSel.has(item.id)} onChange={() => alternarPerdedor(item.id)} />
+            ) : (
+              <span style={{ width: 13, display: "inline-block" }} />
+            )}
+            <span>{item.nome}</span>
+            {item.quantidade != null && <span style={{ color: "var(--text-muted)", fontSize: "0.74rem" }}>saldo {item.quantidade}</span>}
+            {item.medicamento_comercial_id != null && (
+              <span style={{ fontSize: "0.68rem", color: "var(--dourado-light)", border: "1px solid var(--dourado)", borderRadius: 999, padding: "0.05rem 0.4rem" }}>
+                Padrão CowData
+              </span>
+            )}
+            {item.id === sobreviventeId && <span style={{ fontSize: "0.7rem", color: "var(--green-light)" }}>sobrevivente</span>}
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <button className="btn-primary" style={{ fontSize: "0.76rem" }} disabled={salvando || perdedoresSel.size === 0} onClick={mesclar}>
+          {salvando ? "Mesclando…" : `Mesclar ${perdedoresSel.size} item(ns) no sobrevivente`}
+        </button>
+      </div>
+      {aviso && <p style={{ color: "var(--green-light)", fontSize: "0.76rem", marginTop: "0.4rem" }}>{aviso}</p>}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.76rem", marginTop: "0.4rem" }}>{erro}</p>}
+    </div>
+  );
 }
 
 export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoGlobal?: boolean; somenteLeitura?: boolean } = {}) {
