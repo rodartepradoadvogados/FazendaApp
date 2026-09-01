@@ -21,7 +21,8 @@ from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, CategoriaAlimento,
     ConsumoAlimento, ConsumoSobra, CurvaABC, Dieta, DietaItemProgramado, DietaLancamento, DietaRegistroReal,
-    Estoque, IngredienteMS, LancamentoItem, Lote, MovimentoEstoque, Sanidade, Usuario,
+    DietaSimulacaoItem, Estoque, IngredienteMS, LancamentoItem, Lote, MovimentoEstoque, Sanidade,
+    TabelaNutricionalProduto, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, resolver_kg_por_unidade, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -699,12 +700,34 @@ def excluir_alimento(
     alimento_id: int, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    """(bug real corrigido, relato do usuário 01/09/2026: "Failed to fetch"
+    ao excluir) `Alimento.id` é referenciado por FK opcional em outras 6
+    tabelas além de `Estoque` (histórico de dieta programada/consumida,
+    análise bromatológica, tabela nutricional, biblioteca nutricional da
+    Formulação de Dietas e item de simulação) — SQLite (usado nos testes)
+    não valida FK por padrão, então o `session.delete()` sempre passava por
+    aqui sem erro; o Postgres de produção rejeita a exclusão com uma
+    violação de integridade sempre que o Alimento ainda está referenciado
+    por qualquer uma delas, e a exceção não tratada aparecia no navegador
+    como "Failed to fetch". Cada linha referenciada perde só o vínculo
+    (nome/valores continuam intactos, gravados como texto/snapshot à parte
+    em todas elas) — nenhuma perde dado histórico."""
     alimento = session.get(Alimento, alimento_id)
     if not alimento or (fazenda_id is not None and alimento.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Alimento não encontrado")
-    for e in session.exec(select(Estoque).where(Estoque.alimento_id == alimento_id)).all():
-        e.alimento_id = None
-        session.add(e)
+    for modelo in (
+        Estoque, DietaItemProgramado, ConsumoAlimento, AnaliseBromatologica,
+        TabelaNutricionalProduto, AlimentoNutricional, DietaSimulacaoItem,
+    ):
+        for row in session.exec(select(modelo).where(modelo.alimento_id == alimento_id)).all():
+            row.alimento_id = None
+            session.add(row)
+    # Flush explícito ANTES do delete — garante que os UPDATEs (desvincular)
+    # cheguem ao banco antes do DELETE do Alimento em si. Sem isso, nada
+    # garante a ordem entre um DELETE avulso e UPDATEs pendentes na mesma
+    # sessão (ver o mesmo cuidado em exclusoes.py::_excluir_alvos_em_ordem,
+    # achado idêntico no animal 1291 no mesmo dia).
+    session.flush()
     session.delete(alimento)
     session.commit()
     return {"ok": True}
