@@ -27,6 +27,7 @@ from fazenda.models import (
     AgendaManual,
     Animal,
     CalendarioSanitario,
+    ColostragemBezerra,
     ComissaoCorretagem,
     CompraAnimal,
     CompraSemen,
@@ -38,6 +39,7 @@ from fazenda.models import (
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
+    FotoCampo,
     Lactacao,
     LancamentoItem,
     Lote,
@@ -508,6 +510,29 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         partos = session.exec(select(Parto).where(Parto.numero_matriz == id_)).all()
         controles = session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)).all()
         sanidades = session.exec(select(Sanidade).where(Sanidade.numero_matriz == id_)).all()
+        # ColostragemBezerra, Lactacao e FotoCampo têm FK de verdade pra
+        # animal.id (ao contrário dos quatro acima, que só casam por
+        # numero_matriz em texto solto) — sem incluí-los aqui, excluir o
+        # animal violava essa FK no Postgres de produção e o commit
+        # explodia num 500 que, por sair da exceção não tratada do
+        # FastAPI, sai sem cabeçalho CORS: o navegador não mostra o erro
+        # de verdade, só "Failed to fetch" (achado real, 01/09/2026 — o
+        # SQLite dos testes não pega isso porque não aplica FK por padrão).
+        # Casa por animal_id OU pelo número em texto, pra pegar também
+        # registros antigos de antes do FK existir.
+        colostragens = session.exec(
+            select(ColostragemBezerra).where(
+                (ColostragemBezerra.animal_id == animal.id) | (ColostragemBezerra.numero_animal == id_)
+            )
+        ).all()
+        lactacoes = session.exec(
+            select(Lactacao).where((Lactacao.animal_id == animal.id) | (Lactacao.numero_matriz == id_))
+        ).all()
+        fotos = session.exec(
+            select(FotoCampo).where(
+                (FotoCampo.animal_id == animal.id) | (FotoCampo.identificacao_animal == id_)
+            )
+        ).all()
         impacto = [f"Ficha do animal {id_}"]
         if servicos:
             impacto.append(f"{len(servicos)} serviço(s) de IA/cobertura")
@@ -517,7 +542,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             impacto.append(f"{len(controles)} registro(s) de controle leiteiro")
         if sanidades:
             impacto.append(f"{len(sanidades)} aplicação(ões) de sanidade")
-        return impacto, [animal, *servicos, *partos, *controles, *sanidades]
+        if colostragens:
+            impacto.append(f"{len(colostragens)} registro(s) de colostragem/IgG")
+        if lactacoes:
+            impacto.append(f"{len(lactacoes)} lactação(ões)")
+        if fotos:
+            impacto.append(f"{len(fotos)} foto(s) do campo")
+        return impacto, [animal, *servicos, *partos, *controles, *sanidades, *colostragens, *lactacoes, *fotos]
 
     if tipo == "servico":
         s = session.get(Servico, int(id_))
@@ -1185,6 +1216,30 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
     return avisos
 
 
+def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
+    """Apaga cada objeto de `alvos` com um flush logo em seguida, na ordem
+    INVERSA à que `_alvos()` devolve (que é sempre [raiz, *dependentes] — ex.:
+    [animal, *servicos, ...] ou [lancamento, *aplicações, ...]) — assim os
+    dependentes saem do banco antes da raiz.
+
+    Sem isto, `session.delete(a); session.delete(b); session.commit()`
+    deixa o SQLAlchemy livre pra emitir os DELETEs em QUALQUER ordem entre
+    mappers diferentes — ele só respeita dependência de FK automaticamente
+    quando existe um `relationship()` ORM declarado entre as classes, e este
+    código nunca declara (é todo baseado em `select()` avulso). Resultado
+    real, batido em teste (SQLite com PRAGMA foreign_keys=ON, que reproduz o
+    Postgres de produção): excluir um animal com `Servico.animal_id`
+    preenchido gerava `DELETE FROM animal` ANTES de `DELETE FROM servico` —
+    violação de FK, commit falha com uma exceção não tratada, e como esse
+    500 sai fora do CORSMiddleware (a exceção nunca passa pelo `send`
+    dele — quem responde é o ServerErrorMiddleware, que fica por fora), o
+    navegador nunca chega a ler o erro de verdade: só um "Failed to fetch"
+    sem pista nenhuma (achado real, animal 1291, 01/09/2026)."""
+    for obj in reversed(alvos):
+        session.delete(obj)
+        session.flush()
+
+
 class ExclusaoIn(BaseModel):
     tipo: str
     id: str
@@ -1218,8 +1273,7 @@ def confirmar(
         _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
         _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
-        for obj in alvos:
-            session.delete(obj)
+        _excluir_alvos_em_ordem(session, alvos)
         session.commit()
         return {"status": "excluido", "itens": itens, "avisos": avisos}
 
@@ -1269,8 +1323,7 @@ def aprovar_pendente(
     _reabrir_lactacao_das_secagens_excluidas(session, alvos, fazenda_id)
     _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
     avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
-    for obj in alvos:
-        session.delete(obj)
+    _excluir_alvos_em_ordem(session, alvos)
     sol.status = "aprovada"
     sol.decidido_por = user.username
     sol.decidido_em = datetime.utcnow()
