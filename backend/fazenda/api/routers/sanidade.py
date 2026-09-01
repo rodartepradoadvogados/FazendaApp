@@ -1190,7 +1190,8 @@ def listar_resultados_exame(
 ) -> list[dict]:
     """Relatório de resultados de exames (positivo/negativo/indefinido ou
     numérico) lançados via calendário sanitário preventivo — ver
-    cadastrar_preventivo. Só leitura, para acompanhamento."""
+    cadastrar_preventivo. Editar/excluir um resultado individual são as
+    rotas abaixo (PUT/DELETE via /exclusoes)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(ExameResultado).order_by(ExameResultado.data_exame.desc(), ExameResultado.id.desc())
     if fazenda_id is not None:
@@ -1210,6 +1211,63 @@ def listar_resultados_exame(
         d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
         saida.append(d)
     return saida
+
+
+class EditarResultadoExameIn(BaseModel):
+    data_exame: date | None = None
+    resultado: str | None = None
+    valor_numerico: float | None = None
+    veterinario: str | None = None
+    observacao: str | None = None
+
+
+@router.put("/exames/resultados/{resultado_id}")
+def editar_resultado_exame(
+    resultado_id: int, dados: EditarResultadoExameIn,
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Corrige o diagnóstico/valor de um exame preventivo já lançado — antes
+    desta rota, o relatório era só leitura e o único jeito de corrigir um
+    resultado errado era apagar e relançar manualmente o calendário inteiro.
+    Se o resultado mudar de/para "positivo", ajusta "A descartar" do animal
+    do mesmo jeito que o lançamento original faz (ver cadastrar_preventivo)
+    — nunca deixa a marcação automática dessincronizada do diagnóstico que a
+    gerou."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    r = session.get(ExameResultado, resultado_id)
+    if not r or (fazenda_id is not None and r.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Resultado de exame não encontrado")
+
+    campos = dados.model_dump(exclude_unset=True)
+    if campos.get("resultado") is not None and campos["resultado"] not in RESULTADOS_EXAME:
+        raise HTTPException(status_code=400, detail=f"Resultado inválido (use: {', '.join(RESULTADOS_EXAME)})")
+
+    resultado_anterior = r.resultado
+    for campo, valor in campos.items():
+        setattr(r, campo, valor)
+    if "valor_numerico" in campos or "resultado" in campos:
+        exame_def = session.get(ExameDefinicao, r.exame_definicao_id) if r.exame_definicao_id else None
+        r.banda = _banda_numerica(exame_def, r.valor_numerico) if r.valor_numerico is not None else None
+    session.add(r)
+    session.commit()
+
+    if r.resultado != resultado_anterior and (r.resultado == "positivo" or resultado_anterior == "positivo"):
+        ev = session.get(EventoSanitario, r.evento_sanitario_id)
+        marcar_a_descartar(
+            ADescartarIn(
+                animais=[r.numero_matriz],
+                descartar=(r.resultado == "positivo"),
+                observacao=f"Exame {ev.nome}: positivo" if ev and r.resultado == "positivo" else None,
+            ),
+            session=session,
+            fazenda_id=fazenda_id,
+        )
+
+    session.refresh(r)
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    d = r.model_dump()
+    d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
+    return d
 
 
 # ---------------------------------------------------------------------------

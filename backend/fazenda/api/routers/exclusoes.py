@@ -1281,6 +1281,16 @@ def confirmar(
         session.commit()
         return {"status": "excluido", "itens": itens, "avisos": avisos}
 
+    # `_alvos()` pode ter side effects de reversão (ex.: saldo de estoque em
+    # `estoque.py::_alvos_movimento_estoque`, "A descartar" em
+    # `sanidade.py::_alvos_exame_resultado`) escritos na sessão via
+    # `session.add(...)` — pensados pra rodar só quando a exclusão acontece
+    # de fato (aqui mesmo, no ramo admin acima, ou em `aprovar_pendente`, que
+    # chama `_alvos()` de novo na hora de aprovar). Uma mera SOLICITAÇÃO não
+    # pode carregar esses efeitos: descarta com rollback antes de gravar a
+    # `SolicitacaoExclusao` — sem isso, `session.commit()` logo abaixo
+    # persistiria a reversão junto, como se já tivesse sido aprovada.
+    session.rollback()
     solicitacao = SolicitacaoExclusao(
         tipo=dados.tipo,
         id_alvo=dados.id,
