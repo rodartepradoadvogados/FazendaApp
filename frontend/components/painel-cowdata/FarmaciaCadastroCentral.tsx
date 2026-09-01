@@ -7,13 +7,16 @@
 // item de Estoque correspondente em toda fazenda-cliente — inativo e não-
 // estocável, pronto pro tenant ativar se quiser (ver painel_cowdata_farmacia.py).
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Pill, Plus, Stethoscope, Syringe } from "lucide-react";
+import { AlertTriangle, Beaker, Building2, Pill, Plus, Stethoscope, Syringe, Tags } from "lucide-react";
 import {
   atualizarCategoriaFarmaciaCowData, criarCategoriaFarmaciaCowData,
   criarMedicamentoFarmaciaCowData, criarPrincipioFarmaciaCowData, excluirPrincipioFarmaciaCowData,
   fetchCategoriasFarmaciaCowData, fetchMedicamentosFarmaciaCowData, fetchPrincipiosFarmaciaCowData,
-  refazerFanoutMedicamentoFarmaciaCowData, CLASSIFICACOES_MEDICAMENTO,
-  type CategoriaFarmaciaCowData, type MedicamentoFarmaciaCowData, type PrincipioFarmaciaCowData,
+  refazerFanoutMedicamentoFarmaciaCowData,
+  fetchLaboratoriosFarmaciaCowData, criarLaboratorioFarmaciaCowData, atualizarLaboratorioFarmaciaCowData,
+  fetchCategoriasMedicamentoFarmaciaCowData, criarCategoriaMedicamentoFarmaciaCowData, atualizarCategoriaMedicamentoFarmaciaCowData,
+  fetchClassificacoesMedicamentoFarmaciaCowData, criarClassificacaoMedicamentoFarmaciaCowData, atualizarClassificacaoMedicamentoFarmaciaCowData,
+  type CategoriaFarmaciaCowData, type MedicamentoFarmaciaCowData, type PrincipioFarmaciaCowData, type ItemCadastroSimples,
 } from "@/lib/api";
 import SeletorMultiploComBusca from "@/components/SeletorMultiploComBusca";
 
@@ -30,52 +33,181 @@ const TIPOS: { valor: string; label: string; cor: string }[] = [
   { valor: "suporte", label: "Suporte", cor: "var(--cat-acesso)" },
 ];
 
-const ABAS = [
-  { chave: "categorias", label: "Categorias", icone: Stethoscope },
-  { chave: "principios", label: "Princípios ativos", icone: Pill },
-  { chave: "medicamentos", label: "Medicamentos", icone: Syringe },
+// Hierarquia pedida pelo usuário (01/09/2026), na ordem exata: Seção 1
+// (Doenças/Reprodutivo/Produtivo/Preventivo/Suporte/Todas — filtro por
+// Doenca.tipo) e Seção 2 (Medicamentos/Princípios ativos/Categorias/
+// Classificação do medicamento/Laboratórios — o catálogo de farmácia
+// propriamente dito). "Categorias" aqui é a Fase B ("Categoria (medicamento)":
+// antimicrobiano/antibiótico...) — não confundir com Doenca.tipo acima.
+const SECAO1_ABAS = [
+  { chave: "doenca", label: "Doenças" },
+  { chave: "reprodutivo", label: "Reprodutivo" },
+  { chave: "produtivo", label: "Produtivo" },
+  { chave: "preventivo", label: "Preventivo" },
+  { chave: "suporte", label: "Suporte" },
+  { chave: "todas", label: "Todas" },
 ] as const;
-type Aba = (typeof ABAS)[number]["chave"];
+const SECAO2_ABAS = [
+  { chave: "medicamentos", label: "Medicamentos", icone: Syringe },
+  { chave: "principios", label: "Princípios ativos", icone: Pill },
+  { chave: "categoriasMedicamento", label: "Categorias", icone: Tags },
+  { chave: "classificacoesMedicamento", label: "Classificação do medicamento", icone: Beaker },
+  { chave: "laboratorios", label: "Laboratórios", icone: Building2 },
+] as const;
+type Aba = (typeof SECAO1_ABAS)[number]["chave"] | (typeof SECAO2_ABAS)[number]["chave"];
+
+function BotaoAba({ ativo, onClick, children, icone: Icone }: { ativo: boolean; onClick: () => void; children: React.ReactNode; icone?: React.ComponentType<{ size?: number }> }) {
+  const { cor: COR } = usePainelCowDataEstilos();
+  return (
+    <button onClick={onClick}
+      style={{
+        fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: "var(--r-sm)", cursor: "pointer",
+        display: "inline-flex", alignItems: "center", gap: "0.4rem", fontWeight: 700,
+        border: `1px solid ${ativo ? COR.dourado : COR.borda}`,
+        background: ativo ? COR.dourado : "transparent",
+        color: ativo ? COR.bg : COR.mudo,
+      }}>
+      {Icone && <Icone size={14} />} {children}
+    </button>
+  );
+}
 
 export default function FarmaciaCadastroCentral() {
   const { cor: COR } = usePainelCowDataEstilos();
-  const [aba, setAba] = useState<Aba>("categorias");
+  const [aba, setAba] = useState<Aba>("doenca");
 
   return (
     <div>
+      <p style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, margin: "0 0 0.4rem" }}>
+        Seção 1 — Indicações
+      </p>
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-        {ABAS.map(({ chave, label, icone: Icone }) => (
-          <button key={chave} onClick={() => setAba(chave)}
-            style={{
-              fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: "var(--r-sm)", cursor: "pointer",
-              display: "inline-flex", alignItems: "center", gap: "0.4rem", fontWeight: 700,
-              border: `1px solid ${aba === chave ? COR.dourado : COR.borda}`,
-              background: aba === chave ? COR.dourado : "transparent",
-              color: aba === chave ? COR.bg : COR.mudo,
-            }}>
-            <Icone size={14} /> {label}
-          </button>
+        {SECAO1_ABAS.map(({ chave, label }) => (
+          <BotaoAba key={chave} ativo={aba === chave} onClick={() => setAba(chave)}>{label}</BotaoAba>
         ))}
       </div>
-      {aba === "categorias" && <AbaCategorias />}
-      {aba === "principios" && <AbaPrincipios />}
-      {aba === "medicamentos" && <AbaMedicamentos />}
+      <p style={{ fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: COR.mudo, margin: "0 0 0.4rem" }}>
+        Seção 2 — Catálogo de farmácia
+      </p>
+      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+        {SECAO2_ABAS.map(({ chave, label, icone }) => (
+          <BotaoAba key={chave} ativo={aba === chave} onClick={() => setAba(chave)} icone={icone}>{label}</BotaoAba>
+        ))}
+      </div>
+      <div style={{ borderTop: `1px solid ${COR.borda}`, paddingTop: "1rem" }}>
+        {(aba === "doenca" || aba === "reprodutivo" || aba === "produtivo" || aba === "preventivo" || aba === "suporte") && (
+          <AbaCategorias tipoFiltro={aba} />
+        )}
+        {aba === "todas" && <AbaCategorias />}
+        {aba === "principios" && <AbaPrincipios />}
+        {aba === "medicamentos" && <AbaMedicamentos />}
+        {aba === "categoriasMedicamento" && (
+          <AbaCatalogoSimples
+            titulo="Categoria (medicamento)"
+            descricao="Antimicrobiano, anti-inflamatório, antibiótico... — a classificação médica do medicamento (cumulativa: um medicamento pode ter mais de uma). Cadastrada aqui, vira padrão em todas as fazendas."
+            fetch={fetchCategoriasMedicamentoFarmaciaCowData} criar={criarCategoriaMedicamentoFarmaciaCowData} atualizar={atualizarCategoriaMedicamentoFarmaciaCowData}
+            placeholder="Ex.: Antiparasitário" />
+        )}
+        {aba === "classificacoesMedicamento" && (
+          <AbaCatalogoSimples
+            titulo="Classificação do medicamento"
+            descricao="Eixo próprio, independente de Categoria — cadastre os valores que fizerem sentido (ex.: controlado, genérico, uso interno/externo). Cumulativo, mesmo padrão de Categoria."
+            fetch={fetchClassificacoesMedicamentoFarmaciaCowData} criar={criarClassificacaoMedicamentoFarmaciaCowData} atualizar={atualizarClassificacaoMedicamentoFarmaciaCowData}
+            placeholder="Ex.: Genérico" />
+        )}
+        {aba === "laboratorios" && (
+          <AbaCatalogoSimples
+            titulo="Laboratório"
+            descricao="Fabricante do medicamento — alimenta o seletor tanto aqui quanto no cadastro de item de estoque do tenant."
+            fetch={fetchLaboratoriosFarmaciaCowData} criar={criarLaboratorioFarmaciaCowData} atualizar={atualizarLaboratorioFarmaciaCowData}
+            placeholder="Ex.: Ourofino" />
+        )}
+      </div>
     </div>
   );
 }
 
-function AbaCategorias() {
+// Cadastro "nome + ativo" genérico — reutilizado por Categoria (medicamento),
+// Classificação do medicamento e Laboratório (Fase B, 01/09/2026): mesma
+// interação de sempre (lista de pílulas + adicionar), sem repetir a mesma
+// tela 3 vezes.
+function AbaCatalogoSimples({ titulo, descricao, fetch, criar, atualizar, placeholder }: {
+  titulo: string; descricao: string; placeholder: string;
+  fetch: () => Promise<ItemCadastroSimples[]>;
+  criar: (dados: { nome: string; ativo?: boolean }) => Promise<ItemCadastroSimples>;
+  atualizar: (id: number, dados: { nome: string; ativo: boolean }) => Promise<ItemCadastroSimples>;
+}) {
+  const { cor: COR, inputStyle, btnPrimario, btnGhost } = usePainelCowDataEstilos();
+  const [lista, setLista] = useState<ItemCadastroSimples[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [nome, setNome] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  const carregar = () => fetch().then(setLista).catch((e) => setErro(e.message));
+  useEffect(() => { carregar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function adicionar() {
+    const nomeLimpo = nome.trim();
+    if (!nomeLimpo) { setErro("Informe o nome."); return; }
+    setErro(null); setSalvando(true);
+    try { await criar({ nome: nomeLimpo }); setNome(""); carregar(); }
+    catch (e) { setErro(msgErro(e)); } finally { setSalvando(false); }
+  }
+
+  async function alternarAtivo(item: ItemCadastroSimples) {
+    setErro(null);
+    try { await atualizar(item.id, { nome: item.nome, ativo: !item.ativo }); carregar(); }
+    catch (e) { setErro(msgErro(e)); }
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.8rem", color: COR.mudo, marginBottom: "0.8rem" }}>{descricao}</p>
+      <div style={{ display: "flex", gap: "0.6rem", marginBottom: "1rem" }}>
+        <input style={{ ...inputStyle, width: 260 }} value={nome} onChange={(e) => setNome(e.target.value)} placeholder={placeholder}
+          onKeyDown={(e) => { if (e.key === "Enter") adicionar(); }} />
+        <button style={btnPrimario} onClick={adicionar} disabled={salvando}><Plus size={14} /> Adicionar</button>
+      </div>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}><AlertTriangle size={13} style={{ display: "inline", marginRight: 4 }} />{erro}</p>}
+      {!lista ? <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Carregando…</p> : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+          {lista.map((item) => (
+            <span key={item.id} onClick={() => alternarAtivo(item)} title={item.ativo ? "Clique para desativar" : "Clique para reativar"} style={{
+              display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.3rem 0.65rem", cursor: "pointer",
+              borderRadius: 999, border: `1px solid ${COR.borda}`, background: COR.painelAlt, fontSize: "0.8rem",
+              color: item.ativo ? COR.texto : COR.mudo, opacity: item.ativo ? 1 : 0.6,
+            }}>
+              {item.nome}{!item.ativo && " (inativa)"}
+            </span>
+          ))}
+          {lista.length === 0 && <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Nada cadastrado ainda — {titulo.toLowerCase()} começa vazio.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AbaCategorias({ tipoFiltro }: { tipoFiltro?: string } = {}) {
   const { cor: COR, inputStyle, labelStyle, btnPrimario, btnGhost } = usePainelCowDataEstilos();
   const [lista, setLista] = useState<CategoriaFarmaciaCowData[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [nome, setNome] = useState("");
-  const [tipo, setTipo] = useState("doenca");
+  const [tipo, setTipo] = useState(tipoFiltro || "doenca");
   const [descricao, setDescricao] = useState("");
   const [editando, setEditando] = useState<number | null>(null);
   const [salvando, setSalvando] = useState(false);
 
   const carregar = () => fetchCategoriasFarmaciaCowData().then(setLista).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, []);
+  // Ao trocar de aba (Doenças/Reprodutivo/...), a nova categoria já nasce
+  // com o tipo daquela aba — evita cadastrar em Reprodutivo e o item cair
+  // sem querer em Doenças por esquecer de trocar o seletor.
+  useEffect(() => { if (!editando) setTipo(tipoFiltro || "doenca"); }, [tipoFiltro]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const listaFiltrada = useMemo(
+    () => (tipoFiltro ? (lista || []).filter((c) => c.tipo === tipoFiltro) : lista || []),
+    [lista, tipoFiltro],
+  );
 
   async function salvar() {
     const nomeLimpo = nome.trim();
@@ -84,7 +216,7 @@ function AbaCategorias() {
     try {
       if (editando != null) await atualizarCategoriaFarmaciaCowData(editando, { nome: nomeLimpo, tipo, descricao: descricao || null });
       else await criarCategoriaFarmaciaCowData({ nome: nomeLimpo, tipo, descricao: descricao || null });
-      setNome(""); setDescricao(""); setEditando(null);
+      setNome(""); setDescricao(""); setEditando(null); setTipo(tipoFiltro || "doenca");
       carregar();
     } catch (e) { setErro(msgErro(e)); } finally { setSalvando(false); }
   }
@@ -96,7 +228,7 @@ function AbaCategorias() {
   return (
     <div>
       <p style={{ fontSize: "0.8rem", color: COR.mudo, marginBottom: "0.8rem" }}>
-        Doença, Reprodutivo, Produtivo, Preventivo e Suporte — a categoria que organiza a Farmácia de toda fazenda-cliente.
+        Doença, Reprodutivo, Produtivo, Preventivo e Suporte — a indicação que organiza a Farmácia de toda fazenda-cliente.
         Cadastrada aqui, aparece automaticamente em todos os tenants.
       </p>
       <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem", alignItems: "flex-end" }}>
@@ -118,13 +250,13 @@ function AbaCategorias() {
           <Plus size={14} /> {editando != null ? "Salvar" : "Adicionar"}
         </button>
         {editando != null && (
-          <button style={btnGhost} onClick={() => { setEditando(null); setNome(""); setDescricao(""); }}>Cancelar</button>
+          <button style={btnGhost} onClick={() => { setEditando(null); setNome(""); setDescricao(""); setTipo(tipoFiltro || "doenca"); }}>Cancelar</button>
         )}
       </div>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}><AlertTriangle size={13} style={{ display: "inline", marginRight: 4 }} />{erro}</p>}
       {!lista ? <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Carregando…</p> : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-          {lista.map((c) => {
+          {listaFiltrada.map((c) => {
             const t = TIPOS.find((x) => x.valor === c.tipo);
             return (
               <div key={c.id} onClick={() => editar(c)} style={{
@@ -133,13 +265,13 @@ function AbaCategorias() {
               }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: t?.cor || COR.mudo, flexShrink: 0 }} />
                 <strong style={{ fontSize: "0.85rem", color: COR.texto }}>{c.nome}</strong>
-                <span style={{ fontSize: "0.72rem", color: COR.mudo }}>{t?.label || c.tipo}</span>
+                {!tipoFiltro && <span style={{ fontSize: "0.72rem", color: COR.mudo }}>{t?.label || c.tipo}</span>}
                 {!c.ativo && <span style={{ fontSize: "0.7rem", color: "var(--red)" }}>Inativa</span>}
                 {c.descricao && <span style={{ fontSize: "0.75rem", color: COR.mudo, marginLeft: "auto" }}>{c.descricao}</span>}
               </div>
             );
           })}
-          {lista.length === 0 && <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Nenhuma categoria cadastrada ainda.</p>}
+          {listaFiltrada.length === 0 && <p style={{ color: COR.mudo, fontSize: "0.85rem" }}>Nenhuma categoria cadastrada ainda.</p>}
         </div>
       )}
     </div>
@@ -205,6 +337,9 @@ function AbaMedicamentos() {
   const [lista, setLista] = useState<MedicamentoFarmaciaCowData[] | null>(null);
   const [principios, setPrincipios] = useState<PrincipioFarmaciaCowData[]>([]);
   const [categorias, setCategorias] = useState<CategoriaFarmaciaCowData[]>([]);
+  const [categoriasMedicamento, setCategoriasMedicamento] = useState<ItemCadastroSimples[]>([]);
+  const [classificacoesMedicamento, setClassificacoesMedicamento] = useState<ItemCadastroSimples[]>([]);
+  const [laboratorios, setLaboratorios] = useState<ItemCadastroSimples[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -217,11 +352,19 @@ function AbaMedicamentos() {
   const [carenciaLeite, setCarenciaLeite] = useState("");
   const [carenciaCarne, setCarenciaCarne] = useState("");
   const [proibidoLactacao, setProibidoLactacao] = useState(false);
-  const [classificacaoMedicamento, setClassificacaoMedicamento] = useState("");
+  const [categoriaMedicamentoIds, setCategoriaMedicamentoIds] = useState<number[]>([]);
+  const [classificacaoMedicamentoIds, setClassificacaoMedicamentoIds] = useState<number[]>([]);
 
   function carregar() {
-    Promise.all([fetchMedicamentosFarmaciaCowData(), fetchPrincipiosFarmaciaCowData(), fetchCategoriasFarmaciaCowData()])
-      .then(([m, p, c]) => { setLista(m); setPrincipios(p); setCategorias(c); })
+    Promise.all([
+      fetchMedicamentosFarmaciaCowData(), fetchPrincipiosFarmaciaCowData(), fetchCategoriasFarmaciaCowData(),
+      fetchCategoriasMedicamentoFarmaciaCowData(), fetchClassificacoesMedicamentoFarmaciaCowData(), fetchLaboratoriosFarmaciaCowData(),
+    ])
+      .then(([m, p, c, catMed, classMed, lab]) => {
+        setLista(m); setPrincipios(p); setCategorias(c);
+        setCategoriasMedicamento(catMed.filter((i) => i.ativo)); setClassificacoesMedicamento(classMed.filter((i) => i.ativo));
+        setLaboratorios(lab.filter((i) => i.ativo));
+      })
       .catch((e) => setErro(e.message));
   }
   useEffect(() => { carregar(); }, []);
@@ -239,7 +382,8 @@ function AbaMedicamentos() {
         carencia_leite_dias: carenciaLeite ? Number(carenciaLeite) : null,
         carencia_carne_dias: carenciaCarne ? Number(carenciaCarne) : null,
         proibido_lactacao: proibidoLactacao,
-        classificacao_medicamento: classificacaoMedicamento || null,
+        categoria_medicamento_ids: [...categoriaMedicamentoIds],
+        classificacao_medicamento_ids: [...classificacaoMedicamentoIds],
       });
       setMensagem(
         `"${nome}" cadastrado — item de estoque criado em ${resultado.fan_out.criados} fazenda(s)` +
@@ -247,7 +391,8 @@ function AbaMedicamentos() {
         ". Inativo e não-estocável até cada fazenda decidir ativar."
       );
       setNomeComercial(""); setLaboratorio(""); setPrincipioIds([]); setDoencaIds([]);
-      setDoseTexto(""); setCarenciaLeite(""); setCarenciaCarne(""); setProibidoLactacao(false); setClassificacaoMedicamento("");
+      setDoseTexto(""); setCarenciaLeite(""); setCarenciaCarne(""); setProibidoLactacao(false);
+      setCategoriaMedicamentoIds([]); setClassificacaoMedicamentoIds([]);
       carregar();
     } catch (e) { setErro(msgErro(e)); } finally { setSalvando(false); }
   }
@@ -280,7 +425,12 @@ function AbaMedicamentos() {
           </div>
           <div>
             <label style={labelStyle}>Laboratório (opcional)</label>
-            <input style={{ ...inputStyle, width: "100%" }} value={laboratorio} onChange={(e) => setLaboratorio(e.target.value)} placeholder="Ex.: Ourofino" />
+            <select style={{ ...inputStyle, width: "100%" }} value={laboratorio} onChange={(e) => setLaboratorio(e.target.value)}>
+              <option value="">—</option>
+              {laboratorio && !laboratorios.some((l) => l.nome === laboratorio) && <option value={laboratorio}>{laboratorio}</option>}
+              {laboratorios.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
+            </select>
+            {laboratorios.length === 0 && <span style={{ fontSize: "0.72rem", color: COR.mudo }}>Cadastre em Seção 2 › Laboratórios.</span>}
           </div>
         </div>
 
@@ -302,11 +452,20 @@ function AbaMedicamentos() {
         </div>
 
         <div style={{ marginBottom: "0.7rem" }}>
-          <label style={labelStyle}>Categoria (medicamento) — mesma classificação já usada no cadastro de item de estoque do tenant</label>
-          <select style={{ ...inputStyle, width: "100%" }} value={classificacaoMedicamento} onChange={(e) => setClassificacaoMedicamento(e.target.value)}>
-            <option value="">—</option>
-            {CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <SeletorMultiploComBusca
+            label="Categoria (medicamento) — pode marcar mais de uma"
+            opcoes={categoriasMedicamento.map((c) => ({ id: c.id, nome: c.nome }))}
+            selecionados={categoriaMedicamentoIds} onChange={setCategoriaMedicamentoIds}
+            placeholder="Ex.: Antibiótico" cor={COR} />
+          {categoriasMedicamento.length === 0 && <span style={{ fontSize: "0.72rem", color: COR.mudo }}>Cadastre em Seção 2 › Categorias.</span>}
+        </div>
+
+        <div style={{ marginBottom: "0.7rem" }}>
+          <SeletorMultiploComBusca
+            label="Classificação do medicamento — pode marcar mais de uma"
+            opcoes={classificacoesMedicamento.map((c) => ({ id: c.id, nome: c.nome }))}
+            selecionados={classificacaoMedicamentoIds} onChange={setClassificacaoMedicamentoIds}
+            placeholder="Ex.: Genérico, uso controlado…" cor={COR} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.6rem", marginBottom: "0.8rem" }}>

@@ -12,7 +12,9 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.auth import EMAIL_DONO, hash_senha
-from fazenda.models import Estoque, Fazenda, IndicacaoTerapeutica, MedicamentoComercial, PrincipioAtivo, Usuario
+from fazenda.models import (
+    Estoque, EstoqueCategoriaMedicamento, Fazenda, IndicacaoTerapeutica, MedicamentoComercial, PrincipioAtivo, Usuario,
+)
 
 
 @pytest.fixture
@@ -176,24 +178,84 @@ def test_fanout_propaga_categoria_medicamento_carencia_e_lactacao(client):
     token = _login(c)
     h = {"Authorization": f"Bearer {token}"}
     pa_id = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Tulatromicina"}, headers=h).json()["id"]
+    cat_id = c.post("/painel-cowdata/farmacia/categorias-medicamento", json={"nome": "Antibiótico"}, headers=h).json()["id"]
     r_med = c.post(
         "/painel-cowdata/farmacia/medicamentos",
         json={
             "nome_comercial": "Draxxin KP", "principio_ativo_ids": [pa_id], "laboratorio": "Zoetis",
-            "classificacao_medicamento": "Antibiótico", "proibido_lactacao": True, "carencia_carne_dias": 18,
+            "categoria_medicamento_ids": [cat_id], "proibido_lactacao": True, "carencia_carne_dias": 18,
         },
         headers=h,
     )
     assert r_med.status_code == 201, r_med.text
+    assert r_med.json()["categoria_medicamento_ids"] == [cat_id]
+    assert r_med.json()["classificacao_medicamento"] == "Antibiótico"  # espelho do escalar legado
 
     with Session(engine) as s:
         item = s.exec(select(Estoque).where(Estoque.nome == "Draxxin KP", Estoque.fazenda_id == fa_id)).first()
         assert item.categoria == "Medicamentos"
         assert item.classificacao_medicamento == "Antibiótico"
         assert item.laboratorio == "Zoetis"
+        vinculo = s.exec(
+            select(EstoqueCategoriaMedicamento).where(EstoqueCategoriaMedicamento.estoque_id == item.id)
+        ).first()
+        assert vinculo is not None and vinculo.categoria_medicamento_id == cat_id
         assert item.proibido_lactacao is True
         assert item.carencia_carne_dias == 18
         assert item.carencia_leite_dias is None  # não informado — nunca vira zero
+
+
+def test_catalogos_laboratorio_categoria_classificacao_crud(client):
+    """CRUD básico dos 3 catálogos novos (Fase B) — mesmo padrão de /principios."""
+    c, engine, fa_id, fb_id = client
+    token = _login(c)
+    h = {"Authorization": f"Bearer {token}"}
+
+    for prefixo, nome in [
+        ("laboratorios", "Ourofino"), ("categorias-medicamento", "Antiparasitário"),
+        ("classificacoes-medicamento", "Controlado"),
+    ]:
+        r_criar = c.post(f"/painel-cowdata/farmacia/{prefixo}", json={"nome": nome}, headers=h)
+        assert r_criar.status_code == 201, r_criar.text
+        item_id = r_criar.json()["id"]
+        assert r_criar.json()["fazenda_id"] is None
+
+        r_dup = c.post(f"/painel-cowdata/farmacia/{prefixo}", json={"nome": nome}, headers=h)
+        assert r_dup.status_code == 409
+
+        r_listar = c.get(f"/painel-cowdata/farmacia/{prefixo}", headers=h)
+        assert nome in [i["nome"] for i in r_listar.json()]
+
+        r_editar = c.put(f"/painel-cowdata/farmacia/{prefixo}/{item_id}", json={"nome": nome, "ativo": False}, headers=h)
+        assert r_editar.status_code == 200
+        assert r_editar.json()["ativo"] is False
+
+
+def test_categoria_e_classificacao_medicamento_sao_cumulativas(client):
+    """Pedido do usuário (01/09/2026): "categoria e classificação do
+    medicamento pode ser cumulativo, podendo cadastrar mais de 1"."""
+    c, engine, fa_id, fb_id = client
+    token = _login(c)
+    h = {"Authorization": f"Bearer {token}"}
+    pa_id = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Meloxicam"}, headers=h).json()["id"]
+    cat1 = c.post("/painel-cowdata/farmacia/categorias-medicamento", json={"nome": "Anti-inflamatório"}, headers=h).json()["id"]
+    cat2 = c.post("/painel-cowdata/farmacia/categorias-medicamento", json={"nome": "Analgésico"}, headers=h).json()["id"]
+    cla1 = c.post("/painel-cowdata/farmacia/classificacoes-medicamento", json={"nome": "Genérico"}, headers=h).json()["id"]
+    cla2 = c.post("/painel-cowdata/farmacia/classificacoes-medicamento", json={"nome": "Uso controlado"}, headers=h).json()["id"]
+
+    r_med = c.post(
+        "/painel-cowdata/farmacia/medicamentos",
+        json={
+            "nome_comercial": "Maxicam 2%", "principio_ativo_ids": [pa_id],
+            "categoria_medicamento_ids": [cat1, cat2], "classificacao_medicamento_ids": [cla1, cla2],
+        },
+        headers=h,
+    )
+    assert r_med.status_code == 201, r_med.text
+    corpo = r_med.json()
+    assert corpo["categoria_medicamento_ids"] == [cat1, cat2]
+    assert corpo["classificacao_medicamento_ids"] == [cla1, cla2]
+    assert corpo["classificacao_medicamento"] == "Anti-inflamatório"  # 1ª categoria espelhada no escalar legado
 
 
 def test_fanout_pula_fazenda_cowdata_interna(client):

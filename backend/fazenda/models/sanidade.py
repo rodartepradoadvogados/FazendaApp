@@ -295,6 +295,117 @@ class MedicamentoPrincipioAtivo(SQLModel, table=True):
     origem_id: Optional[int] = Field(default=None, foreign_key="medicamento_principio_ativo.id", index=True)
 
 
+class Laboratorio(SQLModel, table=True):
+    """Catálogo de laboratórios/fabricantes de medicamento — Configurações
+    (Painel CowData) > Farmácia > Cadastrar > Laboratórios. Mesmo padrão
+    "nome + ativo" global/por-fazenda de CategoriaEstoque (models/estoque.py).
+    `MedicamentoComercial.laboratorio`/`Estoque.laboratorio` continuam texto
+    livre (pedido do usuário, 01/09/2026: "puxe o padrão do que já há
+    cadastrado no painel CowData") — este catálogo só alimenta o seletor,
+    não substitui o dado já gravado."""
+
+    __tablename__ = "laboratorio"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_laboratorio_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CategoriaMedicamento(SQLModel, table=True):
+    """"Categoria (medicamento)" — antimicrobiano, anti-inflamatório,
+    antibiótico... (a classificação médica que o usuário chama de
+    "categoria", para não confundir com `CategoriaEstoque`, a lista geral de
+    Administrativo/Alim. Animal/Sêmen/etc. — ver Estoque.categoria). Nasce
+    semeada com os 7 valores hoje fixos em lib/api.ts::CLASSIFICACOES_MEDICAMENTO
+    (seed em rules/farmacia.py::seed_farmacia), mas o Painel CowData pode
+    cadastrar mais. Cumulativo (um medicamento pode ter mais de uma) — ver
+    `MedicamentoCategoria`/`EstoqueCategoriaMedicamento`."""
+
+    __tablename__ = "categoria_medicamento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_categoria_medicamento_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ClassificacaoMedicamento(SQLModel, table=True):
+    """"Classificação do medicamento" — eixo novo e independente de
+    Categoria (medicamento), pedido do usuário (01/09/2026) como item 2.4 da
+    hierarquia da Farmácia. Nasce vazio: o Painel CowData cadastra os valores
+    que quiser (ex.: controlado, genérico, uso interno/externo). Cumulativo,
+    mesmo padrão de CategoriaMedicamento."""
+
+    __tablename__ = "classificacao_medicamento_cad"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_classificacao_medicamento_cad_nome_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MedicamentoCategoria(SQLModel, table=True):
+    """Vínculo N-para-N entre marca comercial e CategoriaMedicamento —
+    cumulativo (sem "principal": ao contrário de princípio ativo, não há
+    hierarquia entre categorias, só a lista completa). O primeiro valor
+    escolhido é espelhado em `MedicamentoComercial.classificacao_medicamento`
+    (mantido por compatibilidade com quem já lê só o escalar)."""
+
+    __tablename__ = "medicamento_categoria"
+    __table_args__ = (UniqueConstraint("medicamento_comercial_id", "categoria_medicamento_id", name="uq_medicamento_categoria"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
+    categoria_medicamento_id: int = Field(foreign_key="categoria_medicamento.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MedicamentoClassificacao(SQLModel, table=True):
+    """Vínculo N-para-N entre marca comercial e ClassificacaoMedicamento —
+    mesmo espírito de MedicamentoCategoria, sem espelho escalar (eixo novo,
+    sem leitor pré-existente)."""
+
+    __tablename__ = "medicamento_classificacao"
+    __table_args__ = (UniqueConstraint("medicamento_comercial_id", "classificacao_medicamento_id", name="uq_medicamento_classificacao"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    medicamento_comercial_id: int = Field(foreign_key="medicamento_comercial.id", index=True)
+    classificacao_medicamento_id: int = Field(foreign_key="classificacao_medicamento_cad.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EstoqueCategoriaMedicamento(SQLModel, table=True):
+    """Espelho de MedicamentoCategoria no lado do item de Estoque do
+    tenant — propagado pelo fan-out, editável depois pelo tenant."""
+
+    __tablename__ = "estoque_categoria_medicamento"
+    __table_args__ = (UniqueConstraint("estoque_id", "categoria_medicamento_id", name="uq_estoque_categoria_medicamento"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    categoria_medicamento_id: int = Field(foreign_key="categoria_medicamento.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EstoqueClassificacaoMedicamento(SQLModel, table=True):
+    """Espelho de MedicamentoClassificacao no lado do item de Estoque do tenant."""
+
+    __tablename__ = "estoque_classificacao_medicamento"
+    __table_args__ = (UniqueConstraint("estoque_id", "classificacao_medicamento_id", name="uq_estoque_classificacao_medicamento"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    classificacao_medicamento_id: int = Field(foreign_key="classificacao_medicamento_cad.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ExameDefinicao(SQLModel, table=True):
     """
     Cadastro de um exame (ex.: Tuberculose, Brucelose) para o calendário
