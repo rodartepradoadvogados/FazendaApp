@@ -369,6 +369,21 @@ class DesfazerAplicacaoIn(BaseModel):
     numero_matriz: str
 
 
+def _frasco_da_ultima_baixa_protocolo(session: Session, origem_tipo: str, origem_id: int) -> tuple[int | None, int | None]:
+    """(`estoque_id`, `lote_id`) que a baixa mais recente desta origem/id de
+    fato usou — lido do próprio rastro em MovimentoEstoque (mesmo padrão de
+    `sanidade.py::_frasco_da_ultima_aplicacao`), pra devolver o estorno no
+    MESMO frasco/lote que a baixa consumiu, nunca em outro escolhido por
+    acaso pelo FIFO/nome na hora de desfazer."""
+    mov = session.exec(
+        select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo == origem_tipo, MovimentoEstoque.origem_id == origem_id,
+            MovimentoEstoque.movimento == "Aplicação",
+        ).order_by(MovimentoEstoque.id.desc())
+    ).first()
+    return (mov.estoque_id, mov.lote_id) if mov else (None, None)
+
+
 def _lancamento_ou_404(session: Session, origem: str, origem_id: int, fazenda_id: int | None):
     if origem not in _ORIGENS_COM_ACAO:
         raise HTTPException(
@@ -508,6 +523,48 @@ def detalhe(
                 }
                 for m in medicamentos_por_dia.get(d["dia"], [])
             ]
+    elif origem == "sanitario":
+        # Sanitário: um único produto por dia (a etapa do molde cadastrado) —
+        # diferente de IATF/Indução, que podem ter vários hormônios no mesmo
+        # dia. `ProtocoloSanitarioAplicacao.produto` pode ter fixado o
+        # medicamento no lançamento (etapa por princípio ativo/classificação,
+        # ver ProtocoloLancamentoIn.escolhas_medicamento); senão usa o produto
+        # já cadastrado na própria etapa. Como o produto vale pro dia inteiro
+        # (todo animal daquele dia usa a mesma etapa), uma aplicação
+        # qualquer do dia já basta pra descobrir etapa/produto.
+        etapa_por_dia: dict[int, ProtocoloSanitarioEtapa] = {}
+        produto_por_dia: dict[int, str] = {}
+        for a in aps:
+            if a.dia in etapa_por_dia:
+                continue
+            etapa = session.get(ProtocoloSanitarioEtapa, a.etapa_id)
+            if etapa:
+                etapa_por_dia[a.dia] = etapa
+                produto_por_dia[a.dia] = a.produto or etapa.produto
+        for d in dias.values():
+            etapa = etapa_por_dia.get(d["dia"])
+            if not etapa:
+                d["hormonios"] = []
+                continue
+            produto = produto_por_dia[d["dia"]]
+            opcoes = estoque_baixa.opcoes_medicamento(
+                session, fazenda_id=fazenda_id, produto=produto, incluir_sem_estoque=incluir_sem_estoque,
+            )[1]
+            # "de qual lote/frasco de COMPRA?" (Fase G) — um nível abaixo do
+            # frasco (estoque_id), mesmo seletor de 2 níveis que a aplicação
+            # avulsa de Sanidade já tem (ver FormSanidade.tsx). Só listado
+            # quando o frasco tem lote aberto — item sem lote nenhum não
+            # ganha essa chave, e o frontend trata como "sem escolha de lote".
+            for op in opcoes:
+                if op.get("estoque_id"):
+                    op["lotes"] = [
+                        {
+                            "id": l.id, "numero_lote": l.numero_lote,
+                            "data_compra": l.data_compra, "quantidade_restante": l.quantidade_restante,
+                        }
+                        for l in estoque_baixa.lotes_disponiveis(session, estoque_id=op["estoque_id"])
+                    ]
+            d["hormonios"] = [{"produto": produto, "dose": etapa.dosagem, "unidade": etapa.unidade, "via": etapa.via, "opcoes": opcoes}]
 
     total = len(aps)
     feitas = sum(1 for a in aps if a.realizada)
@@ -720,6 +777,13 @@ def dar_baixa(
         # — aqui só filtra as do dia/lote pedido (e do subconjunto de animais,
         # se veio) e chama a mesma função uma vez por aplicação pendente,
         # repassando a data retroativa.
+        # "De qual frasco/lote?" (Fase G, 01/09/2026): um só par
+        # estoque_id/lote_id pro dia inteiro — a etapa sanitária tem um único
+        # produto por dia, então não há por que pedir a escolha por animal
+        # (mesmo espírito de `medicamentos[0]` valendo pro grupo inteiro no
+        # IATF). Sem escolha, cai no comportamento de sempre: resolve pelo
+        # nome do produto e baixa em FIFO.
+        escolha = dados.medicamentos[0] if dados.medicamentos else None
         avisos = []
         pendentes = [
             a for a in _aplicacoes_do_lancamento(session, origem, origem_id)
@@ -729,6 +793,8 @@ def dar_baixa(
             avisos.extend(_baixar_protocolo_sanitario(
                 session, f"protocolo_sanitario_{ap.id}", fazenda_id=fazenda_id, usuario_id=usuario_id,
                 data_realizacao=dados.data_realizacao,
+                estoque_id=escolha.estoque_id if escolha else None,
+                lote_id=escolha.lote_id if escolha else None,
             ))
     else:
         _marcar_protocolo_custom_realizado(
@@ -804,7 +870,15 @@ def desfazer_aplicacao(
         etapa = session.get(ProtocoloSanitarioEtapa, aplicacao.etapa_id)
         if etapa and etapa.dosagem:
             produto = aplicacao.produto or etapa.produto
-            item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto)
+            # Devolve no MESMO frasco/lote que a baixa original consumiu —
+            # lido de volta do rastro em MovimentoEstoque (ver
+            # `_frasco_da_ultima_baixa_protocolo`), nunca resolvido de novo
+            # só pelo nome (que cairia no frasco "errado" se houver mais de
+            # um do mesmo produto, mesmo bug que A-13 já corrigiu em Sanidade).
+            estoque_id_usado, lote_id_usado = _frasco_da_ultima_baixa_protocolo(
+                session, "protocolo_sanitario", aplicacao.id,
+            )
+            item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id_usado)
             avisos.extend(estoque_baixa.devolver(
                 session, item=item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=date.today(),
                 fazenda_id=fazenda_id, usuario_id=usuario_id, produto=produto,
@@ -813,7 +887,7 @@ def desfazer_aplicacao(
                 # `_baixar_protocolo_sanitario` usa ao dar a baixa original —
                 # rastreada por APLICAÇÃO, não pelo lote (ver
                 # ProtocoloSanitarioAplicacao no modelo e exclusoes.py).
-                origem_tipo="protocolo_sanitario", origem_id=aplicacao.id,
+                origem_tipo="protocolo_sanitario", origem_id=aplicacao.id, lote_id=lote_id_usado,
             ))
     elif origem == "iatf":
         hoje = date.today()
@@ -943,7 +1017,7 @@ def cancelar(
             session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=hoje,
             fazenda_id=fazenda_id, usuario_id=usuario_id, produto=mov.nome_item,
             observacao=f"Estorno — protocolo cancelado ({lancamento.nome_protocolo})",
-            origem_tipo=mov.origem_tipo, origem_id=mov.origem_id,
+            origem_tipo=mov.origem_tipo, origem_id=mov.origem_id, lote_id=mov.lote_id,
         ))
 
     # `ativo=False` é o que marca "cancelado" nas três famílias — `_linha` já

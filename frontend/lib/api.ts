@@ -1135,7 +1135,14 @@ export async function fetchAgenda(data?: string, dias?: number) {
   return res.json();
 }
 
-export type MedicamentoIatf = { produto: string; estoque_id?: number | null; dose?: number | null; unidade?: string | null; via?: string | null };
+export type MedicamentoIatf = {
+  produto: string; estoque_id?: number | null;
+  // "de qual lote/frasco de COMPRA?" (Fase G) — só usado hoje pelo protocolo
+  // Sanitário na Central (ver DetalheCentralProtocolo.dias[].hormonios[].opcoes[].lotes);
+  // IATF/Indução ainda ignoram este campo no backend.
+  lote_id?: number | null;
+  dose?: number | null; unidade?: string | null; via?: string | null;
+};
 // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) + overrides
 // de aplicação agendada — cada campo só é lido pelo prefixo de evento_id
 // correspondente no backend (agenda.py::RealizadoIn), ignorado nos demais.
@@ -5227,6 +5234,10 @@ export type CelulaProtocolo = {
 export type OpcaoMedicamento = {
   estoque_id: number | null; nome: string; marca: string | null; saldo: number | null;
   unidade: string | null; estoque_inicializado: boolean; sem_estoque: boolean;
+  // "de qual lote/frasco de COMPRA?" (Fase G) — só vem preenchido para
+  // origem === "sanitario" hoje (ver central_protocolos.py::detalhe), e só
+  // quando o frasco (estoque_id) tem algum lote aberto com saldo.
+  lotes?: { id: number; numero_lote: string | null; data_compra: string; quantidade_restante: number }[];
 };
 export type HormonioProtocolo = {
   produto: string; dose: number | null; unidade: string | null; via: string | null;
@@ -5238,8 +5249,9 @@ export type DetalheCentralProtocolo = {
   ativo: boolean; etapas_total: number; etapas_realizadas: number; etapas_atrasadas: number;
   dias: {
     dia: number; rotulo: string; data_prevista: string; descricao: string | null; total: number; realizadas: number;
-    // Vem preenchido para origem === "iatf" ou "inducao" — o "qual
-    // medicamento/frasco?" que a Agenda já pergunta, agora também na Central.
+    // Vem preenchido para origem === "iatf", "inducao" ou "sanitario" — o
+    // "qual medicamento/frasco?" que a Agenda já pergunta, agora também na
+    // Central (Sanitário ganhou também o "de qual lote?", ver OpcaoMedicamento.lotes).
     hormonios?: HormonioProtocolo[];
   }[];
   animais: { numero_matriz: string; celulas: CelulaProtocolo[] }[];

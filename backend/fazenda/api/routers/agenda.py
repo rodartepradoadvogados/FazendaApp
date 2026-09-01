@@ -1713,6 +1713,12 @@ def calcular_agenda(
 class MedicamentoIatfIn(BaseModel):
     produto: str  # nome do medicamento/frasco escolhido (item de estoque)
     estoque_id: int | None = None  # "qual frasco?" — abate deste item específico
+    # "de qual lote/frasco de COMPRA?" (Fase G, 01/09/2026) — um nível abaixo
+    # de estoque_id, mesmo campo que a aplicação avulsa de Sanidade já tem
+    # (ver ItemSanidade em comumForms.tsx). Só usado hoje pelo protocolo
+    # Sanitário (ver _baixar_protocolo_sanitario); IATF/Indução ainda
+    # ignoram este campo. None = backend escolhe por FIFO (lote mais antigo).
+    lote_id: int | None = None
     dose: float | None = None
     unidade: str | None = None
     via: str | None = None
@@ -1829,7 +1835,7 @@ def _aplicar_cronograma(
 
 def _baixar_protocolo_sanitario(
     session: Session, evento_id: str, fazenda_id: int | None = None, usuario_id: int | None = None,
-    data_realizacao: date | None = None,
+    data_realizacao: date | None = None, estoque_id: int | None = None, lote_id: int | None = None,
 ) -> list[str]:
     """
     Ao marcar "realizado" um evento de protocolo sanitário: registra a
@@ -1842,6 +1848,11 @@ def _baixar_protocolo_sanitario(
     reaproveitam suas respectivas `_marcar_*_realizado`. A confirmação normal
     pela Agenda (POST /agenda/realizados) não passa este argumento — mantém
     o comportamento de sempre (hoje).
+
+    `estoque_id`/`lote_id` (Fase G, 01/09/2026): "de qual frasco/lote?" —
+    escolhidos pelo usuário na Central (ver `dar_baixa`, origem="sanitario").
+    Sem eles, resolve o item pelo nome do produto e a baixa cai em FIFO
+    (mesmo comportamento de sempre).
     """
     aplicacao_id = int(evento_id.removeprefix("protocolo_sanitario_"))
     aplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)
@@ -1868,11 +1879,12 @@ def _baixar_protocolo_sanitario(
         protocolo_sanitario_lancamento_id=lancamento.id, fazenda_id=fazenda_id,
     ))
 
-    estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto)
+    estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id)
     avisos = estoque_baixa.baixar(
         session, item=estoque_item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=data_efetiva,
         fazenda_id=fazenda_id, observacao=f"Protocolo sanitário — matriz {lancamento.numero_matriz} — D{etapa.dia}",
         usuario_id=usuario_id, origem_tipo="protocolo_sanitario", origem_id=aplicacao.id, produto=produto,
+        lote_id=lote_id,
     )
     session.commit()
     return avisos
