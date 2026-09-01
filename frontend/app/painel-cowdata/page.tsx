@@ -9,6 +9,8 @@ import {
 import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 import { registrarLeituraKpisCowData, calcularTendencia, type PontoHistoricoKpisCowData } from "@/lib/painelCowDataHistorico";
 import { Sparkline, SetaTendencia } from "@/components/painel-cowdata/KpiTendencia";
+import { ehAppOuPwa } from "@/lib/nativo";
+import InicioMobilePainelCowData from "@/components/painel-cowdata/mobile/InicioMobilePainelCowData";
 
 // Ordem de exibição do rodapé "Base de fazendas por plano" — nomes batem com
 // PLANOS_CATALOGO no backend (fazenda/models/planos.py); "Sob medida" e "Sem
@@ -44,6 +46,15 @@ function Cartao({
 
 export default function CockpitCowData() {
   const COR = usePainelCowDataCor();
+  // Dentro do app (nativo/PWA), a raiz do Painel CowData vira a grade de
+  // início mobile em vez deste Cockpit de desktop — ver PainelCowDataShell
+  // (app/painel-cowdata/layout.tsx::appMode) e o pedido do usuário
+  // (01/09/2026: "ao clicar em painel CowData no app, abra essa versão").
+  // O Cockpit de verdade continua existindo, só que numa tela própria
+  // (app/painel-cowdata/cockpit/page.tsx) — este componente aqui não muda
+  // em nada pro site.
+  const [appMode, setAppMode] = useState(false);
+  useEffect(() => { ehAppOuPwa().then(setAppMode); }, []);
   const [resumo, setResumo] = useState<ResumoCowData | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [historico, setHistorico] = useState<PontoHistoricoKpisCowData[]>([]);
@@ -122,6 +133,8 @@ export default function CockpitCowData() {
   }
 
   const historicoValores = (chave: keyof Omit<PontoHistoricoKpisCowData, "data">) => historico.map((p) => p[chave]);
+
+  if (appMode) return <InicioMobilePainelCowData />;
 
   return (
     <div className="animate-in">
