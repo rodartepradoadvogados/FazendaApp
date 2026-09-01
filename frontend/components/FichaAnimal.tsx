@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FileText, AlertTriangle, Download, Pencil, Save, X } from "lucide-react";
+import { FileText, AlertTriangle, Download, Pencil, Save, X, Lock, Unlock } from "lucide-react";
 import {
   fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida,
   verificarMaeParto, type VerificacaoMaeParto, fetchEquivalenteMaduroDoAnimal, type TrioEquivalenteMaduro,
-  fetchRacas, fetchGrausSangue,
+  fetchRacas, fetchGrausSangue, ehAdmin, renumerarAnimal,
 } from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -652,6 +652,13 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
   const [confirmMae, setConfirmMae] = useState<{ verificacao: VerificacaoMaeParto; payload: Record<string, any> } | null>(null);
   const [racas, setRacas] = useState<OpcaoListaFechada[]>([]);
   const [grausSangue, setGrausSangue] = useState<OpcaoListaFechada[]>([]);
+  // Cadeado do número/brinco (01/09/2026) — corrigir o número é uma ação
+  // rara e sensível (usada como chave de texto em dezenas de tabelas de
+  // histórico, ver renumerarAnimal), então fica travada atrás de um clique
+  // extra e só aparece pra administrador do tenant (ehAdmin()).
+  const [cadeadoNumeroAberto, setCadeadoNumeroAberto] = useState(false);
+  const [novoNumero, setNovoNumero] = useState("");
+  const [renumerando, setRenumerando] = useState(false);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
   useEffect(() => {
@@ -730,6 +737,23 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
       await buscar(numero);
     } catch (e: any) { setAviso(e.message || "Erro ao salvar."); }
     finally { setSalvando(false); }
+  }
+
+  async function confirmarRenumerar() {
+    const alvo = novoNumero.trim();
+    if (!alvo) return;
+    if (!window.confirm(
+      `Trocar o número/brinco de ${numero} para ${alvo}? Isso atualiza TODO o histórico já lançado ` +
+      `(produção, reprodução, sanidade, financeiro...) para o número novo. Não é possível desfazer com um clique.`
+    )) return;
+    setRenumerando(true); setAviso(null);
+    try {
+      await renumerarAnimal(numero, alvo);
+      setCadeadoNumeroAberto(false); setNovoNumero("");
+      setAviso(`Número corrigido: ${numero} → ${alvo}.`);
+      await buscar(alvo);
+    } catch (e: any) { setAviso(e.message || "Erro ao renumerar."); }
+    finally { setRenumerando(false); }
   }
 
   function abrirEditColostro() {
@@ -871,7 +895,18 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
           {aviso && <div className="mb-3" style={{ fontSize: "0.8rem", color: "var(--green-light)" }}>{aviso}</div>}
           <div className="card" style={cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
-              <span>{String(a.nome || a.numero)} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>(nº {String(a.numero)})</span></span>
+              <span>
+                {String(a.nome || a.numero)} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>(nº {String(a.numero)})</span>
+                {ehAdmin() && (
+                  <button
+                    className="btn-ghost" title={cadeadoNumeroAberto ? "Travar correção de número/brinco" : "Destravar correção de número/brinco (admin)"}
+                    style={{ marginLeft: "0.5rem", padding: "0.15rem 0.3rem", verticalAlign: "middle" }}
+                    onClick={() => { setCadeadoNumeroAberto((v) => !v); setNovoNumero(""); }}
+                  >
+                    {cadeadoNumeroAberto ? <Unlock size={13} /> : <Lock size={13} />}
+                  </button>
+                )}
+              </span>
               <div className="flex items-center gap-2">
                 {!editAnimal && <button className="btn-ghost" style={btnEdit} onClick={abrirEditAnimal}><Pencil size={13} /> Editar cadastro</button>}
                 <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={exportarPDF}>
@@ -879,6 +914,16 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                 </button>
               </div>
             </div>
+            {cadeadoNumeroAberto && (
+              <div className="flex items-center gap-2 mb-3" style={{ fontSize: "0.8rem", background: "var(--surface-2)", padding: "0.5rem 0.7rem", borderRadius: "var(--r-sm)" }}>
+                <span style={{ color: "var(--amber)" }}>Corrigir número/brinco (só admin — atualiza todo o histórico já lançado):</span>
+                <input style={{ ...inpStyle, width: 120 }} value={novoNumero} onChange={(e) => setNovoNumero(e.target.value)} placeholder="novo número" />
+                <button className="btn-primary" style={btnEdit} disabled={renumerando || !novoNumero.trim()} onClick={confirmarRenumerar}>
+                  {renumerando ? "Salvando…" : "Confirmar"}
+                </button>
+                <button className="btn-ghost" style={btnEdit} onClick={() => { setCadeadoNumeroAberto(false); setNovoNumero(""); }}>Cancelar</button>
+              </div>
+            )}
             {editAnimal ? (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

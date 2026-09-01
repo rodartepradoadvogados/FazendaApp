@@ -602,6 +602,48 @@ class MesclarEstoqueIn(BaseModel):
     perdedor_ids: list[int]
 
 
+def _alinhar_padrao_cowdata(session: Session, sobrevivente: Estoque, perdedor: Estoque) -> bool:
+    """Pedido do usuário (01/09/2026): mesclar precisa também servir para
+    "o tenant alinhar com o padrão CowData" — quando um dos dois lados já é
+    o item que o fan-out do Painel CowData criou (`medicamento_comercial_id`
+    setado, ver painel_cowdata_farmacia.py::_fan_out_medicamento) e o outro
+    é o item que a fazenda digitou por conta própria, o SOBREVIVENTE (que
+    fica com o histórico e o estoque) passa a herdar a identidade padrão
+    (vínculo com o catálogo global, categoria, classificação, princípio,
+    laboratório, carência) — nunca o NOME, que é o que o resto do sistema
+    já usa/referencia (Sanidade.produto, protocolos, financeiro...).
+
+    Campos escalares só preenchem lacuna (nunca sobrescrevem o que a
+    fazenda já tinha preenchido); as tags de categoria/classificação são
+    sempre UNIDAS dos dois lados, nos dois sentidos, mesmo que nenhum dos
+    dois seja o item padrão CowData (mesmo espírito do princípio ativo,
+    ver `principios_unidos` acima)."""
+    alinhou = False
+    if perdedor.medicamento_comercial_id and not sobrevivente.medicamento_comercial_id:
+        sobrevivente.medicamento_comercial_id = perdedor.medicamento_comercial_id
+        sobrevivente.categoria = sobrevivente.categoria or perdedor.categoria
+        sobrevivente.laboratorio = sobrevivente.laboratorio or perdedor.laboratorio
+        if sobrevivente.carencia_dias is None:
+            sobrevivente.carencia_dias = perdedor.carencia_dias
+        if sobrevivente.carencia_leite_dias is None:
+            sobrevivente.carencia_leite_dias = perdedor.carencia_leite_dias
+        if sobrevivente.carencia_carne_dias is None:
+            sobrevivente.carencia_carne_dias = perdedor.carencia_carne_dias
+        if sobrevivente.proibido_lactacao is None:
+            sobrevivente.proibido_lactacao = perdedor.proibido_lactacao
+        alinhou = True
+
+    categorias = set(tags_de(session, EstoqueCategoriaMedicamento, "estoque_id", sobrevivente.id, "categoria_medicamento_id"))
+    categorias.update(tags_de(session, EstoqueCategoriaMedicamento, "estoque_id", perdedor.id, "categoria_medicamento_id"))
+    classificacoes = set(tags_de(session, EstoqueClassificacaoMedicamento, "estoque_id", sobrevivente.id, "classificacao_medicamento_id"))
+    classificacoes.update(tags_de(session, EstoqueClassificacaoMedicamento, "estoque_id", perdedor.id, "classificacao_medicamento_id"))
+    if categorias or classificacoes:
+        _sincronizar_tags_estoque(session, sobrevivente, sorted(categorias), sorted(classificacoes))
+        alinhou = True
+    session.add(sobrevivente)
+    return alinhou
+
+
 @router.post("/{sobrevivente_id}/mesclar")
 def mesclar_itens_estoque(
     sobrevivente_id: int, dados: MesclarEstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -616,6 +658,8 @@ def mesclar_itens_estoque(
         raise HTTPException(status_code=400, detail="Selecione ao menos um item perdedor, diferente do sobrevivente")
 
     aliases_criados = 0
+    estoque_transferido = 0.0
+    alinhou_padrao_cowdata = False
     principios_unidos = set(principios_do_estoque(session, sobrevivente_id))
     for perdedor_id in perdedor_ids:
         perdedor = session.get(Estoque, perdedor_id)
@@ -631,7 +675,23 @@ def mesclar_itens_estoque(
             alimento.estoque_preferido_id = sobrevivente_id
             session.add(alimento)
 
+        # Saldo físico e lotes/frascos abertos (Fase G) — "sem perder
+        # estoque": o perdedor pode ter quantidade e/ou lotes de compra
+        # reais, não só histórico. Move os DOIS pro sobrevivente (repontar
+        # o dono do lote + somar o agregado), em vez de deixar o saldo do
+        # perdedor simplesmente desaparecer ao virar alias inativo.
+        for lote in session.exec(select(LoteEstoque).where(LoteEstoque.estoque_id == perdedor_id)).all():
+            lote.estoque_id = sobrevivente_id
+            session.add(lote)
+        saldo_perdedor = perdedor.quantidade or 0
+        if saldo_perdedor:
+            incrementar_quantidade_atomico(session, "estoque", sobrevivente_id, "quantidade", saldo_perdedor)
+            incrementar_quantidade_atomico(session, "estoque", perdedor_id, "quantidade", -saldo_perdedor)
+            estoque_transferido += saldo_perdedor
+
         principios_unidos.update(principios_do_estoque(session, perdedor_id))
+        if _alinhar_padrao_cowdata(session, sobrevivente, perdedor):
+            alinhou_padrao_cowdata = True
 
         marca_perdedor = resolver_marca_comercial(session, item=perdedor)
         carencia = carencia_para_item(perdedor, marca_perdedor)
@@ -655,7 +715,10 @@ def mesclar_itens_estoque(
         session.add(sobrevivente)
     session.commit()
     session.refresh(sobrevivente)
-    return {"sobrevivente": sobrevivente.model_dump(), "mesclados": aliases_criados}
+    return {
+        "sobrevivente": sobrevivente.model_dump(), "mesclados": aliases_criados,
+        "estoque_transferido": estoque_transferido, "alinhou_padrao_cowdata": alinhou_padrao_cowdata,
+    }
 
 
 @router.get("/sugestoes-mesclagem")
@@ -685,7 +748,10 @@ def sugestoes_mesclagem(
         sugestoes.append({
             "principio_ativo_id": pid, "principio_ativo_nome": (principios_por_id.get(pid) or PrincipioAtivo(nome="?")).nome,
             "sobrevivente_sugerido_id": sobrevivente_sugerido.id,
-            "itens": [{"id": e.id, "nome": e.nome, "quantidade": e.quantidade} for e in grupo_ordenado],
+            "itens": [
+                {"id": e.id, "nome": e.nome, "quantidade": e.quantidade, "medicamento_comercial_id": e.medicamento_comercial_id}
+                for e in grupo_ordenado
+            ],
         })
     return sugestoes
 

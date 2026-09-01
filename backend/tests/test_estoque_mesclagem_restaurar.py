@@ -15,7 +15,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import fazenda.database as database
 from fazenda.auth import criar_token, get_current_user, hash_senha
 from fazenda.models import (
-    Alimento, Estoque, EstoqueAliasMesclado, Fazenda, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Usuario,
+    Alimento, CategoriaMedicamento, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento, Fazenda, LoteEstoque,
+    MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Usuario,
 )
 
 
@@ -100,6 +101,110 @@ def test_mescla_repointa_movimentos_e_alimento_preferido(client):
         assert alias.nome_perdedor == "Meloxicam Antigo"
         assert alias.estoque_sobrevivente_id == sob_id
         assert alias.carencia_carne_dias_congelada == 10  # carência do PERDEDOR congelada, não herdada do sobrevivente
+
+
+def test_mescla_soma_quantidade_e_repontea_lotes(client):
+    """Pedido do usuário (01/09/2026): mesclar "sem perder... estoque" — o
+    saldo físico e os lotes/frascos abertos (Fase G) do perdedor precisam
+    ir pro sobrevivente, não desaparecer quando o perdedor vira alias
+    inativo."""
+    c, engine, fa_id, fb_id, usuario_id = client
+    with Session(engine) as s:
+        sobrevivente = Estoque(nome="Meloxicam Novo", fazenda_id=fa_id, ativo=True, estocavel=True, quantidade=5)
+        perdedor = Estoque(nome="Meloxicam Antigo", fazenda_id=fa_id, ativo=True, estocavel=True, quantidade=20)
+        s.add_all([sobrevivente, perdedor])
+        s.commit()
+        s.refresh(sobrevivente)
+        s.refresh(perdedor)
+        sob_id, perd_id = sobrevivente.id, perdedor.id
+
+        lote = LoteEstoque(
+            estoque_id=perd_id, fazenda_id=fa_id, data_compra=date(2026, 1, 1),
+            quantidade_comprada=20, quantidade_restante=20, ativo=True,
+        )
+        s.add(lote)
+        s.commit()
+        lote_id = lote.id
+
+    r = c.post(f"/estoque/{sob_id}/mesclar", json={"perdedor_ids": [perd_id]})
+    assert r.status_code == 200, r.text
+    assert r.json()["estoque_transferido"] == 20
+
+    with Session(engine) as s:
+        sobrevivente_depois = s.get(Estoque, sob_id)
+        assert sobrevivente_depois.quantidade == 25  # 5 + 20, nada perdido
+
+        perdedor_depois = s.get(Estoque, perd_id)
+        assert perdedor_depois.quantidade == 0  # saldo movido, não duplicado
+
+        lote_depois = s.get(LoteEstoque, lote_id)
+        assert lote_depois.estoque_id == sob_id  # lote repontado pro sobrevivente
+
+
+def test_mescla_alinha_item_com_padrao_cowdata(client):
+    """Pedido do usuário: mesclar serve pra "o tenant alinhar com o padrão
+    CowData" — quando o item padrão do fan-out (medicamento_comercial_id
+    setado) é um dos dois lados, o SOBREVIVENTE (que fica com histórico e
+    estoque) herda a identidade padrão, sem nunca trocar de nome."""
+    c, engine, fa_id, fb_id, usuario_id = client
+    with Session(engine) as s:
+        pa = PrincipioAtivo(nome="Tulatromicina", fazenda_id=None)
+        s.add(pa)
+        s.commit()
+        s.refresh(pa)
+        medicamento = MedicamentoComercial(nome_comercial="Draxxin KP", principio_ativo_id=pa.id, laboratorio="Zoetis", fazenda_id=None)
+        s.add(medicamento)
+        s.commit()
+        s.refresh(medicamento)
+        medicamento_id = medicamento.id
+
+        categoria = CategoriaMedicamento(nome="Antibiótico", fazenda_id=None)
+        s.add(categoria)
+        s.commit()
+        s.refresh(categoria)
+        categoria_id = categoria.id
+
+        # Item real da fazenda, com histórico — nome digitado antes de o
+        # Painel CowData cadastrar o medicamento oficial.
+        sobrevivente = Estoque(
+            nome="Draxxin da Zoetis", fazenda_id=fa_id, ativo=True, estocavel=True,
+            quantidade=10, principio_ativo_id=pa.id,
+        )
+        # Item-fantasma criado pelo fan-out (ver _fan_out_medicamento) —
+        # sempre ativo=False/estocavel=False, sem histórico nenhum, mas já
+        # com a identidade padrão.
+        perdedor = Estoque(
+            nome="Draxxin KP", fazenda_id=fa_id, ativo=False, estocavel=False, quantidade=0,
+            principio_ativo_id=pa.id, medicamento_comercial_id=medicamento.id,
+            categoria="Medicamentos", laboratorio="Zoetis", carencia_leite_dias=4, carencia_carne_dias=21,
+            proibido_lactacao=False,
+        )
+        s.add_all([sobrevivente, perdedor])
+        s.commit()
+        s.refresh(sobrevivente)
+        s.refresh(perdedor)
+        sob_id, perd_id = sobrevivente.id, perdedor.id
+
+        s.add(EstoqueCategoriaMedicamento(estoque_id=perd_id, categoria_medicamento_id=categoria.id))
+        s.commit()
+
+    r = c.post(f"/estoque/{sob_id}/mesclar", json={"perdedor_ids": [perd_id]})
+    assert r.status_code == 200, r.text
+    assert r.json()["alinhou_padrao_cowdata"] is True
+
+    with Session(engine) as s:
+        sobrevivente_depois = s.get(Estoque, sob_id)
+        assert sobrevivente_depois.nome == "Draxxin da Zoetis"  # nome NUNCA trocado
+        assert sobrevivente_depois.medicamento_comercial_id == medicamento_id
+        assert sobrevivente_depois.laboratorio == "Zoetis"
+        assert sobrevivente_depois.carencia_leite_dias == 4
+        assert sobrevivente_depois.carencia_carne_dias == 21
+        assert sobrevivente_depois.proibido_lactacao is False
+
+        tags = s.exec(
+            select(EstoqueCategoriaMedicamento).where(EstoqueCategoriaMedicamento.estoque_id == sob_id)
+        ).all()
+        assert {t.categoria_medicamento_id for t in tags} == {categoria_id}
 
 
 def test_mescla_bloqueia_itens_de_fazendas_diferentes(client):
