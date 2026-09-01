@@ -94,6 +94,38 @@ class TestIdempotencia:
         assert _contar(engine, AnaliseBromatologica) == 2
         assert _contar(engine, IdempotenciaChave) == 0
 
+    def test_falha_ao_gravar_cache_nao_derruba_a_resposta_ja_processada(self, client, monkeypatch):
+        """Bug real relatado pelo usuário (01/09/2026): "Sem conexão com a
+        API" ao confirmar um pagamento, mesmo o lançamento tendo sido salvo —
+        acontecia sempre, com ou sem anexar comprovante. Causa: o middleware
+        só perdoava `IntegrityError` (a corrida esperada entre duas tentativas
+        com a mesma chave) ao gravar o CACHE da idempotência — qualquer OUTRO
+        erro nesse passo (ex.: uma conexão instável com o Postgres) escapava
+        do middleware inteiro, derrubando a resposta que a rota já tinha
+        processado com sucesso. Simula esse "qualquer outro erro"."""
+        c, engine = client
+        from sqlmodel import Session as _SessionCls
+
+        # Quebra só o passo de GRAVAR o cache (session.add com uma
+        # IdempotenciaChave) — o SELECT de consulta ao cache, no início do
+        # middleware, continua funcionando normalmente, senão o teste nem
+        # chegaria a rodar a rota de verdade.
+        original_add = _SessionCls.add
+
+        def _add_quebrado(self, instance, *args, **kwargs):
+            if isinstance(instance, IdempotenciaChave):
+                raise RuntimeError("conexão instável com o Postgres (simulado)")
+            return original_add(self, instance, *args, **kwargs)
+
+        monkeypatch.setattr(_SessionCls, "add", _add_quebrado)
+        corpo = {"data": "2026-07-01", "alimento": "Silagem"}
+        r = c.post(CAMINHO, json=corpo, headers={"Idempotency-Key": "falha-cache-1"})
+        # A resposta real (o lançamento JÁ foi salvo pela rota) precisa chegar
+        # ao cliente mesmo com o cache de idempotência falhando por baixo.
+        assert r.status_code == 201, r.text
+        assert _contar(engine, AnaliseBromatologica) == 1
+        assert _contar(engine, IdempotenciaChave) == 0  # cache não gravou, e não precisa
+
     def test_erro_de_validacao_nao_fica_em_cache(self, client):
         c, engine = client
         r1 = c.post(CAMINHO, json={"data": "2026-07-01", "alimento": "   "}, headers={"Idempotency-Key": "retry1"})

@@ -5,6 +5,8 @@ pelo endpoint GET /alimentacao/tabela-nutricional para o modal + calculadora.
 """
 from __future__ import annotations
 
+import re
+
 ALIMENTOS = ["SILAGEM DE MILHO (60d)", "TECK MILK 24%", "MILK PROTEICO F. PREMIX", "CORTE 21", "BOVINOS PRÉ-PARTO", "BEZERRO 1"]
 
 # Cada linha: [nutriente, valor_alim1, valor_alim2, ...] (string vazia = sem dado)
@@ -62,3 +64,160 @@ LINHAS = [
 
 def tabela_nutricional() -> dict:
     return {"alimentos": ALIMENTOS, "linhas": LINHAS}
+
+
+# ---------------------------------------------------------------------------
+# Compor AlimentoNutricional (biblioteca de referência) a partir da Tabela
+# Nutricional — pedido do usuário (01/09/2026): usar a composição já digitada
+# por produto (texto livre, unidades mistas) em vez de deixar a importação de
+# dieta cair sempre no template genérico da categoria.
+#
+# A tabela mistura DOIS jeitos de expressar composição, e cada um pede um
+# tratamento diferente:
+#   - Volumoso (ex.: silagem): já vem em "% da MS" — usa direto, sem conversão.
+#   - Concentrado/mineral/premix comercial: vem como garantia de rótulo, em
+#     massa por kg de PRODUTO (g ou mg/kg) — é preciso (a) converter pra
+#     percentual do produto (÷10, já que 1kg = 1000g) e (b) reexpressar em
+#     percentual da MS (÷ MS do produto/100), porque todo o motor de cálculo
+#     (fazenda.rules.nutricao) trata os campos `_pct` como % da MS, salvo o
+#     próprio `ms_pct`. A MS do produto raramente vem explícita no rótulo,
+#     mas quase sempre dá pra derivar da linha "Umidade (Máx)" (MS ≈ 100% -
+#     umidade) — é o mesmo raciocínio de qualquer boletim de garantia.
+# Nutrientes em mg/UI/ufc (traço, vitaminas, aditivos) não têm campo tipado em
+# AlimentoNutricional (ver docstring da classe) — ficam em `extras_json`,
+# nunca descartados.
+# ---------------------------------------------------------------------------
+
+# nutriente da tabela -> campo de AlimentoNutricional (ver CAMPOS_NUTRICIONAIS
+# em fazenda/rules/nutricao/tipos.py). Cálcio/Fósforo etc. têm variantes
+# "(Mín)"/"(Máx)" como linhas SEPARADAS na tabela — o nome aqui já inclui o
+# sufixo porque é assim que a linha chega; MAPA_FALLBACK cobre o caso de só
+# existir a variante Máx.
+MAPA_NUTRIENTE_PARA_CAMPO: dict[str, str] = {
+    "Proteína Bruta": "pb_pct",
+    "PIDA": "pida_pct",
+    "PIDN": "pidn_pct",
+    "Extrato Etéreo (Gordura)": "ee_pct",
+    "FDN (Fibra em Det. Neutro)": "fdn_pct",
+    "FDA (Fibra em Det. Ácido)": "fda_pct",
+    "Matéria Mineral / Cinzas": "cinzas_pct",
+    "Amido": "amido_pct",
+    "Lignina": "lignina_pct",
+    "Cálcio (Mín)": "ca_pct",
+    "Fósforo (Mín)": "p_pct",
+    "Magnésio (Mín)": "mg_pct",
+    "Enxofre (Mín)": "s_pct",
+    "Sódio (Mín)": "na_pct",
+    "Cloro (Mín)": "cl_pct",
+    "Potássio": "k_pct",
+}
+# Só usado se a variante "(Mín)" da mesma linha não existir nesta coluna.
+MAPA_NUTRIENTE_FALLBACK: dict[str, str] = {
+    "Cálcio (Máx)": "ca_pct",
+    "Fósforo (Máx)": "p_pct",
+    "Magnésio (Máx)": "mg_pct",
+    "Enxofre (Máx)": "s_pct",
+    "Sódio (Máx)": "na_pct",
+    "Cloro (Máx)": "cl_pct",
+}
+
+_RE_VALOR = re.compile(r"^\s*([\d.]+,\d+|\d+)\s*(.*)$")
+
+
+def parse_valor(texto: str) -> tuple[float, str] | None:
+    """"5.500,00 mg" -> (5500.0, "mg"); "6,71% MS" -> (6.71, "% MS");
+    "Não informado" ou vazio -> None (nada a extrair)."""
+    texto = (texto or "").strip()
+    if not texto:
+        return None
+    m = _RE_VALOR.match(texto)
+    if not m:
+        return None
+    numero_str, unidade = m.group(1), m.group(2).strip()
+    numero = float(numero_str.replace(".", "").replace(",", "."))
+    return numero, unidade
+
+
+def _pct_de_unidade_massa(numero: float, unidade: str) -> float | None:
+    """Converte uma garantia "X g/kg de produto" ou "X mg/kg de produto" em
+    percentual do PRODUTO (base como oferecido, ainda não é % da MS)."""
+    u = unidade.lower()
+    if u.startswith("mg"):
+        return numero / 1000.0 / 10.0  # mg -> g, depois g/kg -> %
+    if u.startswith("g"):
+        return numero / 10.0
+    return None
+
+
+def compor_alimento_nutricional_de_tabela(nutriente_valores: dict[str, str]) -> tuple[dict[str, float], dict[str, str]]:
+    """Recebe {nutriente: valor_bruto} de UM produto (uma coluna da tabela) e
+    devolve (campos_convertidos, nao_convertidos) — o primeiro pronto pra
+    gravar em AlimentoNutricional, o segundo guarda o texto original de cada
+    nutriente que não tem campo tipado correspondente (destino: extras_json)."""
+    convertidos: dict[str, float] = {}
+    nao_convertidos: dict[str, str] = {}
+
+    # 1) MS do produto — direto se a linha existir, senão derivado de Umidade
+    # (MS ≈ 100% - umidade máxima admitida). Precisa vir ANTES do resto porque
+    # os itens em massa/kg de produto dependem dela para virar % da MS.
+    ms_pct: float | None = None
+    bruto_ms = parse_valor(nutriente_valores.get("Matéria Seca (MS)", ""))
+    if bruto_ms and "%" in bruto_ms[1]:
+        ms_pct = bruto_ms[0]
+    else:
+        bruto_umidade = parse_valor(nutriente_valores.get("Umidade", ""))
+        if bruto_umidade:
+            numero, unidade = bruto_umidade
+            umidade_pct = numero if "%" in unidade else _pct_de_unidade_massa(numero, unidade)
+            if umidade_pct is not None:
+                ms_pct = max(0.0, min(100.0, 100.0 - umidade_pct))
+    if ms_pct is not None:
+        convertidos["ms_pct"] = round(ms_pct, 2)
+
+    # 2) Demais nutrientes mapeados — "(Mín)" tem prioridade sobre "(Máx)".
+    for nutriente, valor_bruto in nutriente_valores.items():
+        if nutriente in ("Matéria Seca (MS)", "Umidade"):
+            continue
+        campo = MAPA_NUTRIENTE_PARA_CAMPO.get(nutriente)
+        eh_fallback_ja_coberto = False
+        if campo is None:
+            campo = MAPA_NUTRIENTE_FALLBACK.get(nutriente)
+            if campo is not None:
+                # só usa o "(Máx)" se a linha "(Mín)" correspondente estiver
+                # vazia/ausente nesta mesma coluna — "(Mín)" já processado
+                # no laço não garante ordem, então checa direto o valor bruto.
+                nome_min = nutriente.replace("(Máx)", "(Mín)")
+                eh_fallback_ja_coberto = bool(parse_valor(nutriente_valores.get(nome_min, "")))
+        if campo is None:
+            if valor_bruto and valor_bruto.strip() and valor_bruto.strip().lower() != "não informado":
+                nao_convertidos[nutriente] = valor_bruto
+            continue
+        if eh_fallback_ja_coberto:
+            continue  # a variante "(Mín)" já preencheu este campo
+
+        bruto = parse_valor(valor_bruto)
+        if not bruto:
+            continue
+        numero, unidade = bruto
+        u = unidade.lower()
+        if "%" in u:
+            # já é percentual — "% MS"/"% da MS" é direto; "% PB" (ex.:
+            # Proteína Solúvel) não tem campo tipado, mas isso já não chega
+            # aqui porque só nutrientes MAPEADOS entram neste ramo, e nenhum
+            # deles usa base "% PB".
+            convertidos[campo] = round(numero, 2)
+        elif u.startswith("g") or u.startswith("mg"):
+            pct_produto = _pct_de_unidade_massa(numero, unidade)
+            if pct_produto is None:
+                continue
+            if ms_pct and ms_pct > 0:
+                convertidos[campo] = round(pct_produto / (ms_pct / 100.0), 2)
+            else:
+                # Sem MS conhecida do produto — melhor aproximação disponível
+                # é assumir garantia≈%MS (erro típico de poucos pontos
+                # percentuais pra produto seco); documentado em `fonte`.
+                convertidos[campo] = round(pct_produto, 2)
+        else:
+            nao_convertidos[nutriente] = valor_bruto
+
+    return convertidos, nao_convertidos
