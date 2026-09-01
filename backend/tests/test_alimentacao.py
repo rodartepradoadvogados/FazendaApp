@@ -10,13 +10,15 @@ from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    AlimentacaoEstado, Alimento, AnaliseBromatologica, Animal, CategoriaAlimento, ControleLeiteiro, Dieta, Estoque,
-    IngredienteMS, Lote, MovimentoEstoque,
+    AlimentacaoEstado, Alimento, AlimentoNutricional, AnaliseBromatologica, Animal, CategoriaAlimento,
+    ConsumoAlimento, ControleLeiteiro, Dieta, DietaItemProgramado, DietaLancamento, DietaSimulacao,
+    DietaSimulacaoItem, Estoque, Fazenda, IngredienteMS, Lote, MovimentoEstoque, TabelaNutricionalProduto,
 )
 
 HOJE = date(2026, 7, 8)
@@ -1246,6 +1248,88 @@ class TestAlimentos:
         c, engine = client
         r = c.delete("/alimentacao/alimentos/999")
         assert r.status_code == 404
+
+
+class TestExcluirAlimentoReferenciadoEmOutrasTabelas:
+    """Bug real relatado pelo usuário (01/09/2026): "Failed to fetch" ao
+    tentar excluir os dois últimos alimentos sem produto de estoque
+    vinculado. `Alimento.id` é referenciado por FK opcional em outras 6
+    tabelas além de `Estoque` (dieta programada/consumida, análise
+    bromatológica, tabela nutricional, biblioteca nutricional da Formulação
+    de Dietas e item de simulação) — o `client` padrão usa SQLite sem
+    `PRAGMA foreign_keys`, que não reproduz a violação de integridade que o
+    Postgres de produção aplica (mesmo achado do animal 1291 em
+    exclusoes.py, no mesmo dia). Esta classe usa um engine à parte com FK
+    de verdade ligada."""
+
+    @pytest.fixture
+    def client_fk(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+        @event.listens_for(engine, "connect")
+        def _habilitar_fk(conexao_dbapi, _conn_record):
+            conexao_dbapi.execute("PRAGMA foreign_keys=ON")
+
+        SQLModel.metadata.create_all(engine)
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        from fazenda.auth import get_current_user
+
+        class _FakeUser:
+            id = 1
+            papel = "admin"
+            ativo = True
+            username = "teste"
+
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+        with TestClient(main.app) as c:
+            yield c, engine
+        main.app.dependency_overrides.clear()
+
+    def test_exclui_com_referencia_em_todas_as_tabelas(self, client_fk):
+        c, engine = client_fk
+        with Session(engine) as s:
+            s.add(Fazenda(id=1, nome="Fazenda teste"))
+            alimento = Alimento(nome="Teste FK")
+            s.add(alimento)
+            s.commit()
+            s.refresh(alimento)
+            aid = alimento.id
+
+            lancamento = DietaLancamento(lote=1, data_abertura=HOJE)
+            s.add(lancamento)
+            s.commit()
+            s.refresh(lancamento)
+            s.add(DietaItemProgramado(dieta_lancamento_id=lancamento.id, alimento="Teste FK", alimento_id=aid, quantidade=10, unidade="kg"))
+            s.add(ConsumoAlimento(data=HOJE, lote=1, alimento="Teste FK", alimento_id=aid, quantidade=5, unidade="kg"))
+            s.add(AnaliseBromatologica(data=HOJE, alimento="Teste FK", alimento_id=aid))
+            s.add(TabelaNutricionalProduto(nome="Teste FK", alimento_id=aid))
+            s.add(AlimentoNutricional(nome="Teste FK", categoria_nasem="Outros", alimento_id=aid))
+
+            simulacao = DietaSimulacao(fazenda_id=1, nome="Simulação teste")
+            s.add(simulacao)
+            s.commit()
+            s.refresh(simulacao)
+            s.add(DietaSimulacaoItem(fazenda_id=1, simulacao_id=simulacao.id, alimento_id=aid, nome="Teste FK"))
+            s.commit()
+
+        r = c.delete(f"/alimentacao/alimentos/{aid}")
+        assert r.status_code == 200, r.text
+        assert r.json()["ok"] is True
+
+        with Session(engine) as s:
+            assert s.get(Alimento, aid) is None
+            assert s.exec(select(DietaItemProgramado)).first().alimento_id is None
+            assert s.exec(select(ConsumoAlimento)).first().alimento_id is None
+            assert s.exec(select(AnaliseBromatologica)).first().alimento_id is None
+            assert s.exec(select(TabelaNutricionalProduto)).first().alimento_id is None
+            assert s.exec(select(AlimentoNutricional)).first().alimento_id is None
+            assert s.exec(select(DietaSimulacaoItem)).first().alimento_id is None
 
 
 class TestEstoquePreferido:
