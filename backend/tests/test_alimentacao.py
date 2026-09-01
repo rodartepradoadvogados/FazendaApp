@@ -1332,6 +1332,75 @@ class TestExcluirAlimentoReferenciadoEmOutrasTabelas:
             assert s.exec(select(DietaSimulacaoItem)).first().alimento_id is None
 
 
+class TestExcluirEstoqueReferenciadoEmOutrasTabelas:
+    """Fase 2 do plano de correção de Alimentação (01/09/2026): novos campos
+    `estoque_id` em AlimentoNutricional/TabelaNutricionalProduto/
+    DietaSimulacaoItem (importação por produto específico) precisam da MESMA
+    proteção contra "Failed to fetch" já aplicada à exclusão de Alimento —
+    ver TestExcluirAlimentoReferenciadoEmOutrasTabelas acima. Engine à parte
+    com FK de verdade ligada (Postgres de produção aplica, SQLite padrão
+    dos testes não)."""
+
+    @pytest.fixture
+    def client_fk(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+        @event.listens_for(engine, "connect")
+        def _habilitar_fk(conexao_dbapi, _conn_record):
+            conexao_dbapi.execute("PRAGMA foreign_keys=ON")
+
+        SQLModel.metadata.create_all(engine)
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        from fazenda.auth import get_current_user
+
+        class _FakeUser:
+            id = 1
+            papel = "admin"
+            ativo = True
+            username = "teste"
+
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+        with TestClient(main.app) as c:
+            yield c, engine
+        main.app.dependency_overrides.clear()
+
+    def test_exclui_com_referencia_em_todas_as_tabelas(self, client_fk):
+        c, engine = client_fk
+        with Session(engine) as s:
+            s.add(Fazenda(id=1, nome="Fazenda teste"))
+            item = Estoque(nome="Produto FK", finalidade="Ração/Alimento")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            eid = item.id
+
+            s.add(AlimentoNutricional(nome="Produto FK", categoria_nasem="Outros", estoque_id=eid))
+            s.add(TabelaNutricionalProduto(nome="Produto FK", estoque_id=eid))
+
+            simulacao = DietaSimulacao(fazenda_id=1, nome="Simulação teste")
+            s.add(simulacao)
+            s.commit()
+            s.refresh(simulacao)
+            s.add(DietaSimulacaoItem(fazenda_id=1, simulacao_id=simulacao.id, estoque_id=eid, nome="Produto FK"))
+            s.commit()
+
+        r = c.delete(f"/estoque/{eid}")
+        assert r.status_code == 200, r.text
+        assert r.json()["excluido"] is True
+
+        with Session(engine) as s:
+            assert s.get(Estoque, eid) is None
+            assert s.exec(select(AlimentoNutricional)).first().estoque_id is None
+            assert s.exec(select(TabelaNutricionalProduto)).first().estoque_id is None
+            assert s.exec(select(DietaSimulacaoItem)).first().estoque_id is None
+
+
 class TestEstoquePreferido:
     """Fase P1, Gap 3 — PUT /alimentacao/alimentos/{id}/estoque-preferido:
     escolha deliberada de qual item de Estoque vinculado recebe a baixa
@@ -1547,6 +1616,68 @@ class TestEstoqueCategoriaIsolamentoFazenda:
         assert r.status_code == 404
         with Session(engine) as s:
             assert s.get(Estoque, estoque_id).categoria_alimento_id is None
+
+
+class TestTabelaNutricionalProdutoDeEstoque:
+    """Fase 2 (01/09/2026): "Nome do novo produto" deixa de ser só texto
+    livre — POST /alimentacao/tabela-nutricional/produtos aceita `estoque_id`
+    do cadastro fechado de Estoque, derivando o nome de lá; texto livre
+    continua funcionando como fallback (flag na tela)."""
+
+    def test_cria_produto_a_partir_de_estoque_e_deriva_nome(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            item = Estoque(nome="Concentrado X", finalidade="Ração/Alimento")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            estoque_id = item.id
+
+        r = c.post("/alimentacao/tabela-nutricional/produtos", json={"estoque_id": estoque_id})
+        assert r.status_code == 201, r.text
+        corpo = r.json()
+        assert corpo["nome"] == "Concentrado X"
+        assert corpo["estoque_id"] == estoque_id
+
+    def test_recusa_vincular_o_mesmo_produto_de_estoque_duas_vezes(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            item = Estoque(nome="Concentrado Y", finalidade="Ração/Alimento")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            estoque_id = item.id
+
+        assert c.post("/alimentacao/tabela-nutricional/produtos", json={"estoque_id": estoque_id}).status_code == 201
+        r2 = c.post("/alimentacao/tabela-nutricional/produtos", json={"estoque_id": estoque_id})
+        assert r2.status_code == 409
+
+    def test_estoque_id_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/alimentacao/tabela-nutricional/produtos", json={"estoque_id": 999999})
+        assert r.status_code == 404
+
+    def test_ainda_aceita_texto_livre_sem_estoque_id(self, client):
+        c, _ = client
+        r = c.post("/alimentacao/tabela-nutricional/produtos", json={"nome": "Referência genérica"})
+        assert r.status_code == 201
+        assert r.json()["estoque_id"] is None
+
+    def test_obter_tabela_retorna_estoque_ids_paralelo_a_produto_ids(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            item = Estoque(nome="Concentrado Z", finalidade="Ração/Alimento")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            estoque_id = item.id
+        c.post("/alimentacao/tabela-nutricional/produtos", json={"estoque_id": estoque_id})
+
+        r = c.get("/alimentacao/tabela-nutricional")
+        assert r.status_code == 200
+        corpo = r.json()
+        idx = corpo["alimentos"].index("Concentrado Z")
+        assert corpo["estoque_ids"][idx] == estoque_id
 
 
 class TestMateriaSeca:

@@ -4251,11 +4251,11 @@ export async function fetchAlimentosPadrao() {
 export async function fetchTabelaNutricional() {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Tabela nutricional error: ${res.status}`);
-  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; linhas: string[][] }>;
+  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; estoque_ids: (number | null)[]; linhas: string[][] }>;
 }
-export async function criarProdutoTabelaNutricional(nome: string) {
+export async function criarProdutoTabelaNutricional(dados: { nome?: string; estoque_id?: number }) {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar produto"); }
   return res.json();

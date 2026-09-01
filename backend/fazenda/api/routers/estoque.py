@@ -14,9 +14,10 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Alimento, CategoriaMedicamento, CompraSemen, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento,
-    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fornecedor, LoteEstoque, MedicamentoComercial,
-    MovimentoEstoque, PrincipioAtivo, SeedFlag, Usuario,
+    Alimento, AlimentoNutricional, CategoriaMedicamento, CompraSemen, DietaSimulacaoItem, Estoque,
+    EstoqueAliasMesclado, EstoqueCategoriaMedicamento, EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo,
+    EstoqueSemen, Fornecedor, LoteEstoque, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, SeedFlag,
+    TabelaNutricionalProduto, Usuario,
 )
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -578,6 +579,20 @@ def excluir_item_estoque(
         )
     for vinculo in session.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.estoque_id == item_id)).all():
         session.delete(vinculo)
+    # Zera as referências opcionais antes de excluir — mesmo padrão já usado
+    # em excluir_alimento (alimentacao.py): sem isto, o Postgres recusa a
+    # exclusão com IntegrityError de FK, e esse 500 chega ao navegador só
+    # como "Failed to fetch" (nunca passa pelo CORSMiddleware — ver nota em
+    # exclusoes.py). SQLite (testes) não pega isso por padrão.
+    for tabela, coluna in (
+        (AlimentoNutricional, AlimentoNutricional.estoque_id),
+        (TabelaNutricionalProduto, TabelaNutricionalProduto.estoque_id),
+        (DietaSimulacaoItem, DietaSimulacaoItem.estoque_id),
+    ):
+        for referencia in session.exec(select(tabela).where(coluna == item_id)).all():
+            referencia.estoque_id = None
+            session.add(referencia)
+    session.flush()
     session.delete(item)
     session.commit()
     return {"excluido": True}
