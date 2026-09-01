@@ -26,7 +26,8 @@ const vazio = {
   nome: "", numero_produto: "", categoria: "", finalidade: "", unidade: "", quantidade: "", estoque_minimo: "",
   valor_unitario: "", local_armazenamento: "", fornecedor_id: "",
   unidade_embalagem: "", medida_embalagem: "", quantidade_embalagem: "",
-  ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
+  ativo: true, observacao: "", carencia_dias: "", carencia_leite_dias: "", carencia_carne_dias: "",
+  proibido_lactacao: false, centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
   gera_receita: false, gera_patrimonio: false,
@@ -97,6 +98,8 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       unidade_embalagem: s(editando.unidade_embalagem), medida_embalagem: s(editando.medida_embalagem),
       quantidade_embalagem: s(editando.quantidade_embalagem), ativo: editando.ativo !== false,
       observacao: s(editando.observacao), carencia_dias: s(editando.carencia_dias),
+      carencia_leite_dias: s(editando.carencia_leite_dias), carencia_carne_dias: s(editando.carencia_carne_dias),
+      proibido_lactacao: editando.proibido_lactacao === true,
       centro_custo_padrao: s(editando.centro_custo_padrao),
       conta_gerencial_despesa_padrao: s(editando.conta_gerencial_despesa_padrao),
       conta_gerencial_receita_padrao: s(editando.conta_gerencial_receita_padrao),
@@ -167,6 +170,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         ativo: form.ativo,
         observacao: str(form.observacao),
         carencia_dias: num(form.carencia_dias),
+        carencia_leite_dias: num(form.carencia_leite_dias),
+        carencia_carne_dias: num(form.carencia_carne_dias),
+        proibido_lactacao: form.finalidade === "Medicamento" ? form.proibido_lactacao : undefined,
         centro_custo_padrao: str(form.centro_custo_padrao),
         conta_gerencial_despesa_padrao: str(form.conta_gerencial_despesa_padrao),
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
@@ -251,6 +257,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
                 }}
               >
                 <option value="">—</option>
+                {form.principio_ativo_id && !principiosAtivos.some((p) => String(p.id) === form.principio_ativo_id) && (
+                  <option value={form.principio_ativo_id}>{form.principio_ativo || `Princípio #${form.principio_ativo_id}`}</option>
+                )}
                 {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
               </select>
             ) : (
@@ -275,7 +284,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         {form.finalidade === "Medicamento" && (
           <div><label style={labelStyle}>Classificação (medicamento)</label>
             <select style={inputStyle} value={form.classificacao_medicamento} onChange={(e) => set({ classificacao_medicamento: e.target.value })}>
-              <option value="">—</option>{CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value="">—</option>
+              {form.classificacao_medicamento && !CLASSIFICACOES_MEDICAMENTO.includes(form.classificacao_medicamento) && (
+                <option value={form.classificacao_medicamento}>{form.classificacao_medicamento}</option>
+              )}
+              {CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
             </select></div>
         )}
         {form.categoria === "Sêmen e genética" && (
@@ -341,7 +354,23 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
           </select>
         </div>
         <div><label style={labelStyle}>Quantidade por embalagem</label><input type="number" style={inputStyle} value={form.quantidade_embalagem} onChange={(e) => set({ quantidade_embalagem: e.target.value })} /></div>
-        <div><label style={labelStyle}>Carência (dias)</label><input type="number" style={inputStyle} value={form.carencia_dias} onChange={(e) => set({ carencia_dias: e.target.value })} placeholder="período de carência do leite/carne" /></div>
+        {form.finalidade === "Medicamento" ? (
+          <>
+            <div><label style={labelStyle}>Carência do leite (dias)</label>
+              <input type="number" style={inputStyle} value={form.carencia_leite_dias} disabled={form.proibido_lactacao}
+                onChange={(e) => set({ carencia_leite_dias: e.target.value })} placeholder={form.proibido_lactacao ? "não se aplica" : "dias"} /></div>
+            <div><label style={labelStyle}>Carência da carne (dias)</label>
+              <input type="number" style={inputStyle} value={form.carencia_carne_dias} onChange={(e) => set({ carencia_carne_dias: e.target.value })} placeholder="dias" /></div>
+            <div className="flex items-end gap-3">
+              <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Este medicamento não deve ser aplicado em vaca em lactação — aparece como aviso no lançamento de aplicação sanitária.">
+                <input type="checkbox" checked={form.proibido_lactacao} onChange={(e) => set({ proibido_lactacao: e.target.checked, carencia_leite_dias: e.target.checked ? "" : form.carencia_leite_dias })} />
+                Não usar em vaca em lactação
+              </label>
+            </div>
+          </>
+        ) : (
+          <div><label style={labelStyle}>Carência (dias)</label><input type="number" style={inputStyle} value={form.carencia_dias} onChange={(e) => set({ carencia_dias: e.target.value })} placeholder="período de carência do leite/carne" /></div>
+        )}
 
         <div><label style={labelStyle}>Centro de custo padrão</label>
           <select style={inputStyle} value={form.centro_custo_padrao} onChange={(e) => set({ centro_custo_padrao: e.target.value })}>

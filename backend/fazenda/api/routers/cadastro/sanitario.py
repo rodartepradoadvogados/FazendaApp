@@ -291,7 +291,9 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
     session.commit()
 
 
-_listar_principios, _criar_principio, _atualizar_principio, _ = _crud_nome_ativo(PrincipioAtivo, com_fazenda=True)
+_listar_principios, _criar_principio, _atualizar_principio, _ = _crud_nome_ativo(
+    PrincipioAtivo, com_fazenda=True, global_compartilhado=True,
+)
 router.get("/principios-ativos")(_listar_principios)
 router.post("/principios-ativos")(_criar_principio)
 router.put("/principios-ativos/{item_id}")(_atualizar_principio)
@@ -308,7 +310,9 @@ def restaurar_catalogo_principios(session: Session = Depends(get_session)) -> di
     total = len(session.exec(select(PrincipioAtivo)).all())
     return {"criados": total - antes, "total": total}
 
-_listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(Doenca, com_fazenda=True)
+_listar_doencas, _criar_doenca, _atualizar_doenca, _ = _crud_nome_ativo(
+    Doenca, com_fazenda=True, global_compartilhado=True,
+)
 router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)
 router.put("/doencas/{item_id}")(_atualizar_doenca)

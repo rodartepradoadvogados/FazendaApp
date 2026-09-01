@@ -10,6 +10,10 @@ export type EstoqueItem = {
   estoque_minimo?: number | null; classificacao_medicamento?: string | null; principio_ativo?: string | null;
   finalidade?: string | null; conta_gerencial_despesa_padrao?: string | null; conta_gerencial_receita_padrao?: string | null;
   estoque_semen_id?: number | null; tipo_semen?: string | null;
+  // "Não usar em vaca em lactação" (ver Estoque.proibido_lactacao) — usado só
+  // para o aviso não-bloqueante no lançamento de aplicação sanitária, nunca
+  // impede salvar (ver FormSanidade.tsx).
+  proibido_lactacao?: boolean | null;
 };
 
 export const inputStyle: React.CSSProperties = {

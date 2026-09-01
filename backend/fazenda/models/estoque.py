@@ -85,7 +85,15 @@ class Estoque(SQLModel, table=True):
     # tratado como "não desativado"/"não pediu lembrete", nunca como erro.
     ativo: Optional[bool] = None
     observacao: Optional[str] = None
-    carencia_dias: Optional[int] = None  # período de carência (leite/carne) após uso, em dias
+    carencia_dias: Optional[int] = None  # período de carência (leite/carne) após uso, em dias — legado, ver split abaixo
+    # Split leite/carne (compatibiliza com MedicamentoComercial.carencia_leite_dias/
+    # carencia_carne_dias — ver rules/carencia.py) + flag "não usar em vaca em
+    # lactação", pedido do usuário (01/09/2026) junto da carência do leite.
+    # `carencia_dias` acima continua existindo por compatibilidade com quem já lê
+    # esse campo; estes dois passam a ser a fonte de verdade a partir de agora.
+    carencia_leite_dias: Optional[int] = None
+    carencia_carne_dias: Optional[int] = None
+    proibido_lactacao: Optional[bool] = None
     centro_custo_padrao: Optional[str] = None
     conta_gerencial_despesa_padrao: Optional[str] = None  # código do plano de contas (ex.: "3.01.01.01")
     conta_gerencial_receita_padrao: Optional[str] = None

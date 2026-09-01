@@ -80,12 +80,17 @@ def carencia_para_item(
     opcionalmente, do item de Estoque de origem — usado só para o fallback do
     campo legado, abaixo.
 
+    Fallback do próprio item de Estoque: itens auto-cadastrados pelo tenant
+    (sem `medicamento_comercial_id`, portanto sem `marca`) agora também têm
+    `carencia_leite_dias`/`carencia_carne_dias`/`proibido_lactacao` (pedido do
+    usuário — 01/09/2026), preenchidos pelo fan-out do Painel CowData ou
+    digitados direto no cadastro do item — usados sempre que a marca não tiver
+    o próprio valor.
+
     Fallback do campo legado `Estoque.carencia_dias`: esse campo é um número
     único e genérico gravado pelo formulário antigo de item de estoque (o
-    produtor digitava "a carência" sem distinguir leite de carne) e hoje não é
-    lido em lugar nenhum — dado morto. Enquanto a marca comercial não tiver
-    `carencia_carne_dias` própria (marca não cadastrada, ou cadastrada sem
-    esse campo), usamos o legado como carência de CARNE — nunca de leite:
+    produtor digitava "a carência" sem distinguir leite de carne). Só entra
+    como último recurso, e sempre como carência de CARNE — nunca de leite:
     quando o produtor pensava em "carência" sem qualificar, o caso de uso mais
     comum é "quanto tempo até poder abater"; leite é o prazo mais curto e mais
     perigoso de supor errado (entra no tanque todo dia, carne só no abate).
@@ -95,6 +100,10 @@ def carencia_para_item(
     carne = marca.carencia_carne_dias if marca else None
     proibido = marca.proibido_lactacao if marca else None
     origem: str | None = "marca" if marca is not None else None
+    if item is not None and (leite is None and carne is None and not proibido):
+        if item.carencia_leite_dias is not None or item.carencia_carne_dias is not None or item.proibido_lactacao:
+            leite, carne, proibido = item.carencia_leite_dias, item.carencia_carne_dias, item.proibido_lactacao
+            origem = "fazenda"
     if carne is None and item is not None and item.carencia_dias is not None:
         carne = item.carencia_dias
         origem = "fazenda"
@@ -204,7 +213,7 @@ def opcoes_medicamento(
             "estoque_inicializado": e.estoque_inicializado is not False,
             "sem_estoque": False,
             "carencia": carencia,
-            "proibido_lactacao": bool(marca.proibido_lactacao) if marca else False,
+            "proibido_lactacao": bool(marca.proibido_lactacao) if marca else bool(e.proibido_lactacao),
             "alerta": marca.alerta if marca else None,
         }
 

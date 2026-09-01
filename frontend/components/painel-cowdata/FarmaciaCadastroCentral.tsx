@@ -12,7 +12,7 @@ import {
   atualizarCategoriaFarmaciaCowData, criarCategoriaFarmaciaCowData,
   criarMedicamentoFarmaciaCowData, criarPrincipioFarmaciaCowData, excluirPrincipioFarmaciaCowData,
   fetchCategoriasFarmaciaCowData, fetchMedicamentosFarmaciaCowData, fetchPrincipiosFarmaciaCowData,
-  refazerFanoutMedicamentoFarmaciaCowData,
+  refazerFanoutMedicamentoFarmaciaCowData, CLASSIFICACOES_MEDICAMENTO,
   type CategoriaFarmaciaCowData, type MedicamentoFarmaciaCowData, type PrincipioFarmaciaCowData,
 } from "@/lib/api";
 import SeletorMultiploComBusca from "@/components/SeletorMultiploComBusca";
@@ -216,6 +216,8 @@ function AbaMedicamentos() {
   const [doseTexto, setDoseTexto] = useState("");
   const [carenciaLeite, setCarenciaLeite] = useState("");
   const [carenciaCarne, setCarenciaCarne] = useState("");
+  const [proibidoLactacao, setProibidoLactacao] = useState(false);
+  const [classificacaoMedicamento, setClassificacaoMedicamento] = useState("");
 
   function carregar() {
     Promise.all([fetchMedicamentosFarmaciaCowData(), fetchPrincipiosFarmaciaCowData(), fetchCategoriasFarmaciaCowData()])
@@ -236,6 +238,8 @@ function AbaMedicamentos() {
         dose_texto: doseTexto || null,
         carencia_leite_dias: carenciaLeite ? Number(carenciaLeite) : null,
         carencia_carne_dias: carenciaCarne ? Number(carenciaCarne) : null,
+        proibido_lactacao: proibidoLactacao,
+        classificacao_medicamento: classificacaoMedicamento || null,
       });
       setMensagem(
         `"${nome}" cadastrado — item de estoque criado em ${resultado.fan_out.criados} fazenda(s)` +
@@ -243,7 +247,7 @@ function AbaMedicamentos() {
         ". Inativo e não-estocável até cada fazenda decidir ativar."
       );
       setNomeComercial(""); setLaboratorio(""); setPrincipioIds([]); setDoencaIds([]);
-      setDoseTexto(""); setCarenciaLeite(""); setCarenciaCarne("");
+      setDoseTexto(""); setCarenciaLeite(""); setCarenciaCarne(""); setProibidoLactacao(false); setClassificacaoMedicamento("");
       carregar();
     } catch (e) { setErro(msgErro(e)); } finally { setSalvando(false); }
   }
@@ -264,8 +268,8 @@ function AbaMedicamentos() {
     <div>
       <p style={{ fontSize: "0.8rem", color: COR.mudo, marginBottom: "0.8rem" }}>
         Ao salvar, um item de Estoque é criado automaticamente em toda fazenda-cliente — com finalidade &ldquo;Medicamento&rdquo;,
-        classificação &ldquo;Medicamentos&rdquo; e o(s) princípio(s) já preenchido(s), mas <strong>inativo e não-estocável</strong> até o
-        tenant decidir usar.
+        categoria &ldquo;Medicamentos&rdquo;, e já com o(s) princípio(s), categoria (medicamento), laboratório e carência
+        preenchidos, mas <strong>inativo e não-estocável</strong> até o tenant decidir usar.
       </p>
 
       <div style={{ border: `1px solid ${COR.borda}`, borderRadius: "var(--r-sm)", padding: "0.8rem", marginBottom: "1.2rem", background: COR.painelAlt }}>
@@ -291,10 +295,18 @@ function AbaMedicamentos() {
 
         <div style={{ marginBottom: "0.7rem" }}>
           <SeletorMultiploComBusca
-            label="Categoria(s)/indicação(ões) — para onde este medicamento aparece sugerido"
+            label="Indicações — doenças/finalidades para onde este medicamento aparece sugerido"
             opcoes={categorias.map((c) => ({ id: c.id, nome: c.nome, grupo: TIPOS.find((t) => t.valor === c.tipo)?.label }))}
             selecionados={doencaIds} onChange={setDoencaIds}
             placeholder="Clique para selecionar…" cor={COR} />
+        </div>
+
+        <div style={{ marginBottom: "0.7rem" }}>
+          <label style={labelStyle}>Categoria (medicamento) — mesma classificação já usada no cadastro de item de estoque do tenant</label>
+          <select style={{ ...inputStyle, width: "100%" }} value={classificacaoMedicamento} onChange={(e) => setClassificacaoMedicamento(e.target.value)}>
+            <option value="">—</option>
+            {CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.6rem", marginBottom: "0.8rem" }}>
@@ -304,13 +316,19 @@ function AbaMedicamentos() {
           </div>
           <div>
             <label style={labelStyle}>Carência leite (dias)</label>
-            <input type="number" style={{ ...inputStyle, width: "100%" }} value={carenciaLeite} onChange={(e) => setCarenciaLeite(e.target.value)} />
+            <input type="number" style={{ ...inputStyle, width: "100%" }} value={carenciaLeite} disabled={proibidoLactacao}
+              onChange={(e) => setCarenciaLeite(e.target.value)} placeholder={proibidoLactacao ? "não se aplica" : undefined} />
           </div>
           <div>
             <label style={labelStyle}>Carência carne (dias)</label>
             <input type="number" style={{ ...inputStyle, width: "100%" }} value={carenciaCarne} onChange={(e) => setCarenciaCarne(e.target.value)} />
           </div>
         </div>
+
+        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", color: COR.texto, marginBottom: "0.8rem" }}>
+          <input type="checkbox" checked={proibidoLactacao} onChange={(e) => { setProibidoLactacao(e.target.checked); if (e.target.checked) setCarenciaLeite(""); }} />
+          Não usar em vaca em lactação
+        </label>
 
         <button style={btnPrimario} onClick={salvar} disabled={salvando}><Plus size={14} /> {salvando ? "Salvando…" : "Cadastrar medicamento"}</button>
       </div>
