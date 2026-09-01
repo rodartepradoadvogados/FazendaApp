@@ -171,7 +171,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
 
   const navConteudo = (
     <>
-      <div style={{ padding: "1.1rem 1.1rem 0.9rem" }}>
+      <div style={{ padding: "calc(1.1rem + env(safe-area-inset-top, 0px)) 1.1rem 0.9rem" }}>
         <Link href={voltarHref} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
           <ArrowLeft size={13} /> {voltarLabel}
         </Link>
@@ -231,9 +231,21 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }} className="md:flex">
-      {/* Barra superior — só no mobile. Mesmo padrão do Sidebar.tsx do site. */}
-      <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
-        style={{ height: "3.25rem", background: COR.painel, borderBottom: `1px solid ${COR.borda}` }}>
+      {/* Barra superior — só no mobile. Mesmo padrão do Sidebar.tsx do site —
+          precisa do MESMO respiro pra status bar/notch (env(safe-area-inset-top))
+          e do MESMO offset pra faixa de suporte (--suporte-banner-h) que todo
+          outro cabeçalho fixo do app usa (ver app/app/layout.tsx) — sem isso,
+          esta barra ficava por baixo da status bar em app instalado/nativo
+          (edge-to-edge, ver appleWebApp.statusBarStyle no layout raiz): o
+          hambúrguer ficava visualmente atrás do relógio/bateria do celular e
+          não recebia toque nenhum (achado real, 01/09/2026). */}
+      <div className="md:hidden flex items-center gap-3 px-4 fixed left-0 right-0 z-30"
+        style={{
+          top: "var(--suporte-banner-h, 0px)",
+          height: "calc(3.25rem + env(safe-area-inset-top, 0px))",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          background: COR.painel, borderBottom: `1px solid ${COR.borda}`,
+        }}>
         <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu do Painel CowData"
           style={{ background: "none", border: "none", color: COR.textoPainel, cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
@@ -241,7 +253,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
         <CowDataWordmark size="0.85rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
         <span style={{ color: COR.mudo, fontSize: "0.7rem" }}>· Painel da empresa</span>
       </div>
-      <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
+      <div className="md:hidden" style={{ height: "calc(3.25rem + env(safe-area-inset-top, 0px))" }} aria-hidden="true" />
 
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
 
