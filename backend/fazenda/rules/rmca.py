@@ -42,7 +42,14 @@ def calcular_custo_fisico(movimentos: list[dict], estoque_por_nome: dict[str, di
         if preco is None:
             preco = (estoque or {}).get("valor_unitario") or 0
         quantidade = m["quantidade"] or 0
-        acc = itens.setdefault(m["nome_item"], {"ingrediente": m["nome_item"], "quantidade": 0.0, "valor_unitario": preco, "custo": 0.0})
+        acc = itens.setdefault(m["nome_item"], {
+            "ingrediente": m["nome_item"], "quantidade": 0.0, "valor_unitario": preco, "custo": 0.0,
+            # Id + unidade do item de Estoque — usados pelo Simulador de
+            # cenários do RMCA (ver GET /financeiro/rmca) pra resolver preço
+            # por kg (padrão do cadastro / última compra) na mesma conversão
+            # kg↔unidade já usada na baixa da Alimentação.
+            "estoque_id": (estoque or {}).get("id"), "unidade": (estoque or {}).get("unidade"),
+        })
         # Acumula em ponto flutuante cheio — arredondar a cada iteração
         # (round dentro do loop) compunha um erro pequeno a cada movimento
         # somado, que crescia com a quantidade de lançamentos no período.

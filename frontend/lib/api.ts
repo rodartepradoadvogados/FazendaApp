@@ -5812,15 +5812,6 @@ export async function fetchContextoFornecedor(nome: string, tipo: "despesa" | "r
   return res.json();
 }
 
-// Link pro painel do Supabase (Table Editor) — botão em Relatórios
-// financeiros; backend bloqueia consultor (ver fazenda.auth.exigir_nao_consultor).
-// url: null quando o Supabase não está configurado.
-export async function fetchSupabaseDashboardUrl(): Promise<{ url: string | null }> {
-  const res = await authFetch(`${API}/financeiro/supabase-dashboard-url`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Link do Supabase error: ${res.status}`);
-  return res.json();
-}
-
 export async function fetchPlanoContas() {
   const res = await authFetch(`${API}/financeiro/plano-contas`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Plano de contas error: ${res.status}`);

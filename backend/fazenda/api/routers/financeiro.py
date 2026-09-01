@@ -34,6 +34,8 @@ from fazenda.rules.casamento_cadastro import normalizar
 from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
+from fazenda.rules.alimentacao import resolver_kg_por_unidade
+from fazenda.rules.unidades import DENSIDADE_LEITE_KG_POR_L, leite_para_kg
 from fazenda.rules.patrimonio import (
     METODOS_DEPRECIACAO, METODOS_VALIDOS, MOTIVOS_BAIXA, MOTIVOS_BAIXA_COM_VENDA,
     MOTIVOS_BAIXA_VALIDOS, TIPOS_PATRIMONIO, UNIDADES_PATRIMONIO,
@@ -516,9 +518,13 @@ def _registros_dre_para_cascata(
 
     Nota antiga sem NENHUM LancamentoItem (import de CSV, alguns fluxos
     legados) — ou cujos itens não sobraram depois do filtro de centro de
-    custo/vale — cai no `codigo_conta` da nota inteira como fallback,
-    sinalizado no segundo valor de retorno (`fallback_notas`) para
-    transparência: a classificação por item não pôde ser aplicada ali."""
+    custo/vale, ou cuja soma dos itens restantes é zero/negativa (peso
+    indefinido para ratear, ex.: item importado com valor_total 0) — cai no
+    `codigo_conta` da nota inteira como fallback, sinalizado no segundo valor
+    de retorno (`fallback_notas`) para transparência: a classificação por
+    item não pôde ser aplicada ali. Sem este fallback, esse valor sumiria da
+    cascata inteira (nem classificado, nem em `nao_classificado`) — violando
+    a garantia de que a DRE nunca finge que fecha (ver `montar_cascata_dre`)."""
     numeros = {c.numero_lancamento for c in filtradas if c.numero_lancamento}
     itens_por_numero: dict[str, list[LancamentoItem]] = {}
     if numeros:
@@ -543,7 +549,13 @@ def _registros_dre_para_cascata(
             # override do item, senão o da nota inteira.
             itens_da_nota = [it for it in itens_da_nota if (it.centro_custo or c.centro_custo) == centro_custo]
 
-        if not itens_da_nota:
+        total_itens = round(sum(it.valor_total or 0 for it in itens_da_nota), 2) if itens_da_nota else 0.0
+        if not itens_da_nota or total_itens <= 0:
+            # Sem item pra ratear (nota sem LancamentoItem, filtro de centro
+            # de custo/vale zerou a lista, OU os itens que sobraram somam
+            # zero/negativo — peso indefinido pra dividir `valor_c` entre
+            # eles). Cai no código da nota inteira: NUNCA descarta o valor em
+            # silêncio (ver docstring acima).
             registros.append({
                 "codigo_conta": c.codigo_conta, "tipo": c.tipo, "valor": valor_c,
                 "descricao": c.descricao, "origem": "fallback_conta",
@@ -553,9 +565,6 @@ def _registros_dre_para_cascata(
             })
             continue
 
-        total_itens = round(sum(it.valor_total or 0 for it in itens_da_nota), 2)
-        if total_itens <= 0:
-            continue
         itens_ordenados = sorted(itens_da_nota, key=lambda it: it.id or 0)
         acumulado = 0.0
         for i, it in enumerate(itens_ordenados):
@@ -1723,6 +1732,87 @@ def lancamentos_por_data(
     ]
 
 
+def _preco_por_kg(estoque: dict | None, valor_unitario: float | None) -> float | None:
+    """Converte um preço "por unidade do item" (por saco de 30kg, por
+    litro, por unidade avulsa...) em R$/kg — mesma resolução de peso de
+    embalagem já usada na baixa da Alimentação (`resolver_kg_por_unidade`).
+    None quando falta preço ou não há como resolver o peso da embalagem
+    (o chamador decide o que fazer — nunca inventa um fator de conversão)."""
+    if valor_unitario is None:
+        return None
+    kg_por_unidade = resolver_kg_por_unidade(estoque)
+    return round(valor_unitario / kg_por_unidade, 4) if kg_por_unidade else round(valor_unitario, 4)
+
+
+def _ultima_compra_por_estoque_id(session: Session, fazenda_id: int | None, estoque_ids: set[int]) -> dict[int, float]:
+    """{estoque_id: valor_unitario} do MovimentoEstoque "Entrada de compra"
+    mais recente de cada item — usado pelo Simulador de cenários do RMCA
+    como fonte "último preço de compra" (ver GET /financeiro/rmca).
+    Ignora movimentos sem `valor_unitario` (histórico anterior a essa
+    coluna existir) e sem `estoque_id` (vínculo só por nome, não dá pra
+    saber qual item é)."""
+    if not estoque_ids:
+        return {}
+    query = select(MovimentoEstoque).where(
+        MovimentoEstoque.movimento == "Entrada de compra",
+        MovimentoEstoque.estoque_id.in_(estoque_ids),
+    )
+    if fazenda_id is not None:
+        query = query.where(MovimentoEstoque.fazenda_id == fazenda_id)
+    mais_recente: dict[int, tuple[date, float]] = {}
+    for m in session.exec(query).all():
+        if m.valor_unitario is None or m.estoque_id is None:
+            continue
+        atual = mais_recente.get(m.estoque_id)
+        if atual is None or m.data_movimento > atual[0]:
+            mais_recente[m.estoque_id] = (m.data_movimento, m.valor_unitario)
+    return {estoque_id: valor for estoque_id, (_data, valor) in mais_recente.items()}
+
+
+def _preco_medio_litro_leite(session: Session, fazenda_id: int | None, codigos_receita: set[str]) -> dict | None:
+    """Preço médio recebido por litro de leite na competência mais recente
+    com entrega registrada — receita do leite (mesmas contas do RMCA
+    gerencial) dividida pelos litros entregues naquele mês. Usado pelo
+    Simulador de cenários (leite fornecido a bezerros) como alternativa ao
+    valor padrão digitado pelo usuário. None quando falta entrega, receita
+    marcada para o RMCA, ou a conta não fecha (litros = 0)."""
+    if not codigos_receita:
+        return None
+    query_entregas = select(EntregaLeiteMensal)
+    if fazenda_id is not None:
+        query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+    entregas = session.exec(query_entregas).all()
+    if not entregas:
+        return None
+    competencia = max(e.competencia for e in entregas)
+    # `quantidade_litros` está na unidade que o produtor escolheu (`unidade`,
+    # ver docstring de EntregaLeiteMensal) — normaliza pra kg e depois divide
+    # pela densidade pra ter sempre litros de verdade, igual ao resto do
+    # RMCA (mesmo padrão de Produção > Controle × Entregue).
+    litros = sum(
+        leite_para_kg(e.quantidade_litros, e.unidade) / DENSIDADE_LEITE_KG_POR_L
+        for e in entregas if e.competencia == competencia
+    )
+    if not litros:
+        return None
+    ano, mes = (int(p) for p in competencia.split("-"))
+    ini = date(ano, mes, 1)
+    fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+    query_itens = sem_itens_de_vale(select(LancamentoItem))
+    if fazenda_id is not None:
+        query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
+    receita = sum(
+        it.valor_total or 0 for it in session.exec(query_itens).all()
+        if it.codigo_conta_gerencial in codigos_receita and it.data_competencia and ini <= it.data_competencia <= fim
+    )
+    if not receita:
+        return None
+    return {
+        "competencia": competencia, "litros": round(litros, 1), "receita": round(receita, 2),
+        "preco_por_litro": round(receita / litros, 4),
+    }
+
+
 @router.get("/rmca")
 def rmca(
     data_inicio: date = Query(..., description="Data inicial (competência)"),
@@ -1764,8 +1854,23 @@ def rmca(
     query_estoque = select(Estoque)
     if fazenda_id is not None:
         query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
-    estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(query_estoque).all()}
+    estoque_por_id = {e.id: e.model_dump() for e in session.exec(query_estoque).all()}
+    estoque_por_nome = {e["nome"]: e for e in estoque_por_id.values()}
     fisico = calcular_custo_fisico(movimentos, estoque_por_nome)
+
+    # Preço por kg (e o próprio consumo em kg) em cada uma das 3 fontes do
+    # Simulador de cenários do RMCA (ver RmcaSimulador em
+    # frontend/app/financeiro/page.tsx): padrão do cadastro (valor atual do
+    # item) e última compra (Entrada de compra mais recente) — "lançar R$/kg
+    # manualmente" é resolvido no próprio front, sem dado nenhum daqui.
+    estoque_ids = {it["estoque_id"] for it in fisico["itens"] if it.get("estoque_id")}
+    ultima_compra = _ultima_compra_por_estoque_id(session, fazenda_id, estoque_ids)
+    for it in fisico["itens"]:
+        estoque_item = estoque_por_id.get(it.get("estoque_id"))
+        kg_por_unidade = resolver_kg_por_unidade(estoque_item)
+        it["preco_padrao_kg"] = _preco_por_kg(estoque_item, (estoque_item or {}).get("valor_unitario"))
+        it["preco_ultima_compra_kg"] = _preco_por_kg(estoque_item, ultima_compra.get(it.get("estoque_id")))
+        it["quantidade_kg"] = round(it["quantidade"] * kg_por_unidade, 2) if kg_por_unidade else it["quantidade"]
 
     return {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -1780,6 +1885,7 @@ def rmca(
             "itens": fisico["itens"],
         },
         "meta_rmca": meta_rmca(),
+        "preco_medio_litro_leite": _preco_medio_litro_leite(session, fazenda_id, codigos_receita),
     }
 
 

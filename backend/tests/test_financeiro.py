@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
-from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, ParametroFazenda, PlanoContaGerencial
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, LancamentoItem, MovimentoEstoque, ParametroFazenda, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -338,6 +338,39 @@ class TestCentroCustoPorItem:
         assert pl["despesas_total"] == 700.0
         assert agro["despesas_total"] == 300.0
         assert sem_filtro["despesas_total"] == 1000.0
+
+    def test_dre_nao_perde_valor_quando_itens_da_nota_somam_zero(self, client):
+        """Nota com valor_total > 0, mas cujos LancamentoItem (import legado
+        com preço unitário zerado, item de ajuste, etc.) somam 0 — sem
+        fallback, `_registros_dre_para_cascata` batia em
+        `total_itens <= 0: continue` e o valor da nota SUMIA da cascata
+        inteira: não entrava em nenhuma linha nem em `nao_classificado`,
+        enquanto os campos legados (`despesas_total`) continuavam contando
+        com ele. A DRE promete nunca fingir que fecha (todo valor aparece em
+        algum lugar) — este é o caso que quebrava essa garantia."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(ContaGerencial(
+                numero_lancamento="LC-2026-90001", codigo_conta="3.03", tipo="despesa",
+                valor_total=100.0, data_competencia=date(2026, 6, 5),
+            ))
+            s.add(LancamentoItem(
+                numero_lancamento="LC-2026-90001", produto="Item com preço zerado",
+                valor_total=0.0, codigo_conta_gerencial="3.03",
+            ))
+            s.commit()
+
+        r = c.get("/financeiro/dre", params={"data_inicio": "2026-01-01", "data_fim": "2026-12-31"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["despesas_total"] == 100.0
+
+        total_cascata = sum(l["valor"] for l in body["cascata"] if not l["eh_subtotal"])
+        # O valor não classificado tem que cobrir exatamente o que sumiria —
+        # nenhum real pode desaparecer sem aparecer em algum lugar.
+        assert round(total_cascata + body["nao_classificado"]["total"], 2) == 100.0
+        assert body["nao_classificado"]["total"] == 100.0
+        assert body["nao_classificado"]["contas"] == [{"codigo": "3.03", "nome": "3.03", "valor": 100.0}]
 
 
 class TestDescontoAcrescimo:
@@ -1047,6 +1080,64 @@ class TestRmca:
         assert fisico["custo_alimentacao"] == 1000.0  # 400kg * R$2,50
         assert fisico["rmca"] == 9000.0
         assert fisico["itens"][0]["ingrediente"] == "Ração concentrada"
+
+    def test_itens_fisicos_trazem_preco_por_kg_das_3_fontes_do_simulador(self, client):
+        # Item embalado em saca de 30kg: preço padrão do cadastro é por SACA
+        # (R$90/saca), e a última compra (Entrada de compra mais recente)
+        # também — o Simulador de cenários (frontend) precisa dos dois já
+        # convertidos pra R$/kg, na mesma resolução de embalagem usada na
+        # baixa da Alimentação (resolver_kg_por_unidade).
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            item = Estoque(nome="Racao Teck Milk", quantidade=1000, unidade="saca 30kg", valor_unitario=90.0,
+                            conta_gerencial_despesa_padrao="3.01.01")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            estoque_id = item.id
+            # Compra mais antiga (não deve vencer) e a mais recente (deve vencer).
+            s.add(MovimentoEstoque(nome_item="Racao Teck Milk", movimento="Entrada de compra", quantidade=10,
+                                    unidade="saca 30kg", data_movimento=date(2026, 1, 5), valor_unitario=84.0,
+                                    estoque_id=estoque_id))
+            s.add(MovimentoEstoque(nome_item="Racao Teck Milk", movimento="Entrada de compra", quantidade=10,
+                                    unidade="saca 30kg", data_movimento=date(2026, 1, 18), valor_unitario=96.0,
+                                    estoque_id=estoque_id))
+            s.add(MovimentoEstoque(nome_item="Racao Teck Milk", movimento="Saída de ajuste", quantidade=5,
+                                    unidade="saca 30kg", data_movimento=date(2026, 1, 20), valor_unitario=90.0,
+                                    estoque_id=estoque_id))
+            s.commit()
+
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.status_code == 200
+        item_json = r.json()["fisico"]["itens"][0]
+        assert item_json["preco_padrao_kg"] == 3.0       # R$90 / 30kg
+        assert item_json["preco_ultima_compra_kg"] == 3.2  # R$96 (compra de 18/01, mais recente) / 30kg
+        assert item_json["quantidade_kg"] == 150.0  # 5 sacas baixadas * 30kg
+
+    def test_preco_medio_litro_leite_usa_competencia_mais_recente_com_entrega(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            s.add(EntregaLeiteMensal(competencia="2026-01", quantidade_litros=30000, unidade="L"))
+            s.commit()
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "receita",
+            "itens": [{"produto": "Leite", "codigo_conta_gerencial": "2.01.01.01", "valor_total": 90000.0}],
+            "data_competencia": "2026-01-15",
+        })
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        preco = r.json()["preco_medio_litro_leite"]
+        assert preco["competencia"] == "2026-01"
+        assert preco["litros"] == 30000.0
+        assert preco["preco_por_litro"] == 3.0
+
+    def test_preco_medio_litro_leite_none_sem_entrega_registrada(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.json()["preco_medio_litro_leite"] is None
 
     def test_versao_fisica_exclui_item_fora_da_conta_gerencial_alimentacao(self, client):
         c, engine = client
