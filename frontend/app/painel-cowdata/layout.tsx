@@ -35,7 +35,10 @@ const AREAS_ENFORCADAS: AreaPainelCowData[] = ["equipe", "financeiro", "cofre", 
 // exigir_area_painel_cowdata no backend) — os demais ficam escondidos por
 // enquanto para quem não é dono, mesmo que a área apareça marcada no
 // cadastro dele (ver docstring de equipe_cowdata_acesso.py).
-const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any; area: AreaPainelCowData }[] }[] = [
+// Exportado — reaproveitado pelo início mobile do app (ver
+// components/painel-cowdata/mobile/InicioMobilePainelCowData.tsx) pra listar
+// as mesmas áreas do site, sem duplicar a lista.
+export const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any; area: AreaPainelCowData }[] }[] = [
   {
     titulo: "Negócio",
     itens: [
@@ -89,6 +92,17 @@ const GRUPOS: { titulo: string; itens: { href: string; label: string; icon: any;
   },
 ];
 
+// Mesma regra de filtro por área que a barra lateral já aplicava — extraída
+// pra função à parte (era um `const` dentro do componente) porque o início
+// mobile do app (fora desta árvore de componente) precisa do mesmo cálculo.
+export function gruposVisiveisPainelCowData() {
+  return ehDono()
+    ? GRUPOS
+    : GRUPOS
+        .map((g) => ({ ...g, itens: g.itens.filter((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area)) }))
+        .filter((g) => g.itens.length > 0);
+}
+
 export default function PainelCowDataLayout({ children }: { children: React.ReactNode }) {
   return (
     <PainelCowDataTemaProvider>
@@ -140,7 +154,11 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
   // após escolher "Painel CowData" no login. Manda pra primeira área de
   // verdade que ele tiver, em vez disso.
   useEffect(() => {
-    if (ehDono() || path !== "/painel-cowdata") return;
+    // "/painel-cowdata/cockpit" é a mesma tela (Cockpit), só que na versão
+    // mobile do app (ver InicioMobilePainelCowData) — precisa da MESMA
+    // guarda, senão um membro da equipe sem ser dono alcançaria de propósito
+    // pela URL uma tela sem a permissão de verdade aplicada na rota.
+    if (ehDono() || (path !== "/painel-cowdata" && path !== "/painel-cowdata/cockpit")) return;
     const primeiraArea = GRUPOS.flatMap((g) => g.itens).find((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area));
     router.replace(primeiraArea?.href || "/");
   }, [path, router]);
@@ -163,11 +181,14 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
     ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); });
   }, []);
 
-  const gruposVisiveis = ehDono()
-    ? GRUPOS
-    : GRUPOS
-        .map((g) => ({ ...g, itens: g.itens.filter((i) => AREAS_ENFORCADAS.includes(i.area) && temAreaPainelCowData(i.area)) }))
-        .filter((g) => g.itens.length > 0);
+  const gruposVisiveis = gruposVisiveisPainelCowData();
+
+  // App nativo/PWA — casca própria (grade de início + telas focadas com
+  // botão "voltar", ver components/painel-cowdata/mobile/) em vez da barra
+  // lateral/gaveta pensada pro desktop. Pedido explícito do usuário
+  // (01/09/2026): "ao clicar em painel CowData no app, abra essa versão".
+  const [appMode, setAppMode] = useState(false);
+  useEffect(() => { ehAppOuPwa().then(setAppMode); }, []);
 
   const navConteudo = (
     <>
@@ -228,6 +249,34 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
     "--card-header-bg": COR.painelAlt, "--card-header-fg": COR.dourado,
     "--pill-active-bg": COR.dourado, "--pill-active-fg": COR.bg,
   } as CSSProperties;
+
+  if (appMode) {
+    // Estas 2 rotas trazem a própria tela cheia (cabeçalho incluso) — ver
+    // InicioMobilePainelCowData/CockpitMobile. As demais ainda são as telas
+    // do site (Fazendas, Usuários, Financeiro CowData etc. — cadastros
+    // completos demais pra reconstruir aqui de uma vez); só ganham uma barra
+    // mínima de volta, no lugar da gaveta lateral, pra nunca ficarem sem
+    // navegação nenhuma dentro do app.
+    if (path === "/painel-cowdata" || path === "/painel-cowdata/cockpit") {
+      return <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}>{children}</div>;
+    }
+    const itemAtual = GRUPOS.flatMap((g) => g.itens).find((i) => i.href !== "/painel-cowdata" && path.startsWith(i.href));
+    return (
+      <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: "0.6rem", borderBottom: `1px solid ${COR.borda}`,
+          padding: "calc(0.9rem + env(safe-area-inset-top, 0px)) 1.1rem 0.9rem",
+        }}>
+          <button onClick={() => router.push("/painel-cowdata")} aria-label="Voltar ao Painel CowData" title="Voltar ao Painel CowData"
+            style={{ background: "none", border: "none", color: COR.texto, cursor: "pointer", display: "flex", flexShrink: 0 }}>
+            <ArrowLeft size={19} />
+          </button>
+          <span style={{ fontSize: "1.02rem", fontWeight: 700 }}>{itemAtual?.label || "Painel CowData"}</span>
+        </div>
+        <div style={{ padding: "1rem 1.1rem 2rem" }}>{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif", ...tokensPainel }} className="md:flex">
