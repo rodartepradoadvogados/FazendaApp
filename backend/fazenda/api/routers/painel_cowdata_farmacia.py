@@ -338,6 +338,25 @@ def listar_medicamentos_globais(_: Usuario = _dep, session: Session = Depends(ge
     return [_montar_medicamento_dict(session, m) for m in medicamentos]
 
 
+@router.get("/medicamentos/{medicamento_id}")
+def detalhar_medicamento_global(
+    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> dict:
+    """Detalhe de UM medicamento do catálogo padrão — bug real (01/09/2026):
+    "editar bula em Painel CowData deu 404". A tela de "Editar bula" (mesmo
+    componente usado no catálogo da fazenda, `FormEdicaoMarca` em
+    Farmacia.tsx) chamava a rota do TENANT (`GET /farmacia/principios/{id}`,
+    que exige `pa.fazenda_id == fazenda_id do token`) mesmo estando dentro do
+    Painel CowData — o princípio ali é GLOBAL (`fazenda_id=None`), então
+    aquela rota sempre devolvia 404. Esta rota é o equivalente pro contexto
+    global: sem fazenda nenhuma envolvida, 404 só quando o medicamento não
+    existe ou não é global."""
+    medicamento = session.get(MedicamentoComercial, medicamento_id)
+    if not medicamento or medicamento.fazenda_id is not None:
+        raise HTTPException(status_code=404, detail="Medicamento global não encontrado")
+    return _montar_medicamento_dict(session, medicamento)
+
+
 def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, principio_ids: list[int]) -> dict:
     """Cria (get-or-create, idempotente) o item de Estoque correspondente em
     toda fazenda-cliente ativa — pedido: "automaticamente, fazer parte do

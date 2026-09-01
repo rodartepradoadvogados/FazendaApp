@@ -115,6 +115,51 @@ def test_cria_principio_global_e_medicamento_faz_fanout_inativo(client):
         assert indicacoes[0].principio_ativo_id == pa_id and indicacoes[0].doenca_id == doenca_id
 
 
+def test_detalhar_medicamento_global(client):
+    """GET /painel-cowdata/farmacia/medicamentos/{id} — a rota que faltava:
+    editar a bula de um medicamento dentro do Painel CowData chamava a rota
+    do tenant (`/farmacia/principios/{id}`), que sempre devolvia 404 porque
+    o princípio ali é global (`fazenda_id=None`). Esta rota é o equivalente
+    de detalhe para o contexto global."""
+    c, engine, fa_id, fb_id = client
+    token = _login(c)
+    h = {"Authorization": f"Bearer {token}"}
+
+    r_pa = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Meloxicam"}, headers=h)
+    pa_id = r_pa.json()["id"]
+    r_med = c.post(
+        "/painel-cowdata/farmacia/medicamentos",
+        json={"nome_comercial": "Maxicam 2%", "principio_ativo_ids": [pa_id], "laboratorio": "Ourofino"},
+        headers=h,
+    )
+    med_id = r_med.json()["id"]
+
+    r_detalhe = c.get(f"/painel-cowdata/farmacia/medicamentos/{med_id}", headers=h)
+    assert r_detalhe.status_code == 200, r_detalhe.text
+    corpo = r_detalhe.json()
+    assert corpo["nome_comercial"] == "Maxicam 2%"
+    assert corpo["principio_ativo_ids"] == [pa_id]
+    assert corpo["laboratorio"] == "Ourofino"
+
+    r_404 = c.get("/painel-cowdata/farmacia/medicamentos/999999", headers=h)
+    assert r_404.status_code == 404
+
+    # Um medicamento de TENANT (fazenda_id preenchido) não é "global" — 404 também.
+    with Session(engine) as s:
+        pa_tenant = PrincipioAtivo(nome="Flunixin", fazenda_id=fa_id)
+        s.add(pa_tenant)
+        s.commit()
+        s.refresh(pa_tenant)
+        medicamento_tenant = MedicamentoComercial(nome_comercial="Só da fazenda A", fazenda_id=fa_id, principio_ativo_id=pa_tenant.id)
+        s.add(medicamento_tenant)
+        s.commit()
+        s.refresh(medicamento_tenant)
+        medicamento_tenant_id = medicamento_tenant.id
+
+    r_tenant = c.get(f"/painel-cowdata/farmacia/medicamentos/{medicamento_tenant_id}", headers=h)
+    assert r_tenant.status_code == 404
+
+
 def test_fanout_nunca_sobrescreve_item_ja_existente_no_tenant(client):
     c, engine, fa_id, fb_id = client
     token = _login(c)
