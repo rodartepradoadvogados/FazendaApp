@@ -449,38 +449,50 @@ _ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str, str | None]] = [
 
 
 def seed_alimentos(session: Session, fazenda_id: int | None = None) -> None:
-    """Idempotente — só cria o que ainda não existe (nunca sobrescreve edição
-    manual). Chamado no startup (ver `main.py`), sempre com `fazenda_id=1`:
-    a lista `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
-    produtos comerciais específicos já usados por essa fazenda."""
+    """Chamado no startup (ver `main.py`), sempre com `fazenda_id=1`: a lista
+    `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
+    produtos comerciais específicos já usados por essa fazenda.
+
+    (bug real corrigido, relato do usuário 01/09/2026: "excluí esses alimentos
+    várias vezes e eles sempre voltam") Igual ao que já tinha sido corrigido em
+    `_seed_categorias_alimento`/`_seed_subcategorias_concentrado` acima: a
+    versão antiga checava nome a nome (`if nome in existentes: continue`) e
+    rodava a CADA restart do servidor — apagar "Corte 21" de propósito só
+    durava até o próximo deploy, porque o nome já não estava mais em
+    `existentes` e o seed o recriava do zero. Bônus: a comparação por string
+    exata também nunca reconhecia "Ração Pré-parto" (seed) como igual a
+    "Ração Pré-Parto" (já cadastrado pelo usuário, com vínculo de estoque) —
+    diferença de maiúscula bastava para duplicar o registro. Agora só semeia
+    quando a fazenda está com ZERO alimentos (primeira vez de verdade);
+    depois disso, apagar um alimento padrão é definitivo, como em qualquer
+    cadastro editável."""
     _seed_categorias_alimento(session, fazenda_id=fazenda_id)
     _seed_subcategorias_concentrado(session, fazenda_id=fazenda_id)
-    categoria_query = select(CategoriaAlimento)
     alimento_query = select(Alimento)
+    if fazenda_id is not None:
+        alimento_query = alimento_query.where(Alimento.fazenda_id == fazenda_id)
+    if session.exec(alimento_query).first() is not None:
+        return
+    categoria_query = select(CategoriaAlimento)
     estoque_query = select(Estoque)
     if fazenda_id is not None:
         categoria_query = categoria_query.where(CategoriaAlimento.fazenda_id == fazenda_id)
-        alimento_query = alimento_query.where(Alimento.fazenda_id == fazenda_id)
         estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
     categorias = {c.nome: c.id for c in session.exec(categoria_query).all()}
-    existentes = {a.nome for a in session.exec(alimento_query).all()}
     estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(estoque_query).all()}
-    novos_com_vinculo = []
-    for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA:
-        if nome in existentes:
-            continue
-        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome), fazenda_id=fazenda_id)
-        novos_com_vinculo.append((alimento, nome_estoque or nome))
-    if novos_com_vinculo:
-        session.add_all([a for a, _ in novos_com_vinculo])
-        session.commit()
-        for alimento, nome_estoque in novos_com_vinculo:
-            session.refresh(alimento)
-            item = estoque_por_nome.get(nome_estoque.strip().lower())
-            if item and item.alimento_id is None:
-                item.alimento_id = alimento.id
-                session.add(item)
-        session.commit()
+    novos_com_vinculo = [
+        (Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome), fazenda_id=fazenda_id), nome_estoque or nome)
+        for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA
+    ]
+    session.add_all([a for a, _ in novos_com_vinculo])
+    session.commit()
+    for alimento, nome_estoque in novos_com_vinculo:
+        session.refresh(alimento)
+        item = estoque_por_nome.get(nome_estoque.strip().lower())
+        if item and item.alimento_id is None:
+            item.alimento_id = alimento.id
+            session.add(item)
+    session.commit()
 
 
 @router.get("/categorias")
