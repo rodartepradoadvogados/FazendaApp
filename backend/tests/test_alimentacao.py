@@ -5,6 +5,7 @@ incluindo a segurança contra baixa duplicada sob acesso concorrente.
 """
 from __future__ import annotations
 
+import json
 import threading
 from datetime import date, timedelta
 
@@ -1678,6 +1679,90 @@ class TestTabelaNutricionalProdutoDeEstoque:
         corpo = r.json()
         idx = corpo["alimentos"].index("Concentrado Z")
         assert corpo["estoque_ids"][idx] == estoque_id
+
+
+class TestGerarComposicaoDeTabelaNutricional:
+    """Fase 2 (01/09/2026), pedido do usuário: usar a composição já digitada
+    na Tabela Nutricional (texto livre, unidades mistas) pra preencher a
+    Biblioteca de Referência por produto, em vez do template genérico. Ver
+    fazenda.rules.tabela_nutricional.compor_alimento_nutricional_de_tabela."""
+
+    def _criar_produto_vinculado(self, engine, *, valores: dict[str, str]) -> tuple[int, int, int]:
+        from fazenda.models import TabelaNutricionalValor
+        with Session(engine) as s:
+            alimento = Alimento(nome="Concentrado Proteico Teste")
+            s.add(alimento)
+            s.commit()
+            s.refresh(alimento)
+            item = Estoque(nome="Teck Milk 24%", alimento_id=alimento.id, finalidade="Ração/Alimento")
+            s.add(item)
+            s.commit()
+            s.refresh(item)
+            produto = TabelaNutricionalProduto(nome="Teck Milk 24%", estoque_id=item.id)
+            s.add(produto)
+            s.commit()
+            s.refresh(produto)
+            for nutriente, valor in valores.items():
+                s.add(TabelaNutricionalValor(produto_id=produto.id, nutriente=nutriente, valor=valor))
+            s.commit()
+            return alimento.id, item.id, produto.id
+
+    def test_gera_composicao_convertendo_unidades_e_guarda_o_resto_em_extras(self, client):
+        c, engine = client
+        alimento_id, estoque_id, produto_id = self._criar_produto_vinculado(engine, valores={
+            "Umidade": "125,00 g (Máx)",
+            "Proteína Bruta": "240,00 g (Mín)",
+            "Cálcio (Mín)": "5.500,00 mg",
+            "Vitamina A (Mín)": "13.300,00 UI",
+        })
+        r = c.post(f"/alimentacao/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["criado"] is True
+        assert corpo["convertidos"]["ms_pct"] == 87.5
+        assert corpo["convertidos"]["pb_pct"] == 27.43
+        assert corpo["nao_convertidos"]["Vitamina A (Mín)"] == "13.300,00 UI"
+
+        with Session(engine) as s:
+            item = s.get(AlimentoNutricional, corpo["alimento_nutricional_id"])
+            assert item.alimento_id == alimento_id
+            assert item.estoque_id == estoque_id
+            assert item.pb_pct == 27.43
+            assert item.ms_pct == 87.5
+            assert json.loads(item.extras_json)["Vitamina A (Mín)"] == "13.300,00 UI"
+
+    def test_chamar_de_novo_atualiza_em_vez_de_duplicar(self, client):
+        c, engine = client
+        _, _, produto_id = self._criar_produto_vinculado(engine, valores={"Proteína Bruta": "200,00 g (Mín)"})
+        r1 = c.post(f"/alimentacao/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+        assert r1.json()["criado"] is True
+        r2 = c.post(f"/alimentacao/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+        assert r2.json()["criado"] is False
+        assert r2.json()["alimento_nutricional_id"] == r1.json()["alimento_nutricional_id"]
+        with Session(engine) as s:
+            assert len(s.exec(select(AlimentoNutricional)).all()) == 1
+
+    def test_produto_sem_vinculo_com_estoque_ou_alimento_da_400(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            produto = TabelaNutricionalProduto(nome="Solto")
+            s.add(produto)
+            s.commit()
+            s.refresh(produto)
+            produto_id = produto.id
+        r = c.post(f"/alimentacao/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+        assert r.status_code == 400
+
+    def test_produto_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/alimentacao/tabela-nutricional/produtos/999999/gerar-composicao")
+        assert r.status_code == 404
+
+    def test_sem_nenhum_valor_convertivel_da_400(self, client):
+        c, engine = client
+        _, _, produto_id = self._criar_produto_vinculado(engine, valores={"Vitamina A (Mín)": "13.300,00 UI"})
+        r = c.post(f"/alimentacao/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+        assert r.status_code == 400
 
 
 class TestMateriaSeca:

@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from fazenda.auth import (
@@ -658,6 +657,14 @@ async def _idempotencia(request, call_next):
         texto = None  # resposta binária (ex.: PDF) — fora do que este cache assume; segue sem gravar
 
     if texto is not None:
+        # Best-effort: a resposta original já reflete um pedido processado com
+        # SUCESSO (o commit de verdade, da rota, já aconteceu) — gravar o
+        # cache de idempotência é só uma otimização por cima disso. Um
+        # `except IntegrityError` sozinho aqui deixava escapar qualquer OUTRO
+        # erro (ex.: uma conexão soltando com o Postgres em produção) direto
+        # pra fora do middleware, derrubando a resposta inteira — o navegador
+        # via "Failed to fetch" mesmo com o lançamento já salvo (bug real,
+        # relatado em 01/09/2026 no pagamento de Contas a Pagar).
         try:
             with _sessao_idempotencia(request) as session:
                 session.add(IdempotenciaChave(
@@ -665,8 +672,8 @@ async def _idempotencia(request, call_next):
                     status_code=response.status_code, resposta_json=texto,
                 ))
                 session.commit()
-        except IntegrityError:
-            pass  # corrida rara entre duas tentativas concorrentes com a mesma chave — a primeira grava, esta é descartada
+        except Exception:
+            pass
 
     return Response(content=corpo, status_code=response.status_code, media_type=response.headers.get("content-type"))
 

@@ -7,6 +7,7 @@ estoque (opção A: o sistema recalcula quantos dias se passaram desde a
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -1284,6 +1285,72 @@ def excluir_produto_tabela_nutricional(produto_id: int, session: Session = Depen
     session.delete(produto)
     session.commit()
     return {"excluido": True, "id": produto_id}
+
+
+@router.post("/tabela-nutricional/produtos/{produto_id}/gerar-composicao")
+def gerar_composicao_de_tabela_nutricional(
+    produto_id: int, categoria_nasem: str | None = None,
+    fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Usa os valores já digitados na Tabela Nutricional deste produto (texto
+    livre, unidades mistas) para preencher/atualizar a composição dele na
+    Biblioteca de Referência (AlimentoNutricional) — em vez de deixar a
+    importação de dieta cair sempre no template genérico da categoria.
+
+    Requer o produto já vinculado a um item de Estoque (que por sua vez
+    aponta pra um Alimento) — é essa cadeia que decide em qual `alimento_id`/
+    `estoque_id` a composição gerada é gravada. Ver
+    `fazenda.rules.tabela_nutricional.compor_alimento_nutricional_de_tabela`
+    pra regra de conversão de unidade."""
+    from fazenda.models import TabelaNutricionalValor
+    from fazenda.rules.tabela_nutricional import compor_alimento_nutricional_de_tabela
+
+    produto = session.get(TabelaNutricionalProduto, produto_id)
+    if not produto or (produto.fazenda_id is not None and produto.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+
+    alimento_id = produto.alimento_id
+    if alimento_id is None and produto.estoque_id is not None:
+        produto_estoque = session.get(Estoque, produto.estoque_id)
+        alimento_id = produto_estoque.alimento_id if produto_estoque else None
+    if alimento_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Vincule este produto a um item de Estoque (que aponte pra um Alimento) antes de gerar a composição",
+        )
+
+    valores = session.exec(select(TabelaNutricionalValor).where(TabelaNutricionalValor.produto_id == produto_id)).all()
+    nutriente_valores = {v.nutriente: v.valor for v in valores}
+    convertidos, nao_convertidos = compor_alimento_nutricional_de_tabela(nutriente_valores)
+    if not convertidos:
+        raise HTTPException(status_code=400, detail="Nenhum valor desta tabela nutricional pôde ser convertido em composição")
+
+    query_existente = select(AlimentoNutricional).where(
+        AlimentoNutricional.alimento_id == alimento_id, AlimentoNutricional.estoque_id == produto.estoque_id,
+        AlimentoNutricional.fazenda_id == fazenda_id,
+    )
+    item = session.exec(query_existente).first()
+    criado = item is None
+    if item is None:
+        item = AlimentoNutricional(
+            alimento_id=alimento_id, estoque_id=produto.estoque_id, fazenda_id=fazenda_id,
+            nome=produto.nome, categoria_nasem=categoria_nasem or "Outros", usuario_id=user.id,
+        )
+    for campo, valor in convertidos.items():
+        setattr(item, campo, valor)
+    item.fonte = "Tabela nutricional (rótulo do produto)"
+    extras = json.loads(item.extras_json) if item.extras_json else {}
+    extras.update(nao_convertidos)
+    item.extras_json = json.dumps(extras) if extras else None
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return {
+        "criado": criado, "alimento_nutricional_id": item.id,
+        "convertidos": convertidos, "nao_convertidos": nao_convertidos,
+    }
 
 
 class ValorTabelaNutricionalIn(BaseModel):

@@ -1135,7 +1135,11 @@ def registrar_pagamento_diaria(
         fazenda_id=fazenda_id,
     ))
     session.commit()
-    return _resumo_diaria(session, diaria, pessoa.nome)
+    # `numero_lancamento_gerado` no topo (fora do resumo) — é o que a tela
+    # usa pra anexar o comprovante logo em seguida via o mecanismo genérico
+    # POST /financeiro/lancamentos/{numero_lancamento}/anexos, sem precisar
+    # adivinhar qual dos pagamentos da lista é o que acabou de ser criado.
+    return {**_resumo_diaria(session, diaria, pessoa.nome), "numero_lancamento_gerado": numero_lancamento}
 
 
 # ---------------------------------------------------------------------------

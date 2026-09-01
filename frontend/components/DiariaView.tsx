@@ -5,7 +5,7 @@ import {
   fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
   confirmarExclusao, fetchContasCorrentes, type ContaCorrenteCadastro, encerrarDiaria,
-  fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta,
+  fetchDiasDiaria, salvarDiasDiaria, type DiasDiariaResposta, anexarArquivoLancamento,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
@@ -16,7 +16,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { CampoMoeda } from "@/components/CampoMoeda";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
-type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
+type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null; numero_lancamento_gerado: string | null };
 type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type AuditoriaPendente = { id: number; diaria_id: number; periodo_inicio: string; periodo_fim: string };
 type Diaria = {
@@ -81,6 +81,9 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   const [pagoErro, setPagoErro] = useState<string | null>(null);
   const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
   const [pagamentoContaCorrenteId, setPagamentoContaCorrenteId] = useState("");
+  const [comprovantePagamento, setComprovantePagamento] = useState<File | null>(null);
+  const [enviandoPagamento, setEnviandoPagamento] = useState(false);
+  const [enviandoComprovanteId, setEnviandoComprovanteId] = useState<number | null>(null);
 
   const [diasTrabalhadosPorAuditoria, setDiasTrabalhadosPorAuditoria] = useState<Record<number, string>>({});
   const [auditoriaErro, setAuditoriaErro] = useState<string | null>(null);
@@ -97,6 +100,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   // app/sanidade/page.tsx): admin exclui na hora, operador só solicita.
   const [pagamentosAbertoId, setPagamentosAbertoId] = useState<number | null>(null);
   const [erroExclusao, setErroExclusao] = useState<string | null>(null);
+  const [avisoPagamento, setAvisoPagamento] = useState<string | null>(null);
   const [ocupadoExclusao, setOcupadoExclusao] = useState<number | null>(null);
 
   // Estimativa de nº de diárias/valor quando início e fim são informados no
@@ -194,15 +198,46 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
   async function registrarPagamento(diariaId: number) {
     setPagoErro(null);
     if (!valorPagamento || parseFloat(valorPagamento) <= 0) { setPagoErro("Informe o valor do pagamento."); return; }
+    setEnviandoPagamento(true);
     try {
-      await registrarPagamentoDiaria(diariaId, {
+      const resultado = await registrarPagamentoDiaria(diariaId, {
         data_pagamento: dataPagamento, valor: parseFloat(valorPagamento),
         conta_corrente_id: pagamentoContaCorrenteId ? Number(pagamentoContaCorrenteId) : undefined,
       });
-      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId("");
+      // O pagamento já foi salvo aqui — se o anexo do comprovante falhar
+      // (ex.: arquivo grande numa conexão ruim), o pagamento não pode
+      // desaparecer nem parecer que deu erro; só avisa e deixa a fazenda
+      // anexar depois pela lista de pagamentos lançados.
+      if (comprovantePagamento && resultado.numero_lancamento_gerado) {
+        try {
+          await anexarArquivoLancamento(resultado.numero_lancamento_gerado, comprovantePagamento);
+        } catch (e: any) {
+          setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null);
+          carregar();
+          setAvisoPagamento(`Pagamento registrado, mas o comprovante não foi anexado: ${e.message || "erro desconhecido"}. Anexe de novo pela lista de pagamentos lançados.`);
+          return;
+        }
+      }
+      setPagandoId(null); setValorPagamento(""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null);
       carregar();
     } catch (e: any) {
       setPagoErro(e.message || "Erro ao registrar pagamento");
+    } finally {
+      setEnviandoPagamento(false);
+    }
+  }
+
+  async function anexarComprovantePagamento(pagamentoId: number, numeroLancamento: string | null, file: File) {
+    if (!numeroLancamento) { setAvisoPagamento("Este pagamento é antigo e não tem lançamento associado — não é possível anexar comprovante nele."); return; }
+    setEnviandoComprovanteId(pagamentoId);
+    setAvisoPagamento(null);
+    try {
+      await anexarArquivoLancamento(numeroLancamento, file);
+      carregar();
+    } catch (e: any) {
+      setAvisoPagamento(`Erro ao anexar comprovante: ${e.message || "erro desconhecido"}`);
+    } finally {
+      setEnviandoComprovanteId(null);
     }
   }
 
@@ -590,6 +625,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
           </label>
         </div>
         {erroExclusao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erroExclusao}</p>}
+        {avisoPagamento && <p style={{ color: "var(--amber)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{avisoPagamento}</p>}
         {calendarioMsg && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{calendarioMsg}</p>}
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
         {itens && !itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma diarista lançada ainda.</p>}
@@ -641,7 +677,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                           <Pencil size={13} />
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setPagoErro(null); }}>
+                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagamentoContaCorrenteId(""); setComprovantePagamento(null); setPagoErro(null); }}>
                           <DollarSign size={13} /> Pagar
                         </button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem" }} title="Ver pagamentos lançados"
@@ -699,6 +735,15 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
                                   <td>{formatBRL(p.valor)}</td>
                                   <td>{p.observacao || "—"}</td>
                                   <td>
+                                    <label className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.25rem", cursor: "pointer" }}
+                                      title="Anexar comprovante de pagamento">
+                                      <Receipt size={12} /> {enviandoComprovanteId === p.id ? "Enviando…" : "Comprovante"}
+                                      <input
+                                        type="file" accept="application/pdf,image/jpeg,image/png,image/webp" style={{ display: "none" }}
+                                        disabled={enviandoComprovanteId === p.id}
+                                        onChange={(e) => { const f = e.target.files?.[0]; if (f) anexarComprovantePagamento(p.id, p.numero_lancamento_gerado, f); e.target.value = ""; }}
+                                      />
+                                    </label>
                                     <button className="btn-ghost" style={{ fontSize: "0.7rem", color: "var(--red)" }} title="Excluir pagamento"
                                       disabled={ocupadoExclusao === p.id}
                                       onClick={() => excluirPagamento(p.id, d.pessoa_nome, p.valor)}>
@@ -761,9 +806,17 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo }: {
               {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
             </select>
           </div>
+          <div style={{ marginTop: "0.6rem" }}>
+            <label style={lbl}>Comprovante de pagamento (opcional)</label>
+            <input
+              type="file" accept="application/pdf,image/jpeg,image/png,image/webp"
+              onChange={(e) => setComprovantePagamento(e.target.files?.[0] || null)}
+              style={{ fontSize: "0.78rem" }}
+            />
+          </div>
           {pagoErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{pagoErro}</p>}
-          <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} onClick={() => registrarPagamento(pagandoId)}>
-            Confirmar pagamento
+          <button className="btn-primary" style={{ fontSize: "0.8rem", marginTop: "1rem" }} disabled={enviandoPagamento} onClick={() => registrarPagamento(pagandoId)}>
+            {enviandoPagamento ? "Enviando…" : "Confirmar pagamento"}
           </button>
         </Modal>
       )}

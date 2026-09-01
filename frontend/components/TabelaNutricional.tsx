@@ -3,11 +3,11 @@
 // suspenso, com uma calculadora ao lado que aceita o teclado numérico do
 // computador. Botão reutilizável: <TabelaNutricionalBotao />.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, Table2, Search, Plus, Trash2, Pencil, Download, Upload, Save } from "lucide-react";
+import { X, Table2, Search, Plus, Trash2, Pencil, Download, Upload, Save, Sparkles } from "lucide-react";
 import {
   fetchTabelaNutricional, criarProdutoTabelaNutricional, renomearProdutoTabelaNutricional,
   excluirProdutoTabelaNutricional, salvarValoresTabelaNutricional, baixarModeloTabelaNutricional, importarTabelaNutricional,
-  fetchEstoque,
+  fetchEstoque, gerarComposicaoDeTabelaNutricional,
 } from "@/lib/api";
 import { casaBusca } from "@/lib/busca";
 
@@ -214,6 +214,23 @@ export function TabelaNutricionalCadastroInline() {
     } catch (e: any) { setMsg({ texto: e.message, erro: true }); }
   }
 
+  const [gerandoComposicaoId, setGerandoComposicaoId] = useState<number | null>(null);
+
+  async function gerarComposicao(produtoId: number, nome: string) {
+    setGerandoComposicaoId(produtoId);
+    setMsg(null);
+    try {
+      const r = await gerarComposicaoDeTabelaNutricional(produtoId);
+      const nConvertidos = Object.keys(r.convertidos).length;
+      const nNaoConvertidos = Object.keys(r.nao_convertidos).length;
+      setMsg({
+        texto: `"${nome}": ${nConvertidos} valor(es) convertido(s) pra composição na Biblioteca de Referência`
+          + (nNaoConvertidos ? ` (${nNaoConvertidos} nutriente(s) sem campo tipado ficaram guardados à parte).` : "."),
+      });
+    } catch (e: any) { setMsg({ texto: e.message, erro: true }); }
+    finally { setGerandoComposicaoId(null); }
+  }
+
   async function renomear(id: number, nomeAtual: string) {
     const nome = window.prompt("Novo nome do produto:", nomeAtual);
     if (!nome || !nome.trim() || nome.trim() === nomeAtual) return;
@@ -273,6 +290,13 @@ export function TabelaNutricionalCadastroInline() {
                   <th key={dados.produto_ids[idx]} style={{ position: "sticky", top: 0, background: "var(--surface-2)", minWidth: "9rem" }}>
                     <div className="flex items-center gap-1">
                       <span style={{ flex: 1 }}>{nome}</span>
+                      {dados.estoque_ids[idx] != null && (
+                        <button className="btn-ghost" title="Gerar/atualizar composição na Biblioteca de Referência a partir desta tabela"
+                          style={{ padding: "0.1rem" }} disabled={gerandoComposicaoId === dados.produto_ids[idx]}
+                          onClick={() => gerarComposicao(dados.produto_ids[idx], nome)}>
+                          <Sparkles size={11} />
+                        </button>
+                      )}
                       <button className="btn-ghost" title="Renomear produto" style={{ padding: "0.1rem" }} onClick={() => renomear(dados.produto_ids[idx], nome)}><Pencil size={11} /></button>
                       <button className="btn-ghost" title="Excluir produto" style={{ padding: "0.1rem", color: "var(--red)" }} onClick={() => excluir(dados.produto_ids[idx], nome)}><Trash2 size={11} /></button>
                     </div>

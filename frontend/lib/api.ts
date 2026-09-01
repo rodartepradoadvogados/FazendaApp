@@ -2334,7 +2334,7 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: {
   data_pagamento: string; valor: number; observacao?: string;
   // Conta bancária de onde sai o pagamento — OPCIONAL (ver _resolver_conta_corrente no backend).
   conta_corrente_id?: number | null;
-}) {
+}): Promise<{ numero_lancamento_gerado: string } & Record<string, any>> {
   const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -4258,6 +4258,15 @@ export async function criarProdutoTabelaNutricional(dados: { nome?: string; esto
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cadastrar produto"); }
+  return res.json();
+}
+export type GerarComposicaoResposta = {
+  criado: boolean; alimento_nutricional_id: number;
+  convertidos: Record<string, number>; nao_convertidos: Record<string, string>;
+};
+export async function gerarComposicaoDeTabelaNutricional(produtoId: number): Promise<GerarComposicaoResposta> {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${produtoId}/gerar-composicao`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao gerar composição"); }
   return res.json();
 }
 export async function renomearProdutoTabelaNutricional(id: number, nome: string) {
