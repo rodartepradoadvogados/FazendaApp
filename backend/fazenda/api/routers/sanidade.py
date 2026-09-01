@@ -212,6 +212,10 @@ class ItemAplicacaoIn(BaseModel):
     # apresentação (marca/tamanho) do mesmo princípio no estoque, o front manda
     # o id do item escolhido para abater do recipiente certo.
     estoque_id: int | None = None
+    # "Qual lote/frasco de compra?" (Fase G, 01/09/2026) — dentro do MESMO
+    # item de estoque escolhido acima, quando há mais de um lote em aberto.
+    # Sem isso, a baixa cai em FIFO automático (lote mais antigo primeiro).
+    lote_id: int | None = None
 
 
 class AplicacaoIn(BaseModel):
@@ -329,7 +333,7 @@ def registrar_aplicacao(
                 session, item=estoque_item, quantidade=item.quantidade, unidade=item.unidade, data=dados.data_aplicacao,
                 fazenda_id=fazenda_id, observacao=f"Aplicação em {numero} — Sanidade",
                 usuario_id=usuario_id_seguro(user), origem_tipo="sanidade", origem_id=sanidade.id,
-                produto=item.produto,
+                produto=item.produto, lote_id=item.lote_id,
             ))
 
     session.commit()
@@ -339,7 +343,7 @@ def registrar_aplicacao(
 def _ajustar_estoque_por_aplicacao(
     session: Session, produto: str | None, dose: float | None, unidade: str | None,
     fazenda_id: int | None, sinal: int, observacao: str, origem_id: int | None = None,
-    estoque_id: int | None = None,
+    estoque_id: int | None = None, lote_id: int | None = None,
 ) -> list[str]:
     """Devolve (sinal=+1) ou baixa (sinal=-1) `dose` de `produto` no estoque —
     usado para estornar/reaplicar a baixa quando uma aplicação é editada ou
@@ -352,7 +356,9 @@ def _ajustar_estoque_por_aplicacao(
     usou — sem ele, `_resolver_item_estoque` cai no fallback por nome e, se
     houver mais de um frasco cadastrado com o mesmo produto (comum em
     Farmácia — lotes/validades diferentes), pode devolver/rebaixar num frasco
-    diferente do que a aplicação de fato consumiu."""
+    diferente do que a aplicação de fato consumiu. `lote_id` (Fase G,
+    01/09/2026) é o mesmo princípio, um nível abaixo: o lote/frasco de compra
+    específico que a baixa original consumiu dentro desse item."""
     if not produto or dose is None or not unidade:
         return []
     estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto, estoque_id=estoque_id)
@@ -360,13 +366,13 @@ def _ajustar_estoque_por_aplicacao(
     return fn(
         session, item=estoque_item, quantidade=dose, unidade=unidade, data=date.today(),
         fazenda_id=fazenda_id, observacao=observacao, origem_tipo="sanidade", origem_id=origem_id,
-        produto=produto,
+        produto=produto, lote_id=lote_id,
     )
 
 
-def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> int | None:
-    """`estoque_id` do frasco que a baixa mais recente desta Sanidade de fato
-    usou (lido do próprio rastro em MovimentoEstoque, que `estoque_baixa.
+def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> tuple[int | None, int | None]:
+    """(`estoque_id`, `lote_id`) que a baixa mais recente desta Sanidade de
+    fato usou (lido do próprio rastro em MovimentoEstoque, que `estoque_baixa.
     movimentar` grava — ver a nota em `_ajustar_estoque_por_aplicacao`).
     "Mais recente" porque uma aplicação pode já ter sido editada antes: cada
     edição grava um novo par estorno/rebaixa com o mesmo origem_id."""
@@ -376,7 +382,7 @@ def _frasco_da_ultima_aplicacao(session: Session, sanidade_id: int) -> int | Non
             MovimentoEstoque.movimento == "Aplicação",
         ).order_by(MovimentoEstoque.id.desc())
     ).first()
-    return mov.estoque_id if mov else None
+    return (mov.estoque_id, mov.lote_id) if mov else (None, None)
 
 
 class EditarAplicacaoIn(BaseModel):
@@ -429,10 +435,11 @@ def editar_aplicacao(
     mexe_estoque = any(c in campos for c in ("produto", "dose", "unidade"))
     if mexe_estoque:
         produto_antigo = s.produto
-        estoque_id_antigo = _frasco_da_ultima_aplicacao(session, s.id)
+        estoque_id_antigo, lote_id_antigo = _frasco_da_ultima_aplicacao(session, s.id)
         _ajustar_estoque_por_aplicacao(
             session, produto_antigo, s.dose, s.unidade, fazenda_id, +1,
             f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_antigo,
+            lote_id=lote_id_antigo,
         )
 
     for campo, valor in campos.items():
@@ -447,9 +454,11 @@ def editar_aplicacao(
         # válido pro produto novo, resolve por nome mesmo (comportamento de
         # sempre).
         estoque_id_novo = estoque_id_antigo if s.produto == produto_antigo else None
+        lote_id_novo = lote_id_antigo if s.produto == produto_antigo else None
         avisos.extend(_ajustar_estoque_por_aplicacao(
             session, s.produto, s.dose, s.unidade, fazenda_id, -1,
             f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id, estoque_id=estoque_id_novo,
+            lote_id=lote_id_novo,
         ))
 
     session.commit()
@@ -475,10 +484,11 @@ def excluir_aplicacao(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+    estoque_id_excluida, lote_id_excluida = _frasco_da_ultima_aplicacao(session, s.id)
     _ajustar_estoque_por_aplicacao(
         session, s.produto, s.dose, s.unidade, fazenda_id, +1,
         f"Estorno por exclusão da aplicação #{s.id} — Sanidade", origem_id=s.id,
-        estoque_id=_frasco_da_ultima_aplicacao(session, s.id),
+        estoque_id=estoque_id_excluida, lote_id=lote_id_excluida,
     )
     session.delete(s)
     session.commit()

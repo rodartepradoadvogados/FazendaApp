@@ -3502,7 +3502,7 @@ export async function fetchUnidadesCompativeis(produto: string) {
 
 export async function criarAplicacaoSanidade(dados: {
   data_aplicacao: string; animais: string[]; responsavel?: string; observacao?: string;
-  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null }[];
+  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null; lote_id?: number | null }[];
   aplicado?: boolean;
 }) {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
@@ -4433,6 +4433,32 @@ export async function fetchApresentacoesFarmacia(params: { principio_ativo_id?: 
   if (!res.ok) throw new Error(`Apresentações error: ${res.status}`);
   return res.json() as Promise<ApresentacaoFarmacia[]>;
 }
+// Lotes/frascos de compra (Fase G, 01/09/2026) — pedido do usuário:
+// "registrar/comprar um medicamento escolhendo um tamanho de frasco/
+// embalagem específico com sua própria dosagem, rastrear múltiplos lotes de
+// tamanhos diferentes do mesmo medicamento em estoque, e — ao aplicar —
+// escolher explicitamente de qual frasco/lote a dose saiu, ou, se nenhum for
+// escolhido, baixar automaticamente do lote mais antigo primeiro (FIFO)."
+export type LoteEstoque = {
+  id: number; estoque_id: number; numero_lote: string | null; data_compra: string;
+  quantidade_comprada: number; quantidade_restante: number; valor_unitario: number | null;
+  observacao: string | null; ativo: boolean;
+};
+export async function fetchLotesEstoque(estoqueId: number) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lotes error: ${res.status}`);
+  return res.json() as Promise<LoteEstoque[]>;
+}
+export async function abrirLoteEstoque(estoqueId: number, dados: {
+  quantidade: number; data_compra: string; valor_unitario?: number | null; numero_lote?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/estoque/${estoqueId}/lotes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao abrir lote"); }
+  return res.json() as Promise<LoteEstoque & { avisos: string[] }>;
+}
+
 export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { quantidade: number; data?: string; observacao?: string }) {
   const res = await authFetch(`${API}/farmacia/estoque/${estoqueId}/inicializar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

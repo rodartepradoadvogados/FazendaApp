@@ -160,6 +160,46 @@ class EstoquePrincipioAtivo(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class LoteEstoque(SQLModel, table=True):
+    """Um lote/frasco COMPRADO de um item de Estoque — pedido do usuário
+    (01/09/2026): "registrar/comprar um medicamento escolhendo um tamanho de
+    frasco/embalagem específico com sua própria dosagem, rastrear múltiplos
+    lotes de tamanhos diferentes do mesmo medicamento em estoque, e — ao
+    aplicar — escolher explicitamente de qual frasco/lote a dose saiu, ou,
+    se nenhum for escolhido, baixar automaticamente do lote mais antigo
+    primeiro (FIFO)."
+
+    Puramente ADITIVO sobre o que já existia: `Estoque.quantidade` continua
+    sendo o saldo agregado (somado a partir de `quantidade_restante` de todos
+    os lotes do item) — ninguém que só lê o agregado precisa saber que lotes
+    existem. Um item que nunca teve um lote aberto continua se comportando
+    exatamente como antes (ver `rules/estoque_baixa.py::movimentar`) — a
+    granularidade por lote só passa a valer para quem decidir usá-la.
+
+    Limitação conhecida e documentada: uma DEVOLUÇÃO (sinal=+1) sem
+    `lote_id` explícito — ex.: estorno genérico de uma baixa antiga que não
+    conseguiu recuperar de qual lote específico veio — é distribuída de volta
+    pelos lotes com espaço (do mais recente pro mais antigo), não
+    necessariamente no lote exato de onde a baixa original saiu. Fluxos que já
+    guardam o rastro exato (ex.: edição/exclusão de aplicação em Sanidade, que
+    lê `MovimentoEstoque.lote_id` da baixa original) reaproveitam o lote certo
+    — ver `sanidade.py::_lote_da_ultima_aplicacao`."""
+
+    __tablename__ = "lote_estoque"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    estoque_id: int = Field(foreign_key="estoque.id", index=True)
+    numero_lote: Optional[str] = None
+    data_compra: date
+    quantidade_comprada: float
+    quantidade_restante: float
+    valor_unitario: Optional[float] = None
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class EstoqueAliasMesclado(SQLModel, table=True):
     """Registro de mesclagem de itens de Estoque (ver POST
     /estoque/{sobrevivente_id}/mesclar): o item "perdedor" NÃO é excluído nem
@@ -356,6 +396,14 @@ class MovimentoEstoque(SQLModel, table=True):
     # Id do lançamento (Sanidade, ProtocoloSanitarioAplicacao, Servico...) que
     # gerou este movimento — junto de `origem_tipo`, dá o rastro completo.
     origem_id: Optional[int] = None
+    # Qual lote/frasco (LoteEstoque) este movimento afetou — None quando o
+    # item nunca teve lote aberto (comportamento legado, só mexe no agregado)
+    # OU quando a baixa/devolução por FIFO acabou tocando mais de um lote na
+    # mesma chamada (caso raro: dose maior que o que sobrava no lote mais
+    # antigo) — nesse caso o LEDGER por lote continua correto (cada lote foi
+    # decrementado certinho), só a atribuição desta UMA linha de movimento
+    # fica ambígua entre os lotes tocados. Ver rules/estoque_baixa.py.
+    lote_id: Optional[int] = Field(default=None, foreign_key="lote_estoque.id", index=True)
 
 
 class EstoqueSemen(SQLModel, table=True):

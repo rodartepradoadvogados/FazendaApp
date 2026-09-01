@@ -1202,16 +1202,20 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
             if mov.movimento == "Entrada de compra":
                 # A baixa original SOMOU ao estoque (compra financeira) — o
                 # estorno precisa SUBTRAIR a mesma quantidade, não devolver.
+                # `lote_id` (Fase G, 01/09/2026): quando a compra original
+                # abriu um lote, o estorno tira exatamente dele.
                 avisos.extend(estoque_baixa.movimentar(
                     session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
                     fazenda_id=fazenda_id, movimento="Saída de ajuste", observacao=observacao, sinal=-1,
                     origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                    lote_id=mov.lote_id,
                 ))
             else:
                 avisos.extend(estoque_baixa.devolver(
                     session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
                     fazenda_id=fazenda_id, observacao=observacao,
                     origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+                    lote_id=mov.lote_id,
                 ))
     return avisos
 

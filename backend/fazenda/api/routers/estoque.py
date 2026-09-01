@@ -15,12 +15,12 @@ from fazenda.auth import exigir_sessao_suporte, get_current_user, get_fazenda_at
 from fazenda.database import get_session
 from fazenda.models import (
     Alimento, CategoriaMedicamento, CompraSemen, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento,
-    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fornecedor, MedicamentoComercial,
+    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fornecedor, LoteEstoque, MedicamentoComercial,
     MovimentoEstoque, PrincipioAtivo, SeedFlag, Usuario,
 )
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.estoque_baixa import carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
+from fazenda.rules.estoque_baixa import abrir_lote, carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
 from fazenda.rules.farmacia_multi_principio import definir_principios_estoque, principios_do_estoque, principios_do_medicamento
 from fazenda.rules.farmacia_tags import definir_tags, tags_de
 from fazenda.rules.visibilidade import visivel
@@ -725,6 +725,58 @@ def restaurar_padrao_cowdata(
     session.commit()
     session.refresh(item)
     return item.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Lotes/frascos (Fase G, 01/09/2026) — pedido do usuário: "registrar/comprar
+# um medicamento escolhendo um tamanho de frasco/embalagem específico com sua
+# própria dosagem, rastrear múltiplos lotes de tamanhos diferentes do mesmo
+# medicamento em estoque". Puramente aditivo sobre o item de Estoque já
+# existente — abrir um lote continua somando em `Estoque.quantidade` (ver
+# rules/estoque_baixa.abrir_lote), só ganha o rastro por lote além do
+# agregado. Consumido pela baixa (FIFO automático ou escolha explícita de
+# lote) e pelo seletor "de qual frasco/lote?" no lançamento.
+# ---------------------------------------------------------------------------
+class LoteEstoqueIn(BaseModel):
+    quantidade: float
+    data_compra: date
+    valor_unitario: float | None = None
+    numero_lote: str | None = None
+    observacao: str | None = None
+
+
+@router.get("/{item_id}/lotes")
+def listar_lotes_estoque(
+    item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    item = session.get(Estoque, item_id)
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    lotes = session.exec(
+        select(LoteEstoque).where(LoteEstoque.estoque_id == item_id).order_by(LoteEstoque.data_compra, LoteEstoque.id)
+    ).all()
+    return [l.model_dump() for l in lotes]
+
+
+@router.post("/{item_id}/lotes", status_code=201)
+def abrir_lote_estoque(
+    item_id: int, dados: LoteEstoqueIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    item = session.get(Estoque, item_id)
+    if not item or item.fazenda_id != fazenda_id:
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    if dados.quantidade <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade do lote deve ser maior que zero")
+    lote, avisos = abrir_lote(
+        session, item=item, quantidade=dados.quantidade, data_compra=dados.data_compra, fazenda_id=fazenda_id,
+        valor_unitario=dados.valor_unitario, numero_lote=dados.numero_lote, observacao=dados.observacao,
+        usuario_id=user.id,
+    )
+    session.commit()
+    session.refresh(lote)
+    return {**lote.model_dump(), "avisos": avisos}
 
 
 def _eh_medicamento(e: Estoque) -> bool:
