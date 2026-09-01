@@ -1117,6 +1117,48 @@ class TestAlimentos:
         nomes = {a["nome"] for a in c.get("/alimentacao/alimentos").json()}
         assert "Silagem de teste" in nomes
 
+    def test_semeadura_nao_ressuscita_alimento_apagado(self, client):
+        """Bug real relatado pelo usuário (01/09/2026): "excluí esses
+        alimentos várias vezes e eles sempre voltam". `seed_alimentos` rodava
+        a cada boot e checava nome a nome — apagar "Corte 21" de propósito só
+        durava até o próximo restart do servidor. Agora só semeia quando a
+        fazenda está com ZERO alimentos."""
+        from fazenda.api.routers.alimentacao import seed_alimentos
+
+        c, engine = client
+        with Session(engine) as s:
+            seed_alimentos(s, fazenda_id=None)
+        nomes_pos_seed = {a["nome"] for a in c.get("/alimentacao/alimentos").json()}
+        assert "Corte 21" in nomes_pos_seed
+
+        corte_21_id = next(a["id"] for a in c.get("/alimentacao/alimentos").json() if a["nome"] == "Corte 21")
+        r_del = c.delete(f"/alimentacao/alimentos/{corte_21_id}")
+        assert r_del.status_code == 200
+
+        # Simula um restart do servidor: chama o seed de novo, no mesmo banco.
+        with Session(engine) as s:
+            seed_alimentos(s, fazenda_id=None)
+        nomes_pos_restart = {a["nome"] for a in c.get("/alimentacao/alimentos").json()}
+        assert "Corte 21" not in nomes_pos_restart
+        # O restante da lista padrão continua intacto — só o apagado some.
+        assert "Milk Proteico" in nomes_pos_restart
+
+    def test_semeadura_nao_duplica_por_diferenca_de_caixa(self, client):
+        """Bug real encontrado durante a investigação: a lista de seed usa
+        "Ração Pré-parto" (p minúsculo); um alimento já cadastrado como
+        "Ração Pré-Parto" (P maiúsculo) não bloqueava mais a nova checagem
+        "zero alimentos" (porque já existe pelo menos um), então o seed nunca
+        roda de novo e não duplica."""
+        from fazenda.api.routers.alimentacao import seed_alimentos
+
+        c, engine = client
+        c.post("/alimentacao/alimentos", json={"nome": "Ração Pré-Parto"})
+        with Session(engine) as s:
+            seed_alimentos(s, fazenda_id=None)
+        nomes = [a["nome"] for a in c.get("/alimentacao/alimentos").json()]
+        assert nomes.count("Ração Pré-Parto") == 1
+        assert "Ração Pré-parto" not in nomes
+
     def test_cria_alimento_simples(self, client):
         c, engine = client
         r = c.post("/alimentacao/alimentos", json={"nome": "Farelo de soja"})
