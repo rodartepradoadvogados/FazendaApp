@@ -7,7 +7,8 @@ import {
   fetchCategoriasEstoqueCadastro, fetchFinalidadesEstoqueCadastro, fetchUnidadesEstoqueCadastro,
   fetchUnidadesEmbalagemEstoqueCadastro, fetchUnidadesMedidaEmbalagemEstoqueCadastro, fetchLocaisArmazenamento,
   fetchLaboratoriosCadastro, fetchCategoriasMedicamentoCadastro, fetchClassificacoesMedicamentoCadastro,
-  type ItemCadastroSimples,
+  fetchLotesEstoque, abrirLoteEstoque,
+  type ItemCadastroSimples, type LoteEstoque,
 } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -39,6 +40,101 @@ const vazio = {
 };
 
 type PrincipioAtivo = { id: number; nome: string; ativo?: boolean };
+
+// Lotes/frascos de compra (Fase G, 01/09/2026) — pedido do usuário:
+// "registrar/comprar um medicamento escolhendo um tamanho de frasco/
+// embalagem específico com sua própria dosagem, rastrear múltiplos lotes de
+// tamanhos diferentes do mesmo medicamento em estoque". Só aparece editando
+// um item já existente (um lote pertence a um item que já tem id) e só faz
+// sentido pra item estocável.
+function PainelLotesEstoque({ estoqueId }: { estoqueId: number }) {
+  const [lotes, setLotes] = useState<LoteEstoque[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [abrindo, setAbrindo] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [novo, setNovo] = useState({ quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "" });
+
+  const carregar = () => fetchLotesEstoque(estoqueId).then(setLotes).catch((e: any) => setErro(e.message));
+  useEffect(() => { carregar(); }, [estoqueId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function salvarLote() {
+    const quantidade = Number(novo.quantidade);
+    if (!quantidade || quantidade <= 0) { setErro("Informe a quantidade comprada."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      await abrirLoteEstoque(estoqueId, {
+        quantidade, data_compra: novo.data_compra,
+        valor_unitario: novo.valor_unitario ? Number(novo.valor_unitario) : undefined,
+        numero_lote: novo.numero_lote || undefined,
+      });
+      setNovo({ quantidade: "", data_compra: new Date().toISOString().slice(0, 10), valor_unitario: "", numero_lote: "" });
+      setAbrindo(false);
+      carregar();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao abrir lote");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div style={{ gridColumn: "1 / -1", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.75rem", marginTop: "0.3rem" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: "0.5rem" }}>
+        <label style={{ ...labelStyle, fontWeight: 700 }}>
+          Lotes de compra (frascos) — a baixa consome o mais antigo primeiro (FIFO), a não ser que se escolha um lote específico na aplicação
+        </label>
+        {!abrindo && (
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", display: "flex", alignItems: "center", gap: "0.25rem" }} onClick={() => setAbrindo(true)}>
+            <Plus size={12} /> Registrar compra
+          </button>
+        )}
+      </div>
+
+      {abrindo && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2" style={{ marginBottom: "0.6rem" }}>
+          <div><label style={labelStyle}>Quantidade comprada</label>
+            <input type="number" style={inputStyle} value={novo.quantidade} onChange={(e) => setNovo((n) => ({ ...n, quantidade: e.target.value }))} /></div>
+          <div><label style={labelStyle}>Data da compra</label>
+            <input type="date" style={inputStyle} value={novo.data_compra} onChange={(e) => setNovo((n) => ({ ...n, data_compra: e.target.value }))} /></div>
+          <div><label style={labelStyle}>Valor unitário (R$)</label>
+            <input type="number" style={inputStyle} value={novo.valor_unitario} onChange={(e) => setNovo((n) => ({ ...n, valor_unitario: e.target.value }))} /></div>
+          <div><label style={labelStyle}>Nº do lote (opcional)</label>
+            <input style={inputStyle} value={novo.numero_lote} onChange={(e) => setNovo((n) => ({ ...n, numero_lote: e.target.value }))} /></div>
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.4rem" }}>
+            <button type="button" className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={salvando} onClick={salvarLote}>
+              <Check size={12} /> {salvando ? "Salvando…" : "Salvar lote"}
+            </button>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setAbrindo(false)}><X size={12} /></button>
+          </div>
+        </div>
+      )}
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.72rem", marginBottom: "0.4rem" }}>{erro}</p>}
+      {!lotes ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Carregando…</p>
+      ) : lotes.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Nenhum lote registrado ainda — o saldo do item continua sendo controlado de forma agregada.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+          {lotes.map((l) => (
+            <div key={l.id} style={{
+              display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "0.76rem",
+              padding: "0.35rem 0.55rem", borderRadius: 6, background: "var(--surface)",
+              opacity: l.quantidade_restante > 0 ? 1 : 0.55,
+            }}>
+              <strong>{l.numero_lote ? `Lote ${l.numero_lote}` : `Compra de ${l.data_compra}`}</strong>
+              <span style={{ color: "var(--text-muted)" }}>comprado em {l.data_compra}</span>
+              <span style={{ marginLeft: "auto" }}>
+                {l.quantidade_restante} / {l.quantidade_comprada} restante
+                {l.quantidade_restante <= 0 && " — esgotado"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Item já cadastrado, para editar em vez de criar — mesmo formato do
  * model_dump() de Estoque (GET /estoque/). */
@@ -469,6 +565,8 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         )}
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observação</label>
           <textarea style={{ ...inputStyle, minHeight: "2.4rem" }} value={form.observacao} onChange={(e) => set({ observacao: e.target.value })} /></div>
+
+        {editando && form.estocavel && <PainelLotesEstoque estoqueId={editando.id} />}
       </div>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erro}</p>}
