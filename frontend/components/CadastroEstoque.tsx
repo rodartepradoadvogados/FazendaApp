@@ -15,7 +15,7 @@ import {
 const ABAS = [
   ["itens", "Itens de Estoque", Package],
   ["locais-armazenamento", "Local de Armazenamento", MapPin],
-  ["categorias", "Categoria", Tag],
+  ["categorias", "Classificação", Tag],
   ["finalidades", "Finalidade", Target],
   ["unidades", "Unidade", Ruler],
   ["unidades-embalagem", "Unidade (embalagem)", Box],
@@ -52,14 +52,14 @@ export default function CadastroEstoque({ abaControlada, onAbaChange }: {
 
       {aba === "categorias" && (
         <div className="card">
-          <div className="card-header mb-3 flex items-center gap-2"><Tag size={16} /> Categoria</div>
+          <div className="card-header mb-3 flex items-center gap-2"><Tag size={16} /> Classificação</div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-            Categoria do item de estoque (ex.: "Medicamentos e produtos veterinários", "Sêmen e genética") — mesma
+            Classificação do item de estoque (ex.: "Medicamentos e produtos veterinários", "Sêmen e genética") — mesma
             lista usada no cadastro de fornecedores.
           </p>
           <ListaCadastroSimples
             fetchFn={fetchCategoriasEstoqueCadastro} criarFn={criarCategoriaEstoque} atualizarFn={atualizarCategoriaEstoque} excluirFn={excluirCategoriaEstoque}
-            nomeNovo="Nova categoria" placeholderNome='ex.: "Equipamentos e manutenção"' semRegistros="Nenhuma categoria cadastrada ainda."
+            nomeNovo="Nova classificação" placeholderNome='ex.: "Equipamentos e manutenção"' semRegistros="Nenhuma classificação cadastrada ainda."
           />
         </div>
       )}

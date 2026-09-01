@@ -39,13 +39,15 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_area_painel_cowdata
 from fazenda.database import get_session
 from fazenda.models import (
-    Doenca, Estoque, Fazenda, IndicacaoTerapeutica, MedicamentoComercial, MedicamentoPrincipioAtivo,
-    PrincipioAtivo, Usuario,
+    CategoriaMedicamento, ClassificacaoMedicamento, Doenca, Estoque, EstoqueCategoriaMedicamento,
+    EstoqueClassificacaoMedicamento, Fazenda, IndicacaoTerapeutica, Laboratorio, MedicamentoCategoria,
+    MedicamentoClassificacao, MedicamentoComercial, MedicamentoPrincipioAtivo, PrincipioAtivo, Usuario,
 )
 from fazenda.rules.farmacia_multi_principio import (
     checar_e_desvincular_exclusao_principio, definir_principios_estoque, definir_principios_medicamento,
     principios_do_medicamento,
 )
+from fazenda.rules.farmacia_tags import definir_tags, tags_de
 
 router = APIRouter(prefix="/painel-cowdata/farmacia", tags=["painel-cowdata-farmacia"])
 
@@ -184,6 +186,59 @@ def excluir_principio_global(
 
 
 # ---------------------------------------------------------------------------
+# Laboratório / Categoria (medicamento) / Classificação do medicamento —
+# três catálogos "nome + ativo" globais, mesmo padrão de Princípios ativos
+# acima. Pedido do usuário (01/09/2026): "princípio ativo, categoria e
+# classificação do medicamento pode ser cumulativo" — Categoria/Classificação
+# viram tags multi-valor (ver rules/farmacia_tags.py); Laboratório continua
+# alimentando o campo de texto livre já existente (MedicamentoComercial.
+# laboratorio/Estoque.laboratorio), só como fonte do seletor.
+# ---------------------------------------------------------------------------
+class NomeAtivoGlobalIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
+def _crud_catalogo_global(model, router: APIRouter, prefixo: str):
+    @router.get(f"/{prefixo}")
+    def listar(_: Usuario = _dep, session: Session = Depends(get_session)) -> list[dict]:
+        itens = session.exec(select(model).where(model.fazenda_id.is_(None)).order_by(model.nome)).all()
+        return [i.model_dump() for i in itens]
+
+    @router.post(f"/{prefixo}", status_code=201)
+    def criar(dados: NomeAtivoGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session)) -> dict:
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        if session.exec(select(model).where(model.nome == nome, model.fazenda_id.is_(None))).first():
+            raise HTTPException(status_code=409, detail=f"Já existe '{nome}' cadastrado")
+        obj = model(nome=nome, ativo=dados.ativo, fazenda_id=None)
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+    @router.put(f"/{prefixo}/{{item_id}}")
+    def atualizar(item_id: int, dados: NomeAtivoGlobalIn, _: Usuario = _dep, session: Session = Depends(get_session)) -> dict:
+        obj = session.get(model, item_id)
+        if not obj or obj.fazenda_id is not None:
+            raise HTTPException(status_code=404, detail="Registro global não encontrado")
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        obj.nome, obj.ativo = nome, dados.ativo
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+
+_crud_catalogo_global(Laboratorio, router, "laboratorios")
+_crud_catalogo_global(CategoriaMedicamento, router, "categorias-medicamento")
+_crud_catalogo_global(ClassificacaoMedicamento, router, "classificacoes-medicamento")
+
+
+# ---------------------------------------------------------------------------
 # Medicamentos — catálogo global (MedicamentoComercial) + fan-out para
 # Estoque de toda fazenda-cliente. Multi-princípio (item 2 do pedido) e
 # multi-doença (via IndicacaoTerapeutica, uma por combinação princípio×
@@ -209,6 +264,12 @@ class MedicamentoGlobalIn(BaseModel):
     proibido_lactacao: bool | None = None
     alerta_gestacao: bool | None = None
     alerta: str | None = None
+    # Cumulativos (pedido do usuário, 01/09/2026) — ver rules/farmacia_tags.py.
+    # `classificacao_medicamento` (escalar) é preenchido automaticamente com o
+    # nome da 1ª categoria escolhida, por compatibilidade com quem já lê só o
+    # escalar (ver _sincronizar_tags_medicamento).
+    categoria_medicamento_ids: list[int] = []
+    classificacao_medicamento_ids: list[int] = []
     classificacao_medicamento: str | None = None
 
 
@@ -231,18 +292,40 @@ def _sincronizar_indicacoes_globais(session: Session, principio_ids: list[int], 
                 session.add(IndicacaoTerapeutica(principio_ativo_id=pid, doenca_id=did, prioridade=2, fazenda_id=None))
 
 
-def _montar_medicamento_dict(session: Session, m: MedicamentoComercial) -> dict:
-    principio_ids = principios_do_medicamento(session, m.id)
-    doenca_ids = sorted({
+def _sincronizar_tags_medicamento(session: Session, medicamento: MedicamentoComercial, categoria_ids: list[int], classificacao_ids: list[int]) -> None:
+    """Grava as tags cumulativas de Categoria (medicamento)/Classificação do
+    medicamento e espelha a 1ª categoria escolhida no campo escalar legado
+    `classificacao_medicamento` — mesmo espírito do "principal" de
+    multi-princípio, sem impor ordem de importância às demais."""
+    definir_tags(session, MedicamentoCategoria, "medicamento_comercial_id", medicamento.id, "categoria_medicamento_id", categoria_ids)
+    definir_tags(session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento.id, "classificacao_medicamento_id", classificacao_ids)
+    if categoria_ids:
+        primeira = session.get(CategoriaMedicamento, categoria_ids[0])
+        medicamento.classificacao_medicamento = primeira.nome if primeira else medicamento.classificacao_medicamento
+    else:
+        medicamento.classificacao_medicamento = None
+    session.add(medicamento)
+
+
+def _doencas_dos_principios(session: Session, principio_ids: list[int]) -> set[int]:
+    return {
         ind.doenca_id for pid in principio_ids
         for ind in session.exec(
             select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.principio_ativo_id == pid, IndicacaoTerapeutica.fazenda_id.is_(None))
         ).all()
-    })
+    }
+
+
+def _montar_medicamento_dict(session: Session, m: MedicamentoComercial) -> dict:
+    principio_ids = principios_do_medicamento(session, m.id)
+    doenca_ids = sorted(_doencas_dos_principios(session, principio_ids))
     total_fazendas = len(_fazendas_cliente_ativas(session))
     em_fazendas = session.exec(select(Estoque).where(Estoque.medicamento_comercial_id == m.id)).all()
+    categoria_medicamento_ids = tags_de(session, MedicamentoCategoria, "medicamento_comercial_id", m.id, "categoria_medicamento_id")
+    classificacao_medicamento_ids = tags_de(session, MedicamentoClassificacao, "medicamento_comercial_id", m.id, "classificacao_medicamento_id")
     return {
         **m.model_dump(), "principio_ativo_ids": principio_ids, "doenca_ids": doenca_ids,
+        "categoria_medicamento_ids": categoria_medicamento_ids, "classificacao_medicamento_ids": classificacao_medicamento_ids,
         "fan_out_fazendas": len(em_fazendas), "fan_out_total_fazendas": total_fazendas,
     }
 
@@ -263,6 +346,8 @@ def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, pr
     marcados como ativos e não marcados como estocáveis". NUNCA sobrescreve
     um item já existente com o mesmo nome (pode ser dado real do tenant)."""
     principal = session.get(PrincipioAtivo, principio_ids[0])
+    categoria_ids = tags_de(session, MedicamentoCategoria, "medicamento_comercial_id", medicamento.id, "categoria_medicamento_id")
+    classificacao_ids = tags_de(session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento.id, "classificacao_medicamento_id")
     criados = ja_existiam = 0
     for fazenda in _fazendas_cliente_ativas(session):
         existente = session.exec(
@@ -283,6 +368,8 @@ def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, pr
         session.add(item)
         session.flush()  # precisa do item.id antes de gravar a junção
         definir_principios_estoque(session, item, principio_ids)
+        definir_tags(session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id", categoria_ids)
+        definir_tags(session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id", classificacao_ids)
         criados += 1
     return {"criados": criados, "ja_existiam": ja_existiam}
 
@@ -302,7 +389,8 @@ def criar_medicamento_global(
         pa = session.get(PrincipioAtivo, pid)
         if not pa or pa.fazenda_id is not None:
             raise HTTPException(status_code=400, detail=f"Princípio ativo {pid} inválido")
-    campos_medicamento = dados.model_dump(exclude={"principio_ativo_ids", "doenca_ids"})
+    campos_excluidos = {"principio_ativo_ids", "doenca_ids", "categoria_medicamento_ids", "classificacao_medicamento_ids"}
+    campos_medicamento = dados.model_dump(exclude=campos_excluidos)
     medicamento = MedicamentoComercial(**campos_medicamento, principio_ativo_id=dados.principio_ativo_ids[0], fazenda_id=None)
     session.add(medicamento)
     session.commit()
@@ -310,6 +398,7 @@ def criar_medicamento_global(
 
     definir_principios_medicamento(session, medicamento, dados.principio_ativo_ids, fazenda_id=None)
     _sincronizar_indicacoes_globais(session, dados.principio_ativo_ids, dados.doenca_ids)
+    _sincronizar_tags_medicamento(session, medicamento, dados.categoria_medicamento_ids, dados.classificacao_medicamento_ids)
     session.commit()
 
     resultado_fanout = _fan_out_medicamento(session, medicamento, dados.principio_ativo_ids)
@@ -335,12 +424,14 @@ def atualizar_medicamento_global(
     nome = dados.nome_comercial.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome comercial é obrigatório")
-    campos_medicamento = dados.model_dump(exclude={"principio_ativo_ids", "doenca_ids"})
+    campos_excluidos = {"principio_ativo_ids", "doenca_ids", "categoria_medicamento_ids", "classificacao_medicamento_ids"}
+    campos_medicamento = dados.model_dump(exclude=campos_excluidos)
     for k, v in {**campos_medicamento, "nome_comercial": nome}.items():
         setattr(medicamento, k, v)
     session.add(medicamento)
     definir_principios_medicamento(session, medicamento, dados.principio_ativo_ids, fazenda_id=None)
     _sincronizar_indicacoes_globais(session, dados.principio_ativo_ids, dados.doenca_ids)
+    _sincronizar_tags_medicamento(session, medicamento, dados.categoria_medicamento_ids, dados.classificacao_medicamento_ids)
     session.commit()
     session.refresh(medicamento)
     return _montar_medicamento_dict(session, medicamento)
@@ -360,4 +451,102 @@ def reexecutar_fanout(
     principio_ids = principios_do_medicamento(session, medicamento.id)
     resultado = _fan_out_medicamento(session, medicamento, principio_ids)
     session.commit()
+    return resultado
+
+
+# ---------------------------------------------------------------------------
+# Substitutivos — tabela dinâmica de cruzamento (Fase E, pedido do usuário
+# 01/09/2026): "duas filtros em cascata (Seção 1 ou 2 + item específico) →
+# lista de medicamentos que batem → clique num medicamento → rankeia os
+# demais pelo número de atributos clínicos coincidentes." Decisão já
+# confirmada com o usuário: só contam atributos CLÍNICOS (princípio ativo,
+# indicação/doença, categoria e classificação do medicamento) — laboratório
+# nunca soma ponto de coincidência, é só informação no card.
+# ---------------------------------------------------------------------------
+EIXOS_FILTRO_SUBSTITUTIVOS = ("doenca", "principio", "categoria", "classificacao", "laboratorio")
+
+
+@router.get("/substitutivos")
+def listar_medicamentos_por_filtro(
+    eixo: str, valor_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> list[dict]:
+    """1º nível da tabela dinâmica: dado um eixo (Seção 1 = indicação, ou um
+    dos catálogos de Seção 2) e um item específico dele, devolve os
+    medicamentos globais que batem — ponto de partida antes de escolher um
+    pivô para ver os substitutos ranqueados."""
+    if eixo not in EIXOS_FILTRO_SUBSTITUTIVOS:
+        raise HTTPException(status_code=400, detail=f"Eixo inválido — use um de {EIXOS_FILTRO_SUBSTITUTIVOS}")
+    medicamentos_globais = session.exec(
+        select(MedicamentoComercial).where(MedicamentoComercial.fazenda_id.is_(None)).order_by(MedicamentoComercial.nome_comercial)
+    ).all()
+
+    if eixo == "doenca":
+        principios_da_doenca = {
+            ind.principio_ativo_id for ind in session.exec(
+                select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == valor_id, IndicacaoTerapeutica.fazenda_id.is_(None))
+            ).all()
+        }
+        medicamentos = [m for m in medicamentos_globais if principios_da_doenca & set(principios_do_medicamento(session, m.id))]
+    elif eixo == "principio":
+        medicamentos = [m for m in medicamentos_globais if valor_id in principios_do_medicamento(session, m.id)]
+    elif eixo == "categoria":
+        ids_com_categoria = {
+            v.medicamento_comercial_id for v in session.exec(
+                select(MedicamentoCategoria).where(MedicamentoCategoria.categoria_medicamento_id == valor_id)
+            ).all()
+        }
+        medicamentos = [m for m in medicamentos_globais if m.id in ids_com_categoria]
+    elif eixo == "classificacao":
+        ids_com_classificacao = {
+            v.medicamento_comercial_id for v in session.exec(
+                select(MedicamentoClassificacao).where(MedicamentoClassificacao.classificacao_medicamento_id == valor_id)
+            ).all()
+        }
+        medicamentos = [m for m in medicamentos_globais if m.id in ids_com_classificacao]
+    else:  # laboratorio — MedicamentoComercial.laboratorio continua texto livre, casa pelo nome do catálogo
+        laboratorio = session.get(Laboratorio, valor_id)
+        nome_laboratorio = laboratorio.nome if laboratorio else None
+        medicamentos = [m for m in medicamentos_globais if nome_laboratorio and m.laboratorio == nome_laboratorio]
+
+    return [_montar_medicamento_dict(session, m) for m in medicamentos]
+
+
+def _atributos_clinicos_medicamento(session: Session, medicamento_id: int) -> dict[str, set[int]]:
+    principio_ids = set(principios_do_medicamento(session, medicamento_id))
+    return {
+        "principio_ativo_ids": principio_ids,
+        "doenca_ids": _doencas_dos_principios(session, list(principio_ids)),
+        "categoria_medicamento_ids": set(tags_de(session, MedicamentoCategoria, "medicamento_comercial_id", medicamento_id, "categoria_medicamento_id")),
+        "classificacao_medicamento_ids": set(tags_de(session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento_id, "classificacao_medicamento_id")),
+    }
+
+
+@router.get("/medicamentos/{medicamento_id}/substitutivos")
+def listar_substitutivos_de_medicamento(
+    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> list[dict]:
+    """2º nível: dado um medicamento pivô, ranqueia os demais medicamentos
+    globais por número de atributos clínicos coincidentes (princípio ativo,
+    indicação, categoria, classificação — sem laboratório), do mais para o
+    menos parecido. Só entram na lista os que coincidem em pelo menos um
+    atributo — zero coincidências não é um substituto."""
+    pivo = session.get(MedicamentoComercial, medicamento_id)
+    if not pivo or pivo.fazenda_id is not None:
+        raise HTTPException(status_code=404, detail="Medicamento global não encontrado")
+
+    atributos_pivo = _atributos_clinicos_medicamento(session, medicamento_id)
+    outros = session.exec(
+        select(MedicamentoComercial).where(MedicamentoComercial.fazenda_id.is_(None), MedicamentoComercial.id != medicamento_id)
+    ).all()
+
+    resultado = []
+    for m in outros:
+        atributos = _atributos_clinicos_medicamento(session, m.id)
+        coincidencias = {chave: sorted(atributos_pivo[chave] & atributos[chave]) for chave in atributos_pivo}
+        pontuacao = sum(len(v) for v in coincidencias.values())
+        if pontuacao == 0:
+            continue
+        resultado.append({**_montar_medicamento_dict(session, m), "pontuacao_substituto": pontuacao, "coincidencias": coincidencias})
+
+    resultado.sort(key=lambda r: r["pontuacao_substituto"], reverse=True)
     return resultado

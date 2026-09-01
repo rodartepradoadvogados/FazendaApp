@@ -3139,6 +3139,20 @@ export const criarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEsto
 export const atualizarUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.atualizar;
 export const excluirUnidadeMedidaEmbalagemEstoque = apiUnidadesMedidaEmbalagemEstoque.excluir;
 
+// Laboratório / Categoria (medicamento) / Classificação do medicamento —
+// catálogos globais cadastrados no Painel CowData, visíveis automaticamente
+// aqui (ver rules/visibilidade.py::visivel(), global_compartilhado=True em
+// _crud_nome_ativo). Sem `excluir`: só o Painel CowData cria/edita a linha
+// global; o tenant só consome no seletor.
+const apiLaboratorios = criarApiCadastroSimples("laboratorios", "Laboratório");
+export const fetchLaboratoriosCadastro = apiLaboratorios.fetch;
+
+const apiCategoriasMedicamento = criarApiCadastroSimples("categorias-medicamento", "Categoria (medicamento)");
+export const fetchCategoriasMedicamentoCadastro = apiCategoriasMedicamento.fetch;
+
+const apiClassificacoesMedicamento = criarApiCadastroSimples("classificacoes-medicamento", "Classificação do medicamento");
+export const fetchClassificacoesMedicamentoCadastro = apiClassificacoesMedicamento.fetch;
+
 // ── Graus de sangue (Configurações > Cadastro) ──
 export async function fetchGrausSangue() {
   const res = await authFetch(`${API}/cadastro/graus-sangue`, { cache: "no-store" });
@@ -4604,6 +4618,68 @@ export async function refazerFanoutMedicamentoFarmaciaCowData(id: number) {
   const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${id}/fanout`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao propagar medicamento"); }
   return res.json() as Promise<{ criados: number; ja_existiam: number }>;
+}
+
+// Laboratório / Categoria (medicamento) / Classificação do medicamento —
+// cadastro central no Painel CowData (mesmo padrão "nome + ativo" de
+// Princípios ativos acima, ver painel_cowdata_farmacia.py::_crud_catalogo_global).
+function criarApiCatalogoFarmaciaCowData(rota: string, rotulo: string) {
+  return {
+    fetch: async (): Promise<ItemCadastroSimples[]> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${rotulo} error: ${res.status}`);
+      return res.json();
+    },
+    criar: async (dados: { nome: string; ativo?: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    atualizar: async (id: number, dados: { nome: string; ativo: boolean }): Promise<ItemCadastroSimples> => {
+      const res = await authFetch(`${API}/painel-cowdata/farmacia/${rota}/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+  };
+}
+
+const apiLaboratoriosFarmaciaCowData = criarApiCatalogoFarmaciaCowData("laboratorios", "Laboratório");
+export const fetchLaboratoriosFarmaciaCowData = apiLaboratoriosFarmaciaCowData.fetch;
+export const criarLaboratorioFarmaciaCowData = apiLaboratoriosFarmaciaCowData.criar;
+export const atualizarLaboratorioFarmaciaCowData = apiLaboratoriosFarmaciaCowData.atualizar;
+
+const apiCategoriasMedicamentoFarmaciaCowData = criarApiCatalogoFarmaciaCowData("categorias-medicamento", "Categoria (medicamento)");
+export const fetchCategoriasMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.fetch;
+export const criarCategoriaMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.criar;
+export const atualizarCategoriaMedicamentoFarmaciaCowData = apiCategoriasMedicamentoFarmaciaCowData.atualizar;
+
+const apiClassificacoesMedicamentoFarmaciaCowData = criarApiCatalogoFarmaciaCowData("classificacoes-medicamento", "Classificação do medicamento");
+export const fetchClassificacoesMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.fetch;
+export const criarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.criar;
+export const atualizarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.atualizar;
+
+// Substitutivos (Fase E, 01/09/2026) — tabela dinâmica de cruzamento: 1º
+// nível filtra medicamentos por um eixo/item; 2º nível ranqueia os
+// substitutos de um medicamento pivô por atributos clínicos coincidentes.
+export type EixoFiltroSubstitutivos = "doenca" | "principio" | "categoria" | "classificacao" | "laboratorio";
+export type MedicamentoSubstituto = MedicamentoFarmaciaCowData & {
+  pontuacao_substituto: number;
+  coincidencias: { principio_ativo_ids: number[]; doenca_ids: number[]; categoria_medicamento_ids: number[]; classificacao_medicamento_ids: number[] };
+};
+
+export async function fetchSubstitutivosPorFiltro(eixo: EixoFiltroSubstitutivos, valorId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/substitutivos?eixo=${eixo}&valor_id=${valorId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function fetchSubstitutivosDeMedicamento(medicamentoId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${medicamentoId}/substitutivos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoSubstituto[]>;
 }
 
 export async function fetchProducao() {

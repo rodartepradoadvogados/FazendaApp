@@ -4,13 +4,14 @@ import { Check, Plus, X } from "lucide-react";
 import {
   criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos,
   criarPrincipioAtivo,
-  CLASSIFICACOES_MEDICAMENTO,
   fetchCategoriasEstoqueCadastro, fetchFinalidadesEstoqueCadastro, fetchUnidadesEstoqueCadastro,
   fetchUnidadesEmbalagemEstoqueCadastro, fetchUnidadesMedidaEmbalagemEstoqueCadastro, fetchLocaisArmazenamento,
+  fetchLaboratoriosCadastro, fetchCategoriasMedicamentoCadastro, fetchClassificacoesMedicamentoCadastro,
   type ItemCadastroSimples,
 } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { CampoMoeda } from "@/components/CampoMoeda";
+import SeletorMultiploComBusca from "@/components/SeletorMultiploComBusca";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { pedirCadastroDeAlimento, pedirReaberturaDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 
@@ -32,7 +33,8 @@ const vazio = {
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
   gera_receita: false, gera_patrimonio: false,
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
-  principio_ativo: "", principio_ativo_id: "", classificacao_medicamento: "",
+  principio_ativo: "", principio_ativo_id: "",
+  laboratorio: "", categoriaMedicamentoIds: [] as number[], classificacaoMedicamentoIds: [] as number[],
   tipo_semen: "",
 };
 
@@ -58,6 +60,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
   const [unidadesEmbalagem, setUnidadesEmbalagem] = useState<ItemCadastroSimples[]>([]);
   const [medidasEmbalagem, setMedidasEmbalagem] = useState<ItemCadastroSimples[]>([]);
   const [locaisArmazenamento, setLocaisArmazenamento] = useState<ItemCadastroSimples[]>([]);
+  const [laboratorios, setLaboratorios] = useState<ItemCadastroSimples[]>([]);
+  const [categoriasMedicamento, setCategoriasMedicamento] = useState<ItemCadastroSimples[]>([]);
+  const [classificacoesMedicamento, setClassificacoesMedicamento] = useState<ItemCadastroSimples[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -76,6 +81,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
     fetchUnidadesEmbalagemEstoqueCadastro().then((l) => setUnidadesEmbalagem(l.filter((i) => i.ativo))).catch(() => {});
     fetchUnidadesMedidaEmbalagemEstoqueCadastro().then((l) => setMedidasEmbalagem(l.filter((i) => i.ativo))).catch(() => {});
     fetchLocaisArmazenamento().then((l) => setLocaisArmazenamento(l.filter((i) => i.ativo))).catch(() => {});
+    // Catálogos globais do Painel CowData (ver rules/visibilidade.py) —
+    // laboratório e categoria/classificação (medicamento).
+    fetchLaboratoriosCadastro().then((l) => setLaboratorios(l.filter((i) => i.ativo))).catch(() => {});
+    fetchCategoriasMedicamentoCadastro().then((l) => setCategoriasMedicamento(l.filter((i) => i.ativo))).catch(() => {});
+    fetchClassificacoesMedicamentoCadastro().then((l) => setClassificacoesMedicamento(l.filter((i) => i.ativo))).catch(() => {});
   }, []);
 
   const set = (patch: Partial<typeof vazio>) => setForm((p) => ({ ...p, ...patch }));
@@ -108,7 +118,10 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       exibir_necessidade_compra_agenda: editando.exibir_necessidade_compra_agenda === true,
       estocavel: editando.estocavel !== false, data_inicio_controle: s(editando.data_inicio_controle),
       principio_ativo: s(editando.principio_ativo), principio_ativo_id: s(editando.principio_ativo_id),
-      classificacao_medicamento: s(editando.classificacao_medicamento), tipo_semen: s(editando.tipo_semen) || "convencional",
+      laboratorio: s(editando.laboratorio),
+      categoriaMedicamentoIds: Array.isArray(editando.categoria_medicamento_ids) ? editando.categoria_medicamento_ids : [],
+      classificacaoMedicamentoIds: Array.isArray(editando.classificacao_medicamento_ids) ? editando.classificacao_medicamento_ids : [],
+      tipo_semen: s(editando.tipo_semen) || "convencional",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editando]);
@@ -183,7 +196,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
         principio_ativo: str(form.principio_ativo),
         principio_ativo_id: form.principio_ativo_id ? Number(form.principio_ativo_id) : undefined,
-        classificacao_medicamento: str(form.classificacao_medicamento),
+        laboratorio: str(form.laboratorio),
+        categoria_medicamento_ids: form.finalidade === "Medicamento" ? form.categoriaMedicamentoIds : [],
+        classificacao_medicamento_ids: form.finalidade === "Medicamento" ? form.classificacaoMedicamentoIds : [],
         tipo_semen: form.categoria === "Sêmen e genética" ? str(form.tipo_semen) : undefined,
         alimento_id: prefill?.alimentoId,
       };
@@ -219,7 +234,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => set({ nome: e.target.value })} /></div>
         <div><label style={labelStyle}>Número</label><input style={inputStyle} value={form.numero_produto} onChange={(e) => set({ numero_produto: e.target.value })} /></div>
-        <div><label style={labelStyle}>Categoria</label>
+        <div><label style={labelStyle}>Classificação</label>
           <select style={inputStyle} value={form.categoria} onChange={(e) => set({ categoria: e.target.value })}>
             <option value="">—</option>
             {form.categoria && !categorias.some((c) => c.nome === form.categoria) && <option value={form.categoria}>{form.categoria}</option>}
@@ -282,13 +297,29 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
           </div>
         )}
         {form.finalidade === "Medicamento" && (
-          <div><label style={labelStyle}>Classificação (medicamento)</label>
-            <select style={inputStyle} value={form.classificacao_medicamento} onChange={(e) => set({ classificacao_medicamento: e.target.value })}>
+          <div>
+            <SeletorMultiploComBusca
+              label="Categoria (medicamento) — pode marcar mais de uma"
+              opcoes={categoriasMedicamento.map((c) => ({ id: c.id, nome: c.nome }))}
+              selecionados={form.categoriaMedicamentoIds} onChange={(ids) => set({ categoriaMedicamentoIds: ids })}
+              placeholder="Ex.: Antibiótico" />
+          </div>
+        )}
+        {form.finalidade === "Medicamento" && (
+          <div>
+            <SeletorMultiploComBusca
+              label="Classificação do medicamento — pode marcar mais de uma"
+              opcoes={classificacoesMedicamento.map((c) => ({ id: c.id, nome: c.nome }))}
+              selecionados={form.classificacaoMedicamentoIds} onChange={(ids) => set({ classificacaoMedicamentoIds: ids })}
+              placeholder="Ex.: Genérico, uso controlado…" />
+          </div>
+        )}
+        {form.finalidade === "Medicamento" && (
+          <div><label style={labelStyle}>Laboratório</label>
+            <select style={inputStyle} value={form.laboratorio} onChange={(e) => set({ laboratorio: e.target.value })}>
               <option value="">—</option>
-              {form.classificacao_medicamento && !CLASSIFICACOES_MEDICAMENTO.includes(form.classificacao_medicamento) && (
-                <option value={form.classificacao_medicamento}>{form.classificacao_medicamento}</option>
-              )}
-              {CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
+              {form.laboratorio && !laboratorios.some((l) => l.nome === form.laboratorio) && <option value={form.laboratorio}>{form.laboratorio}</option>}
+              {laboratorios.map((l) => <option key={l.id} value={l.nome}>{l.nome}</option>)}
             </select></div>
         )}
         {form.categoria === "Sêmen e genética" && (

@@ -14,14 +14,29 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Alimento, CompraSemen, Estoque, EstoqueAliasMesclado, EstoquePrincipioAtivo, EstoqueSemen, Fornecedor,
-    MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, SeedFlag, Usuario,
+    Alimento, CategoriaMedicamento, CompraSemen, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento,
+    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fornecedor, MedicamentoComercial,
+    MovimentoEstoque, PrincipioAtivo, SeedFlag, Usuario,
 )
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.estoque_baixa import carencia_para_item, incrementar_quantidade_atomico, resolver_marca_comercial
 from fazenda.rules.farmacia_multi_principio import definir_principios_estoque, principios_do_estoque, principios_do_medicamento
+from fazenda.rules.farmacia_tags import definir_tags, tags_de
 from fazenda.rules.visibilidade import visivel
+
+
+def _sincronizar_tags_estoque(session: Session, item: Estoque, categoria_ids: list[int], classificacao_ids: list[int]) -> None:
+    """Mesma lógica de _sincronizar_tags_medicamento (painel_cowdata_farmacia.py),
+    do lado do item de Estoque do tenant — ver rules/farmacia_tags.py."""
+    definir_tags(session, EstoqueCategoriaMedicamento, "estoque_id", item.id, "categoria_medicamento_id", categoria_ids)
+    definir_tags(session, EstoqueClassificacaoMedicamento, "estoque_id", item.id, "classificacao_medicamento_id", classificacao_ids)
+    if categoria_ids:
+        primeira = session.get(CategoriaMedicamento, categoria_ids[0])
+        item.classificacao_medicamento = primeira.nome if primeira else item.classificacao_medicamento
+    else:
+        item.classificacao_medicamento = None
+    session.add(item)
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
 
@@ -310,9 +325,25 @@ def listar_estoque(
         query_fornecedor = query_fornecedor.where(Fornecedor.fazenda_id == fazenda_id)
         query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
     fornecedores = {f.id: f.nome for f in session.exec(query_fornecedor).all()}
+    todos = session.exec(query_estoque.order_by(Estoque.nome)).all()
+    ids = [e.id for e in todos]
+    # Busca em lote (não 1-por-item) as tags de Categoria/Classificação do
+    # medicamento — ver rules/farmacia_tags.py.
+    categorias_por_item: dict[int, list[int]] = {}
+    if ids:
+        for v in session.exec(select(EstoqueCategoriaMedicamento).where(EstoqueCategoriaMedicamento.estoque_id.in_(ids))).all():
+            categorias_por_item.setdefault(v.estoque_id, []).append(v.categoria_medicamento_id)
+    classificacoes_por_item: dict[int, list[int]] = {}
+    if ids:
+        for v in session.exec(select(EstoqueClassificacaoMedicamento).where(EstoqueClassificacaoMedicamento.estoque_id.in_(ids))).all():
+            classificacoes_por_item.setdefault(v.estoque_id, []).append(v.classificacao_medicamento_id)
     itens = [
-        {**e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id)}
-        for e in session.exec(query_estoque.order_by(Estoque.nome)).all()
+        {
+            **e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id),
+            "categoria_medicamento_ids": categorias_por_item.get(e.id, []),
+            "classificacao_medicamento_ids": classificacoes_por_item.get(e.id, []),
+        }
+        for e in todos
     ]
     return {"itens": itens, "total": len(itens)}
 
@@ -334,6 +365,13 @@ class EstoqueIn(BaseModel):
     ativo: bool = True
     observacao: str | None = None
     carencia_dias: int | None = None
+    carencia_leite_dias: int | None = None
+    carencia_carne_dias: int | None = None
+    proibido_lactacao: bool | None = None
+    laboratorio: str | None = None
+    # Cumulativos (pedido do usuário, 01/09/2026) — ver rules/farmacia_tags.py.
+    categoria_medicamento_ids: list[int] = []
+    classificacao_medicamento_ids: list[int] = []
     centro_custo_padrao: str | None = None
     conta_gerencial_despesa_padrao: str | None = None
     conta_gerencial_receita_padrao: str | None = None
@@ -382,6 +420,10 @@ def criar_item_estoque(
         ativo=dados.ativo,
         observacao=dados.observacao,
         carencia_dias=dados.carencia_dias,
+        carencia_leite_dias=dados.carencia_leite_dias,
+        carencia_carne_dias=dados.carencia_carne_dias,
+        proibido_lactacao=dados.proibido_lactacao,
+        laboratorio=dados.laboratorio,
         centro_custo_padrao=dados.centro_custo_padrao,
         conta_gerencial_despesa_padrao=dados.conta_gerencial_despesa_padrao,
         conta_gerencial_receita_padrao=dados.conta_gerencial_receita_padrao,
@@ -399,6 +441,9 @@ def criar_item_estoque(
         fazenda_id=fazenda_id,
     )
     session.add(item)
+    session.commit()
+    session.refresh(item)
+    _sincronizar_tags_estoque(session, item, dados.categoria_medicamento_ids, dados.classificacao_medicamento_ids)
     session.commit()
     session.refresh(item)
 
@@ -453,6 +498,10 @@ def atualizar_item_estoque(
     item.ativo = dados.ativo
     item.observacao = dados.observacao
     item.carencia_dias = dados.carencia_dias
+    item.carencia_leite_dias = dados.carencia_leite_dias
+    item.carencia_carne_dias = dados.carencia_carne_dias
+    item.proibido_lactacao = dados.proibido_lactacao
+    item.laboratorio = dados.laboratorio
     item.centro_custo_padrao = dados.centro_custo_padrao
     item.conta_gerencial_despesa_padrao = dados.conta_gerencial_despesa_padrao
     item.conta_gerencial_receita_padrao = dados.conta_gerencial_receita_padrao
@@ -470,6 +519,7 @@ def atualizar_item_estoque(
     item.tipo_semen = dados.tipo_semen
     item.atualizado_em = datetime.utcnow()
     session.add(item)
+    _sincronizar_tags_estoque(session, item, dados.categoria_medicamento_ids, dados.classificacao_medicamento_ids)
 
     # Editar a quantidade direto no cadastro mudava o saldo sem deixar
     # rastro nenhum em MovimentoEstoque — invisível no Mapa de Entradas/

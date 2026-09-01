@@ -14,12 +14,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Search, Lock, Pencil, ChevronDown, ChevronRight, AlertTriangle, Ban, ExternalLink, RotateCcw, Check, X,
+  Beaker, Building2, Pill, Syringe, Tags, GitCompareArrows,
 } from "lucide-react";
 import {
   fetchIndicacoesCatalogo, personalizarIndicacao,
   atualizarMarcaFarmacia, atualizarVinculoIndicacao, fetchFarmaciaDetalhe, restaurarCatalogoPrincipios,
   fetchFarmaciaPrincipios, definirEstoqueMinimoFarmacia,
+  fetchPrincipiosFarmaciaCowData, fetchCategoriasMedicamentoFarmaciaCowData,
+  fetchClassificacoesMedicamentoFarmaciaCowData, fetchLaboratoriosFarmaciaCowData,
+  fetchCategoriasFarmaciaCowData, fetchSubstitutivosPorFiltro, fetchSubstitutivosDeMedicamento,
   type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
+  type EixoFiltroSubstitutivos, type MedicamentoFarmaciaCowData, type MedicamentoSubstituto,
 } from "@/lib/api";
 import { carenciaNaoInformada } from "@/lib/carencia";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -41,12 +46,238 @@ const TIPOS_FILTRO: [string, string][] = [
   ["", "Todas"], ["doenca", "Doenças"], ["reprodutivo", "Reprodutivo"],
   ["produtivo", "Produtivo"], ["preventivo", "Preventivo"], ["suporte", "Suporte"],
 ];
+// Seção 1 (ordem pedida pelo usuário, 01/09/2026): Doenças/Reprodutivo/
+// Produtivo/Preventivo/Suporte/Todas — igual TIPOS_FILTRO, só reordenado
+// como tabs de navegação (em vez de pílulas soltas) quando dentro do Painel
+// CowData. Seção 2: as 5 abas do catálogo de farmácia propriamente dito —
+// "Medicamentos" é o browse por indicação já existente (CardIndicacao); as
+// outras 4 são catálogos "nome + ativo" simples, cadastrados em
+// FarmaciaCadastroCentral e aqui só consultados.
+const SECAO1_ABAS_CATALOGO: [string, string][] = [
+  ["doenca", "Doenças"], ["reprodutivo", "Reprodutivo"], ["produtivo", "Produtivo"],
+  ["preventivo", "Preventivo"], ["suporte", "Suporte"], ["", "Todas"],
+];
+const SECAO2_ABAS_CATALOGO = [
+  { chave: "medicamentos", label: "Medicamentos", icone: Syringe },
+  { chave: "principios", label: "Princípios ativos", icone: Pill },
+  { chave: "categoriasMedicamento", label: "Categorias", icone: Tags },
+  { chave: "classificacoesMedicamento", label: "Classificação do medicamento", icone: Beaker },
+  { chave: "laboratorios", label: "Laboratórios", icone: Building2 },
+] as const;
+// Seção 3 — só existe em Catálogo (Fase E, 01/09/2026): tabela dinâmica de
+// cruzamento de medicamentos por atributos clínicos coincidentes.
+const SECAO3_ABAS_CATALOGO = [
+  { chave: "substitutivos", label: "Substitutivos", icone: GitCompareArrows },
+] as const;
+type Secao2AbaCatalogo = (typeof SECAO2_ABAS_CATALOGO)[number]["chave"] | (typeof SECAO3_ABAS_CATALOGO)[number]["chave"];
+
+// Eixos disponíveis pro 1º filtro de Substitutivos — Seção 1 (indicação) +
+// os catálogos "nome + ativo" da Seção 2 (Medicamentos fica de fora: não faz
+// sentido cruzar "por medicamento", o pivô já É o medicamento escolhido no
+// 2º passo).
+const EIXOS_SUBSTITUTIVOS: { chave: EixoFiltroSubstitutivos; label: string }[] = [
+  { chave: "doenca", label: "Indicação (doença/finalidade)" },
+  { chave: "principio", label: "Princípio ativo" },
+  { chave: "categoria", label: "Categoria (medicamento)" },
+  { chave: "classificacao", label: "Classificação do medicamento" },
+  { chave: "laboratorio", label: "Laboratório" },
+];
+
+const secaoLabelStyle: React.CSSProperties = {
+  fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+  color: "var(--text-muted)", margin: "0 0 0.4rem",
+};
+
+function AbaBotaoCatalogo({ ativo, onClick, children, icone: Icone }: {
+  ativo: boolean; onClick: () => void; children: React.ReactNode; icone?: React.ComponentType<{ size?: number }>;
+}) {
+  return (
+    <button onClick={onClick} style={{
+      fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: 999, cursor: "pointer", fontWeight: ativo ? 700 : 500,
+      display: "inline-flex", alignItems: "center", gap: "0.4rem",
+      border: "1px solid " + (ativo ? "var(--dourado)" : "var(--border)"),
+      background: ativo ? "var(--pill-active-bg)" : "transparent",
+      color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)",
+    }}>
+      {Icone && <Icone size={14} />}{children}
+    </button>
+  );
+}
+
+// Catálogo "nome + ativo" simples (Categoria/Classificação do medicamento,
+// Laboratório, Princípios ativos) — só consulta; cadastrar/editar continua
+// sendo tarefa exclusiva de Painel CowData › Farmácia › Cadastrar.
+function CatalogoLeituraSimples({ descricao, fetch: buscar }: {
+  descricao: string; fetch: () => Promise<{ id: number; nome: string; ativo?: boolean }[]>;
+}) {
+  const [lista, setLista] = useState<{ id: number; nome: string; ativo?: boolean }[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { buscar().then(setLista).catch((e: any) => setErro(e.message)); }, [buscar]);
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.8rem", maxWidth: "62ch" }}>{descricao}</p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+      {!lista ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+      ) : lista.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nada cadastrado ainda — cadastre em Painel CowData › Farmácia › Cadastrar.</p>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+          {lista.map((item) => (
+            <span key={item.id} style={{
+              display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.3rem 0.65rem",
+              borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-2)", fontSize: "0.8rem",
+              color: item.ativo === false ? "var(--text-muted)" : "var(--text)", opacity: item.ativo === false ? 0.6 : 1,
+            }}>
+              {item.nome}{item.ativo === false && " (inativa)"}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const input: React.CSSProperties = {
   padding: "0.4rem 0.55rem", borderRadius: 6, fontSize: "0.82rem",
   background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text-muted)" };
+
+// Fase E (01/09/2026) — 1º nível da tabela de Substitutivos: pra cada eixo,
+// qual catálogo buscar as opções específicas.
+const FETCH_ITENS_EIXO_SUBSTITUTIVOS: Record<EixoFiltroSubstitutivos, () => Promise<{ id: number; nome: string }[]>> = {
+  doenca: fetchCategoriasFarmaciaCowData, principio: fetchPrincipiosFarmaciaCowData,
+  categoria: fetchCategoriasMedicamentoFarmaciaCowData, classificacao: fetchClassificacoesMedicamentoFarmaciaCowData,
+  laboratorio: fetchLaboratoriosFarmaciaCowData,
+};
+
+// Tabela dinâmica de cruzamento: escolhe um eixo + item → lista de
+// medicamentos que batem → clique num deles → ranking dos demais por
+// atributos clínicos coincidentes (laboratório não conta ponto).
+function SubstitutivosView() {
+  const [eixo, setEixo] = useState<EixoFiltroSubstitutivos>("principio");
+  const [itensEixo, setItensEixo] = useState<{ id: number; nome: string }[] | null>(null);
+  const [itemId, setItemId] = useState<number | "">("");
+  const [medicamentos, setMedicamentos] = useState<MedicamentoFarmaciaCowData[] | null>(null);
+  const [pivoId, setPivoId] = useState<number | null>(null);
+  const [substitutos, setSubstitutos] = useState<MedicamentoSubstituto[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    setItensEixo(null); setItemId(""); setMedicamentos(null); setPivoId(null); setSubstitutos(null); setErro(null);
+    FETCH_ITENS_EIXO_SUBSTITUTIVOS[eixo]().then(setItensEixo).catch((e: any) => setErro(e.message));
+  }, [eixo]);
+
+  useEffect(() => {
+    setPivoId(null); setSubstitutos(null);
+    if (itemId === "") { setMedicamentos(null); return; }
+    setMedicamentos(null); setErro(null);
+    fetchSubstitutivosPorFiltro(eixo, Number(itemId)).then(setMedicamentos).catch((e: any) => setErro(e.message));
+  }, [eixo, itemId]);
+
+  useEffect(() => {
+    if (pivoId == null) { setSubstitutos(null); return; }
+    setSubstitutos(null); setErro(null);
+    fetchSubstitutivosDeMedicamento(pivoId).then(setSubstitutos).catch((e: any) => setErro(e.message));
+  }, [pivoId]);
+
+  const nomePivo = medicamentos?.find((m) => m.id === pivoId)?.nome_comercial;
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.9rem", maxWidth: "68ch" }}>
+        Escolha um filtro — indicação, princípio ativo, categoria, classificação ou laboratório — pra achar os
+        medicamentos que batem nele, depois clique num deles pra ver os demais ranqueados pelo número de atributos
+        clínicos em comum (princípio ativo, indicação, categoria e classificação do medicamento — laboratório não
+        conta ponto, aparece só como informação no card).
+      </p>
+
+      <div className="flex items-end gap-2 flex-wrap" style={{ marginBottom: "1rem" }}>
+        <div>
+          <label style={labelStyle}>Filtrar por</label>
+          <select style={{ ...input, width: 230 }} value={eixo} onChange={(e) => setEixo(e.target.value as EixoFiltroSubstitutivos)}>
+            {EIXOS_SUBSTITUTIVOS.map((o) => <option key={o.chave} value={o.chave}>{o.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Item</label>
+          <select style={{ ...input, width: 230 }} value={itemId} disabled={!itensEixo}
+            onChange={(e) => setItemId(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">{itensEixo ? "Selecione…" : "Carregando…"}</option>
+            {(itensEixo || []).map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+
+      {itemId !== "" && (
+        !medicamentos ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+        ) : medicamentos.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum medicamento bate nesse filtro.</p>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "1.1rem" }}>
+            {medicamentos.map((m) => (
+              <button key={m.id} onClick={() => setPivoId(m.id)} style={{
+                fontSize: "0.8rem", padding: "0.35rem 0.75rem", borderRadius: 999, cursor: "pointer", fontWeight: pivoId === m.id ? 700 : 500,
+                border: "1px solid " + (pivoId === m.id ? "var(--dourado)" : "var(--border)"),
+                background: pivoId === m.id ? "var(--pill-active-bg)" : "var(--surface-2)",
+                color: pivoId === m.id ? "var(--pill-active-fg)" : "var(--text)",
+              }}>
+                {m.nome_comercial}
+              </button>
+            ))}
+          </div>
+        )
+      )}
+
+      {pivoId != null && (
+        <div>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Substitutos de <strong style={{ color: "var(--text)" }}>{nomePivo}</strong>, do mais pro menos parecido:
+          </p>
+          {!substitutos ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+          ) : substitutos.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum outro medicamento do catálogo compartilha algum atributo clínico com este.</p>
+          ) : (
+            <div className="space-y-2">
+              {substitutos.map((s) => <CardSubstituto key={s.id} s={s} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardSubstituto({ s }: { s: MedicamentoSubstituto }) {
+  const c = s.coincidencias;
+  const partes: string[] = [];
+  if (c.principio_ativo_ids.length) partes.push(`${c.principio_ativo_ids.length} princípio(s) ativo(s)`);
+  if (c.doenca_ids.length) partes.push(`${c.doenca_ids.length} indicação(ões)`);
+  if (c.categoria_medicamento_ids.length) partes.push(`${c.categoria_medicamento_ids.length} categoria(s)`);
+  if (c.classificacao_medicamento_ids.length) partes.push(`${c.classificacao_medicamento_ids.length} classificação(ões)`);
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.65rem 0.8rem" }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <strong style={{ fontSize: "0.85rem" }}>{s.nome_comercial}</strong>
+        {s.laboratorio && <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>— {s.laboratorio}</span>}
+        <span style={{
+          marginLeft: "auto", fontSize: "0.7rem", fontWeight: 800, color: "var(--dourado-light)",
+          border: "1px solid var(--dourado)", borderRadius: 999, padding: "0.1rem 0.55rem",
+        }}>
+          {s.pontuacao_substituto} coincidência{s.pontuacao_substituto === 1 ? "" : "s"}
+        </span>
+      </div>
+      <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>{partes.join(" · ")}</p>
+    </div>
+  );
+}
 
 function labelPrioridade(p: number): string {
   return p === 1 ? "1ª ESCOLHA" : `${p}ª OPÇÃO`;
@@ -73,30 +304,17 @@ function statusEstoque(p: PrincipioIndicacaoCatalogo): { cor: string; label: str
 // Catálogo (abaixo) e o Painel de Conciliação de estoque mínimo — que só
 // faz sentido por fazenda (estoque físico é sempre de UM tenant), por isso
 // nunca aparece no Painel CowData.
+// Configurações > Cadastro > Farmácia (fazenda): a partir da Fase F
+// (01/09/2026), o Catálogo saiu daqui — não é uma tela de cadastro, é
+// consulta, e passou a viver em Sanidade > Catálogo (somente leitura, ver
+// components/sanidade/CatalogoFarmaciaConsulta.tsx). Aqui sobra só o Painel
+// de Conciliação de estoque mínimo, que É ação de configuração por fazenda.
 export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
-  const [aba, setAba] = useState<"catalogo" | "minimo">("catalogo");
   if (contextoGlobal) return <CatalogoFarmacia contextoGlobal />;
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
-        {([["catalogo", "Catálogo"], ["minimo", "Estoque mínimo"]] as const).map(([id, label]) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{
-              fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: 999, cursor: "pointer", fontWeight: aba === id ? 700 : 500,
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "var(--pill-active-bg)" : "transparent",
-              color: aba === id ? "var(--pill-active-fg)" : "var(--text-muted)",
-            }}>
-            {label}
-          </button>
-        ))}
-      </div>
-      {aba === "catalogo" ? <CatalogoFarmacia /> : <PainelEstoqueMinimo />}
-    </div>
-  );
+  return <PainelEstoqueMinimo />;
 }
 
-function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
+export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoGlobal?: boolean; somenteLeitura?: boolean } = {}) {
   const [catalogo, setCatalogo] = useState<IndicacaoCatalogo[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -104,6 +322,10 @@ function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {})
   const [soPersonalizadas, setSoPersonalizadas] = useState(false);
   const [restaurando, setRestaurando] = useState(false);
   const [msgRestaurar, setMsgRestaurar] = useState<string | null>(null);
+  // Seção 2 — só existe dentro do Painel CowData (contextoGlobal); a
+  // fazenda continua vendo só o browse por indicação (Fase F vai extrair
+  // isso pra Sanidade, somente leitura).
+  const [secao2, setSecao2] = useState<Secao2AbaCatalogo>("medicamentos");
 
   const carregar = () => fetchIndicacoesCatalogo().then(setCatalogo).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, []);
@@ -136,56 +358,106 @@ function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {})
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", flex: "1 1 320px", margin: 0 }}>
-          {contextoGlobal
-            ? "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. Este é o catálogo-padrão CowData: qualquer edição feita aqui vale imediatamente para todas as fazendas que ainda não personalizaram esta indicação."
-            : "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada automaticamente só para a sua fazenda, sem afetar as demais."}
-        </p>
-        <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
-          onClick={restaurar} disabled={restaurando}
-          title="(Re)carrega o catálogo padrão de princípios ativos (documento base) — só adiciona o que estiver faltando, nunca sobrescreve edições.">
-          <RotateCcw size={13} /> {restaurando ? "Restaurando…" : "Restaurar catálogo"}
-        </button>
-      </div>
-      {msgRestaurar && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>{msgRestaurar}</p>}
+      {contextoGlobal && (
+        <>
+          <p style={secaoLabelStyle}>Seção 1 — Indicações</p>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            {SECAO1_ABAS_CATALOGO.map(([id, label]) => (
+              <AbaBotaoCatalogo key={id || "todas"} ativo={secao2 === "medicamentos" && tipoFiltro === id}
+                onClick={() => { setTipoFiltro(id); setSecao2("medicamentos"); }}>{label}</AbaBotaoCatalogo>
+            ))}
+          </div>
+          <p style={secaoLabelStyle}>Seção 2 — Catálogo de farmácia</p>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            {SECAO2_ABAS_CATALOGO.map(({ chave, label, icone }) => (
+              <AbaBotaoCatalogo key={chave} ativo={secao2 === chave} onClick={() => setSecao2(chave)} icone={icone}>{label}</AbaBotaoCatalogo>
+            ))}
+          </div>
+          <p style={secaoLabelStyle}>Seção 3 — Substitutivos</p>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            {SECAO3_ABAS_CATALOGO.map(({ chave, label, icone }) => (
+              <AbaBotaoCatalogo key={chave} ativo={secao2 === chave} onClick={() => setSecao2(chave)} icone={icone}>{label}</AbaBotaoCatalogo>
+            ))}
+          </div>
+        </>
+      )}
 
-      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 340 }}>
-          <Search size={14} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar indicação, princípio ou marca…"
-            style={{ ...input, width: "100%", paddingLeft: "1.8rem" }} />
-        </div>
-        {TIPOS_FILTRO.map(([id, label]) => (
-          <button key={id || "todas"} onClick={() => setTipoFiltro(id)}
-            style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
-              border: "1px solid " + (tipoFiltro === id ? "var(--dourado)" : "var(--border)"),
-              background: tipoFiltro === id ? "var(--pill-active-bg)" : "transparent",
-              color: tipoFiltro === id ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: tipoFiltro === id ? 700 : 500 }}>
-            {label}
-          </button>
-        ))}
-        {!contextoGlobal && (
-          <button onClick={() => setSoPersonalizadas((v) => !v)}
-            style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
-              display: "inline-flex", alignItems: "center", gap: "0.3rem",
-              border: "1px solid " + (soPersonalizadas ? "var(--dourado)" : "var(--border)"),
-              background: soPersonalizadas ? "var(--pill-active-bg)" : "transparent",
-              color: soPersonalizadas ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: soPersonalizadas ? 700 : 500 }}>
-            <Pencil size={12} /> Só personalizadas
-          </button>
-        )}
-      </div>
+      {(!contextoGlobal || secao2 === "medicamentos") ? (
+        <>
+          <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", flex: "1 1 320px", margin: 0 }}>
+              {somenteLeitura
+                ? "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. Reflexo do catálogo mantido pelo Painel CowData — para personalizar, use Configurações > Cadastro > Farmácia."
+                : contextoGlobal
+                ? "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. Este é o catálogo-padrão CowData: qualquer edição feita aqui vale imediatamente para todas as fazendas que ainda não personalizaram esta indicação."
+                : "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada automaticamente só para a sua fazenda, sem afetar as demais."}
+            </p>
+            {!somenteLeitura && (
+              <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
+                onClick={restaurar} disabled={restaurando}
+                title="(Re)carrega o catálogo padrão de princípios ativos (documento base) — só adiciona o que estiver faltando, nunca sobrescreve edições.">
+                <RotateCcw size={13} /> {restaurando ? "Restaurando…" : "Restaurar catálogo"}
+              </button>
+            )}
+          </div>
+          {msgRestaurar && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>{msgRestaurar}</p>}
 
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
-      {!catalogo ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
-      ) : lista.length === 0 ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indicação encontrada.</p>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 340 }}>
+              <Search size={14} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+              <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar indicação, princípio ou marca…"
+                style={{ ...input, width: "100%", paddingLeft: "1.8rem" }} />
+            </div>
+            {!contextoGlobal && TIPOS_FILTRO.map(([id, label]) => (
+              <button key={id || "todas"} onClick={() => setTipoFiltro(id)}
+                style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
+                  border: "1px solid " + (tipoFiltro === id ? "var(--dourado)" : "var(--border)"),
+                  background: tipoFiltro === id ? "var(--pill-active-bg)" : "transparent",
+                  color: tipoFiltro === id ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: tipoFiltro === id ? 700 : 500 }}>
+                {label}
+              </button>
+            ))}
+            {!contextoGlobal && (
+              <button onClick={() => setSoPersonalizadas((v) => !v)}
+                style={{ fontSize: "0.76rem", padding: "0.32rem 0.75rem", borderRadius: 999, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: "0.3rem",
+                  border: "1px solid " + (soPersonalizadas ? "var(--dourado)" : "var(--border)"),
+                  background: soPersonalizadas ? "var(--pill-active-bg)" : "transparent",
+                  color: soPersonalizadas ? "var(--pill-active-fg)" : "var(--text-muted)", fontWeight: soPersonalizadas ? 700 : 500 }}>
+                <Pencil size={12} /> Só personalizadas
+              </button>
+            )}
+          </div>
+
+          {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+          {!catalogo ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+          ) : lista.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indicação encontrada.</p>
+          ) : (
+            <div className="space-y-2">
+              {lista.map((ind) => <CardIndicacao key={ind.id} ind={ind} onMudou={carregar} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />)}
+            </div>
+          )}
+        </>
+      ) : secao2 === "principios" ? (
+        <CatalogoLeituraSimples
+          descricao="Lista fechada de princípios ativos — a mesma usada ao cadastrar um medicamento, tanto no Painel CowData quanto em cada fazenda."
+          fetch={fetchPrincipiosFarmaciaCowData} />
+      ) : secao2 === "categoriasMedicamento" ? (
+        <CatalogoLeituraSimples
+          descricao="Categoria (medicamento): antimicrobiano, anti-inflamatório, antibiótico... — cumulativa, um medicamento pode ter mais de uma."
+          fetch={fetchCategoriasMedicamentoFarmaciaCowData} />
+      ) : secao2 === "classificacoesMedicamento" ? (
+        <CatalogoLeituraSimples
+          descricao="Classificação do medicamento — eixo próprio, independente de Categoria, também cumulativo."
+          fetch={fetchClassificacoesMedicamentoFarmaciaCowData} />
+      ) : secao2 === "laboratorios" ? (
+        <CatalogoLeituraSimples
+          descricao="Laboratório — fabricante do medicamento, usado tanto aqui quanto no cadastro de item de estoque de cada fazenda."
+          fetch={fetchLaboratoriosFarmaciaCowData} />
       ) : (
-        <div className="space-y-2">
-          {lista.map((ind) => <CardIndicacao key={ind.id} ind={ind} onMudou={carregar} contextoGlobal={contextoGlobal} />)}
-        </div>
+        <SubstitutivosView />
       )}
     </div>
   );
@@ -311,7 +583,9 @@ function LinhaEstoqueMinimo({ p, onMudou }: { p: PrincipioFarmacia; onMudou: () 
   );
 }
 
-function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean }) {
+function CardIndicacao({ ind, onMudou, contextoGlobal, somenteLeitura }: {
+  ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean; somenteLeitura?: boolean;
+}) {
   const [aberto, setAberto] = useState(false);
   const [processando, setProcessando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -362,7 +636,7 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
             <span title="Personalizada para a sua fazenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--dourado-light)" }}>
               <Pencil size={12} /> Personalizada
             </span>
-          ) : contextoGlobal ? (
+          ) : contextoGlobal || somenteLeitura ? (
             <span title="Catálogo-padrão CowData — edições aqui valem para todas as fazendas que não personalizaram esta indicação." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
               <Lock size={14} />
             </span>
@@ -400,7 +674,7 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
           ) : (
             <div className="space-y-3">
               {ind.principios.map((p) => (
-                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} />
+                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />
               ))}
             </div>
           )}
@@ -410,8 +684,9 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
   );
 }
 
-function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: {
-  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void; contextoGlobal?: boolean;
+function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal, somenteLeitura }: {
+  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void;
+  contextoGlobal?: boolean; somenteLeitura?: boolean;
 }) {
   const [editandoVinculo, setEditandoVinculo] = useState(false);
   const [prioridade, setPrioridade] = useState(String(p.prioridade));
@@ -453,10 +728,12 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: 
             <Lock size={11} />
           </span>
         )}
-        <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)}
-          title={indicacaoPersonalizada || contextoGlobal ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
-          <Pencil size={11} />
-        </button>
+        {!somenteLeitura && (
+          <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)}
+            title={indicacaoPersonalizada || contextoGlobal ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
+            <Pencil size={11} />
+          </button>
+        )}
       </div>
       {p.nota && !editandoVinculo && <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>{p.nota}</p>}
 
@@ -478,15 +755,16 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: 
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Nenhuma marca comercial cadastrada para este princípio.</p>
       ) : (
         <div className="space-y-2" style={{ marginTop: "0.55rem" }}>
-          {p.marcas.map((m) => <MarcaLinha key={m.id} m={m} principioId={p.id} onMudou={onMudou} contextoGlobal={contextoGlobal} />)}
+          {p.marcas.map((m) => <MarcaLinha key={m.id} m={m} principioId={p.id} onMudou={onMudou} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />)}
         </div>
       )}
     </div>
   );
 }
 
-function MarcaLinha({ m, principioId, onMudou, contextoGlobal }: {
-  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void; contextoGlobal?: boolean;
+function MarcaLinha({ m, principioId, onMudou, contextoGlobal, somenteLeitura }: {
+  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void;
+  contextoGlobal?: boolean; somenteLeitura?: boolean;
 }) {
   const [editando, setEditando] = useState(false);
   const semInfo = carenciaNaoInformada(m.carencia);
@@ -517,10 +795,12 @@ function MarcaLinha({ m, principioId, onMudou, contextoGlobal }: {
           </div>
         </div>
 
-        <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}
-          title={m.editavel || contextoGlobal ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
-          <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
-        </button>
+        {!somenteLeitura && (
+          <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}
+            title={m.editavel || contextoGlobal ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
+            <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: "0.45rem" }}>

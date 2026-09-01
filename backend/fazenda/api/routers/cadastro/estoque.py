@@ -14,8 +14,9 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    CategoriaEstoque, Estoque, EstoqueSemen, FinalidadeEstoque, Fornecedor, LocalArmazenamento, PlanoContaGerencial,
-    SeedFlag, UnidadeEmbalagemEstoque, UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
+    CategoriaEstoque, CategoriaMedicamento, ClassificacaoMedicamento, Estoque, EstoqueSemen, FinalidadeEstoque,
+    Fornecedor, Laboratorio, LocalArmazenamento, PlanoContaGerencial, SeedFlag, UnidadeEmbalagemEstoque,
+    UnidadeEstoque, UnidadeMedidaEmbalagemEstoque,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from ._comum import _crud_nome_ativo
@@ -285,3 +286,23 @@ router.get("/unidades-medida-embalagem-estoque")(_listar_unidades_medida_embalag
 router.post("/unidades-medida-embalagem-estoque")(_criar_unidade_medida_embalagem_estoque)
 router.put("/unidades-medida-embalagem-estoque/{item_id}")(_atualizar_unidade_medida_embalagem_estoque)
 router.delete("/unidades-medida-embalagem-estoque/{item_id}")(_excluir_unidade_medida_embalagem_estoque)
+
+# Laboratório / Categoria (medicamento) / Classificação do medicamento — mesmo
+# padrão dos cadastros acima, mas `global_compartilhado=True` (ver _comum.py):
+# o que o Painel CowData cadastra em /painel-cowdata/farmacia/{laboratorios,
+# categorias-medicamento,classificacoes-medicamento} vira padrão automático
+# aqui, sem precisar recadastrar por fazenda (pedido do usuário, 01/09/2026).
+_listar_laboratorios, _criar_laboratorio, _atualizar_laboratorio, _ = _crud_nome_ativo(Laboratorio, com_fazenda=True, global_compartilhado=True)
+router.get("/laboratorios")(_listar_laboratorios)
+router.post("/laboratorios")(_criar_laboratorio)
+router.put("/laboratorios/{item_id}")(_atualizar_laboratorio)
+
+_listar_categorias_medicamento, _criar_categoria_medicamento, _atualizar_categoria_medicamento, _ = _crud_nome_ativo(CategoriaMedicamento, com_fazenda=True, global_compartilhado=True)
+router.get("/categorias-medicamento")(_listar_categorias_medicamento)
+router.post("/categorias-medicamento")(_criar_categoria_medicamento)
+router.put("/categorias-medicamento/{item_id}")(_atualizar_categoria_medicamento)
+
+_listar_classificacoes_medicamento, _criar_classificacao_medicamento, _atualizar_classificacao_medicamento, _ = _crud_nome_ativo(ClassificacaoMedicamento, com_fazenda=True, global_compartilhado=True)
+router.get("/classificacoes-medicamento")(_listar_classificacoes_medicamento)
+router.post("/classificacoes-medicamento")(_criar_classificacao_medicamento)
+router.put("/classificacoes-medicamento/{item_id}")(_atualizar_classificacao_medicamento)
