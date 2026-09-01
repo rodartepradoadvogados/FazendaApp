@@ -14,9 +14,8 @@ import {
   fetchDreCascata, classificarContaDre, type DreResposta,
   fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
-  atualizarLancamentoFinanceiro, ehAdmin, ehConsultor, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
-  fetchSupabaseDashboardUrl,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
@@ -236,15 +235,6 @@ export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rel, setRel] = useState<Rel>("a_pagar");
-  // Link pro banco de dados externo (Supabase) — só busca quando o usuário
-  // entra numa sub-aba de Relatórios financeiros, e só se não for consultor
-  // (backend já bloqueia; aqui é só pra não mostrar o botão à toa).
-  const [supabaseUrl, setSupabaseUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (RELATORIOS.some((r) => r.id === rel) && !ehConsultor() && supabaseUrl === null) {
-      fetchSupabaseDashboardUrl().then((d) => setSupabaseUrl(d.url || "")).catch(() => setSupabaseUrl(""));
-    }
-  }, [rel]);
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
@@ -354,7 +344,14 @@ export default function FinanceiroPage() {
   // Árvore de sub-navegação — a Sidebar desenha isto no lugar da lista de
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
   const subNavTree: SubNavNode[] = useMemo(() => [
-    { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    // "extrato" fica de fora daqui de propósito: é o mesmo destino de
+    // "Extrato completo" em Relatórios (mesmo id, mesma tela) — listado nas
+    // duas árvores, o rail sempre resolvia o caminho ativo para "Contas"
+    // (primeira árvore a bater o id), fazendo "Extrato completo" abrir
+    // marcado como se fosse "Contas > Todas". Preservado só uma vez evita a
+    // ambiguidade sem duplicar nenhuma lógica de filtro (CONTAS/CONTAS_IDS
+    // continuam intactos, usados em todo o resto do arquivo).
+    { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.filter((r) => r.id !== "extrato").map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
@@ -699,11 +696,6 @@ export default function FinanceiroPage() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
         </div>
-        {RELATORIOS.some((r) => r.id === rel) && !!supabaseUrl && (
-          <a href={supabaseUrl} target="_blank" rel="noreferrer" className="btn-ghost" style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>
-            <Layers size={13} /> Banco de dados (Supabase)
-          </a>
-        )}
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
@@ -4422,7 +4414,12 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
  * marcadas em Configurações > Parâmetros financeiros) e "físico" (consumo
  * real registrado pela Alimentação × valor unitário do Estoque).
  */
-type ItemFisicoRmca = { ingrediente: string; quantidade: number; valor_unitario: number; custo: number };
+type ItemFisicoRmca = {
+  ingrediente: string; quantidade: number; quantidade_kg: number; valor_unitario: number; custo: number;
+  estoque_id: number | null; unidade: string | null;
+  preco_padrao_kg: number | null; preco_ultima_compra_kg: number | null;
+};
+type PrecoMedioLitroLeite = { competencia: string; litros: number; receita: number; preco_por_litro: number } | null;
 type RmcaResp = {
   periodo: { inicio: string; fim: string };
   configurado: boolean;
@@ -4431,6 +4428,7 @@ type RmcaResp = {
   gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
   fisico: { receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[] };
   meta_rmca: number;
+  preco_medio_litro_leite: PrecoMedioLitroLeite;
 };
 
 function primeiroDiaDoMes() {
@@ -4928,7 +4926,19 @@ function RmcaView() {
   const [erro, setErro] = useState<string | null>(null);
   const [roteiroAberto, setRoteiroAberto] = useState(false);
 
-  useEffect(() => { fetchRmca(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
+  // "vivo" evita que uma resposta desatualizada sobrescreva uma mais nova:
+  // o <input type="date"> pode emitir um valor vazio por uma fração de
+  // segundo ao trocar mês/ano (varia por navegador), disparando uma busca
+  // com data inválida (422) logo antes da busca boa — sem esta trava, se a
+  // resposta ruim chegasse DEPOIS da boa, o erro ficava "preso" na tela
+  // mesmo com o período certo selecionado. Mesmo padrão já usado no
+  // celular (ver components/mobile/menu/Rmca.tsx).
+  useEffect(() => {
+    let vivo = true;
+    fetchRmca(dataInicio, dataFim).then((r) => { if (vivo) { setDados(r); setErro(null); } })
+      .catch((e) => { if (vivo) setErro(e.message); });
+    return () => { vivo = false; };
+  }, [dataInicio, dataFim]);
 
   return (
     <div>
@@ -5004,7 +5014,256 @@ function RmcaView() {
               {!dados.fisico.itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem consumo registrado pela Alimentação no período.</p>}
             </div>
           </div>
+          <RmcaSimulador dados={dados} />
         </>
+      )}
+    </div>
+  );
+}
+
+/* ───────────────────────── Simulador de cenários (RMCA) ─────────────────────────
+ * Calculadora "e se" nos moldes da planilha manual do nutricionista: uma
+ * lista de ingredientes (kg/dia × R$/kg) por cenário — "dieta de hoje" ao
+ * lado de "dieta pretendida" — comparada com a receita do leite do mesmo
+ * período. Não lança nada; é só simulação, por isso vive só no front, sem
+ * endpoint de escrita. */
+type FonteCusto = "manual" | "ultima_compra" | "padrao";
+type LinhaSimulador = {
+  id: string; nome: string; kgDia: number; fonte: FonteCusto;
+  precoManual: number; precoUltimaCompra: number | null; precoPadrao: number | null;
+};
+type FontePrecoLeite = "manual" | "media_laticinio";
+
+function diasDoPeriodo(p: { inicio: string; fim: string }): number {
+  const ini = new Date(p.inicio + "T00:00:00").getTime();
+  const fim = new Date(p.fim + "T00:00:00").getTime();
+  return Math.max(1, Math.round((fim - ini) / 86400000) + 1);
+}
+
+function linhasDoFisico(dados: RmcaResp): LinhaSimulador[] {
+  const dias = diasDoPeriodo(dados.periodo);
+  return dados.fisico.itens.map((it, i) => ({
+    id: `${it.estoque_id ?? it.ingrediente}-${i}`,
+    nome: it.ingrediente,
+    kgDia: Math.round((it.quantidade_kg / dias) * 100) / 100,
+    fonte: "padrao" as FonteCusto,
+    precoManual: it.preco_padrao_kg ?? it.valor_unitario ?? 0,
+    precoUltimaCompra: it.preco_ultima_compra_kg,
+    precoPadrao: it.preco_padrao_kg,
+  }));
+}
+
+function precoEfetivoLinha(l: LinhaSimulador): number {
+  if (l.fonte === "manual") return l.precoManual;
+  if (l.fonte === "ultima_compra") return l.precoUltimaCompra ?? l.precoPadrao ?? l.precoManual;
+  return l.precoPadrao ?? l.precoManual;
+}
+
+function TabelaCenario({ titulo, linhas, setLinhas }: {
+  titulo: string; linhas: LinhaSimulador[]; setLinhas: (fn: (atual: LinhaSimulador[]) => LinhaSimulador[]) => void;
+}) {
+  const atualizar = (id: string, campo: keyof LinhaSimulador, valor: any) =>
+    setLinhas((atual) => atual.map((l) => (l.id === id ? { ...l, [campo]: valor } : l)));
+  const remover = (id: string) => setLinhas((atual) => atual.filter((l) => l.id !== id));
+  const adicionar = () => setLinhas((atual) => [
+    ...atual, { id: `novo-${Date.now()}`, nome: "Novo ingrediente", kgDia: 0, fonte: "manual", precoManual: 0, precoUltimaCompra: null, precoPadrao: null },
+  ]);
+  const totalDia = linhas.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
+
+  return (
+    <div className="card">
+      <div className="card-header mb-3">{titulo}</div>
+      <div className="overflow-x-auto">
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead>
+            <tr>
+              <th>Ingrediente</th>
+              <th style={{ textAlign: "right" }}>kg/dia</th>
+              <th>Fonte do preço</th>
+              <th style={{ textAlign: "right" }}>R$/kg</th>
+              <th style={{ textAlign: "right" }}>Subtotal/dia</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {linhas.map((l) => {
+              const preco = precoEfetivoLinha(l);
+              const semFonte = l.fonte === "ultima_compra" && l.precoUltimaCompra == null;
+              return (
+                <tr key={l.id}>
+                  <td style={{ minWidth: "10rem" }}>
+                    <input style={{ ...selStyleLote, fontSize: "0.78rem" }} value={l.nome} onChange={(e) => atualizar(l.id, "nome", e.target.value)} />
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <input type="number" style={{ ...selStyleLote, fontSize: "0.78rem", textAlign: "right", width: "5.5rem" }}
+                      value={l.kgDia} step="0.1" onChange={(e) => atualizar(l.id, "kgDia", Number(e.target.value) || 0)} />
+                  </td>
+                  <td style={{ minWidth: "11rem" }}>
+                    <select style={{ ...selStyleLote, fontSize: "0.78rem" }} value={l.fonte} onChange={(e) => atualizar(l.id, "fonte", e.target.value as FonteCusto)}>
+                      <option value="manual">Lançar R$/kg</option>
+                      <option value="ultima_compra">Último preço de compra{l.precoUltimaCompra == null ? " (sem compra registrada)" : ""}</option>
+                      <option value="padrao">Preço padrão do cadastro{l.precoPadrao == null ? " (sem cadastro)" : ""}</option>
+                    </select>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {l.fonte === "manual" ? (
+                      <input type="number" style={{ ...selStyleLote, fontSize: "0.78rem", textAlign: "right", width: "5.5rem" }}
+                        value={l.precoManual} step="0.01" onChange={(e) => atualizar(l.id, "precoManual", Number(e.target.value) || 0)} />
+                    ) : (
+                      <span style={{ fontSize: "0.78rem", color: semFonte ? "var(--amber)" : undefined }}>{formatBRL(preco)}</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(l.kgDia * preco)}</td>
+                  <td><button className="btn-ghost" title="Remover ingrediente" onClick={() => remover(l.id)}><Trash2 size={13} /></button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={4} style={{ fontWeight: 700 }}>Total diário de alimentação</td>
+              <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(totalDia)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <button className="btn-ghost mt-2" style={{ fontSize: "0.75rem" }} onClick={adicionar}><Plus size={13} /> Adicionar ingrediente</button>
+    </div>
+  );
+}
+
+function RmcaSimulador({ dados }: { dados: RmcaResp }) {
+  const [aberto, setAberto] = useState(false);
+  const [cenarioA, setCenarioA] = useState<LinhaSimulador[]>(() => linhasDoFisico(dados));
+  const [cenarioB, setCenarioB] = useState<LinhaSimulador[]>(() => linhasDoFisico(dados));
+
+  const [litrosDia, setLitrosDia] = useState(1000);
+  const [fontePrecoVenda, setFontePrecoVenda] = useState<FontePrecoLeite>("manual");
+  const [precoVendaManual, setPrecoVendaManual] = useState(3.0);
+  const [litrosBezerros, setLitrosBezerros] = useState(0);
+  const [fontePrecoBezerro, setFontePrecoBezerro] = useState<FontePrecoLeite>("manual");
+  const [precoBezerroPadrao, setPrecoBezerroPadrao] = useState(3.0);
+
+  const precoMedioLaticinio = dados.preco_medio_litro_leite?.preco_por_litro ?? null;
+  const precoVenda = fontePrecoVenda === "media_laticinio" ? (precoMedioLaticinio ?? precoVendaManual) : precoVendaManual;
+  const precoBezerro = fontePrecoBezerro === "media_laticinio" ? (precoMedioLaticinio ?? precoBezerroPadrao) : precoBezerroPadrao;
+  const litrosVendidos = Math.max(0, litrosDia - litrosBezerros);
+  const receitaVenda = litrosVendidos * precoVenda;
+  const valorLeiteBezerros = litrosBezerros * precoBezerro;
+
+  const custoA = cenarioA.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
+  const custoB = cenarioB.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
+  const pctA = receitaVenda > 0 ? (custoA / receitaVenda) * 100 : null;
+  const pctB = receitaVenda > 0 ? (custoB / receitaVenda) * 100 : null;
+
+  const recarregarDoFisico = (coluna: "A" | "B") => {
+    const linhas = linhasDoFisico(dados);
+    if (coluna === "A") setCenarioA(linhas); else setCenarioB(linhas);
+  };
+
+  return (
+    <div className="card mt-4">
+      <div className="card-header mb-3 flex items-center justify-between">
+        <span>Simulador de cenários</span>
+        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setAberto((v) => !v)}>
+          {aberto ? "Recolher" : "Abrir simulador"}
+        </button>
+      </div>
+      {!aberto && (
+        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          Compare o custo diário de alimentação de dois cenários (ex.: a dieta de hoje × uma dieta que você está pensando em fazer) contra a receita do leite — mesma mecânica da planilha manual, mas recalculando ao vivo.
+        </p>
+      )}
+      {aberto && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
+              Os dois cenários já vêm pré-preenchidos com o consumo real do RMCA físico no período — edite livremente, ou recarregue a partir do real a qualquer momento.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <TabelaCenario titulo="Cenário A — Dieta de hoje" linhas={cenarioA} setLinhas={setCenarioA} />
+              <button className="btn-ghost mt-1" style={{ fontSize: "0.72rem" }} onClick={() => recarregarDoFisico("A")}>
+                <Undo2 size={12} /> Recarregar do RMCA físico
+              </button>
+            </div>
+            <div>
+              <TabelaCenario titulo="Cenário B — Dieta pretendida" linhas={cenarioB} setLinhas={setCenarioB} />
+              <button className="btn-ghost mt-1" style={{ fontSize: "0.72rem" }} onClick={() => recarregarDoFisico("B")}>
+                <Undo2 size={12} /> Recarregar do RMCA físico
+              </button>
+            </div>
+          </div>
+
+          <div className="card mb-4" style={{ background: "var(--surface-2)" }}>
+            <div className="card-header mb-3">Receita do leite (usada nos dois cenários)</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="flex flex-wrap gap-3 items-end mb-2">
+                  <div><label style={labelStyleLote}>Litros produzidos/dia</label>
+                    <input type="number" style={selStyleLote} value={litrosDia} step="10" onChange={(e) => setLitrosDia(Number(e.target.value) || 0)} /></div>
+                  <div><label style={labelStyleLote}>Fonte do preço de venda</label>
+                    <select style={selStyleLote} value={fontePrecoVenda} onChange={(e) => setFontePrecoVenda(e.target.value as FontePrecoLeite)}>
+                      <option value="manual">Valor digitado</option>
+                      <option value="media_laticinio">Média paga pelo laticínio{precoMedioLaticinio == null ? " (sem dado ainda)" : ""}</option>
+                    </select></div>
+                  {fontePrecoVenda === "manual" && (
+                    <div><label style={labelStyleLote}>R$/litro</label>
+                      <input type="number" style={selStyleLote} value={precoVendaManual} step="0.01" onChange={(e) => setPrecoVendaManual(Number(e.target.value) || 0)} /></div>
+                  )}
+                </div>
+                {dados.preco_medio_litro_leite && (
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    Última nota do laticínio ({mesCompLabel(dados.preco_medio_litro_leite.competencia)}): {formatBRL(dados.preco_medio_litro_leite.preco_por_litro)}/L
+                    ({formatBRL(dados.preco_medio_litro_leite.receita)} ÷ {dados.preco_medio_litro_leite.litros.toLocaleString("pt-BR")} L).
+                  </p>
+                )}
+              </div>
+              <div>
+                <div className="flex flex-wrap gap-3 items-end mb-2">
+                  <div><label style={labelStyleLote}>Leite p/ bezerros (L/dia)</label>
+                    <input type="number" style={selStyleLote} value={litrosBezerros} step="1" onChange={(e) => setLitrosBezerros(Number(e.target.value) || 0)} /></div>
+                  <div><label style={labelStyleLote}>Fonte do valor atribuído</label>
+                    <select style={selStyleLote} value={fontePrecoBezerro} onChange={(e) => setFontePrecoBezerro(e.target.value as FontePrecoLeite)}>
+                      <option value="manual">Valor padrão digitado</option>
+                      <option value="media_laticinio">Média paga pelo laticínio{precoMedioLaticinio == null ? " (sem dado ainda)" : ""}</option>
+                    </select></div>
+                  {fontePrecoBezerro === "manual" && (
+                    <div><label style={labelStyleLote}>R$/litro (padrão)</label>
+                      <input type="number" style={selStyleLote} value={precoBezerroPadrao} step="0.01" onChange={(e) => setPrecoBezerroPadrao(Number(e.target.value) || 0)} /></div>
+                  )}
+                </div>
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  Litros produzidos são descontados do leite fornecido a bezerros antes de calcular a receita de venda; o valor do leite de bezerro aparece à parte, informativo.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <KPI v={`${litrosVendidos.toLocaleString("pt-BR")} L`} l="Litros disponíveis p/ venda" />
+              <KPI v={formatBRL(receitaVenda)} l="Receita de venda" c="var(--green-light)" />
+              <KPI v={formatBRL(valorLeiteBezerros)} l="Valor do leite p/ bezerros" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[{ nome: "Cenário A", custo: custoA, pct: pctA }, { nome: "Cenário B", custo: custoB, pct: pctB }].map((c) => (
+              <div key={c.nome} className="card" style={{ borderColor: c.pct != null && c.pct >= 45 ? "var(--red)" : undefined }}>
+                <div className="card-header mb-3">{c.nome}</div>
+                <div className="grid grid-cols-1 gap-3">
+                  <KPI v={formatBRL(c.custo)} l="Custo de alimentação/dia" c="var(--red)" />
+                  <KPI v={c.pct != null ? `${c.pct.toFixed(2)}%` : "—"} l="Custo ÷ Receita de venda" c={c.pct != null && c.pct >= 45 ? "var(--red)" : "var(--green-light)"} />
+                </div>
+                {c.pct != null && (
+                  <div style={{ height: "0.5rem", borderRadius: "99px", background: "var(--surface-2)", overflow: "hidden", marginTop: "0.6rem" }}>
+                    <div style={{ height: "100%", width: `${Math.min(c.pct, 100)}%`, background: c.pct >= 45 ? "var(--red)" : "var(--green-light)" }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -5021,7 +5280,14 @@ function CustoLitroLeiteView() {
   const [dados, setDados] = useState<CustoLitroLeiteResp | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
-  useEffect(() => { fetchCustoLitroLeite(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
+  // Mesma trava de resposta desatualizada de RmcaView, acima — ver o
+  // comentário lá para a explicação completa do 422 intermitente.
+  useEffect(() => {
+    let vivo = true;
+    fetchCustoLitroLeite(dataInicio, dataFim).then((r) => { if (vivo) { setDados(r); setErro(null); } })
+      .catch((e) => { if (vivo) setErro(e.message); });
+    return () => { vivo = false; };
+  }, [dataInicio, dataFim]);
 
   return (
     <div>
