@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Search, Lock, Pencil, ChevronDown, ChevronRight, AlertTriangle, Ban, ExternalLink, RotateCcw, Check, X,
-  Beaker, Building2, Pill, Syringe, Tags,
+  Beaker, Building2, Pill, Syringe, Tags, GitCompareArrows,
 } from "lucide-react";
 import {
   fetchIndicacoesCatalogo, personalizarIndicacao,
@@ -22,7 +22,9 @@ import {
   fetchFarmaciaPrincipios, definirEstoqueMinimoFarmacia,
   fetchPrincipiosFarmaciaCowData, fetchCategoriasMedicamentoFarmaciaCowData,
   fetchClassificacoesMedicamentoFarmaciaCowData, fetchLaboratoriosFarmaciaCowData,
+  fetchCategoriasFarmaciaCowData, fetchSubstitutivosPorFiltro, fetchSubstitutivosDeMedicamento,
   type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
+  type EixoFiltroSubstitutivos, type MedicamentoFarmaciaCowData, type MedicamentoSubstituto,
 } from "@/lib/api";
 import { carenciaNaoInformada } from "@/lib/carencia";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -62,7 +64,24 @@ const SECAO2_ABAS_CATALOGO = [
   { chave: "classificacoesMedicamento", label: "Classificação do medicamento", icone: Beaker },
   { chave: "laboratorios", label: "Laboratórios", icone: Building2 },
 ] as const;
-type Secao2AbaCatalogo = (typeof SECAO2_ABAS_CATALOGO)[number]["chave"];
+// Seção 3 — só existe em Catálogo (Fase E, 01/09/2026): tabela dinâmica de
+// cruzamento de medicamentos por atributos clínicos coincidentes.
+const SECAO3_ABAS_CATALOGO = [
+  { chave: "substitutivos", label: "Substitutivos", icone: GitCompareArrows },
+] as const;
+type Secao2AbaCatalogo = (typeof SECAO2_ABAS_CATALOGO)[number]["chave"] | (typeof SECAO3_ABAS_CATALOGO)[number]["chave"];
+
+// Eixos disponíveis pro 1º filtro de Substitutivos — Seção 1 (indicação) +
+// os catálogos "nome + ativo" da Seção 2 (Medicamentos fica de fora: não faz
+// sentido cruzar "por medicamento", o pivô já É o medicamento escolhido no
+// 2º passo).
+const EIXOS_SUBSTITUTIVOS: { chave: EixoFiltroSubstitutivos; label: string }[] = [
+  { chave: "doenca", label: "Indicação (doença/finalidade)" },
+  { chave: "principio", label: "Princípio ativo" },
+  { chave: "categoria", label: "Categoria (medicamento)" },
+  { chave: "classificacao", label: "Classificação do medicamento" },
+  { chave: "laboratorio", label: "Laboratório" },
+];
 
 const secaoLabelStyle: React.CSSProperties = {
   fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
@@ -126,6 +145,139 @@ const input: React.CSSProperties = {
   background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)",
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text-muted)" };
+
+// Fase E (01/09/2026) — 1º nível da tabela de Substitutivos: pra cada eixo,
+// qual catálogo buscar as opções específicas.
+const FETCH_ITENS_EIXO_SUBSTITUTIVOS: Record<EixoFiltroSubstitutivos, () => Promise<{ id: number; nome: string }[]>> = {
+  doenca: fetchCategoriasFarmaciaCowData, principio: fetchPrincipiosFarmaciaCowData,
+  categoria: fetchCategoriasMedicamentoFarmaciaCowData, classificacao: fetchClassificacoesMedicamentoFarmaciaCowData,
+  laboratorio: fetchLaboratoriosFarmaciaCowData,
+};
+
+// Tabela dinâmica de cruzamento: escolhe um eixo + item → lista de
+// medicamentos que batem → clique num deles → ranking dos demais por
+// atributos clínicos coincidentes (laboratório não conta ponto).
+function SubstitutivosView() {
+  const [eixo, setEixo] = useState<EixoFiltroSubstitutivos>("principio");
+  const [itensEixo, setItensEixo] = useState<{ id: number; nome: string }[] | null>(null);
+  const [itemId, setItemId] = useState<number | "">("");
+  const [medicamentos, setMedicamentos] = useState<MedicamentoFarmaciaCowData[] | null>(null);
+  const [pivoId, setPivoId] = useState<number | null>(null);
+  const [substitutos, setSubstitutos] = useState<MedicamentoSubstituto[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    setItensEixo(null); setItemId(""); setMedicamentos(null); setPivoId(null); setSubstitutos(null); setErro(null);
+    FETCH_ITENS_EIXO_SUBSTITUTIVOS[eixo]().then(setItensEixo).catch((e: any) => setErro(e.message));
+  }, [eixo]);
+
+  useEffect(() => {
+    setPivoId(null); setSubstitutos(null);
+    if (itemId === "") { setMedicamentos(null); return; }
+    setMedicamentos(null); setErro(null);
+    fetchSubstitutivosPorFiltro(eixo, Number(itemId)).then(setMedicamentos).catch((e: any) => setErro(e.message));
+  }, [eixo, itemId]);
+
+  useEffect(() => {
+    if (pivoId == null) { setSubstitutos(null); return; }
+    setSubstitutos(null); setErro(null);
+    fetchSubstitutivosDeMedicamento(pivoId).then(setSubstitutos).catch((e: any) => setErro(e.message));
+  }, [pivoId]);
+
+  const nomePivo = medicamentos?.find((m) => m.id === pivoId)?.nome_comercial;
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.9rem", maxWidth: "68ch" }}>
+        Escolha um filtro — indicação, princípio ativo, categoria, classificação ou laboratório — pra achar os
+        medicamentos que batem nele, depois clique num deles pra ver os demais ranqueados pelo número de atributos
+        clínicos em comum (princípio ativo, indicação, categoria e classificação do medicamento — laboratório não
+        conta ponto, aparece só como informação no card).
+      </p>
+
+      <div className="flex items-end gap-2 flex-wrap" style={{ marginBottom: "1rem" }}>
+        <div>
+          <label style={labelStyle}>Filtrar por</label>
+          <select style={{ ...input, width: 230 }} value={eixo} onChange={(e) => setEixo(e.target.value as EixoFiltroSubstitutivos)}>
+            {EIXOS_SUBSTITUTIVOS.map((o) => <option key={o.chave} value={o.chave}>{o.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Item</label>
+          <select style={{ ...input, width: 230 }} value={itemId} disabled={!itensEixo}
+            onChange={(e) => setItemId(e.target.value ? Number(e.target.value) : "")}>
+            <option value="">{itensEixo ? "Selecione…" : "Carregando…"}</option>
+            {(itensEixo || []).map((i) => <option key={i.id} value={i.id}>{i.nome}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+
+      {itemId !== "" && (
+        !medicamentos ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+        ) : medicamentos.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum medicamento bate nesse filtro.</p>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "1.1rem" }}>
+            {medicamentos.map((m) => (
+              <button key={m.id} onClick={() => setPivoId(m.id)} style={{
+                fontSize: "0.8rem", padding: "0.35rem 0.75rem", borderRadius: 999, cursor: "pointer", fontWeight: pivoId === m.id ? 700 : 500,
+                border: "1px solid " + (pivoId === m.id ? "var(--dourado)" : "var(--border)"),
+                background: pivoId === m.id ? "var(--pill-active-bg)" : "var(--surface-2)",
+                color: pivoId === m.id ? "var(--pill-active-fg)" : "var(--text)",
+              }}>
+                {m.nome_comercial}
+              </button>
+            ))}
+          </div>
+        )
+      )}
+
+      {pivoId != null && (
+        <div>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Substitutos de <strong style={{ color: "var(--text)" }}>{nomePivo}</strong>, do mais pro menos parecido:
+          </p>
+          {!substitutos ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+          ) : substitutos.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum outro medicamento do catálogo compartilha algum atributo clínico com este.</p>
+          ) : (
+            <div className="space-y-2">
+              {substitutos.map((s) => <CardSubstituto key={s.id} s={s} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardSubstituto({ s }: { s: MedicamentoSubstituto }) {
+  const c = s.coincidencias;
+  const partes: string[] = [];
+  if (c.principio_ativo_ids.length) partes.push(`${c.principio_ativo_ids.length} princípio(s) ativo(s)`);
+  if (c.doenca_ids.length) partes.push(`${c.doenca_ids.length} indicação(ões)`);
+  if (c.categoria_medicamento_ids.length) partes.push(`${c.categoria_medicamento_ids.length} categoria(s)`);
+  if (c.classificacao_medicamento_ids.length) partes.push(`${c.classificacao_medicamento_ids.length} classificação(ões)`);
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.65rem 0.8rem" }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <strong style={{ fontSize: "0.85rem" }}>{s.nome_comercial}</strong>
+        {s.laboratorio && <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>— {s.laboratorio}</span>}
+        <span style={{
+          marginLeft: "auto", fontSize: "0.7rem", fontWeight: 800, color: "var(--dourado-light)",
+          border: "1px solid var(--dourado)", borderRadius: 999, padding: "0.1rem 0.55rem",
+        }}>
+          {s.pontuacao_substituto} coincidência{s.pontuacao_substituto === 1 ? "" : "s"}
+        </span>
+      </div>
+      <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>{partes.join(" · ")}</p>
+    </div>
+  );
+}
 
 function labelPrioridade(p: number): string {
   return p === 1 ? "1ª ESCOLHA" : `${p}ª OPÇÃO`;
@@ -234,6 +386,12 @@ function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {})
               <AbaBotaoCatalogo key={chave} ativo={secao2 === chave} onClick={() => setSecao2(chave)} icone={icone}>{label}</AbaBotaoCatalogo>
             ))}
           </div>
+          <p style={secaoLabelStyle}>Seção 3 — Substitutivos</p>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            {SECAO3_ABAS_CATALOGO.map(({ chave, label, icone }) => (
+              <AbaBotaoCatalogo key={chave} ativo={secao2 === chave} onClick={() => setSecao2(chave)} icone={icone}>{label}</AbaBotaoCatalogo>
+            ))}
+          </div>
         </>
       )}
 
@@ -303,10 +461,12 @@ function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {})
         <CatalogoLeituraSimples
           descricao="Classificação do medicamento — eixo próprio, independente de Categoria, também cumulativo."
           fetch={fetchClassificacoesMedicamentoFarmaciaCowData} />
-      ) : (
+      ) : secao2 === "laboratorios" ? (
         <CatalogoLeituraSimples
           descricao="Laboratório — fabricante do medicamento, usado tanto aqui quanto no cadastro de item de estoque de cada fazenda."
           fetch={fetchLaboratoriosFarmaciaCowData} />
+      ) : (
+        <SubstitutivosView />
       )}
     </div>
   );

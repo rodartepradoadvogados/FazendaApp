@@ -265,3 +265,80 @@ def test_fanout_pula_fazenda_cowdata_interna(client):
     pa_id = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Meloxicam"}, headers=h).json()["id"]
     r_med = c.post("/painel-cowdata/farmacia/medicamentos", json={"nome_comercial": "Maxicam 2%", "principio_ativo_ids": [pa_id]}, headers=h)
     assert r_med.json()["fan_out"]["criados"] == 2  # só fa_id/fb_id, nunca a fazenda CowData interna
+
+
+def _preparar_catalogo_substitutivos(c, h):
+    """3 medicamentos: A e B compartilham princípio + categoria (e, por
+    tabela, a mesma indicação/doença — herdada do princípio); C não compartilha
+    nada com os outros dois. Usado tanto pelo teste do filtro em cascata
+    quanto pelo do ranking de substitutos."""
+    pa1 = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Meloxicam"}, headers=h).json()["id"]
+    pa3 = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Enrofloxacino"}, headers=h).json()["id"]
+    cat1 = c.post("/painel-cowdata/farmacia/categorias-medicamento", json={"nome": "Anti-inflamatório"}, headers=h).json()["id"]
+    cat2 = c.post("/painel-cowdata/farmacia/categorias-medicamento", json={"nome": "Antibiótico"}, headers=h).json()["id"]
+    doenca_id = c.post("/painel-cowdata/farmacia/categorias", json={"nome": "Mastite", "tipo": "doenca"}, headers=h).json()["id"]
+
+    a_id = c.post(
+        "/painel-cowdata/farmacia/medicamentos",
+        json={"nome_comercial": "Maxicam 2%", "principio_ativo_ids": [pa1], "doenca_ids": [doenca_id], "categoria_medicamento_ids": [cat1]},
+        headers=h,
+    ).json()["id"]
+    b_id = c.post(
+        "/painel-cowdata/farmacia/medicamentos",
+        json={"nome_comercial": "Cataflam Vet", "principio_ativo_ids": [pa1], "categoria_medicamento_ids": [cat1]},
+        headers=h,
+    ).json()["id"]
+    c_id = c.post(
+        "/painel-cowdata/farmacia/medicamentos",
+        json={"nome_comercial": "Zitromax Vet", "principio_ativo_ids": [pa3], "categoria_medicamento_ids": [cat2]},
+        headers=h,
+    ).json()["id"]
+    return {"pa1": pa1, "pa3": pa3, "cat1": cat1, "cat2": cat2, "doenca_id": doenca_id, "a_id": a_id, "b_id": b_id, "c_id": c_id}
+
+
+def test_substitutivos_filtro_em_cascata(client):
+    """GET /substitutivos?eixo=...&valor_id=... — 1º nível da tabela dinâmica
+    pedida pelo usuário (01/09/2026): dado um eixo (indicação ou um dos
+    catálogos de Seção 2) e um item específico, devolve os medicamentos que
+    batem nesse filtro."""
+    c, engine, fa_id, fb_id = client
+    token = _login(c)
+    h = {"Authorization": f"Bearer {token}"}
+    ids = _preparar_catalogo_substitutivos(c, h)
+
+    r = c.get("/painel-cowdata/farmacia/substitutivos", params={"eixo": "categoria", "valor_id": ids["cat1"]}, headers=h)
+    assert r.status_code == 200, r.text
+    assert {m["id"] for m in r.json()} == {ids["a_id"], ids["b_id"]}
+
+    r = c.get("/painel-cowdata/farmacia/substitutivos", params={"eixo": "principio", "valor_id": ids["pa3"]}, headers=h)
+    assert {m["id"] for m in r.json()} == {ids["c_id"]}
+
+    r = c.get("/painel-cowdata/farmacia/substitutivos", params={"eixo": "doenca", "valor_id": ids["doenca_id"]}, headers=h)
+    assert {m["id"] for m in r.json()} == {ids["a_id"], ids["b_id"]}  # B herda a indicação do princípio compartilhado com A
+
+    r = c.get("/painel-cowdata/farmacia/substitutivos", params={"eixo": "invalido", "valor_id": 1}, headers=h)
+    assert r.status_code == 400
+
+
+def test_substitutivos_ranking_por_medicamento(client):
+    """GET /medicamentos/{id}/substitutivos — 2º nível: ranking por número de
+    atributos clínicos coincidentes (decisão já confirmada com o usuário: sem
+    laboratório contando ponto)."""
+    c, engine, fa_id, fb_id = client
+    token = _login(c)
+    h = {"Authorization": f"Bearer {token}"}
+    ids = _preparar_catalogo_substitutivos(c, h)
+
+    r = c.get(f"/painel-cowdata/farmacia/medicamentos/{ids['a_id']}/substitutivos", headers=h)
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert [m["id"] for m in corpo] == [ids["b_id"]]  # só B tem alguma coincidência com A; C fica de fora
+    b = corpo[0]
+    assert b["pontuacao_substituto"] == 3  # princípio + categoria + indicação (herdada)
+    assert b["coincidencias"]["principio_ativo_ids"] == [ids["pa1"]]
+    assert b["coincidencias"]["categoria_medicamento_ids"] == [ids["cat1"]]
+    assert b["coincidencias"]["doenca_ids"] == [ids["doenca_id"]]
+    assert b["coincidencias"]["classificacao_medicamento_ids"] == []
+
+    r_404 = c.get("/painel-cowdata/farmacia/medicamentos/999999/substitutivos", headers=h)
+    assert r_404.status_code == 404

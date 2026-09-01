@@ -4662,6 +4662,26 @@ export const fetchClassificacoesMedicamentoFarmaciaCowData = apiClassificacoesMe
 export const criarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.criar;
 export const atualizarClassificacaoMedicamentoFarmaciaCowData = apiClassificacoesMedicamentoFarmaciaCowData.atualizar;
 
+// Substitutivos (Fase E, 01/09/2026) — tabela dinâmica de cruzamento: 1º
+// nível filtra medicamentos por um eixo/item; 2º nível ranqueia os
+// substitutos de um medicamento pivô por atributos clínicos coincidentes.
+export type EixoFiltroSubstitutivos = "doenca" | "principio" | "categoria" | "classificacao" | "laboratorio";
+export type MedicamentoSubstituto = MedicamentoFarmaciaCowData & {
+  pontuacao_substituto: number;
+  coincidencias: { principio_ativo_ids: number[]; doenca_ids: number[]; categoria_medicamento_ids: number[]; classificacao_medicamento_ids: number[] };
+};
+
+export async function fetchSubstitutivosPorFiltro(eixo: EixoFiltroSubstitutivos, valorId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/substitutivos?eixo=${eixo}&valor_id=${valorId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoFarmaciaCowData[]>;
+}
+export async function fetchSubstitutivosDeMedicamento(medicamentoId: number) {
+  const res = await authFetch(`${API}/painel-cowdata/farmacia/medicamentos/${medicamentoId}/substitutivos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Substitutivos error: ${res.status}`);
+  return res.json() as Promise<MedicamentoSubstituto[]>;
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);

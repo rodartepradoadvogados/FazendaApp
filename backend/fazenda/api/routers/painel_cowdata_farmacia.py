@@ -307,14 +307,18 @@ def _sincronizar_tags_medicamento(session: Session, medicamento: MedicamentoCome
     session.add(medicamento)
 
 
-def _montar_medicamento_dict(session: Session, m: MedicamentoComercial) -> dict:
-    principio_ids = principios_do_medicamento(session, m.id)
-    doenca_ids = sorted({
+def _doencas_dos_principios(session: Session, principio_ids: list[int]) -> set[int]:
+    return {
         ind.doenca_id for pid in principio_ids
         for ind in session.exec(
             select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.principio_ativo_id == pid, IndicacaoTerapeutica.fazenda_id.is_(None))
         ).all()
-    })
+    }
+
+
+def _montar_medicamento_dict(session: Session, m: MedicamentoComercial) -> dict:
+    principio_ids = principios_do_medicamento(session, m.id)
+    doenca_ids = sorted(_doencas_dos_principios(session, principio_ids))
     total_fazendas = len(_fazendas_cliente_ativas(session))
     em_fazendas = session.exec(select(Estoque).where(Estoque.medicamento_comercial_id == m.id)).all()
     categoria_medicamento_ids = tags_de(session, MedicamentoCategoria, "medicamento_comercial_id", m.id, "categoria_medicamento_id")
@@ -447,4 +451,102 @@ def reexecutar_fanout(
     principio_ids = principios_do_medicamento(session, medicamento.id)
     resultado = _fan_out_medicamento(session, medicamento, principio_ids)
     session.commit()
+    return resultado
+
+
+# ---------------------------------------------------------------------------
+# Substitutivos — tabela dinâmica de cruzamento (Fase E, pedido do usuário
+# 01/09/2026): "duas filtros em cascata (Seção 1 ou 2 + item específico) →
+# lista de medicamentos que batem → clique num medicamento → rankeia os
+# demais pelo número de atributos clínicos coincidentes." Decisão já
+# confirmada com o usuário: só contam atributos CLÍNICOS (princípio ativo,
+# indicação/doença, categoria e classificação do medicamento) — laboratório
+# nunca soma ponto de coincidência, é só informação no card.
+# ---------------------------------------------------------------------------
+EIXOS_FILTRO_SUBSTITUTIVOS = ("doenca", "principio", "categoria", "classificacao", "laboratorio")
+
+
+@router.get("/substitutivos")
+def listar_medicamentos_por_filtro(
+    eixo: str, valor_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> list[dict]:
+    """1º nível da tabela dinâmica: dado um eixo (Seção 1 = indicação, ou um
+    dos catálogos de Seção 2) e um item específico dele, devolve os
+    medicamentos globais que batem — ponto de partida antes de escolher um
+    pivô para ver os substitutos ranqueados."""
+    if eixo not in EIXOS_FILTRO_SUBSTITUTIVOS:
+        raise HTTPException(status_code=400, detail=f"Eixo inválido — use um de {EIXOS_FILTRO_SUBSTITUTIVOS}")
+    medicamentos_globais = session.exec(
+        select(MedicamentoComercial).where(MedicamentoComercial.fazenda_id.is_(None)).order_by(MedicamentoComercial.nome_comercial)
+    ).all()
+
+    if eixo == "doenca":
+        principios_da_doenca = {
+            ind.principio_ativo_id for ind in session.exec(
+                select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.doenca_id == valor_id, IndicacaoTerapeutica.fazenda_id.is_(None))
+            ).all()
+        }
+        medicamentos = [m for m in medicamentos_globais if principios_da_doenca & set(principios_do_medicamento(session, m.id))]
+    elif eixo == "principio":
+        medicamentos = [m for m in medicamentos_globais if valor_id in principios_do_medicamento(session, m.id)]
+    elif eixo == "categoria":
+        ids_com_categoria = {
+            v.medicamento_comercial_id for v in session.exec(
+                select(MedicamentoCategoria).where(MedicamentoCategoria.categoria_medicamento_id == valor_id)
+            ).all()
+        }
+        medicamentos = [m for m in medicamentos_globais if m.id in ids_com_categoria]
+    elif eixo == "classificacao":
+        ids_com_classificacao = {
+            v.medicamento_comercial_id for v in session.exec(
+                select(MedicamentoClassificacao).where(MedicamentoClassificacao.classificacao_medicamento_id == valor_id)
+            ).all()
+        }
+        medicamentos = [m for m in medicamentos_globais if m.id in ids_com_classificacao]
+    else:  # laboratorio — MedicamentoComercial.laboratorio continua texto livre, casa pelo nome do catálogo
+        laboratorio = session.get(Laboratorio, valor_id)
+        nome_laboratorio = laboratorio.nome if laboratorio else None
+        medicamentos = [m for m in medicamentos_globais if nome_laboratorio and m.laboratorio == nome_laboratorio]
+
+    return [_montar_medicamento_dict(session, m) for m in medicamentos]
+
+
+def _atributos_clinicos_medicamento(session: Session, medicamento_id: int) -> dict[str, set[int]]:
+    principio_ids = set(principios_do_medicamento(session, medicamento_id))
+    return {
+        "principio_ativo_ids": principio_ids,
+        "doenca_ids": _doencas_dos_principios(session, list(principio_ids)),
+        "categoria_medicamento_ids": set(tags_de(session, MedicamentoCategoria, "medicamento_comercial_id", medicamento_id, "categoria_medicamento_id")),
+        "classificacao_medicamento_ids": set(tags_de(session, MedicamentoClassificacao, "medicamento_comercial_id", medicamento_id, "classificacao_medicamento_id")),
+    }
+
+
+@router.get("/medicamentos/{medicamento_id}/substitutivos")
+def listar_substitutivos_de_medicamento(
+    medicamento_id: int, _: Usuario = _dep, session: Session = Depends(get_session),
+) -> list[dict]:
+    """2º nível: dado um medicamento pivô, ranqueia os demais medicamentos
+    globais por número de atributos clínicos coincidentes (princípio ativo,
+    indicação, categoria, classificação — sem laboratório), do mais para o
+    menos parecido. Só entram na lista os que coincidem em pelo menos um
+    atributo — zero coincidências não é um substituto."""
+    pivo = session.get(MedicamentoComercial, medicamento_id)
+    if not pivo or pivo.fazenda_id is not None:
+        raise HTTPException(status_code=404, detail="Medicamento global não encontrado")
+
+    atributos_pivo = _atributos_clinicos_medicamento(session, medicamento_id)
+    outros = session.exec(
+        select(MedicamentoComercial).where(MedicamentoComercial.fazenda_id.is_(None), MedicamentoComercial.id != medicamento_id)
+    ).all()
+
+    resultado = []
+    for m in outros:
+        atributos = _atributos_clinicos_medicamento(session, m.id)
+        coincidencias = {chave: sorted(atributos_pivo[chave] & atributos[chave]) for chave in atributos_pivo}
+        pontuacao = sum(len(v) for v in coincidencias.values())
+        if pontuacao == 0:
+            continue
+        resultado.append({**_montar_medicamento_dict(session, m), "pontuacao_substituto": pontuacao, "coincidencias": coincidencias})
+
+    resultado.sort(key=lambda r: r["pontuacao_substituto"], reverse=True)
     return resultado
