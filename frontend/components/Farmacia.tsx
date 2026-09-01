@@ -304,30 +304,17 @@ function statusEstoque(p: PrincipioIndicacaoCatalogo): { cor: string; label: str
 // Catálogo (abaixo) e o Painel de Conciliação de estoque mínimo — que só
 // faz sentido por fazenda (estoque físico é sempre de UM tenant), por isso
 // nunca aparece no Painel CowData.
+// Configurações > Cadastro > Farmácia (fazenda): a partir da Fase F
+// (01/09/2026), o Catálogo saiu daqui — não é uma tela de cadastro, é
+// consulta, e passou a viver em Sanidade > Catálogo (somente leitura, ver
+// components/sanidade/CatalogoFarmaciaConsulta.tsx). Aqui sobra só o Painel
+// de Conciliação de estoque mínimo, que É ação de configuração por fazenda.
 export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
-  const [aba, setAba] = useState<"catalogo" | "minimo">("catalogo");
   if (contextoGlobal) return <CatalogoFarmacia contextoGlobal />;
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
-        {([["catalogo", "Catálogo"], ["minimo", "Estoque mínimo"]] as const).map(([id, label]) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{
-              fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: 999, cursor: "pointer", fontWeight: aba === id ? 700 : 500,
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "var(--pill-active-bg)" : "transparent",
-              color: aba === id ? "var(--pill-active-fg)" : "var(--text-muted)",
-            }}>
-            {label}
-          </button>
-        ))}
-      </div>
-      {aba === "catalogo" ? <CatalogoFarmacia /> : <PainelEstoqueMinimo />}
-    </div>
-  );
+  return <PainelEstoqueMinimo />;
 }
 
-function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
+export function CatalogoFarmacia({ contextoGlobal, somenteLeitura }: { contextoGlobal?: boolean; somenteLeitura?: boolean } = {}) {
   const [catalogo, setCatalogo] = useState<IndicacaoCatalogo[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -399,15 +386,19 @@ function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {})
         <>
           <div className="flex items-center justify-between gap-2 mb-2" style={{ flexWrap: "wrap" }}>
             <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", flex: "1 1 320px", margin: 0 }}>
-              {contextoGlobal
+              {somenteLeitura
+                ? "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. Reflexo do catálogo mantido pelo Painel CowData — para personalizar, use Configurações > Cadastro > Farmácia."
+                : contextoGlobal
                 ? "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. Este é o catálogo-padrão CowData: qualquer edição feita aqui vale imediatamente para todas as fazendas que ainda não personalizaram esta indicação."
                 : "Uma indicação (doença ou finalidade de manejo) por card, com os princípios ativos indicados — em ordem de prioridade — e as marcas comerciais de cada um, com bula e carência. O catálogo é o mesmo padrão para todas as fazendas — dose e carência são só um ponto de partida: edite qualquer campo que uma cópia é criada automaticamente só para a sua fazenda, sem afetar as demais."}
             </p>
-            <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
-              onClick={restaurar} disabled={restaurando}
-              title="(Re)carrega o catálogo padrão de princípios ativos (documento base) — só adiciona o que estiver faltando, nunca sobrescreve edições.">
-              <RotateCcw size={13} /> {restaurando ? "Restaurando…" : "Restaurar catálogo"}
-            </button>
+            {!somenteLeitura && (
+              <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
+                onClick={restaurar} disabled={restaurando}
+                title="(Re)carrega o catálogo padrão de princípios ativos (documento base) — só adiciona o que estiver faltando, nunca sobrescreve edições.">
+                <RotateCcw size={13} /> {restaurando ? "Restaurando…" : "Restaurar catálogo"}
+              </button>
+            )}
           </div>
           {msgRestaurar && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", marginBottom: "0.6rem" }}>{msgRestaurar}</p>}
 
@@ -445,7 +436,7 @@ function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {})
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma indicação encontrada.</p>
           ) : (
             <div className="space-y-2">
-              {lista.map((ind) => <CardIndicacao key={ind.id} ind={ind} onMudou={carregar} contextoGlobal={contextoGlobal} />)}
+              {lista.map((ind) => <CardIndicacao key={ind.id} ind={ind} onMudou={carregar} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />)}
             </div>
           )}
         </>
@@ -592,7 +583,9 @@ function LinhaEstoqueMinimo({ p, onMudou }: { p: PrincipioFarmacia; onMudou: () 
   );
 }
 
-function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean }) {
+function CardIndicacao({ ind, onMudou, contextoGlobal, somenteLeitura }: {
+  ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean; somenteLeitura?: boolean;
+}) {
   const [aberto, setAberto] = useState(false);
   const [processando, setProcessando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -643,7 +636,7 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
             <span title="Personalizada para a sua fazenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--dourado-light)" }}>
               <Pencil size={12} /> Personalizada
             </span>
-          ) : contextoGlobal ? (
+          ) : contextoGlobal || somenteLeitura ? (
             <span title="Catálogo-padrão CowData — edições aqui valem para todas as fazendas que não personalizaram esta indicação." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
               <Lock size={14} />
             </span>
@@ -681,7 +674,7 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
           ) : (
             <div className="space-y-3">
               {ind.principios.map((p) => (
-                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} />
+                <PrincipioBloco key={p.id} p={p} indicacaoPersonalizada={ind.personalizada} onMudou={onMudouFilho} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />
               ))}
             </div>
           )}
@@ -691,8 +684,9 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
   );
 }
 
-function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: {
-  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void; contextoGlobal?: boolean;
+function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal, somenteLeitura }: {
+  p: PrincipioIndicacaoCatalogo; indicacaoPersonalizada: boolean; onMudou: (personalizouAutomaticamente?: boolean) => void;
+  contextoGlobal?: boolean; somenteLeitura?: boolean;
 }) {
   const [editandoVinculo, setEditandoVinculo] = useState(false);
   const [prioridade, setPrioridade] = useState(String(p.prioridade));
@@ -734,10 +728,12 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: 
             <Lock size={11} />
           </span>
         )}
-        <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)}
-          title={indicacaoPersonalizada || contextoGlobal ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
-          <Pencil size={11} />
-        </button>
+        {!somenteLeitura && (
+          <button className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem" }} onClick={() => setEditandoVinculo((v) => !v)}
+            title={indicacaoPersonalizada || contextoGlobal ? "Editar prioridade/nota" : "Editar prioridade/nota — cria uma cópia para a sua fazenda"}>
+            <Pencil size={11} />
+          </button>
+        )}
       </div>
       {p.nota && !editandoVinculo && <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>{p.nota}</p>}
 
@@ -759,15 +755,16 @@ function PrincipioBloco({ p, indicacaoPersonalizada, onMudou, contextoGlobal }: 
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Nenhuma marca comercial cadastrada para este princípio.</p>
       ) : (
         <div className="space-y-2" style={{ marginTop: "0.55rem" }}>
-          {p.marcas.map((m) => <MarcaLinha key={m.id} m={m} principioId={p.id} onMudou={onMudou} contextoGlobal={contextoGlobal} />)}
+          {p.marcas.map((m) => <MarcaLinha key={m.id} m={m} principioId={p.id} onMudou={onMudou} contextoGlobal={contextoGlobal} somenteLeitura={somenteLeitura} />)}
         </div>
       )}
     </div>
   );
 }
 
-function MarcaLinha({ m, principioId, onMudou, contextoGlobal }: {
-  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void; contextoGlobal?: boolean;
+function MarcaLinha({ m, principioId, onMudou, contextoGlobal, somenteLeitura }: {
+  m: MarcaIndicacaoCatalogo; principioId: number; onMudou: (personalizouAutomaticamente?: boolean) => void;
+  contextoGlobal?: boolean; somenteLeitura?: boolean;
 }) {
   const [editando, setEditando] = useState(false);
   const semInfo = carenciaNaoInformada(m.carencia);
@@ -798,10 +795,12 @@ function MarcaLinha({ m, principioId, onMudou, contextoGlobal }: {
           </div>
         </div>
 
-        <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}
-          title={m.editavel || contextoGlobal ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
-          <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
-        </button>
+        {!somenteLeitura && (
+          <button className="btn-ghost" style={{ fontSize: "0.7rem", flexShrink: 0 }} onClick={() => setEditando((v) => !v)}
+            title={m.editavel || contextoGlobal ? "Editar bula" : "Editar bula — cria uma cópia para a sua fazenda"}>
+            <Pencil size={12} /> {editando ? "Fechar" : "Editar bula"}
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: "0.45rem" }}>

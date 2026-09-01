@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical } from "lucide-react";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History, FlaskConical, BookOpen } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, today, fetchTaxaCura, type CasoTaxaCura, marcarCuraAplicacao, marcarCuraProtocolo,
   fetchCronogramasSanitarios, criarCronogramaSanitario,
@@ -22,6 +22,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
+import CatalogoFarmaciaConsulta from "@/components/sanidade/CatalogoFarmaciaConsulta";
 import RemediosPorDoenca from "@/components/RemediosPorDoenca";
 import { casaBusca } from "@/lib/busca";
 
@@ -2025,11 +2026,12 @@ function RastreabilidadeSanitariaView() {
   );
 }
 
-type AbaSanidade = "curativa" | "preventiva" | "rastreabilidade";
+type AbaSanidade = "curativa" | "preventiva" | "rastreabilidade" | "catalogo";
 const ABAS_SANIDADE = [
   { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo e protocolos" },
   { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: aplicações e calendário sanitário" },
   { id: "rastreabilidade", label: "Rastreabilidade", icon: Route, title: "Rastreabilidade sanitária/GTA: linha do tempo por animal ou por GTA" },
+  { id: "catalogo", label: "Catálogo", icon: BookOpen, title: "Catálogo de farmácia mantido pelo Painel CowData — indicações, princípios ativos e marcas, com bula e carência (somente consulta)" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
 type AbaCurativa = "curativo" | "doenca" | "remedios" | "protocolos" | "taxa_cura";
@@ -2113,6 +2115,7 @@ export default function SanidadePage() {
         </>
       )}
       {aba === "rastreabilidade" && <RastreabilidadeSanitariaView />}
+      {aba === "catalogo" && <CatalogoFarmaciaConsulta />}
     </div>
   );
 }
