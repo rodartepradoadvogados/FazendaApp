@@ -491,6 +491,12 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   // várias opções podem ter estoque_id null). Mesma lógica da Agenda (ver
   // medIatf em app/agenda/page.tsx).
   const [medSelecionado, setMedSelecionado] = useState<Record<number, Record<number, number | "">>>({});
+  // "de qual lote/frasco de COMPRA?" (Fase G) — um nível abaixo do frasco
+  // (medSelecionado), só preenchido quando a opção de frasco escolhida tem
+  // lotes abertos (ver OpcaoMedicamento.lotes). "" = deixa o backend
+  // escolher por FIFO (lote mais antigo primeiro), mesmo padrão de
+  // FormSanidade.tsx.
+  const [loteSelecionado, setLoteSelecionado] = useState<Record<number, Record<number, number | "">>>({});
   // Toggle "incluir todos os medicamentos/hormônios, inclusive sem estoque":
   // expande as opções do picker além dos frascos já em Estoque, listando
   // toda marca comercial cadastrada do mesmo princípio ativo — dá liberdade
@@ -522,10 +528,11 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         .map((a) => a.numero_matriz),
     );
     setMedSelecionado((p) => ({ ...p, [dia]: {} }));
+    setLoteSelecionado((p) => ({ ...p, [dia]: {} }));
     setAviso(null);
   }
 
-  const hormoniosDoDiaBaixa = (origem === "iatf" || origem === "inducao") && diaBaixa != null
+  const hormoniosDoDiaBaixa = (origem === "iatf" || origem === "inducao" || origem === "sanitario") && diaBaixa != null
     ? det?.dias.find((d) => d.dia === diaBaixa)?.hormonios || []
     : [];
 
@@ -535,20 +542,25 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     try {
       const pendentes = (det?.animais || []).filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
       const todos = animaisBaixa.length === pendentes.length;
-      // IATF e Indução: monta `medicamentos` a partir dos hormônios do dia +
-      // o frasco escolhido em medSelecionado (índice em h.opcoes) — mesmo
-      // mapeamento que a Agenda já faz (marcarRealizado em app/agenda/page.tsx).
-      // Sem hormônios cadastrados (protocolo ad-hoc, ou D11/inseminação), não
-      // manda nada — mesmo comportamento de antes (backend cai nos
-      // medicamentos cadastrados no lançamento).
+      // IATF, Indução e Sanitário: monta `medicamentos` a partir dos
+      // hormônios do dia + o frasco escolhido em medSelecionado (índice em
+      // h.opcoes) — mesmo mapeamento que a Agenda já faz (marcarRealizado em
+      // app/agenda/page.tsx). Sanitário ganha também o lote (Fase G, um
+      // nível abaixo do frasco — ver loteSelecionado). Sem hormônios
+      // cadastrados (protocolo ad-hoc, ou D11/inseminação), não manda nada —
+      // mesmo comportamento de antes (backend cai nos medicamentos
+      // cadastrados no lançamento).
       let medicamentos: MedicamentoIatf[] | undefined;
-      if ((origem === "iatf" || origem === "inducao") && hormoniosDoDiaBaixa.length) {
+      if ((origem === "iatf" || origem === "inducao" || origem === "sanitario") && hormoniosDoDiaBaixa.length) {
         const sel = medSelecionado[diaBaixa] || {};
+        const loteSel = loteSelecionado[diaBaixa] || {};
         medicamentos = hormoniosDoDiaBaixa.map((h, idx) => {
           const optIdx = sel[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
           const opcao = optIdx === "" ? undefined : h.opcoes?.[optIdx];
+          const loteIdx = loteSel[idx];
           return {
             produto: opcao?.nome ?? h.produto, estoque_id: opcao?.estoque_id ?? undefined,
+            lote_id: loteIdx != null && loteIdx !== "" ? loteIdx : undefined,
             dose: h.dose, unidade: h.unidade, via: h.via,
           };
         }).filter((m) => m.produto);
@@ -800,6 +812,9 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
               </div>
               {hormoniosDoDiaBaixa.map((h, idx) => {
                 const sel = medSelecionado[diaBaixa!]?.[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
+                const opcaoSelecionada = sel === "" ? undefined : h.opcoes?.[sel as number];
+                const lotesDaOpcao = opcaoSelecionada?.lotes || [];
+                const loteSel = loteSelecionado[diaBaixa!]?.[idx] ?? "";
                 return (
                   <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
                     <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
@@ -813,14 +828,31 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
                     ) : (
                       <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
                               value={sel}
-                              onChange={(ev) => setMedSelecionado((p) => ({
-                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value === "" ? "" : Number(ev.target.value) },
-                              }))}>
+                              onChange={(ev) => {
+                                const novoIdx = ev.target.value === "" ? "" : Number(ev.target.value);
+                                setMedSelecionado((p) => ({ ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: novoIdx } }));
+                                // Trocou o frasco — o lote escolhido antes não vale mais pro frasco novo.
+                                setLoteSelecionado((p) => ({ ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: "" } }));
+                              }}>
                         <option value="">Selecione o frasco…</option>
                         {h.opcoes.map((o, oi) => (
                           <option key={oi} value={oi}>
                             {o.nome}{o.marca ? ` · ${o.marca}` : ""}
                             {o.sem_estoque ? " — sem frasco em estoque" : ` — saldo ${o.saldo} ${o.unidade || ""}${!o.estoque_inicializado ? " (sem estoque inicial)" : ""}`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {lotesDaOpcao.length > 1 && (
+                      <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
+                              value={loteSel}
+                              onChange={(ev) => setLoteSelecionado((p) => ({
+                                ...p, [diaBaixa!]: { ...(p[diaBaixa!] || {}), [idx]: ev.target.value === "" ? "" : Number(ev.target.value) },
+                              }))}>
+                        <option value="">De qual lote? (automático — mais antigo primeiro)</option>
+                        {lotesDaOpcao.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.numero_lote ? `Lote ${l.numero_lote}` : `Comprado em ${l.data_compra}`} — saldo {l.quantidade_restante}
                           </option>
                         ))}
                       </select>
