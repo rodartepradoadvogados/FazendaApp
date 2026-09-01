@@ -147,7 +147,7 @@ def upgrade() -> None:
         if nome in existentes:
             continue
         conn.execute(
-            sa.text("INSERT INTO categoria_medicamento (nome, ativo, criado_em, fazenda_id) VALUES (:nome, 1, :agora, NULL)"),
+            sa.text("INSERT INTO categoria_medicamento (nome, ativo, criado_em, fazenda_id) VALUES (:nome, true, :agora, NULL)"),
             {"nome": nome, "agora": agora},
         )
 
