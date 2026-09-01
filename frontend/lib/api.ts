@@ -3735,6 +3735,16 @@ export async function fetchResultadosExame(filtros?: { eventoSanitarioId?: numbe
   if (!res.ok) throw new Error(`Resultados de exame error: ${res.status}`);
   return res.json() as Promise<ExameResultado[]>;
 }
+export async function atualizarResultadoExame(id: number, dados: {
+  data_exame?: string; resultado?: "positivo" | "negativo" | "indefinido" | null;
+  valor_numerico?: number | null; veterinario?: string | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/sanidade/exames/resultados/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar resultado do exame"); }
+  return res.json() as Promise<ExameResultado>;
+}
 
 // Classificações de medicamento (para cadastrar/protocolar por classificação).
 export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"];
