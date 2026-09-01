@@ -1431,6 +1431,30 @@ class TestCadastroSanitario:
         assert r.status_code == 200
         assert "Doramectina" in [p["nome"] for p in c.get("/cadastro/principios-ativos").json()]
 
+    def test_principio_e_doenca_globais_do_painel_cowdata_aparecem_na_fazenda(self, client):
+        """Pedido do usuário (01/09/2026): "cadastrei o princípio ativo
+        Tulatromicina [no Painel CowData], e ele não aparece para seleção no
+        tenant. Todo princípio ativo cadastrado no CowData deve virar
+        padrão." Causa raiz: /cadastro/principios-ativos (e /cadastro/doencas)
+        filtravam fazenda_id == própria, excluindo as linhas globais
+        (fazenda_id nulo) do Painel CowData — corrigido com
+        `global_compartilhado=True` (união via rules.visibilidade.visivel())."""
+        c, engine = client
+        from fazenda.api.routers.cadastro.sanitario import _listar_doencas, _listar_principios
+        from fazenda.models import Doenca, PrincipioAtivo
+        with Session(engine) as s:
+            s.add(PrincipioAtivo(nome="Tulatromicina", fazenda_id=None))  # cadastrado no Painel CowData
+            s.add(PrincipioAtivo(nome="Só desta fazenda", fazenda_id=99))  # de OUTRA fazenda — não pode vazar
+            s.add(Doenca(nome="Mastite Global", tipo="doenca", fazenda_id=None))
+            s.commit()
+
+            nomes_pa = [p["nome"] for p in _listar_principios(session=s, fazenda_id=7)]
+            assert "Tulatromicina" in nomes_pa
+            assert "Só desta fazenda" not in nomes_pa
+
+            nomes_doenca = [d["nome"] for d in _listar_doencas(session=s, fazenda_id=7)]
+            assert "Mastite Global" in nomes_doenca
+
 
 class TestMotivoBaixa:
     """Motivo de baixa (Rebanho > Baixar animal) — mesmo padrão nome+ativo."""

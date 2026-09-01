@@ -273,9 +273,12 @@ def _fan_out_medicamento(session: Session, medicamento: MedicamentoComercial, pr
             continue
         item = Estoque(
             nome=medicamento.nome_comercial, fazenda_id=fazenda.id, finalidade="Medicamento",
-            classificacao_medicamento="Medicamentos", principio_ativo=principal.nome if principal else None,
+            categoria="Medicamentos", classificacao_medicamento=medicamento.classificacao_medicamento,
+            principio_ativo=principal.nome if principal else None,
             principio_ativo_id=principio_ids[0], medicamento_comercial_id=medicamento.id,
-            laboratorio=medicamento.laboratorio, ativo=False, estocavel=False,
+            laboratorio=medicamento.laboratorio, carencia_dias=medicamento.carencia_leite_dias,
+            carencia_leite_dias=medicamento.carencia_leite_dias, carencia_carne_dias=medicamento.carencia_carne_dias,
+            proibido_lactacao=medicamento.proibido_lactacao, ativo=False, estocavel=False,
         )
         session.add(item)
         session.flush()  # precisa do item.id antes de gravar a junção

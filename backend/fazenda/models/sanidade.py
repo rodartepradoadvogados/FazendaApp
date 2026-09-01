@@ -204,6 +204,14 @@ class MedicamentoComercial(SQLModel, table=True):
     alerta_gestacao: Optional[bool] = None        # risco de aborto (corticoide, PGF2α)
     alerta: Optional[str] = None                  # texto livre de alerta clínico
 
+    # "Categoria" do medicamento (antimicrobiano, anti-inflamatório,
+    # antibiótico... — ver lib/api.ts::CLASSIFICACOES_MEDICAMENTO) — hoje só
+    # existia no cadastro de item de estoque do tenant; pedido do usuário
+    # (01/09/2026) de trazer o mesmo campo pro cadastro central do Painel
+    # CowData, compatibilizando os dois. Espelhado em `Estoque.
+    # classificacao_medicamento` pelo fan-out.
+    classificacao_medicamento: Optional[str] = None
+
     # Linha global que esta é cópia de — preenchido só quando a fazenda
     # personaliza o padrão (ver POST /farmacia/indicacoes/{id}/personalizar).
     origem_id: Optional[int] = Field(default=None, foreign_key="medicamento_comercial.id", index=True)

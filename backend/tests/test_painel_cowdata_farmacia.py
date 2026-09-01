@@ -103,7 +103,8 @@ def test_cria_principio_global_e_medicamento_faz_fanout_inativo(client):
             assert item.ativo is False
             assert item.estocavel is False
             assert item.finalidade == "Medicamento"
-            assert item.classificacao_medicamento == "Medicamentos"
+            assert item.categoria == "Medicamentos"  # não confundir com classificacao_medicamento (a categoria médica)
+            assert item.classificacao_medicamento is None  # nenhuma foi escolhida no cadastro deste teste
             assert item.principio_ativo_id == pa_id
             assert item.medicamento_comercial_id == corpo["id"]
 
@@ -164,6 +165,35 @@ def test_excluir_principio_bloqueia_se_medicamento_usa(client):
 
     r = c.delete(f"/painel-cowdata/farmacia/principios/{pa_id}", headers=h)
     assert r.status_code == 400
+
+
+def test_fanout_propaga_categoria_medicamento_carencia_e_lactacao(client):
+    """Pedido do usuário (01/09/2026): cadastrar Categoria (medicamento),
+    carência leite/carne e "proibido em lactação" no medicamento global e ver
+    tudo isso já preenchido no item de Estoque fanned-out — sem precisar
+    redigitar em cada fazenda."""
+    c, engine, fa_id, fb_id = client
+    token = _login(c)
+    h = {"Authorization": f"Bearer {token}"}
+    pa_id = c.post("/painel-cowdata/farmacia/principios", json={"nome": "Tulatromicina"}, headers=h).json()["id"]
+    r_med = c.post(
+        "/painel-cowdata/farmacia/medicamentos",
+        json={
+            "nome_comercial": "Draxxin KP", "principio_ativo_ids": [pa_id], "laboratorio": "Zoetis",
+            "classificacao_medicamento": "Antibiótico", "proibido_lactacao": True, "carencia_carne_dias": 18,
+        },
+        headers=h,
+    )
+    assert r_med.status_code == 201, r_med.text
+
+    with Session(engine) as s:
+        item = s.exec(select(Estoque).where(Estoque.nome == "Draxxin KP", Estoque.fazenda_id == fa_id)).first()
+        assert item.categoria == "Medicamentos"
+        assert item.classificacao_medicamento == "Antibiótico"
+        assert item.laboratorio == "Zoetis"
+        assert item.proibido_lactacao is True
+        assert item.carencia_carne_dias == 18
+        assert item.carencia_leite_dias is None  # não informado — nunca vira zero
 
 
 def test_fanout_pula_fazenda_cowdata_interna(client):

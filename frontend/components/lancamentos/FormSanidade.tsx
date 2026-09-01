@@ -66,6 +66,20 @@ function BannerSubstitutosDoenca({
   );
 }
 
+// Aviso não-bloqueante: produto marcado "proibido em lactação" (ver
+// Estoque.proibido_lactacao) aplicado num animal que está em lactação agora
+// — mesmo padrão de alerta já usado para risco de gestação, só avisa, nunca
+// impede salvar (decisão do usuário, 01/09/2026).
+function AvisoProibidoLactacao({ produto }: { produto: string }) {
+  return (
+    <div style={{ marginTop: "0.6rem", border: "1px solid var(--red)", background: "rgba(220,38,38,.08)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+      <p className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--red)", margin: 0, fontWeight: 700 }}>
+        <AlertTriangle size={14} /> "{produto}" não deve ser usado em vaca em lactação — o animal selecionado está em lactação.
+      </p>
+    </div>
+  );
+}
+
 export function FormSanidade({ animais, lotes, estoque, produtos, onSalvo }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[]; onSalvo?: () => void }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState("");
@@ -140,6 +154,12 @@ export function FormSanidade({ animais, lotes, estoque, produtos, onSalvo }: { a
 
   // Mesma regra do backend p/ estoque baixo/zerado (padrão em FormProtocoloSanitario).
   const estoquePorNome = useMemo(() => new Map(estoque.map((e) => [e.nome, e])), [estoque]);
+  // Algum animal-alvo (do modo Animal ou dos lotes marcados) está em
+  // lactação agora — para o aviso de "proibido em lactação" abaixo.
+  const algumAlvoEmLactacao = useMemo(() => {
+    if (modo === "animal") return !!animais.find((a) => a.numero === animal)?.em_lactacao;
+    return animais.some((a) => a.grupo_primario && lotesSel.has(a.grupo_primario) && a.em_lactacao);
+  }, [modo, animal, animais, lotesSel]);
   const estoqueBaixo = (produto: string) => {
     const item = estoquePorNome.get(produto);
     if (!item) return false;
@@ -312,6 +332,9 @@ export function FormSanidade({ animais, lotes, estoque, produtos, onSalvo }: { a
                   principioAtual={estoquePorNome.get(item.produto)?.principio_ativo}
                   onUsar={(opcao) => escolherProduto(idx, opcao.nome, opcao.principio_ativo_id)}
                 />
+              )}
+              {item.produto && algumAlvoEmLactacao && estoquePorNome.get(item.produto)?.proibido_lactacao && (
+                <AvisoProibidoLactacao produto={item.produto} />
               )}
               {(frascosPorItem[idx]?.length ?? 0) > 1 && (
                 <div style={{ marginTop: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>

@@ -111,15 +111,25 @@ def _seed_basico(engine) -> dict:
             nome="Produto Sem Info Nenhuma", quantidade=8, unidade="ml", fazenda_id=1,
             principio_ativo_id=pa.id,
         )
+        # Item auto-cadastrado pelo tenant (sem medicamento_comercial_id, sem
+        # marca casando por nome) mas com carência/lactação próprias — pedido
+        # do usuário (01/09/2026): "colocar, junto com a carência para o
+        # leite, opção de marcar se pode aplicar em vacas em lactação".
+        item_proprio_proibido = Estoque(
+            nome="Produto Cadastrado Direto Proibido", quantidade=6, unidade="ml", fazenda_id=1,
+            principio_ativo_id=pa.id, carencia_carne_dias=21, proibido_lactacao=True,
+        )
         s.add(item_vinculado)
         s.add(item_por_nome)
         s.add(item_legado)
         s.add(item_sem_info)
+        s.add(item_proprio_proibido)
         s.commit()
         s.refresh(item_vinculado)
         s.refresh(item_por_nome)
         s.refresh(item_legado)
         s.refresh(item_sem_info)
+        s.refresh(item_proprio_proibido)
 
         return {
             "pa_id": pa.id,
@@ -129,6 +139,7 @@ def _seed_basico(engine) -> dict:
             "item_por_nome_id": item_por_nome.id,
             "item_legado_id": item_legado.id,
             "item_sem_info_id": item_sem_info.id,
+            "item_proprio_proibido_id": item_proprio_proibido.id,
         }
 
 
@@ -179,6 +190,20 @@ class TestOpcoesMedicamento:
         assert opcao["carencia"]["leite_dias"] is None
         assert opcao["carencia"]["carne_dias"] is None
         assert opcao["carencia"]["texto"] == "Carência: não informada"
+
+    def test_carencia_e_lactacao_do_proprio_item_de_estoque_sem_marca(self, client):
+        """Item de estoque auto-cadastrado pelo tenant (sem marca comercial
+        vinculada) tem sua PRÓPRIA carência/lactação lidas — não fica mais
+        preso ao fallback legado de `carencia_dias` (carne-only)."""
+        c, engine = client
+        ids = _seed_basico(engine)
+        with Session(engine) as s:
+            _, opcoes = opcoes_medicamento(s, fazenda_id=1, produto="Produto Cadastrado Direto Proibido")
+        opcao = next(o for o in opcoes if o["estoque_id"] == ids["item_proprio_proibido_id"])
+        assert opcao["proibido_lactacao"] is True
+        assert opcao["carencia"]["carne_dias"] == 21
+        assert "NÃO USAR" in opcao["carencia"]["texto"]
+        assert opcao["carencia"]["carencia_origem"] == "fazenda"
 
 
 class TestResolverMarcaComercial:
