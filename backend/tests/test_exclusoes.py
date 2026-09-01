@@ -7,6 +7,7 @@ from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -15,6 +16,7 @@ from fazenda.models import (
     AgendaManual,
     Animal,
     CalendarioSanitario,
+    ColostragemBezerra,
     CompraSemen,
     ContaGerencial,
     ControleLeiteiro,
@@ -24,6 +26,8 @@ from fazenda.models import (
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
+    FotoCampo,
+    Lactacao,
     Lote,
     MotivoMovimentacao,
     MovimentoEstoque,
@@ -44,6 +48,16 @@ from fazenda.models import (
 @pytest.fixture
 def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+    # SQLite não aplica FOREIGN KEY por padrão (ao contrário do Postgres de
+    # produção) — sem isto nenhum teste aqui pegaria uma exclusão que deixa
+    # pra trás uma linha com FK pra outra que acabou de sumir (foi exatamente
+    # esse ponto cego que deixou passar o achado de 01/09/2026, ver
+    # `_excluir_alvos_em_ordem` em exclusoes.py).
+    @event.listens_for(engine, "connect")
+    def _habilitar_fk(conexao_dbapi, _):
+        conexao_dbapi.execute("PRAGMA foreign_keys=ON")
+
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(database, "engine", engine)
 
@@ -116,6 +130,45 @@ class TestExclusaoAnimal:
         c, _ = client
         r = c.post("/exclusoes/impacto", json={"tipo": "animal", "id": "nope"})
         assert r.status_code == 404
+
+    def test_confirmar_apaga_colostragem_lactacao_e_foto_ligados_por_fk(self, client):
+        """Achado de 01/09/2026: ColostragemBezerra/Lactacao/FotoCampo têm FK de
+        verdade pra animal.id (ao contrário de Servico/Parto/ControleLeiteiro/
+        Sanidade, que só casam por numero_matriz em texto solto) — sem entrar
+        na lista de exclusão do animal, ficavam órfãos e o commit violava essa
+        FK no Postgres de produção (o SQLite de teste não aplica FK por
+        padrão, por isso não pegava). Pro usuário isso surgia sem pista
+        nenhuma: um 500 sem cabeçalho CORS aparece no navegador como "Failed
+        to fetch"."""
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="1291", ativo=True))
+            s.commit()
+            animal = s.exec(select(Animal).where(Animal.numero == "1291")).first()
+            s.add(ColostragemBezerra(animal_id=animal.id, numero_animal="1291", tomou_colostro=True))
+            s.add(Lactacao(animal_id=animal.id, numero_matriz="1291", data_inicio=date(2024, 1, 1), origem="parto"))
+            s.add(FotoCampo(
+                caminho_storage="x/1291.jpg", mime_type="image/jpeg", tamanho_bytes=1,
+                animal_id=animal.id, identificacao_animal="1291", tipo_assunto="animal",
+            ))
+            s.commit()
+
+        r = c.post("/exclusoes/impacto", json={"tipo": "animal", "id": "1291"})
+        assert r.status_code == 200
+        impacto = r.json()["impacto"]
+        assert any("colostragem" in i for i in impacto)
+        assert any("lactação" in i for i in impacto)
+        assert any("foto" in i for i in impacto)
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "1291"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "excluido"
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Animal).where(Animal.numero == "1291")).first() is None
+            assert s.exec(select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == "1291")).first() is None
+            assert s.exec(select(Lactacao).where(Lactacao.numero_matriz == "1291")).first() is None
+            assert s.exec(select(FotoCampo).where(FotoCampo.identificacao_animal == "1291")).first() is None
 
 
 class TestExclusaoParto:
