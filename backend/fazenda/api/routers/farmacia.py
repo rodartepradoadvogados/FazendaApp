@@ -16,7 +16,9 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
+from fazenda.models import (
+    Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, ParametroMinimoFarmacia, PrincipioAtivo,
+)
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.carencia import carencia_dict
@@ -117,6 +119,53 @@ def excluir_principio(
         session.delete(obj)
     session.commit()
     return {"excluido": True, "impacto": impacto}
+
+
+class EstoqueMinimoIn(BaseModel):
+    estoque_minimo_base: float
+
+
+@router.put("/principios/{principio_id}/estoque-minimo")
+def definir_estoque_minimo_base(
+    principio_id: int, dados: EstoqueMinimoIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Define o estoque mínimo de UM princípio ativo, em `unidade_base` (ml/L/
+    g/unidade) — pedido do usuário (31/08/2026): "estoque mínimo... tem que
+    ser em unidade de medida, e não em pacotes/frascos". Um princípio de
+    cada vez, ação deliberada — nunca em lote, nunca automática (ver
+    docstring de ParametroMinimoFarmacia).
+
+    Grava numa tabela À PARTE do princípio (nunca no próprio `PrincipioAtivo`,
+    que pode ser um registro GLOBAL do catálogo padrão CowData e nunca é
+    clonado) — por isso funciona também para princípios globais que esta
+    fazenda usa, sem afetar o mínimo de nenhuma outra fazenda-cliente."""
+    if dados.estoque_minimo_base < 0:
+        raise HTTPException(status_code=400, detail="Estoque mínimo não pode ser negativo")
+    pa = session.exec(visivel(select(PrincipioAtivo).where(PrincipioAtivo.id == principio_id), PrincipioAtivo, fazenda_id)).first()
+    if not pa:
+        raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
+    if not pa.unidade_base:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{pa.nome}' ainda não tem unidade de medida (unidade_base) cadastrada — defina-a antes do mínimo.",
+        )
+    existente = session.exec(
+        select(ParametroMinimoFarmacia).where(
+            ParametroMinimoFarmacia.fazenda_id == fazenda_id, ParametroMinimoFarmacia.principio_ativo_id == principio_id,
+        )
+    ).first()
+    if existente:
+        existente.estoque_minimo_base = dados.estoque_minimo_base
+        existente.atualizado_em = datetime.utcnow()
+        session.add(existente)
+    else:
+        session.add(ParametroMinimoFarmacia(
+            fazenda_id=fazenda_id, principio_ativo_id=principio_id, estoque_minimo_base=dados.estoque_minimo_base,
+        ))
+    session.commit()
+    resumo = next((r for r in resumo_principios(session, fazenda_id) if r["id"] == principio_id), None)
+    return resumo or {"ok": True}
 
 
 class MarcaIn(BaseModel):

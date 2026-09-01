@@ -127,6 +127,42 @@ class PrincipioAtivo(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class ParametroMinimoFarmacia(SQLModel, table=True):
+    """Estoque mínimo de um princípio ativo, em `unidade_base` (ml/L/g/
+    unidade) — NUNCA por contagem de frascos/pacotes. Pedido do usuário
+    (31/08/2026): "estoque mínimo... tem que ser em unidade de medida. Ex.:
+    Sincrogest — 3 pacotes de 10 + 2 pacotes de 5 — mínimo: 12 unidades, e
+    não pacotes."
+
+    Vive numa tabela À PARTE de `PrincipioAtivo` — nunca escreve no próprio
+    princípio — por dois motivos: (1) `PrincipioAtivo` pode ser um registro
+    GLOBAL (`fazenda_id=None`, catálogo padrão CowData, ver
+    painel_cowdata_farmacia.py) compartilhado por várias fazendas-cliente, e
+    um valor de mínimo é sempre uma decisão de UMA fazenda (o consumo de
+    Meloxicam da fazenda A não tem nada a ver com o mínimo ideal da fazenda
+    B); (2) `PrincipioAtivo` documentadamente NUNCA é clonado por fazenda
+    (ao contrário de Doença/MedicamentoComercial) — é a âncora fixa de
+    `Estoque.principio_ativo_id`, então esta tabela evita precisar quebrar
+    essa invariante só para guardar um número.
+
+    Sem uma linha aqui para um princípio, `rules.farmacia.resumo_principios`
+    continua usando a regra ANTIGA (mínimo em número de apresentações,
+    `PrincipioAtivo.estoque_minimo_apresentacoes`) — nenhuma conversão
+    automática acontece; cada fazenda concilia o próprio mínimo, um
+    princípio de cada vez, pelo Painel de Conciliação (Configurações >
+    Cadastro > Farmácia > Estoque mínimo)."""
+
+    __tablename__ = "parametro_minimo_farmacia"
+    __table_args__ = (UniqueConstraint("fazenda_id", "principio_ativo_id", name="uq_minimo_fazenda_principio"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    estoque_minimo_base: float
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class MedicamentoComercial(SQLModel, table=True):
     """Marca comercial + laboratório de um princípio ativo (tabela filha). Ex.:
     Maxicam 2%/Ourofino → Meloxicam. Catálogo relacional; um item de estoque

@@ -16,9 +16,10 @@ import {
   Search, Lock, Pencil, ChevronDown, ChevronRight, AlertTriangle, Ban, ExternalLink, RotateCcw, Check, X,
 } from "lucide-react";
 import {
-  fetchIndicacoesCatalogo, personalizarIndicacao, despersonalizarIndicacao,
+  fetchIndicacoesCatalogo, personalizarIndicacao,
   atualizarMarcaFarmacia, atualizarVinculoIndicacao, fetchFarmaciaDetalhe, restaurarCatalogoPrincipios,
-  type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo,
+  fetchFarmaciaPrincipios, definirEstoqueMinimoFarmacia,
+  type IndicacaoCatalogo, type PrincipioIndicacaoCatalogo, type MarcaIndicacaoCatalogo, type PrincipioFarmacia,
 } from "@/lib/api";
 import { carenciaNaoInformada } from "@/lib/carencia";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -67,7 +68,35 @@ function statusEstoque(p: PrincipioIndicacaoCatalogo): { cor: string; label: str
 // fazenda": edita direto a linha global (fazenda_id=None), que é o
 // catálogo-padrão visto por TODAS as fazendas. Só muda textos/afordances
 // que assumiriam uma fazenda específica — nenhuma chamada de API muda.
+//
+// No modo da fazenda (contextoGlobal ausente), agrupa duas telas: o
+// Catálogo (abaixo) e o Painel de Conciliação de estoque mínimo — que só
+// faz sentido por fazenda (estoque físico é sempre de UM tenant), por isso
+// nunca aparece no Painel CowData.
 export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
+  const [aba, setAba] = useState<"catalogo" | "minimo">("catalogo");
+  if (contextoGlobal) return <CatalogoFarmacia contextoGlobal />;
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        {([["catalogo", "Catálogo"], ["minimo", "Estoque mínimo"]] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setAba(id)}
+            style={{
+              fontSize: "0.8rem", padding: "0.4rem 0.85rem", borderRadius: 999, cursor: "pointer", fontWeight: aba === id ? 700 : 500,
+              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
+              background: aba === id ? "var(--pill-active-bg)" : "transparent",
+              color: aba === id ? "var(--pill-active-fg)" : "var(--text-muted)",
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {aba === "catalogo" ? <CatalogoFarmacia /> : <PainelEstoqueMinimo />}
+    </div>
+  );
+}
+
+function CatalogoFarmacia({ contextoGlobal }: { contextoGlobal?: boolean } = {}) {
   const [catalogo, setCatalogo] = useState<IndicacaoCatalogo[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
@@ -162,6 +191,126 @@ export default function Farmacia({ contextoGlobal }: { contextoGlobal?: boolean 
   );
 }
 
+// Painel de Conciliação — pedido do usuário (31/08/2026): "estoque mínimo...
+// tem que ser em unidade de medida. Ex.: Sincrogest — 3 pacotes de 10 + 2
+// pacotes de 5 — mínimo: 12 unidades, e não pacotes." E: "muito cuidado com
+// o que vai acontecer no meu banco de dados... precisa ter uma forma de ter
+// um motor para eu adequar, me orientando quanto a como fazer a
+// compatibilização." Por isso NADA é convertido sozinho: cada princípio que
+// já tem estoque físico e ainda usa a regra antiga (mínimo em número de
+// frascos/pacotes) aparece aqui pra você decidir o número certo, em
+// PrincipioAtivo.unidade_base — um de cada vez (nunca em lote).
+function PainelEstoqueMinimo() {
+  const [lista, setLista] = useState<PrincipioFarmacia[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = () => fetchFarmaciaPrincipios().then(setLista).catch((e: any) => setErro(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  const comEstoque = useMemo(() => (lista || []).filter((p) => p.qtd_marcas_estoque > 0), [lista]);
+  const pendentes = useMemo(() => comEstoque.filter((p) => p.precisa_reconciliar_minimo), [comEstoque]);
+  const conciliados = useMemo(() => comEstoque.filter((p) => !p.precisa_reconciliar_minimo), [comEstoque]);
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "1rem", maxWidth: "62ch" }}>
+        O mínimo de cada princípio ativo passa a ser um número na unidade de medida dele (ml, litro, unidade…), não mais
+        uma contagem de frascos/pacotes — assim, itens de tamanhos diferentes do mesmo remédio somam certo. Nada muda
+        sozinho: enquanto você não definir o mínimo de um princípio aqui, ele continua na regra antiga (por frasco).
+      </p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.85rem" }}>{erro}</p>}
+      {!lista ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+      ) : comEstoque.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum princípio ativo com item de estoque ainda.</p>
+      ) : (
+        <>
+          {pendentes.length > 0 && (
+            <div style={{ marginBottom: "1.4rem" }}>
+              <h3 style={{ fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--amber)", margin: "0 0 0.6rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <AlertTriangle size={13} /> Ainda usando a regra antiga ({pendentes.length})
+              </h3>
+              <div className="space-y-2">
+                {pendentes.map((p) => <LinhaEstoqueMinimo key={p.id} p={p} onMudou={carregar} />)}
+              </div>
+            </div>
+          )}
+          {conciliados.length > 0 && (
+            <div>
+              <h3 style={{ fontSize: "0.78rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--green-light)", margin: "0 0 0.6rem" }}>
+                Já conciliados ({conciliados.length})
+              </h3>
+              <div className="space-y-2">
+                {conciliados.map((p) => <LinhaEstoqueMinimo key={p.id} p={p} onMudou={carregar} />)}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function LinhaEstoqueMinimo({ p, onMudou }: { p: PrincipioFarmacia; onMudou: () => void }) {
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState(p.estoque_minimo_base != null ? String(p.estoque_minimo_base) : "");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const semUnidade = !p.unidade_base;
+
+  const salvar = async () => {
+    const n = Number(valor);
+    if (!valor.trim() || Number.isNaN(n) || n < 0) { setErro("Informe um número válido."); return; }
+    setSalvando(true); setErro(null);
+    try { await definirEstoqueMinimoFarmacia(p.id, n); setEditando(false); onMudou(); }
+    catch (e: any) { setErro(e.message || "Erro ao salvar"); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--surface-2)", padding: "0.65rem 0.8rem" }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span style={{ fontWeight: 700, flex: "1 1 160px" }}>{p.nome}</span>
+        <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+          {p.total_base != null ? `${num(p.total_base)} ${p.unidade_base}` : "—"} em estoque
+        </span>
+        {p.abaixo_minimo && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.7rem", fontWeight: 700, color: "var(--red)" }}>
+            <AlertTriangle size={11} /> abaixo do mínimo
+          </span>
+        )}
+        {!editando ? (
+          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setEditando(true); setErro(null); }} disabled={semUnidade}
+            title={semUnidade ? "Cadastre a unidade de medida deste princípio antes" : "Definir mínimo"}>
+            <Pencil size={11} /> {p.minimo_modo === "base" ? `Mínimo: ${num(p.estoque_minimo_base!)} ${p.unidade_base}` : "Definir mínimo em " + (p.unidade_base || "unidade")}
+          </button>
+        ) : (
+          <span className="flex items-center gap-2">
+            <input type="number" min={0} autoFocus value={valor} onChange={(e) => setValor(e.target.value)}
+              style={{ width: 90, padding: "0.3rem 0.5rem", borderRadius: 6, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.82rem" }} />
+            <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{p.unidade_base}</span>
+            <button className="btn-primary" style={{ fontSize: "0.72rem" }} onClick={salvar} disabled={salvando}>
+              <Check size={12} /> {salvando ? "Salvando…" : "Salvar"}
+            </button>
+            <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEditando(false)}><X size={12} /></button>
+          </span>
+        )}
+      </div>
+      {p.minimo_modo === "apresentacoes" && !editando && (
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.35rem 0 0" }}>
+          Regra antiga em uso: mínimo de {num(p.estoque_minimo_apresentacoes)} frasco(s)/pacote(s), sem olhar o tamanho de cada um.
+        </p>
+      )}
+      {p.itens.length > 0 && (
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.35rem 0 0" }}>
+          {p.itens.map((it) => `${it.nome} (${num(it.saldo)} ${it.unidade || ""})`).join(" + ")}
+        </p>
+      )}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.72rem", margin: "0.35rem 0 0" }}>{erro}</p>}
+    </div>
+  );
+}
+
 function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalogo; onMudou: () => void; contextoGlobal?: boolean }) {
   const [aberto, setAberto] = useState(false);
   const [processando, setProcessando] = useState(false);
@@ -183,13 +332,10 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
     catch (e: any) { setErro(e.message || "Erro ao personalizar"); }
     finally { setProcessando(false); }
   };
-  const voltarPadrao = async () => {
-    if (!window.confirm(`Voltar "${ind.nome}" ao padrão? Isso descarta as edições de bula/prioridade feitas para a sua fazenda nesta indicação.`)) return;
-    setProcessando(true); setErro(null);
-    try { await despersonalizarIndicacao(ind.id); setAvisoPersonalizacao(false); onMudou(); }
-    catch (e: any) { setErro(e.message || "Erro ao voltar ao padrão"); }
-    finally { setProcessando(false); }
-  };
+  // "Voltar ao padrão" (despersonalizar) foi removido a pedido do usuário
+  // (31/08/2026) — reverter em lote assustava mais do que ajudava. Qualquer
+  // ajuste numa indicação personalizada agora é sempre feito campo a campo
+  // (editar bula/prioridade um de cada vez), nunca um botão de "desfazer tudo".
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
@@ -213,14 +359,9 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
         </button>
         <span style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}>
           {ind.personalizada ? (
-            <>
-              <span title="Personalizada para a sua fazenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--dourado-light)" }}>
-                <Pencil size={12} /> Personalizada
-              </span>
-              <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={voltarPadrao} disabled={processando}>
-                {processando ? "Aguarde…" : "Voltar ao padrão"}
-              </button>
-            </>
+            <span title="Personalizada para a sua fazenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--dourado-light)" }}>
+              <Pencil size={12} /> Personalizada
+            </span>
           ) : contextoGlobal ? (
             <span title="Catálogo-padrão CowData — edições aqui valem para todas as fazendas que não personalizaram esta indicação." style={{ display: "inline-flex", color: "var(--text-muted)" }}>
               <Lock size={14} />
@@ -245,7 +386,7 @@ function CardIndicacao({ ind, onMudou, contextoGlobal }: { ind: IndicacaoCatalog
           color: "var(--dourado-light)", fontSize: "0.76rem", padding: "0.4rem 0.9rem", margin: 0,
           background: "rgba(184,134,11,0.08)", borderTop: "1px solid var(--border)",
         }}>
-          <span>Esta indicação agora é personalizada da sua fazenda — o botão &quot;Voltar ao padrão&quot; desfaz.</span>
+          <span>Esta indicação agora é personalizada da sua fazenda.</span>
           <button onClick={() => setAvisoPersonalizacao(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", display: "inline-flex", flexShrink: 0 }} title="Dispensar aviso">
             <X size={13} />
           </button>
