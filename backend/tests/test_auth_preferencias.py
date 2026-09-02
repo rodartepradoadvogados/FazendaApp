@@ -15,8 +15,10 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.auth import EMAIL_DONO, hash_senha
+from fazenda.auth import EMAIL_DONO, EMAILS_DONO_EQUIVALENTE, hash_senha
 from fazenda.models import Usuario
+
+EMAIL_SOCIO = next(e for e in EMAILS_DONO_EQUIVALENTE if e != EMAIL_DONO)
 
 
 @pytest.fixture
@@ -117,6 +119,34 @@ def test_operador_nao_pode_reivindicar_via_flag(client):
     token = _login(c, "operador")
     r = c.put("/auth/preferencias", json={"reivindicar_proprietario": True}, headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 403
+
+
+def test_operador_nao_pode_se_autopromover_com_email_socio_equivalente(client):
+    """Bug de segurança corrigido: a checagem antiga comparava só com
+    EMAIL_DONO — qualquer usuário autenticado (mesmo operador) conseguia
+    virar dono-equivalente enviando diretamente o e-mail do sócio
+    (EMAIL_SOCIO, em EMAILS_DONO_EQUIVALENTE mas != EMAIL_DONO), pulando por
+    inteiro as travas de exigir_admin e "só quando ninguém mais é dono"."""
+    c, engine = client
+    token = _login(c, "operador")
+    r = c.put("/auth/preferencias", json={"email": EMAIL_SOCIO}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+    with Session(engine) as s:
+        op = s.exec(select(Usuario).where(Usuario.username == "operador")).first()
+        assert op.email is None
+
+
+def test_admin_nao_pode_setar_proprio_email_como_o_do_socio_equivalente(client):
+    """Nem mesmo um admin pode assumir EMAIL_SOCIO por aqui — o único
+    e-mail dono-equivalente auto-atendível é o literal EMAIL_DONO (via
+    reivindicar_proprietario ou digitando o valor certo)."""
+    c, engine = client
+    token = _login(c, "admin_sem_email")
+    r = c.put("/auth/preferencias", json={"email": EMAIL_SOCIO}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+    with Session(engine) as s:
+        admin = s.exec(select(Usuario).where(Usuario.username == "admin_sem_email")).first()
+        assert admin.email is None
 
 
 def test_nao_pode_reivindicar_via_flag_se_ja_existe_dono(client):

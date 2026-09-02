@@ -518,7 +518,18 @@ def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_curre
     novo_email = EMAIL_DONO if dados.reivindicar_proprietario else dados.email
     if novo_email is not None:
         novo_email = novo_email.strip() or None
-        if novo_email and novo_email.lower() == EMAIL_DONO:
+        if novo_email and eh_email_dono_equivalente(novo_email):
+            # BUG DE SEGURANÇA CORRIGIDO: a checagem antiga comparava só com
+            # EMAIL_DONO (`== EMAIL_DONO`), não com o conjunto completo
+            # EMAILS_DONO_EQUIVALENTE — qualquer usuário autenticado, de
+            # qualquer papel, conseguia virar dono-equivalente só enviando o
+            # OUTRO e-mail da lista (nunca o literal EMAIL_DONO), pulando as
+            # duas travas abaixo por inteiro. Auto-atendimento continua
+            # existindo só para EMAIL_DONO (via reivindicar_proprietario ou
+            # digitando o valor certo) — o(s) outro(s) e-mail(is)
+            # equivalente(s) nunca são atribuíveis por aqui.
+            if novo_email.lower() != EMAIL_DONO:
+                raise HTTPException(status_code=403, detail="Este e-mail não pode ser definido por aqui.")
             if user.papel != "admin":
                 raise HTTPException(status_code=403, detail="Somente um administrador pode assumir o e-mail do proprietário")
             dono_atual = session.exec(select(Usuario).where(Usuario.email == EMAIL_DONO)).first()

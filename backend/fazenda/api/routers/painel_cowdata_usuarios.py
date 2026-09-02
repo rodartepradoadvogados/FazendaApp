@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.auth import MODULOS, _publico
-from fazenda.auth import exigir_area_painel_cowdata, hash_senha
+from fazenda.auth import eh_email_dono_equivalente, exigir_area_painel_cowdata, hash_senha
 from fazenda.database import get_session
 from fazenda.models import Fazenda, Pessoa, Usuario, UsuarioFazenda
 
@@ -112,9 +112,18 @@ def criar_usuario_da_fazenda(
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Usuário já existe")
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
+    email = (dados.email or "").strip() or None
+    if email and eh_email_dono_equivalente(email):
+        # BUG DE SEGURANÇA CORRIGIDO: esta rota é gated só por
+        # exigir_area_painel_cowdata("cadastros") (área de baixo
+        # privilégio, não exigir_dono) — sem esta trava, qualquer operador
+        # do CowData com acesso a "cadastros" conseguia criar um usuário de
+        # uma fazenda-cliente com o e-mail dono-equivalente e escalar
+        # privilégio via PUT /auth/preferencias.
+        raise HTTPException(status_code=403, detail="Este e-mail não pode ser atribuído por aqui.")
     novo = Usuario(
         username=dados.username, nome=pessoa.nome, pessoa_id=pessoa.id, senha_hash=hash_senha(dados.senha),
-        papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
+        papel=dados.papel, permissoes=perms, email=email,
     )
     session.add(novo)
     session.commit()
@@ -156,7 +165,10 @@ def editar_usuario_da_fazenda(
     if dados.senha:
         u.senha_hash = hash_senha(dados.senha)
     if dados.email is not None:
-        u.email = dados.email.strip() or None
+        email = dados.email.strip() or None
+        if email and eh_email_dono_equivalente(email):
+            raise HTTPException(status_code=403, detail="Este e-mail não pode ser atribuído por aqui.")
+        u.email = email
     session.add(u)
     session.commit()
     session.refresh(u)
