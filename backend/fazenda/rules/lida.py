@@ -103,13 +103,17 @@ def marcar_realizado(
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(LidaAplicacao).where(
-            LidaAplicacao.lancamento_id == lancamento_id,
-            LidaAplicacao.dia == dia,
-            LidaAplicacao.realizada == False,  # noqa: E712
-        )
-    ).all()
+    query = select(LidaAplicacao).where(
+        LidaAplicacao.lancamento_id == lancamento_id,
+        LidaAplicacao.dia == dia,
+        LidaAplicacao.realizada == False,  # noqa: E712
+    )
+    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, qualquer fazenda-cliente
+    # podia confirmar a lida de outro tenant (e consumir o próprio estoque
+    # numa tarefa que não é dela) só adivinhando o lancamento_id.
+    if fazenda_id is not None:
+        query = query.where(LidaAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     if animais is not None:
         alvo = set(animais)
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
@@ -138,7 +142,7 @@ def marcar_realizado(
     return avisos
 
 
-def desmarcar_realizado(session: Session, evento_id: str) -> None:
+def desmarcar_realizado(session: Session, evento_id: str, fazenda_id: int | None = None) -> None:
     """Reverte o grupo inteiro — mesma justificativa de
     _desmarcar_protocolo_iatf_realizado. NÃO estorna estoque: essa é a mesma
     convenção da Central de Protocolos (o estorno mora só em cancelar(), que
@@ -148,13 +152,14 @@ def desmarcar_realizado(session: Session, evento_id: str) -> None:
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
     lancamento_id, dia = int(lancamento_id_str), int(dia_str)
 
-    aplicacoes = session.exec(
-        select(LidaAplicacao).where(
-            LidaAplicacao.lancamento_id == lancamento_id,
-            LidaAplicacao.dia == dia,
-            LidaAplicacao.realizada == True,  # noqa: E712
-        )
-    ).all()
+    query = select(LidaAplicacao).where(
+        LidaAplicacao.lancamento_id == lancamento_id,
+        LidaAplicacao.dia == dia,
+        LidaAplicacao.realizada == True,  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query = query.where(LidaAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query).all()
     for ap in aplicacoes:
         ap.realizada = False
         ap.data_realizacao = None

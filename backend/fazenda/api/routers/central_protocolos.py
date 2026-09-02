@@ -799,7 +799,7 @@ def dar_baixa(
     else:
         _marcar_protocolo_custom_realizado(
             session, f"{PREFIXO_PROTOCOLO_CUSTOM}{origem_id}_{dados.dia}",
-            dados.animais, data_realizacao=dados.data_realizacao,
+            dados.animais, data_realizacao=dados.data_realizacao, fazenda_id=fazenda_id,
         )
         avisos = []
     return {"ok": True, "avisos": avisos}

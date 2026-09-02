@@ -506,10 +506,24 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         animal = session.exec(query_animal).first()
         if not animal:
             raise HTTPException(status_code=404, detail="Animal não encontrado")
-        servicos = session.exec(select(Servico).where(Servico.numero_matriz == id_)).all()
-        partos = session.exec(select(Parto).where(Parto.numero_matriz == id_)).all()
-        controles = session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)).all()
-        sanidades = session.exec(select(Sanidade).where(Sanidade.numero_matriz == id_)).all()
+        # BUG DE SEGURANÇA CORRIGIDO: números de animal são pequenos e podem
+        # coincidir entre fazendas-cliente diferentes — sem o filtro de
+        # fazenda_id abaixo, excluir o animal "X" da própria fazenda também
+        # apagava o histórico reprodutivo/produtivo/sanitário do animal "X"
+        # de OUTRA fazenda, se os números coincidissem.
+        query_servicos = select(Servico).where(Servico.numero_matriz == id_)
+        query_partos = select(Parto).where(Parto.numero_matriz == id_)
+        query_controles = select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == id_)
+        query_sanidades = select(Sanidade).where(Sanidade.numero_matriz == id_)
+        if fazenda_id is not None:
+            query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+            query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+            query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+            query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
+        servicos = session.exec(query_servicos).all()
+        partos = session.exec(query_partos).all()
+        controles = session.exec(query_controles).all()
+        sanidades = session.exec(query_sanidades).all()
         # ColostragemBezerra, Lactacao e FotoCampo têm FK de verdade pra
         # animal.id (ao contrário dos quatro acima, que só casam por
         # numero_matriz em texto solto) — sem incluí-los aqui, excluir o
@@ -567,12 +581,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         # registrar_parto) sem guardar o parto_id — mesma heurística por
         # matriz/data/prefixo do texto já usada acima para o mirror de
         # Sanidade dos protocolos.
-        agendas = session.exec(
-            select(AgendaManual).where(
-                AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
-                AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
-            )
-        ).all()
+        query_agendas = select(AgendaManual).where(
+            AgendaManual.numero_animal == p.numero_matriz, AgendaManual.data_evento == p.data_parto,
+            AgendaManual.descricao.startswith(f"Retenção de placenta — vaca {p.numero_matriz}"),
+        )
+        if fazenda_id is not None:
+            query_agendas = query_agendas.where(AgendaManual.fazenda_id == fazenda_id)
+        agendas = session.exec(query_agendas).all()
         if agendas:
             impacto.append(f"{len(agendas)} pendência(s) de retenção de placenta na Agenda")
             alvos.extend(agendas)
@@ -591,12 +606,20 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             cria = session.exec(query_cria).first()
             if cria is None:
                 continue
+            # Mesmo cuidado de fazenda_id do bloco "animal" acima — sem ele,
+            # um registro de OUTRA fazenda com o mesmo número da cria faria
+            # esta cria parecer "com histórico" e nunca ser considerada órfã.
+            def _existe(model, campo):
+                q = select(model).where(campo == numero_cria)
+                if fazenda_id is not None:
+                    q = q.where(model.fazenda_id == fazenda_id)
+                return session.exec(q).first()
             tem_outros_registros = any([
-                session.exec(select(Servico).where(Servico.numero_matriz == numero_cria)).first(),
-                session.exec(select(Parto).where(Parto.numero_matriz == numero_cria)).first(),
-                session.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == numero_cria)).first(),
-                session.exec(select(Sanidade).where(Sanidade.numero_matriz == numero_cria)).first(),
-                session.exec(select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero_cria)).first(),
+                _existe(Servico, Servico.numero_matriz),
+                _existe(Parto, Parto.numero_matriz),
+                _existe(ControleLeiteiro, ControleLeiteiro.numero_matriz),
+                _existe(Sanidade, Sanidade.numero_matriz),
+                _existe(PesagemCorporal, PesagemCorporal.numero_matriz),
             ])
             if not tem_outros_registros:
                 crias_orfas.append(cria)

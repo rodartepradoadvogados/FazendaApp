@@ -1259,10 +1259,16 @@ def criar_produto_tabela_nutricional(
 
 
 @router.put("/tabela-nutricional/produtos/{produto_id}")
-def renomear_produto_tabela_nutricional(produto_id: int, dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session)) -> dict:
+def renomear_produto_tabela_nutricional(
+    produto_id: int, dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     from fazenda.models import TabelaNutricionalProduto
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     produto = session.get(TabelaNutricionalProduto, produto_id)
-    if not produto:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário podia
+    # renomear o produto de tabela nutricional de outra fazenda.
+    if not produto or (fazenda_id is not None and produto.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -1275,10 +1281,17 @@ def renomear_produto_tabela_nutricional(produto_id: int, dados: TabelaNutriciona
 
 
 @router.delete("/tabela-nutricional/produtos/{produto_id}")
-def excluir_produto_tabela_nutricional(produto_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_produto_tabela_nutricional(
+    produto_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     produto = session.get(TabelaNutricionalProduto, produto_id)
-    if not produto:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário podia
+    # excluir permanentemente o produto de tabela nutricional de outra
+    # fazenda.
+    if not produto or (fazenda_id is not None and produto.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     for v in session.exec(select(TabelaNutricionalValor).where(TabelaNutricionalValor.produto_id == produto_id)).all():
         session.delete(v)
@@ -1766,7 +1779,9 @@ def apresentacao_dieta(
     cabeça, total/dia, total/trato; e o somatório de kg no vagão do lote."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    # BUG DE SEGURANÇA CORRIGIDO: o cabeçalho da dieta (lote, datas) de outra
+    # fazenda vazava mesmo com os itens já corretamente filtrados abaixo.
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     n = len(_animais_do_lote(session, dieta.lote, fazenda_id))
     query_lote = select(Lote).where(Lote.codigo == f"{dieta.lote:02d}")
@@ -1807,9 +1822,16 @@ class EncerrarDietaIn(BaseModel):
 
 
 @router.put("/dietas/{dieta_id}/encerrar")
-def encerrar_dieta(dieta_id: int, dados: EncerrarDietaIn, session: Session = Depends(get_session)) -> dict:
+def encerrar_dieta(
+    dieta_id: int, dados: EncerrarDietaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário
+    # autenticado podia encerrar a dieta ATIVA de outra fazenda só
+    # adivinhando dieta_id.
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if dieta.data_efetivo_encerramento is not None:
         raise HTTPException(status_code=400, detail="Esta dieta já está encerrada")
@@ -1831,7 +1853,9 @@ def registrar_real(
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    # BUG DE SEGURANÇA CORRIGIDO: sem esta checagem, qualquer usuário podia
+    # anexar registros de "consumo real" à dieta de outra fazenda.
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento oferecido")
@@ -1851,7 +1875,7 @@ def comparativo_dieta(
     """Programado × real por alimento — soma total real e média por dia distinto registrado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
-    if not dieta:
+    if not dieta or (fazenda_id is not None and dieta.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     query_prog = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_id)
     query_reais = select(DietaRegistroReal).where(DietaRegistroReal.dieta_lancamento_id == dieta_id)

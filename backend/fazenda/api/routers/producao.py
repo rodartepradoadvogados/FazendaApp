@@ -1995,11 +1995,21 @@ MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropi
 
 
 @router.get("/relatorio-bst")
-def relatorio_bst(session: Session = Depends(get_session)) -> dict:
+def relatorio_bst(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Histórico de aplicações de BST, achatado com lote/categoria do animal na hora."""
-    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animais = select(Animal)
+    query_sanidade = select(Sanidade)
+    # BUG DE SEGURANÇA CORRIGIDO: sem estes filtros, esta rota agregava
+    # aplicações de BST e animais de TODAS as fazendas do sistema.
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+    animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
     aplicacoes = [
-        s for s in session.exec(select(Sanidade)).all()
+        s for s in session.exec(query_sanidade).all()
         if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
     ]
     registros = []
@@ -2021,9 +2031,41 @@ class AjustarProximaAplicacaoBstIn(BaseModel):
     modo: str  # "intervalo" | "referencia"
 
 
+def _linha_parametro_visivel(session: Session, chave: str, fazenda_id: int | None) -> ParametroFazenda | None:
+    """Mesmo padrão clone-on-write de fazenda.api.routers.parametros —
+    prefere a linha fazenda-específica e cai no padrão global (fazenda_id
+    NULL) só para leitura."""
+    if fazenda_id is not None:
+        especifica = session.exec(
+            select(ParametroFazenda).where(ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id == fazenda_id)
+        ).first()
+        if especifica is not None:
+            return especifica
+    return session.exec(
+        select(ParametroFazenda).where(ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id.is_(None))
+    ).first()
+
+
+def _gravar_parametro_da_fazenda(session: Session, linha: ParametroFazenda, fazenda_id: int | None, novo_valor: str) -> None:
+    """Grava `novo_valor` na linha certa: se `linha` encontrada é a global
+    (fazenda_id None) mas o chamador tem fazenda própria, CLONA para essa
+    fazenda em vez de editar o padrão global (mesmo padrão de
+    parametros.py::atualizar_parametro) — nunca deixa uma fazenda-cliente
+    sobrescrever o intervalo de BST visto por todas as outras."""
+    if fazenda_id is not None and linha.fazenda_id is None:
+        linha = ParametroFazenda(
+            chave=linha.chave, fazenda_id=fazenda_id, grupo=linha.grupo, label=linha.label,
+            valor=linha.valor, tipo=linha.tipo, unidade=linha.unidade,
+        )
+    linha.valor = novo_valor
+    linha.atualizado_em = datetime.utcnow()
+    session.add(linha)
+
+
 @router.post("/bst/ajustar-proxima-aplicacao")
 def ajustar_proxima_aplicacao_bst(
     dados: AjustarProximaAplicacaoBstIn, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Corrige manualmente a data da próxima aplicação de BST (é uma decisão
     de rebanho inteiro, não por animal — mesma lógica de `proxima_visita_bst`
@@ -2040,7 +2082,15 @@ def ajustar_proxima_aplicacao_bst(
     # como "última aplicação registrada" — doses de indução de lactação ou
     # avulsas não têm o condão de mudar o intervalo/próxima data da rotina,
     # mesmo usando um produto BST.
-    aplicacoes = [s for s in session.exec(select(Sanidade)).all() if s.atividade == "BST"]
+    # BUG DE SEGURANÇA CORRIGIDO: a agregação abaixo não filtrava por
+    # fazenda_id (misturava datas de BST de todas as fazendas), e as duas
+    # leituras/escritas de ParametroFazenda pegavam a primeira linha com
+    # aquela chave em QUALQUER fazenda — um admin de uma fazenda-cliente
+    # podia sobrescrever o parâmetro de outro tenant ou o padrão global.
+    aplicacoes = [
+        s for s in session.exec(select(Sanidade).where(Sanidade.fazenda_id == fazenda_id)).all()
+        if s.atividade == "BST"
+    ]
     datas_bst = [s.data_aplicacao for s in aplicacoes if s.data_aplicacao]
     intervalo_atual = intervalo_bst()
     hoje = date.today()
@@ -2058,31 +2108,25 @@ def ajustar_proxima_aplicacao_bst(
             marcador += timedelta(days=intervalo_atual)
             ciclos += 1
         novo_intervalo = max(1, round((dados.nova_data - ancora).days / ciclos))
-        linha_intervalo = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "intervalo_bst")).first()
+        linha_intervalo = _linha_parametro_visivel(session, "intervalo_bst", fazenda_id)
         if not linha_intervalo:
             raise HTTPException(status_code=500, detail="Parâmetro 'intervalo_bst' não encontrado.")
-        linha_intervalo.valor = str(novo_intervalo)
-        linha_intervalo.atualizado_em = datetime.utcnow()
-        session.add(linha_intervalo)
+        _gravar_parametro_da_fazenda(session, linha_intervalo, fazenda_id, str(novo_intervalo))
         # O novo intervalo já reproduz a data escolhida a partir da última
         # aplicação real — qualquer ajuste manual de referência anterior fica
         # obsoleto.
-        linha_ancora = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "bst_ajuste_ancora_data")).first()
+        linha_ancora = _linha_parametro_visivel(session, "bst_ajuste_ancora_data", fazenda_id)
         if linha_ancora and linha_ancora.valor:
-            linha_ancora.valor = ""
-            linha_ancora.atualizado_em = datetime.utcnow()
-            session.add(linha_ancora)
+            _gravar_parametro_da_fazenda(session, linha_ancora, fazenda_id, "")
         session.commit()
         return {"ok": True, "novo_intervalo": novo_intervalo, "proxima_visita_bst": dados.nova_data.isoformat()}
 
     if dados.modo == "referencia":
         nova_ancora = dados.nova_data - timedelta(days=intervalo_atual)
-        linha_ancora = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "bst_ajuste_ancora_data")).first()
+        linha_ancora = _linha_parametro_visivel(session, "bst_ajuste_ancora_data", fazenda_id)
         if not linha_ancora:
             raise HTTPException(status_code=500, detail="Parâmetro 'bst_ajuste_ancora_data' não encontrado.")
-        linha_ancora.valor = nova_ancora.isoformat()
-        linha_ancora.atualizado_em = datetime.utcnow()
-        session.add(linha_ancora)
+        _gravar_parametro_da_fazenda(session, linha_ancora, fazenda_id, nova_ancora.isoformat())
         session.commit()
         return {"ok": True, "intervalo_bst": intervalo_atual, "proxima_visita_bst": dados.nova_data.isoformat()}
 
