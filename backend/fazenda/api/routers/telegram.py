@@ -31,9 +31,10 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
+from fazenda.auth import exigir_admin
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import LancamentoPendente, TelegramPendente, TelegramSessao
+from fazenda.models import LancamentoPendente, TelegramPendente, TelegramSessao, Usuario
 from fazenda.rules import telegram_fluxos as fx
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
@@ -686,8 +687,13 @@ def registrar_webhook_telegram() -> None:
 
 
 @router.get("/status")
-def telegram_status() -> dict:
-    """Diagnóstico rápido (sem expor o token) — útil para o administrador."""
+def telegram_status(_admin: Usuario = Depends(exigir_admin)) -> dict:
+    """Diagnóstico rápido (sem expor o token) — útil para o administrador.
+
+    BUG DE SEGURANÇA CORRIGIDO: antes não exigia autenticação — qualquer um
+    que descobrisse a URL via podia ver a allow-list de chats liberados
+    (chats_liberados) sem precisar de login. Agora exige admin, igual ao
+    restante dos diagnósticos administrativos do sistema."""
     return {
         "ligado": bool(settings.telegram_bot_token),
         "webhook_base": settings.public_base_url or None,

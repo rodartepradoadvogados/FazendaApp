@@ -753,12 +753,12 @@
     {
       "prioridade": "P3 — Baixo/Informativo, quando houver tempo",
       "itens": [
-        "Remover o campo morto secret_key de config.py (ou dar a ele o mesmo guard de startup de AUTH_SECRET).",
-        "Proteger ou remover GET /telegram/status (vaza a allow-list de chats sem autenticação).",
-        "Validar esquema http(s):// em link_rastreio (pedidos.py) e link_bula (farmacia.py) no backend.",
-        "Adicionar maker-checker (aprovador ≠ solicitante) em cofre_acesso.py::aprovar_pedido, mesmo que hoje nenhuma fazenda-piloto ative essa opção.",
-        "Revisar a heurística _rodando_em_producao() com quem administra a infraestrutura Railway, documentando explicitamente os formatos de DATABASE_URL cobertos.",
-        "Confirmar operacionalmente se TELEGRAM_CHAT_FAZENDA cobre 100% dos chats ativos, para fechar o vazamento residual de LancamentoPendente entre fazendas."
+        "[CORRIGIDO nesta sessão] Remover o campo morto secret_key de config.py (ou dar a ele o mesmo guard de startup de AUTH_SECRET).",
+        "[CORRIGIDO nesta sessão] Proteger ou remover GET /telegram/status (vaza a allow-list de chats sem autenticação).",
+        "[CORRIGIDO nesta sessão] Validar esquema http(s):// em link_rastreio (pedidos.py) e link_bula (farmacia.py) no backend.",
+        "[CORRIGIDO nesta sessão] Adicionar maker-checker (aprovador ≠ solicitante) em cofre_acesso.py::aprovar_pedido, mesmo que hoje nenhuma fazenda-piloto ative essa opção.",
+        "[REQUER REVISÃO OPERACIONAL — não corrigível em código] Revisar a heurística _rodando_em_producao() com quem administra a infraestrutura Railway, documentando explicitamente os formatos de DATABASE_URL cobertos. A função (fazenda/auth.py) já checa DATABASE_URL iniciando com \"postgres://\"/\"postgresql://\" e FAZENDA_TESTING não setado; falta confirmação humana de que esses são os únicos formatos que o Railway usa hoje/no futuro.",
+        "[REQUER CONFIRMAÇÃO OPERACIONAL — não corrigível em código] Confirmar operacionalmente se TELEGRAM_CHAT_FAZENDA cobre 100% dos chats ativos, para fechar o vazamento residual de LancamentoPendente entre fazendas. Depende de dados de produção (lista real de chats configurados), não do código-fonte."
       ]
     }
   ],

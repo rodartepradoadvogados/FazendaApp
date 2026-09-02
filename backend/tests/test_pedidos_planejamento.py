@@ -108,6 +108,16 @@ class TestRastreio:
         assert detalhe["enviado"] is True
         assert detalhe["codigo_rastreio"] == "BR123456789BR"
 
+    def test_link_rastreio_rejeita_esquema_nao_http(self, client):
+        """Achado P3 #3 da auditoria de segurança: link_rastreio vira
+        <a href> no frontend — um esquema como javascript: executaria no
+        clique em vez de navegar."""
+        pedido_id = _criar_pedido(client).json()["id"]
+        r = client.put(f"/pedidos/{pedido_id}/rastreio", json={
+            "enviado": True, "link_rastreio": "javascript:alert(document.cookie)",
+        })
+        assert r.status_code == 422
+
     def test_marcar_nao_enviado_limpa_codigo_e_link(self, client):
         pedido_id = _criar_pedido(client).json()["id"]
         client.put(f"/pedidos/{pedido_id}/rastreio", json={

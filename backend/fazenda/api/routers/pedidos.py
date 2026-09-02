@@ -13,7 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -24,6 +24,7 @@ from fazenda.models import (
 )
 from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.validacao import link_http_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
 from fazenda.rules.pedido_status import STATUS_CANCELADO, calcular_status_pedido
 from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
@@ -341,6 +342,13 @@ class RastreioIn(BaseModel):
     enviado: bool
     codigo_rastreio: Optional[str] = None
     link_rastreio: Optional[str] = None
+
+    # BUG DE SEGURANÇA CORRIGIDO: link_rastreio vira <a href> no frontend —
+    # sem validar o esquema, um valor "javascript:..." executava no clique.
+    @field_validator("link_rastreio")
+    @classmethod
+    def _validar_link_rastreio(cls, v: str | None) -> str | None:
+        return link_http_seguro(v)
 
 
 @router.put("/{pedido_id}/rastreio")

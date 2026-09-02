@@ -571,3 +571,35 @@ def test_get_permitido_nao_gera_linha_de_auditoria(client):
     token_dono = _token_dono(client)
     acoes = client.get("/painel-cowdata/cofre/acoes", headers={"Authorization": f"Bearer {token_dono}"}).json()
     assert not any(a["metodo"] == "GET" and a["caminho"] == "/rebanho-rota-generica-qualquer" for a in acoes)
+
+
+def test_solicitante_nao_pode_aprovar_o_proprio_pedido(client):
+    """Maker-checker (achado P3 #4 da auditoria de segurança): quando a
+    fazenda exige aprovação (exige_aprovacao_suporte=True), quem pediu o
+    acesso não pode ser também quem aprova — mesmo tendo a área "cofre"
+    liberada, ver docstring de aprovar_pedido em cofre_acesso.py. Um
+    dono-equivalente diferente consegue aprovar normalmente."""
+    fid = _fazenda_id(client)
+    token_dono = _token_dono(client)
+    r = client.put(f"/fazendas/{fid}", json={"exige_aprovacao_suporte": True}, headers={"Authorization": f"Bearer {token_dono}"})
+    assert r.status_code == 200
+
+    r = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Configurar parâmetros da fazenda", "assunto_chamado": "Teste maker-checker"},
+        headers={"Authorization": f"Bearer {token_dono}"},
+    )
+    assert r.status_code == 200
+    pedido = r.json()
+    assert pedido["status"] == "aguardando_aprovacao"
+    assert "token" not in pedido
+    pedido_id = pedido["id"]
+
+    r = client.post(f"/painel-cowdata/cofre/pedidos/{pedido_id}/aprovar", headers={"Authorization": f"Bearer {token_dono}"})
+    assert r.status_code == 403
+    assert "não pode aprovar" in r.json()["detail"].lower()
+
+    login_outro = client.post("/auth/login", json={"username": "dono-sem-vinculo", "senha": "123"}).json()
+    r = client.post(f"/painel-cowdata/cofre/pedidos/{pedido_id}/aprovar", headers={"Authorization": f"Bearer {login_outro['token']}"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "aprovado"

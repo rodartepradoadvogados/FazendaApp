@@ -6,7 +6,6 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./fazenda.db"
-    secret_key: str = "change-me"
     environment: str = "development"
 
     # Robô do Telegram (intake de documentos financeiros). Vazio = desligado.
