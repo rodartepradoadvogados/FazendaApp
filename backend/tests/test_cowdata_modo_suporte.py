@@ -231,6 +231,35 @@ def test_modo_suporte_consegue_encerrar_a_propria_sessao(client):
     assert r.json()["encerrada_em"] is not None
 
 
+def test_encerrar_sessao_corta_acesso_de_fato(client):
+    """BUG DE SEGURANÇA CORRIGIDO: antes desta correção, o token de modo
+    suporte continuava valendo normalmente depois de POST .../encerrar (só a
+    flag encerrada_em era gravada, nada revalidava o token contra o banco) —
+    quem estava com o token em mãos continuava acessando a fazenda até o
+    JWT expirar sozinho. Agora, qualquer requisição com esse token depois do
+    encerramento deve ser recusada."""
+    login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
+    fid = _fazenda_id(client)
+    pedido = client.post(
+        "/painel-cowdata/cofre/pedidos",
+        json={"fazenda_id": fid, "motivo": "Diagnosticar erro relatado", "assunto_chamado": "Erro relatado pelo cliente"},
+        headers={"Authorization": f"Bearer {login['token']}"},
+    ).json()
+    token_suporte = pedido["token"]
+    sessoes = client.get("/painel-cowdata/cofre/sessoes-ativas", headers={"Authorization": f"Bearer {login['token']}"}).json()
+    sessao_id = next(s["id"] for s in sessoes if s["fazenda_id"] == fid)
+
+    # Antes de encerrar, o token de suporte acessa normalmente.
+    r_antes = client.get("/painel-cowdata/cofre/motivos", headers={"Authorization": f"Bearer {token_suporte}"})
+    assert r_antes.status_code == 200
+
+    r_encerra = client.post(f"/painel-cowdata/cofre/sessoes/{sessao_id}/encerrar", headers={"Authorization": f"Bearer {token_suporte}"})
+    assert r_encerra.status_code == 200
+
+    r_depois = client.get("/painel-cowdata/cofre/motivos", headers={"Authorization": f"Bearer {token_suporte}"})
+    assert r_depois.status_code == 403
+
+
 def test_pedido_exige_assunto_chamado(client):
     login = client.post("/auth/login", json={"username": "dono", "senha": "123"}).json()
     fid = _fazenda_id(client)

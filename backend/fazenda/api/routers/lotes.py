@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.recria import _parametros_estado_vivo
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -219,9 +219,8 @@ def listar_lotes(
 
 @router.post("/")
 def criar_lote(
-    dados: LoteIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: LoteIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
     _validar_flags_unicos(session, dados, lote_id=None, fazenda_id=fazenda_id)
     codigo = _normalizar_codigo(dados.codigo)

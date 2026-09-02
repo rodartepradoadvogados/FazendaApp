@@ -182,7 +182,7 @@ def atualizar_protocolo_sanitario(
 ) -> dict:
     protocolo = session.get(ProtocoloSanitario, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -215,7 +215,7 @@ def excluir_protocolo_sanitario(
 ) -> dict:
     protocolo = session.get(ProtocoloSanitario, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     ja_lancado = session.exec(
         select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo_id)
@@ -646,7 +646,7 @@ def atualizar_protocolo_inducao(
 ) -> dict:
     protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -680,7 +680,7 @@ def excluir_protocolo_inducao(
     caminho recomendado é desativar (`ativo=False`), não apagar histórico."""
     protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     ja_lancado = session.exec(
         select(ProtocoloInducaoLancamento).where(ProtocoloInducaoLancamento.protocolo_id == protocolo_id)
@@ -795,7 +795,7 @@ def atualizar_protocolo_iatf_cadastrado(
 ) -> dict:
     protocolo = session.get(ProtocoloIatf, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -823,7 +823,7 @@ def excluir_protocolo_iatf_cadastrado(
 ) -> dict:
     protocolo = session.get(ProtocoloIatf, protocolo_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
+    if not protocolo or (protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     ja_lancado = session.exec(
         select(ProtocoloIatfLancamento).where(ProtocoloIatfLancamento.protocolo_id == protocolo_id)

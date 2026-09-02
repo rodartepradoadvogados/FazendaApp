@@ -122,8 +122,12 @@ def criar_cartao(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_cartao(dados)
-    if dados.conta_bancaria_id and not session.get(ContaCorrente, dados.conta_bancaria_id):
-        raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
+    if dados.conta_bancaria_id:
+        # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, um cartão
+        # podia ser vinculado a uma ContaCorrente de OUTRA fazenda.
+        conta_bancaria = session.get(ContaCorrente, dados.conta_bancaria_id)
+        if not conta_bancaria or (fazenda_id is not None and conta_bancaria.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
     c = CartaoCredito(**{**dados.model_dump(), "apelido": dados.apelido.strip()}, fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
@@ -139,8 +143,10 @@ def atualizar_cartao(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     c = _cartao_ou_404(session, cartao_id, fazenda_id)
     _validar_cartao(dados)
-    if dados.conta_bancaria_id and not session.get(ContaCorrente, dados.conta_bancaria_id):
-        raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
+    if dados.conta_bancaria_id:
+        conta_bancaria = session.get(ContaCorrente, dados.conta_bancaria_id)
+        if not conta_bancaria or (fazenda_id is not None and conta_bancaria.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(c, campo, valor)
     c.apelido = c.apelido.strip()

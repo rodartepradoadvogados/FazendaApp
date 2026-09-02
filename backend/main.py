@@ -423,6 +423,10 @@ _PREFIXOS_RH_MODO_SUPORTE = (
     "/cadastro/empreitadas",
     "/cadastro/contratos",
     "/cadastro/diarias",
+    # BUG DE SEGURANÇA CORRIGIDO: /cadastro/pessoas guarda salario_base, CPF e
+    # anexos de documentos pessoais (RG, holerite, contrato...) — tão
+    # sensível quanto o resto do RH acima, mas tinha ficado de fora da lista.
+    "/cadastro/pessoas",
 )
 
 # Prefixos de rota tratados como "dados sensíveis" em modo suporte (ver
@@ -518,6 +522,34 @@ async def _bloquear_modo_suporte(request, call_next):
             # do cliente" — não teria sentido poluir a auditoria dele com o
             # próprio encerramento do acesso.
             eh_encerramento = path.startswith("/painel-cowdata/cofre/sessoes/") and path.endswith("/encerrar")
+
+            # BUG DE SEGURANÇA CORRIGIDO: POST .../sessoes/{id}/encerrar só
+            # gravava sessao.encerrada_em no banco — o token JWT já emitido
+            # continuava validando normalmente (a claim "suporte" não é
+            # reconferida aqui contra o banco) até a própria expiração do
+            # JWT. Ou seja, "encerrar" pelo Painel CowData não cortava o
+            # acesso de fato. Agora, toda vez que o token carrega "ssid",
+            # confere no banco se a sessão ainda está ativa (não encerrada,
+            # não expirada) antes de deixar a requisição passar.
+            ssid = dados.get("ssid")
+            if ssid is not None:
+                from datetime import datetime as _datetime
+
+                from fazenda.models.cofre_acesso import SessaoAcessoSuporte
+
+                with _sessao_idempotencia(request) as _sessao_bd:
+                    sessao_atual = _sessao_bd.get(SessaoAcessoSuporte, ssid)
+                sessao_valida = (
+                    sessao_atual is not None
+                    and sessao_atual.encerrada_em is None
+                    and sessao_atual.expira_em > _datetime.utcnow()
+                )
+                if not sessao_valida:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Esta sessão de suporte foi encerrada ou expirou. Abra uma nova sessão no Painel CowData."},
+                    )
+
             mensagem_bloqueio: str | None = None
 
             if request.method == "GET":

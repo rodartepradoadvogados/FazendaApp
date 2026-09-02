@@ -16,10 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
-from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
+from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro, Usuario
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
@@ -229,9 +229,8 @@ def semen_disponivel(
 @router.post("/estoque-semen")
 def criar_estoque_semen(
     dados: EstoqueSemenIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.touro_nome.strip():
         raise HTTPException(status_code=400, detail="Informe o nome do touro")
     if dados.tipo not in TIPOS_SEMEN:
@@ -401,7 +400,7 @@ def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/touros/recarregar-catalogo")
-def recarregar_catalogo_touros(session: Session = Depends(get_session)) -> dict:
+def recarregar_catalogo_touros(session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
     """Reimporta o catálogo NAAB completo empacotado no servidor (upsert por
     NAAB — nunca apaga touros existentes). Serve de botão de autoatendimento
     caso a carga automática na inicialização não tenha rodado por algum
@@ -448,10 +447,17 @@ class TouroIn(BaseModel):
 
 
 @router.post("/touros")
-def criar_touro(dados: TouroIn, session: Session = Depends(get_session)) -> dict:
+def criar_touro(dados: TouroIn, session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
     """Cadastro manual de um touro. Só o código NAAB e o nome são
     obrigatórios — todo o resto (inclusive campos extras da planilha do
-    fornecedor) é opcional."""
+    fornecedor) é opcional.
+
+    BUG DE SEGURANÇA CORRIGIDO: este catálogo é GLOBAL (Touro não tem
+    fazenda_id, é compartilhado por todas as fazendas) mas a rota só era
+    protegida pelo módulo genérico "parametros" — qualquer usuário
+    (inclusive operador) de qualquer fazenda com esse módulo contratado
+    podia criar/editar/apagar touros vistos por todo mundo. Agora exige
+    admin da fazenda que está fazendo a chamada."""
     naab = dados.naab.strip().upper()
     if not naab:
         raise HTTPException(status_code=400, detail="Informe o código NAAB")
@@ -474,7 +480,7 @@ def criar_touro(dados: TouroIn, session: Session = Depends(get_session)) -> dict
 
 
 @router.put("/touros/{touro_id}")
-def atualizar_touro(touro_id: int, dados: TouroIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_touro(touro_id: int, dados: TouroIn, session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
     t = session.get(Touro, touro_id)
     if not t:
         raise HTTPException(status_code=404, detail="Touro não encontrado")
@@ -500,7 +506,7 @@ def atualizar_touro(touro_id: int, dados: TouroIn, session: Session = Depends(ge
 
 
 @router.delete("/touros/{touro_id}")
-def excluir_touro(touro_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_touro(touro_id: int, session: Session = Depends(get_session), _admin: Usuario = Depends(exigir_admin)) -> dict:
     t = session.get(Touro, touro_id)
     if not t:
         raise HTTPException(status_code=404, detail="Touro não encontrado")

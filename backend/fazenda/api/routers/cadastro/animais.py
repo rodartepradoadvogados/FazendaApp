@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, AplicacaoAgendada, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro,
@@ -237,7 +237,7 @@ def listar_matrizes_com_parto(
 
 @router.post("/animais")
 def criar_animal(
-    dados: AnimalFichaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)
+    dados: AnimalFichaIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session)
 ) -> dict:
     numero = dados.numero.strip()
     if not numero:
@@ -600,9 +600,8 @@ def listar_racas(
 
 @router.post("/racas")
 def criar_raca(
-    dados: RacaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: RacaIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -659,9 +658,8 @@ def listar_graus_sangue(
 
 @router.post("/graus-sangue")
 def criar_grau_sangue(
-    dados: GrauSangueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: GrauSangueIn, fazenda_id: int = Depends(get_fazenda_id_escrita), session: Session = Depends(get_session),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")

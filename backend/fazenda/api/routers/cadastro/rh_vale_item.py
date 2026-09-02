@@ -113,7 +113,7 @@ def validar_vale_item(
     com as mensagens dos endpoints existentes. Devolve o contexto resolvido
     (pessoa, origem, competências) para `aplicar_vale_item` não refazer."""
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if item_valor <= 0:
         raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
@@ -274,7 +274,7 @@ def opcoes_vale_item(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
 
     tipos = [t for t in (pessoa.tipo or "").split(",") if t]
@@ -353,7 +353,7 @@ def marcar_item_como_vale(
     user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     item = session.get(LancamentoItem, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+    if not item or (item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de lançamento não encontrado")
     if eh_item_de_vale(item):
         vale_tipo = "funcionario" if item.vale_funcionario_id is not None else "avulso"
@@ -399,7 +399,7 @@ def desmarcar_item_como_vale(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(LancamentoItem, item_id)
-    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
+    if not item or (item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de lançamento não encontrado")
     if not eh_item_de_vale(item):
         raise HTTPException(status_code=404, detail="Este item não tem vale vinculado.")

@@ -738,16 +738,16 @@
     {
       "prioridade": "P2 — Alto/Médio, próxima sprint",
       "itens": [
-        "Padronizar as ~20 ocorrências sistêmicas de rotas de criação usando get_fazenda_atual_id em vez de get_fazenda_id_escrita (RH, sanidade, farmácia, estoque, financeiro, animais, produção, reprodução) — risco baixo individualmente, mas repetitivo e fácil de varrer de uma vez com um teste arquitetural (grep) no CI.",
-        "Corrigir as checagens de posse que toleram fazenda_id=None em PUT/DELETE de RH (rh_folha.py, rh_contratos.py, pessoas.py), sanidade e protocolos sanitários — trocar `fazenda_id is not None and obj.fazenda_id != fazenda_id` por uma checagem que não abra mão da posse quando o token não tem fazenda selecionada.",
-        "Corrigir o vazamento de EstoqueSemen em relatorios.py e nao_conformidades.py replicando o filtro já existente em relatorio_acasalamento.py.",
-        "Restringir escrita no catálogo global de Touro (cadastro/genetica.py) a um papel mais alto que o módulo genérico 'parametros'.",
-        "Escapar (html.escape ou template com autoescape) todo texto de usuário interpolado em corpo de e-mail: portal.py (corpo livre), financeiro.py (fornecedor_cliente no recibo), reproducao.py (diagnóstico/método), auth.py (nome no reset de senha).",
-        "Trocar jinja2.Template() por jinja2.Environment(autoescape=select_autoescape([\"html\"])) em contrato_render.py, replicando o padrão já usado em contrato_equipe_render.py.",
-        "Adicionar checagem de posse de fazenda em financeiro.py (vincular_evento_sanitario_reprodutivo, recibo por numero_lancamento) e em cartao_credito.py (conta_bancaria_id).",
-        "Aplicar exigir_admin (ou equivalente) em chamados.py::atualizar_status_chamado.",
-        "Fazer cofre_acesso.py::encerrar_sessao surtir efeito de fato — consultar SessaoAcessoSuporte no middleware de validação de token/modo suporte, não só gravar a flag.",
-        "Decidir e aplicar: incluir /cadastro/pessoas nos prefixos bloqueados de modo suporte (ou um subconjunto de dados pessoais dele), dado que salario_base/CPF/anexos pessoais são tão sensíveis quanto o resto de RH já bloqueado."
+        "[CORRIGIDO nesta sessão] Padronizar as ~20 ocorrências sistêmicas de rotas de criação usando get_fazenda_atual_id em vez de get_fazenda_id_escrita (RH, sanidade, farmácia, estoque, financeiro, animais, produção, reprodução) — risco baixo individualmente, mas repetitivo e fácil de varrer de uma vez com um teste arquitetural (grep) no CI.",
+        "[CORRIGIDO nesta sessão] Corrigir as checagens de posse que toleram fazenda_id=None em PUT/DELETE de RH (rh_folha.py, rh_contratos.py, pessoas.py), sanidade e protocolos sanitários — trocar `fazenda_id is not None and obj.fazenda_id != fazenda_id` por uma checagem que não abra mão da posse quando o token não tem fazenda selecionada.",
+        "[CORRIGIDO nesta sessão] Corrigir o vazamento de EstoqueSemen em relatorios.py e nao_conformidades.py replicando o filtro já existente em relatorio_acasalamento.py.",
+        "[CORRIGIDO nesta sessão] Restringir escrita no catálogo global de Touro (cadastro/genetica.py) a um papel mais alto que o módulo genérico 'parametros'.",
+        "[CORRIGIDO nesta sessão] Escapar (html.escape ou template com autoescape) todo texto de usuário interpolado em corpo de e-mail: portal.py (corpo livre), financeiro.py (fornecedor_cliente no recibo), reproducao.py (diagnóstico/método), auth.py (nome no reset de senha).",
+        "[CORRIGIDO nesta sessão] Trocar jinja2.Template() por jinja2.Environment(autoescape=select_autoescape([\"html\"])) em contrato_render.py, replicando o padrão já usado em contrato_equipe_render.py.",
+        "[CORRIGIDO nesta sessão] Adicionar checagem de posse de fazenda em financeiro.py (vincular_evento_sanitario_reprodutivo, recibo por numero_lancamento) e em cartao_credito.py (conta_bancaria_id).",
+        "[CORRIGIDO nesta sessão] Aplicar exigir_admin (ou equivalente) em chamados.py::atualizar_status_chamado.",
+        "[CORRIGIDO nesta sessão] Fazer cofre_acesso.py::encerrar_sessao surtir efeito de fato — consultar SessaoAcessoSuporte no middleware de validação de token/modo suporte, não só gravar a flag.",
+        "[CORRIGIDO nesta sessão] Decidir e aplicar: incluir /cadastro/pessoas nos prefixos bloqueados de modo suporte (ou um subconjunto de dados pessoais dele), dado que salario_base/CPF/anexos pessoais são tão sensíveis quanto o resto de RH já bloqueado."
       ]
     },
     {
