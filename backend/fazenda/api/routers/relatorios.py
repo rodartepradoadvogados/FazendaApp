@@ -79,7 +79,14 @@ def relatorios_manejo(
 ) -> dict:
     animais, servicos, partos, secagens = _dados(session, fazenda_id)
     aplicacoes_iatf, peso_por_animal = _dados_estado_vivo(session, fazenda_id)
-    semen = [s.model_dump() for s in session.exec(select(EstoqueSemen)).all()]
+    # BUG DE SEGURANÇA CORRIGIDO: sem o filtro, este relatório de manejo
+    # trazia o estoque de sêmen (touro/NAAB/doses) de TODAS as fazendas —
+    # mesma classe de vazamento já corrigida em relatorio_acasalamento.py
+    # (ver tests/test_isolamento_relatorios_fornecedor.py).
+    query_semen = select(EstoqueSemen)
+    if fazenda_id is not None:
+        query_semen = query_semen.where(EstoqueSemen.fazenda_id == fazenda_id)
+    semen = [s.model_dump() for s in session.exec(query_semen).all()]
     return rg.relatorios_manejo(animais, servicos, partos, semen, date.today(), secagens=secagens,
                                  aplicacoes_iatf=aplicacoes_iatf, peso_por_animal=peso_por_animal)
 

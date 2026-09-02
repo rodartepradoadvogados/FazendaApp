@@ -492,13 +492,12 @@ async def anexar_arquivo_pedido(
     pedido_id: int, file: UploadFile, categoria: str = Form(...),
     data_validade: Optional[date] = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Anexa um orçamento, ordem de serviço ou outro documento a um pedido já
     criado. Se `data_validade` for informada, a Agenda passa a alertar 2 dias
     antes do vencimento enquanto o pedido seguir aberto ou parcialmente
     atendido (ver fazenda/rules/agenda_engine.py)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
     if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")

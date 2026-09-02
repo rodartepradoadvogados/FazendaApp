@@ -4,6 +4,7 @@ e lançamento de diagnóstico de gestação.
 """
 from __future__ import annotations
 
+import html
 import logging
 from datetime import date, datetime, timedelta
 
@@ -717,16 +718,19 @@ def enviar_ultimo_diagnostico(
         raise HTTPException(status_code=400, detail=f"A matriz {numero_matriz} ainda não tem diagnóstico de gestação registrado")
 
     fmt = lambda d: d.strftime("%d/%m/%Y") if d else "—"  # noqa: E731
+    # BUG DE SEGURANÇA CORRIGIDO: numero_matriz/diagnostico/metodo_diagnostico
+    # não têm validação de valores fechados no backend — sem escape, um
+    # cliente de e-mail que renderiza HTML executaria markup injetado.
     linhas = [
-        f"<p><b>Matriz:</b> {numero_matriz}</p>",
+        f"<p><b>Matriz:</b> {html.escape(numero_matriz)}</p>",
         f"<p><b>Data do serviço:</b> {fmt(servico.data_servico)}</p>",
         f"<p><b>Data do diagnóstico:</b> {fmt(servico.data_diagnostico)}</p>",
-        f"<p><b>Resultado:</b> {servico.diagnostico or '—'}</p>",
+        f"<p><b>Resultado:</b> {html.escape(servico.diagnostico or '—')}</p>",
     ]
     if servico.metodo_diagnostico:
-        linhas.append(f"<p><b>Método:</b> {servico.metodo_diagnostico}</p>")
+        linhas.append(f"<p><b>Método:</b> {html.escape(servico.metodo_diagnostico)}</p>")
     if servico.data_reconfirmacao:
-        linhas.append(f"<p><b>Reconfirmação ({fmt(servico.data_reconfirmacao)}):</b> {servico.diagnostico_reconfirmacao or '—'}</p>")
+        linhas.append(f"<p><b>Reconfirmação ({fmt(servico.data_reconfirmacao)}):</b> {html.escape(servico.diagnostico_reconfirmacao or '—')}</p>")
     corpo_html = "".join(linhas) + "<p>Fazenda Estreito Ponte de Pedra</p>"
 
     try:
@@ -2278,14 +2282,13 @@ def adicionar_animais_iatf(
     lancamento_id: int,
     dados: AdicionarAnimaisIatfIn,
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
     Adiciona animais a um protocolo IATF já lançado (esqueci de incluí-los na
     hora). Reaproveita a MESMA data de D0 e os mesmos hormônios por dia; ignora
     animais que já estão no protocolo.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
     if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")

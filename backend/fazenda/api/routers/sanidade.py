@@ -411,7 +411,7 @@ def editar_aplicacao(
     fecha o desvio óbvio de chamar o endpoint direto sem passar pela tela."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
 
     campos = dados.model_dump(exclude_unset=True)
@@ -482,7 +482,7 @@ def excluir_aplicacao(
     _ajustar_estoque_por_aplicacao."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     estoque_id_excluida, lote_id_excluida = _frasco_da_ultima_aplicacao(session, s.id)
     _ajustar_estoque_por_aplicacao(
@@ -509,7 +509,7 @@ def marcar_cura_aplicacao(
     (não um protocolo multi-dia). Alimenta o relatório Taxa de cura."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     s = session.get(Sanidade, aplicacao_id)
-    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
+    if not s or (s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     s.curada = dados.curada
     session.add(s)
@@ -786,7 +786,7 @@ def _marcar_calendario_realizado(session: Session, c: CalendarioSanitario) -> No
 
 @router.post("/calendario")
 def criar_calendario(
-    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     _validar_calendario(dados, session)
     c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
@@ -812,7 +812,7 @@ def atualizar_calendario(
 ) -> dict:
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
+    if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     _validar_calendario(dados, session)
     for campo, valor in dados.model_dump(exclude={"realizado"}).items():
@@ -834,7 +834,7 @@ def excluir_calendario(
     """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda)."""
     c = session.get(CalendarioSanitario, calendario_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
+    if not c or (c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     session.delete(c)
     session.commit()
@@ -913,7 +913,7 @@ def criar_cronograma_manual(
     uma regra existente com usa_cronograma=True — nunca um cronograma solto."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     calendario = session.get(CalendarioSanitario, dados.calendario_sanitario_id)
-    if not calendario or (fazenda_id is not None and calendario.fazenda_id != fazenda_id):
+    if not calendario or (calendario.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     if not calendario.usa_cronograma:
         raise HTTPException(status_code=400, detail="Esta regra não está marcada para usar cronograma sanitário — ative em Regras cadastradas antes de criar um cronograma.")
@@ -1235,7 +1235,7 @@ def editar_resultado_exame(
     gerou."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     r = session.get(ExameResultado, resultado_id)
-    if not r or (fazenda_id is not None and r.fazenda_id != fazenda_id):
+    if not r or (r.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Resultado de exame não encontrado")
 
     campos = dados.model_dump(exclude_unset=True)
@@ -1551,7 +1551,7 @@ class MarcarCuraIn(BaseModel):
 def _marcar_cura_protocolo(lancamento_id: int, curada: bool, session: Session, fazenda_id: int | None) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     lanc = session.get(ProtocoloSanitarioLancamento, lancamento_id)
-    if not lanc or (fazenda_id is not None and lanc.fazenda_id != fazenda_id):
+    if not lanc or (lanc.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento de protocolo sanitário não encontrado")
     lanc.curada = curada
     session.add(lanc)
@@ -1661,11 +1661,10 @@ def registrar_colostragem(
     dados: ColostragemIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
     cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.numero == dados.numero_animal)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)

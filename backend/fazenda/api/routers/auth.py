@@ -5,6 +5,7 @@ Endpoints: POST /auth/login · GET /auth/me · GET/POST /auth/usuarios
 """
 from __future__ import annotations
 
+import html
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -331,9 +332,14 @@ def esqueci_senha_enviar(dados: EsqueciSenhaEnviarIn, session: Session = Depends
     session.add(user)
     session.commit()
     link = f"{settings.frontend_base_url}/redefinir-senha?token={user.reset_senha_token}"
+    # BUG DE SEGURANÇA CORRIGIDO: nome/username são texto livre no cadastro
+    # (ver _validar_pessoa_ou_nome) — sem escape, um valor tipo
+    # "<img src=x onerror=...>" executava no cliente de e-mail.
+    nome_seguro = html.escape(user.nome or user.username)
+    username_seguro = html.escape(user.username)
     corpo_html = f"""
-        <p>Olá, {user.nome or user.username}!</p>
-        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{user.username}</strong> no sistema da fazenda.</p>
+        <p>Olá, {nome_seguro}!</p>
+        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{username_seguro}</strong> no sistema da fazenda.</p>
         <p><a href="{link}">Clique aqui para definir uma nova senha</a></p>
         <p>Esse link vale por 1 hora. Se você não pediu essa redefinição, pode ignorar este e-mail.</p>
     """

@@ -337,9 +337,8 @@ def listar_tipos_pessoa(
 @router.post("/pessoas/tipos")
 def criar_tipo_pessoa(
     dados: TipoPessoaIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -362,7 +361,7 @@ def atualizar_tipo_pessoa(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     obj = session.get(TipoPessoa, tipo_id)
-    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
+    if not obj or (obj.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Tipo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -392,9 +391,9 @@ def listar_pessoas(
 
 @router.post("/pessoas")
 def criar_pessoa(
-    dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id_seguro(fazenda_id))
+    tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     telefones = _normalizar_lista_contato(dados.telefones)
@@ -415,7 +414,7 @@ def atualizar_pessoa(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
-    if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
+    if not p or (p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
@@ -459,7 +458,7 @@ def excluir_pessoa(
     excluir_item_estoque em estoque.py)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
-    if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
+    if not p or (p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     vinculos = []
     for modelo, rotulo in _TABELAS_COM_PESSOA_ID:
@@ -516,15 +515,14 @@ async def anexar_arquivo_pessoa(
     pessoa_id: int, file: UploadFile, categoria: str = Form(...),
     data_validade: Optional[date] = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Anexa um documento (RG, CPF, contrato, holerite, comprovante...) a uma
     pessoa já cadastrada. Se `data_validade` for informada, a Agenda passa a
     alertar antes do vencimento — hoje só para "Contrato de trabalho por
     prazo determinado" (ver fazenda/rules/agenda_engine.py)."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if categoria not in CATEGORIAS_PESSOA_ANEXO:
         raise HTTPException(status_code=400, detail=f"categoria deve ser uma de: {', '.join(CATEGORIAS_PESSOA_ANEXO)}")
@@ -565,7 +563,7 @@ def listar_anexos_pessoa(
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, pessoa_id)
-    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
+    if not pessoa or (pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     anexos = session.exec(select(PessoaAnexo).where(PessoaAnexo.pessoa_id == pessoa_id)).all()
     return [
@@ -583,7 +581,7 @@ def baixar_anexo_pessoa(
 ) -> Response:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(PessoaAnexo, anexo_id)
-    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
+    if not anexo or (anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     try:
         conteudo = baixar_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
@@ -602,7 +600,7 @@ def excluir_anexo_pessoa(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(PessoaAnexo, anexo_id)
-    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
+    if not anexo or (anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     if anexo.caminho_storage:
         try:

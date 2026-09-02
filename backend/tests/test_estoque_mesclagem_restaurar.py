@@ -18,6 +18,7 @@ from fazenda.models import (
     Alimento, CategoriaMedicamento, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento, Fazenda, LoteEstoque,
     MedicamentoComercial, MovimentoEstoque, PrincipioAtivo, Usuario,
 )
+from fazenda.models.cofre_acesso import PedidoAcessoSuporte, SessaoAcessoSuporte
 
 
 @pytest.fixture
@@ -38,6 +39,22 @@ def client():
         s.commit()
         s.refresh(usuario)
         usuario_id = usuario.id
+
+        # `_token_suporte` abaixo emite um token com sessao_suporte_id=1 —
+        # desde a correção do cofre_acesso.py::encerrar_sessao (o middleware
+        # de modo suporte agora confere no banco se a sessão do "ssid" ainda
+        # está ativa, não só a claim do JWT), esse id precisa corresponder a
+        # uma SessaoAcessoSuporte real, ativa, não encerrada.
+        from datetime import datetime, timedelta
+        pedido = PedidoAcessoSuporte(fazenda_id=fa_id, usuario_id=usuario_id, motivo="Diagnosticar erro relatado", status="aprovado")
+        s.add(pedido)
+        s.commit()
+        s.refresh(pedido)
+        s.add(SessaoAcessoSuporte(
+            id=1, pedido_id=pedido.id, fazenda_id=fa_id, usuario_id=usuario_id,
+            motivo=pedido.motivo, nivel_sigilo="total", expira_em=datetime.utcnow() + timedelta(hours=1),
+        ))
+        s.commit()
 
     def _get_session_override():
         with Session(engine) as session:

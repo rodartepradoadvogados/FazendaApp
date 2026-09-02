@@ -5,6 +5,7 @@ Router financeiro — DRE, fluxo de caixa, KPIs e lançamentos financeiros
 from __future__ import annotations
 
 import calendar
+import html
 from datetime import date, datetime
 from typing import Optional
 
@@ -1195,7 +1196,7 @@ def listar_contas_correntes(
 
 @router.post("/contas-correntes")
 def criar_conta_corrente(
-    dados: ContaCorrenteIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: ContaCorrenteIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     c = ContaCorrente(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(c)
@@ -1315,7 +1316,7 @@ def listar_centros_custo(
 
 @router.post("/centros-custo")
 def criar_centro_custo(
-    dados: CentroCustoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: CentroCustoIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     nome = dados.nome.strip()
     if not nome:
@@ -1497,9 +1498,8 @@ class PlanoContaGerencialIn(BaseModel):
 
 @router.post("/plano-contas")
 def criar_conta_gerencial(
-    dados: PlanoContaGerencialIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    dados: PlanoContaGerencialIn, session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     codigo = dados.codigo.strip()
     if not codigo or not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
@@ -1682,16 +1682,27 @@ class VincularEventoIn(BaseModel):
 
 
 @router.post("/vincular-evento-sanitario-reprodutivo")
-def vincular_evento_sanitario_reprodutivo(dados: VincularEventoIn, session: Session = Depends(get_session)) -> dict:
+def vincular_evento_sanitario_reprodutivo(
+    dados: VincularEventoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    # BUG DE SEGURANÇA CORRIGIDO: nem o lançamento nem os itens (sanidade/
+    # exame/serviço) eram checados por fazenda_id — um usuário podia vincular
+    # um evento de OUTRA fazenda (ou ao lançamento de outra fazenda) só
+    # acertando os ids.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     modelo = {"sanidade": Sanidade, "exame": ExameResultado, "servico": Servico}.get(dados.tipo)
     if modelo is None:
         raise HTTPException(status_code=400, detail="Tipo inválido (use: sanidade, exame, servico)")
-    if not session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados.numero_lancamento)).first():
+    query_lancamento = select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados.numero_lancamento)
+    if fazenda_id is not None:
+        query_lancamento = query_lancamento.where(ContaGerencial.fazenda_id == fazenda_id)
+    if not session.exec(query_lancamento).first():
         raise HTTPException(status_code=404, detail="Lançamento financeiro não encontrado")
     atualizados = 0
     for item_id in dados.ids:
         obj = session.get(modelo, item_id)
-        if obj:
+        if obj and (fazenda_id is None or obj.fazenda_id == fazenda_id):
             obj.numero_lancamento_vinculado = dados.numero_lancamento
             session.add(obj)
             atualizados += 1
@@ -2460,13 +2471,12 @@ def estornar_baixa_patrimonio(
 @router.post("/patrimonio", status_code=201)
 def criar_patrimonio(
     dados: PatrimonioIn, session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id), _: Usuario = Depends(exigir_admin),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: Usuario = Depends(exigir_admin),
 ) -> dict:
     """Cadastra um item de patrimônio já existente na fazenda (não uma
     compra nova — para isso, ver POST /financeiro/lancamentos com
     `criar_patrimonio` preenchido, que cria os dois registros vinculados de
     uma vez). Substitui o upload de CSV como forma de cadastro."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     _validar_valor_residual_patrimonio(dados)
@@ -2657,7 +2667,7 @@ class ManutencaoRealizadaIn(BaseModel):
 def registrar_manutencao(
     item_id: int, dados: ManutencaoRealizadaIn,
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
     _: Usuario = Depends(exigir_admin),
 ) -> dict:
     """
@@ -2670,7 +2680,6 @@ def registrar_manutencao(
       (quando houver) — sem frequência, a próxima data fica em aberto até o
       usuário cadastrar/editar o plano de novo.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Patrimonio, item_id)
     if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
@@ -3877,7 +3886,7 @@ async def anexar_arquivo_lancamento(
     # "o boleto número X" mesmo sabendo só esse dado, sem saber o lançamento.
     numero_documento: str | None = Form(None), data_documento: date | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Anexa um arquivo (ex.: boleto, nota fiscal) a um lançamento já criado —
     várias chamadas para vários arquivos do mesmo lançamento (um boleto por
@@ -3885,7 +3894,6 @@ async def anexar_arquivo_lancamento(
     TIPOS_DOCUMENTO). Sobe para o Supabase Storage — não faz nenhuma
     leitura/OCR aqui; isso já aconteceu, se foi o caso, em /ler-documento
     antes de o lançamento ser salvo."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
     if fazenda_id is not None:
         query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
@@ -3952,13 +3960,12 @@ async def anexar_arquivo_lancamento_por_id(
     lancamento_id: int, file: UploadFile, categoria: str | None = Form(None),
     numero_documento: str | None = Form(None), data_documento: date | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Mesma coisa que anexar por numero_lancamento, só que achando o
     lançamento pelo id — é o caminho usado pelas telas que já têm o registro
     na mão (baixa de pagamento, edição) e que precisam funcionar mesmo para
     lançamento importado, que ainda não tem numeração."""
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     conta = _garantir_numero_lancamento(session, fazenda_id, lancamento_id)
     return await anexar_arquivo_lancamento(
         conta.numero_lancamento, file, categoria, numero_documento, data_documento,
@@ -3980,7 +3987,7 @@ async def anexar_comprovante_em_lote(
     lancamento_ids: str = Form(""),
     categoria: str | None = Form(None),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Um ou mais comprovantes para vários lançamentos pagos de uma vez (ver a
     aba "Pagamento em lote" em app/financeiro/page.tsx): o banco emite
@@ -3999,7 +4006,6 @@ async def anexar_comprovante_em_lote(
     `lancamento_ids` vem como CSV porque a requisição é multipart (o mesmo
     motivo de `categoria` ser Form): não dá para mandar JSON junto do arquivo.
     """
-    fazenda_id = fazenda_id_seguro(fazenda_id)
     try:
         ids = [int(p) for p in lancamento_ids.split(",") if p.strip()]
     except ValueError:
@@ -4156,7 +4162,10 @@ def excluir_anexo(
 
 
 @router.get("/lancamentos/{numero_lancamento}/destinatario-recibo")
-def destinatario_recibo(numero_lancamento: str, session: Session = Depends(get_session)) -> dict:
+def destinatario_recibo(
+    numero_lancamento: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Resolve o destinatário contextual do recibo a partir do lançamento: folha
     de pagamento busca o e-mail em Pessoa; os demais tipos buscam em
@@ -4166,7 +4175,14 @@ def destinatario_recibo(numero_lancamento: str, session: Session = Depends(get_s
     mais de um cadastro com o mesmo nome ou nenhum, devolve email vazio — o
     campo no modal continua editável para o usuário preencher à mão.
     """
-    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+    # BUG DE SEGURANÇA CORRIGIDO: sem filtro de fazenda, esta rota vazava o
+    # e-mail de fornecedor/pessoa de OUTRA fazenda a quem soubesse (ou
+    # adivinhasse) um numero_lancamento alheio.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
+    if fazenda_id is not None:
+        query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
+    conta = session.exec(query_conta).first()
     if not conta:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     nome = (conta.fornecedor_cliente or "").strip()
@@ -4183,11 +4199,19 @@ def destinatario_recibo(numero_lancamento: str, session: Session = Depends(get_s
 async def enviar_recibo(
     numero_lancamento: str, destinatario: str = Form(...), arquivo: UploadFile = None,
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Envia por e-mail o PDF do recibo (gerado no navegador) para o
     destinatário informado — editável no modal, independente do que a
     resolução contextual sugeriu."""
-    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+    # BUG DE SEGURANÇA CORRIGIDO: sem filtro de fazenda, qualquer usuário
+    # autenticado podia disparar o recibo de um lançamento de OUTRA fazenda
+    # bastando saber (ou adivinhar) o numero_lancamento.
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
+    if fazenda_id is not None:
+        query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
+    conta = session.exec(query_conta).first()
     if not conta:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     if not (destinatario or "").strip():
@@ -4195,9 +4219,12 @@ async def enviar_recibo(
     if not arquivo:
         raise HTTPException(status_code=400, detail="Anexe o PDF do recibo")
     conteudo = await arquivo.read()
+    # BUG DE SEGURANÇA CORRIGIDO: fornecedor_cliente é texto livre digitado
+    # pelo usuário — sem escape, um nome como "<img src=x onerror=...>"
+    # executava no cliente de e-mail que renderiza o HTML.
     corpo_html = (
-        f"<p>Segue em anexo o recibo do lançamento <b>{numero_lancamento}</b> "
-        f"({conta.fornecedor_cliente or '—'}, R$ {conta.valor_total or 0:.2f}).</p>"
+        f"<p>Segue em anexo o recibo do lançamento <b>{html.escape(numero_lancamento)}</b> "
+        f"({html.escape(conta.fornecedor_cliente or '—')}, R$ {conta.valor_total or 0:.2f}).</p>"
         "<p>Fazenda Estreito Ponte de Pedra</p>"
     )
     try:
