@@ -725,14 +725,14 @@
       "prioridade": "P1 — Crítico, corrigir imediatamente",
       "itens": [
         "[JÁ CORRIGIDO nesta sessão] Escalação de privilégio a dono via e-mail dono-equivalente em PUT /auth/preferencias e em Painel CowData > Usuários — testes de regressão adicionados.",
-        "Corrigir todas as rotas de confirmação/desconfirmação de protocolo na Agenda (agenda.py) para exigir e checar fazenda_id antes de gravar/apagar qualquer Sanidade/aplicação — reaproveitar o helper _lancamento_ou_404/_exigir_da_fazenda já existente na Central de Protocolos.",
-        "Corrigir POST /portal/exportar e POST /portal/email para filtrar todas as 10 tabelas do EXPORT_CATALOG por fazenda_id e passar fazenda_id explicitamente para dre()/rmca()/custo_litro_leite() em vez de chamá-los como função pura.",
-        "Corrigir as rotas de importação de planilha (importar.py: animais_cadastro, animais_genealogia, dairycomp, calendario_sanitario) para resolver fazenda_id via get_fazenda_id_escrita e filtrar toda busca de Animal/EventoSanitario/Doenca por essa fazenda antes de casar por número/nome.",
-        "Corrigir exclusoes.py::_alvos para filtrar Servico/Parto/ControleLeiteiro/Sanidade/AgendaManual por fazenda_id, não só por numero_matriz, antes de incluir no cascata de exclusão.",
-        "Corrigir POST /producao/bst/ajustar-proxima-aplicacao para exigir a fazenda do chamador e filtrar a leitura de Sanidade e a escrita de ParametroFazenda por ela.",
-        "Corrigir alimentacao.py: encerrar_dieta, renomear/excluir produto de tabela nutricional, registrar_real — todas devem checar a posse do objeto pai antes de agir.",
-        "Corrigir o webhook POST /cobranca/webhook/bb/{secret} para comparar o segredo contra um valor configurado (mesmo padrão de zapsign.py/asaas.py) antes de processar qualquer payload.",
-        "Corrigir upload de documentos/fotos para sanitizar a extensão do arquivo (reaproveitar nome_seguro_storage(), já existente mas não chamado) e restringir o Content-Type salvo a uma allow-list."
+        "[CORRIGIDO nesta sessão] Corrigir todas as rotas de confirmação/desconfirmação de protocolo na Agenda (agenda.py) para exigir e checar fazenda_id antes de gravar/apagar qualquer Sanidade/aplicação — reaproveitar o helper _lancamento_ou_404/_exigir_da_fazenda já existente na Central de Protocolos.",
+        "[CORRIGIDO nesta sessão] Corrigir POST /portal/exportar e POST /portal/email para filtrar todas as 10 tabelas do EXPORT_CATALOG por fazenda_id e passar fazenda_id explicitamente para dre()/rmca()/custo_litro_leite() em vez de chamá-los como função pura.",
+        "[CORRIGIDO nesta sessão] Corrigir as rotas de importação de planilha (importar.py: animais_cadastro, animais_genealogia, dairycomp, calendario_sanitario) para resolver fazenda_id via get_fazenda_id_escrita e filtrar toda busca de Animal/EventoSanitario/Doenca por essa fazenda antes de casar por número/nome.",
+        "[CORRIGIDO nesta sessão] Corrigir exclusoes.py::_alvos para filtrar Servico/Parto/ControleLeiteiro/Sanidade/AgendaManual por fazenda_id, não só por numero_matriz, antes de incluir no cascata de exclusão.",
+        "[CORRIGIDO nesta sessão] Corrigir POST /producao/bst/ajustar-proxima-aplicacao para exigir a fazenda do chamador e filtrar a leitura de Sanidade e a escrita de ParametroFazenda por ela.",
+        "[CORRIGIDO nesta sessão] Corrigir alimentacao.py: encerrar_dieta, renomear/excluir produto de tabela nutricional, registrar_real — todas devem checar a posse do objeto pai antes de agir.",
+        "[CORRIGIDO nesta sessão] Corrigir o webhook POST /cobranca/webhook/bb/{secret} para comparar o segredo contra um valor configurado (mesmo padrão de zapsign.py/asaas.py) antes de processar qualquer payload.",
+        "[CORRIGIDO nesta sessão] Corrigir upload de documentos/fotos para sanitizar a extensão do arquivo (reaproveitar nome_seguro_storage(), já existente mas não chamado) e restringir o Content-Type salvo a uma allow-list."
       ]
     },
     {

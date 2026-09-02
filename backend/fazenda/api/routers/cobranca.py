@@ -7,6 +7,7 @@ do ZapSign em fazenda/api/routers/fazendas.py.
 """
 from __future__ import annotations
 
+import hmac
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -104,9 +105,17 @@ async def cobranca_webhook_bb(secret: str, request: Request, session: Session = 
     """Baixa automática — configurar esta URL no Portal Developers BB
     (Cobranças: webhook por convênio; PIX: PUT /pix/v2/webhook/{chave}).
     Payload varia por API (boleto x PIX); aqui aceitamos os dois formatos
-    pelo campo presente (nossoNumero para boleto, txid para PIX)."""
-    if not settings.bb_client_id:  # reaproveita a checagem de "BB configurado" — não há segredo de webhook próprio documentado
+    pelo campo presente (nossoNumero para boleto, txid para PIX).
+
+    BUG DE SEGURANÇA CORRIGIDO: antes, `secret` era capturado do path mas
+    NUNCA comparado a nada — qualquer um que descobrisse essa URL (caminho
+    previsível, sem segredo real) podia marcar boletos/PIX como pagos sem
+    ter pago nada. Agora exige BB_WEBHOOK_SECRET configurado e comparado em
+    tempo constante, mesmo padrão de zapsign_webhook_secret/asaas_webhook_token."""
+    if not settings.bb_client_id:  # reaproveita a checagem de "BB configurado"
         raise HTTPException(status_code=403, detail="Banco do Brasil não configurado")
+    if not settings.bb_webhook_secret or not hmac.compare_digest(secret, settings.bb_webhook_secret):
+        raise HTTPException(status_code=403, detail="Segredo do webhook inválido")
     payload = await request.json()
 
     if "txid" in payload:

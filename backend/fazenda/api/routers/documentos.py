@@ -23,11 +23,24 @@ from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import DocumentoArquivado, TipoDocumento, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
 
 router = APIRouter(prefix="/documentos", tags=["documentos"])
 
 TAMANHO_MAXIMO_DOCUMENTO = 15 * 1024 * 1024  # 15 MB — igual ao anexo de lançamento
+
+# BUG DE SEGURANÇA CORRIGIDO: content_type é escolhido pelo cliente e, sem
+# uma allow-list, um valor como "text/html"/"image/svg+xml" servido depois
+# com Content-Disposition: inline (ver baixar_documento) seria um risco de
+# XSS armazenado se este endpoint for aberto na mesma origem autenticada.
+_CONTENT_TYPES_PERMITIDOS = {
+    "application/pdf", "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+    "application/octet-stream",
+}
 
 _ABREV_CATEGORIA = {
     "nota fiscal": "NF", "recibo": "REC", "folha de pagamento": "FOLHA", "fatura": "FAT",
@@ -89,12 +102,17 @@ async def enviar_documento(
         raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível arquivar")
 
     nome_original = file.filename or "arquivo"
-    extensao = f".{nome_original.rsplit('.', 1)[-1].lower()}" if "." in nome_original else ""
+    # BUG DE SEGURANÇA CORRIGIDO: sem nome_seguro_storage, um nome de arquivo
+    # como "evil.png/../../outra-fazenda/arquivo.pdf" produzia uma extensão
+    # contendo "/", que ia direto pra URL do Supabase Storage sem sanitização
+    # — risco de escrever fora do prefixo fazenda-{id}/ pretendido.
+    extensao = nome_seguro_storage(f".{nome_original.rsplit('.', 1)[-1].lower()}") if "." in nome_original else ""
+    content_type = file.content_type if file.content_type in _CONTENT_TYPES_PERMITIDOS else "application/octet-stream"
     hoje = datetime.utcnow().date()
     caminho = _proximo_caminho(session, fazenda_id, categoria, hoje, extensao)
 
     try:
-        enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream")
+        enviar_arquivo(caminho, conteudo, content_type)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -103,7 +121,7 @@ async def enviar_documento(
         categoria=categoria,
         nome_original=nome_original,
         caminho_storage=caminho,
-        mime_type=file.content_type or "application/octet-stream",
+        mime_type=content_type,
         tamanho_bytes=len(conteudo),
         data_documento=data_documento,
         enviado_por=user.id if isinstance(user, Usuario) else None,

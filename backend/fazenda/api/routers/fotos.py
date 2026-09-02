@@ -22,7 +22,11 @@ from fazenda.config import settings
 from fazenda.database import get_session
 from fazenda.models import Animal, FotoCampo, PortalMensagem, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo
+from fazenda.rules.supabase_storage import baixar_arquivo, enviar_arquivo, excluir_arquivo, nome_seguro_storage
+
+# BUG DE SEGURANÇA CORRIGIDO: content_type escolhido pelo cliente sem
+# allow-list — mesma correção de documentos.py.
+_CONTENT_TYPES_PERMITIDOS_FOTO = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
 router = APIRouter(prefix="/fotos", tags=["fotos"])
 
@@ -124,13 +128,16 @@ async def enviar_foto(
         raise HTTPException(status_code=400, detail=f"Assunto inválido: {assunto_fixo}")
 
     nome_original = file.filename or "foto.jpg"
-    extensao = f".{nome_original.rsplit('.', 1)[-1].lower()}" if "." in nome_original else ".jpg"
+    # BUG DE SEGURANÇA CORRIGIDO: mesma correção de documentos.py — sanitiza
+    # a extensão (remove "/" e afins) antes de montar a key do Storage.
+    extensao = nome_seguro_storage(f".{nome_original.rsplit('.', 1)[-1].lower()}") if "." in nome_original else ".jpg"
+    content_type = file.content_type if file.content_type in _CONTENT_TYPES_PERMITIDOS_FOTO else "image/jpeg"
     hoje = datetime.utcnow().date()
     caminho = _proximo_caminho(session, fazenda_id, hoje, extensao)
 
     try:
         enviar_arquivo(
-            caminho, conteudo, file.content_type or "image/jpeg",
+            caminho, conteudo, content_type,
             bucket=settings.supabase_bucket_fotos,
         )
     except RuntimeError as exc:
@@ -152,7 +159,7 @@ async def enviar_foto(
     foto = FotoCampo(
         fazenda_id=fazenda_id,
         caminho_storage=caminho,
-        mime_type=file.content_type or "image/jpeg",
+        mime_type=content_type,
         tamanho_bytes=len(conteudo),
         descricao=descricao,
         identificacao_animal=identificacao_animal,

@@ -485,7 +485,10 @@ async def importar_fornecedores(
 
 
 @router.post("/animais_cadastro")
-async def importar_animais_cadastro(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_animais_cadastro(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Cadastro em lote de animais pela ficha simplificada — cria os que não
     existem e atualiza os que já existem (casado por número), sem exigir a
@@ -501,9 +504,21 @@ async def importar_animais_cadastro(file: UploadFile, session: Session = Depends
             erros.append(f"Linha {i}: número é obrigatório")
             continue
 
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, um número
+        # coincidente com o de outra fazenda-cliente sobrescrevia o cadastro
+        # dela; animais novos eram criados sem fazenda_id (órfãos).
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
-            animal = Animal(numero=numero, ativo=True)
+            # `Animal.numero` é único no banco inteiro (não só por fazenda) —
+            # se o número já existe em OUTRA fazenda, criar aqui violaria
+            # essa restrição; melhor um erro claro do que deixar a exceção
+            # de integridade estourar a importação inteira.
+            if session.exec(select(Animal).where(Animal.numero == numero)).first():
+                erros.append(f"Linha {i}: já existe um animal com o número {numero} cadastrado em outra fazenda — escolha outro número.")
+                continue
+            animal = Animal(numero=numero, ativo=True, fazenda_id=fazenda_id)
             criados += 1
         else:
             atualizados += 1
@@ -545,7 +560,10 @@ async def importar_animais_cadastro(file: UploadFile, session: Session = Depends
 
 
 @router.post("/animais_genealogia")
-async def importar_animais_genealogia(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_animais_genealogia(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Complemento de genealogia (pai/mãe) para animais JÁ CADASTRADOS — ao
     contrário de /animais_cadastro, NÃO cria animal novo (número não
@@ -563,7 +581,11 @@ async def importar_animais_genealogia(file: UploadFile, session: Session = Depen
         if not numero:
             erros.append(f"Linha {i}: número é obrigatório")
             continue
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, esta rota editava a
+        # genealogia de um animal de OUTRA fazenda se o número coincidisse.
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
             erros.append(f"Linha {i}: animal {numero} não encontrado — cadastre-o primeiro (ex.: em \"Cadastro de animais em lote\")")
             continue
@@ -656,7 +678,10 @@ async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(
 
 
 @router.post("/dairycomp")
-async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_dairycomp(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Importa um export do DairyComp 305 (uma linha por animal/parto) com a data
     de nascimento e as datas de parto — alimenta a idade ao 1º parto (Wisconsin)
@@ -669,9 +694,15 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
     partos_criados = 0
     erros: list[str] = []
 
-    # Índice dos partos já existentes por (animal, data) para deduplicar.
+    # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, um número
+    # coincidente com o de outra fazenda-cliente alterava a data de
+    # nascimento dela e podia anexar um Parto ao animal errado. O índice de
+    # dedup também é escopado por fazenda — senão um (numero, data) já
+    # existente em OUTRA fazenda escondia um parto legítimo desta.
     existentes = {
-        (p.numero_matriz, p.data_parto) for p in session.exec(select(Parto)).all() if p.data_parto
+        (p.numero_matriz, p.data_parto)
+        for p in session.exec(select(Parto).where(Parto.fazenda_id == fazenda_id)).all()
+        if p.data_parto
     }
 
     # O DairyComp exporta separado por vírgula; o resto do site usa ';'. Aceita
@@ -695,9 +726,14 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
         data_parto = parse_date(row.get("data_parto", ""))
         ordem = parse_int(row.get("ordem_parto", ""))
 
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        animal = session.exec(
+            select(Animal).where(Animal.numero == numero, Animal.fazenda_id == fazenda_id)
+        ).first()
         if not animal:
-            animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True)
+            if session.exec(select(Animal).where(Animal.numero == numero)).first():
+                erros.append(f"Linha {i}: já existe um animal com o número {numero} cadastrado em outra fazenda — pulado.")
+                continue
+            animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True, fazenda_id=fazenda_id)
             session.add(animal)
             session.commit()
             session.refresh(animal)
@@ -710,6 +746,7 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
         if data_parto and (numero, data_parto) not in existentes:
             session.add(Parto(
                 animal_id=animal.id, numero_matriz=numero, data_parto=data_parto, ordem_parto=ordem,
+                fazenda_id=fazenda_id,
             ))
             existentes.add((numero, data_parto))
             partos_criados += 1
@@ -730,7 +767,10 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
 
 
 @router.post("/calendario_sanitario")
-async def importar_calendario_sanitario(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_calendario_sanitario(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
     """
     Calendário sanitário (preventivo) da fazenda — uma regra por linha. Casa o
     evento sanitário pelo nome (cria se não existir, já com a categoria
@@ -744,10 +784,16 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
 
     CATS_PREVENTIVAS = {"vacina", "exame", "tratamento"}
 
+    # BUG DE SEGURANÇA CORRIGIDO: EventoSanitario/Doenca são cadastros POR
+    # FAZENDA (uq_..._nome_fazenda) — buscar/criar sem fazenda_id podia
+    # editar o evento de OUTRA fazenda com o mesmo nome, ou criar um
+    # registro órfão (fazenda_id=NULL) global a todas as fazendas.
     def _evento(nome: str, categoria: str | None, doenca_id: int | None) -> EventoSanitario:
-        ev = session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome)).first()
+        ev = session.exec(
+            select(EventoSanitario).where(EventoSanitario.nome == nome, EventoSanitario.fazenda_id == fazenda_id)
+        ).first()
         if not ev:
-            ev = EventoSanitario(nome=nome)
+            ev = EventoSanitario(nome=nome, fazenda_id=fazenda_id)
             session.add(ev)
         if categoria and not ev.categoria_preventiva:
             ev.categoria_preventiva = categoria
@@ -760,9 +806,11 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
         nome = (nome or "").strip()
         if not nome:
             return None
-        d = session.exec(select(Doenca).where(Doenca.nome == nome)).first()
+        d = session.exec(
+            select(Doenca).where(Doenca.nome == nome, Doenca.fazenda_id == fazenda_id)
+        ).first()
         if not d:
-            d = Doenca(nome=nome)
+            d = Doenca(nome=nome, fazenda_id=fazenda_id)
             session.add(d)
             session.flush()
         return d.id
@@ -806,6 +854,7 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
                 evento_sanitario_id=ev.id, categoria_alvo=categoria_alvo, doenca_id=doenca_id,
                 produto=row.get("produto", "").strip() or None, dosagem=row.get("dosagem", "").strip() or None,
                 frequencia_valor=freq_valor, frequencia_unidade=freq_unidade, data_evento=data_evento,
+                fazenda_id=fazenda_id,
             ))
             criados += 1
 

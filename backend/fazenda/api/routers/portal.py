@@ -10,6 +10,7 @@ do destinatário, não uma agenda privada por usuário, que não existe hoje).
 from __future__ import annotations
 
 import csv
+import html
 import io
 import zipfile
 from datetime import date, datetime
@@ -280,13 +281,16 @@ class EmailIn(BaseModel):
 
 
 @router.post("/email")
-def enviar_email_portal(dados: EmailIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+def enviar_email_portal(
+    dados: EmailIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     if not dados.destinatarios_usuario_id:
         raise HTTPException(400, "Selecione ao menos um destinatário")
     if not dados.assunto.strip():
         raise HTTPException(400, "Assunto obrigatório")
 
-    corpo_html = f"<p>{dados.corpo}</p>" if dados.corpo else "<p></p>"
+    corpo_html = f"<p>{html.escape(dados.corpo)}</p>" if dados.corpo else "<p></p>"
     anexo_nome = None
     anexo_bytes = None
 
@@ -297,12 +301,18 @@ def enviar_email_portal(dados: EmailIn, user: Usuario = Depends(get_current_user
             raise HTTPException(400, "Informe o período (de/até) do relatório")
         from fazenda.api.routers.financeiro import dre, rmca, custo_litro_leite
 
+        # BUG DE SEGURANÇA CORRIGIDO: dre/rmca/custo_litro_leite são rotas
+        # FastAPI com `fazenda_id: int | None = Depends(get_fazenda_atual_id)`
+        # — chamadas direto como função Python (sem passar fazenda_id), esse
+        # parâmetro ficava com o próprio objeto Depends(...), que
+        # fazenda_id_seguro() convertia para None, desligando todo filtro por
+        # fazenda dentro delas. Passar fazenda_id explícito fecha o vazamento.
         if dados.relatorio == "dre":
-            resultado = dre(data_inicio=dados.data_inicio, data_fim=dados.data_fim, centro_custo=None, regime="competencia", session=session)
+            resultado = dre(data_inicio=dados.data_inicio, data_fim=dados.data_fim, centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
         elif dados.relatorio == "rmca":
-            resultado = rmca(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session)
+            resultado = rmca(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
         else:
-            resultado = custo_litro_leite(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session)
+            resultado = custo_litro_leite(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
 
         csv_texto = _dict_para_csv(resultado)
         anexo_nome = f"{dados.relatorio}_{dados.data_inicio.isoformat()}_{dados.data_fim.isoformat()}.csv"
@@ -414,7 +424,7 @@ def _linhas_para_csv(linhas: list[dict]) -> str:
     return buffer.getvalue()
 
 
-def _executar_exportacao(itens: list[dict], destinatario_email: str) -> None:
+def _executar_exportacao(itens: list[dict], destinatario_email: str, fazenda_id: int | None) -> None:
     with Session(engine) as session:
         buffer_zip = io.BytesIO()
         with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -426,17 +436,27 @@ def _executar_exportacao(itens: list[dict], destinatario_email: str) -> None:
                     if cfg["campo_data"] and item.get("data_inicio") and item.get("data_fim"):
                         coluna = getattr(cfg["model"], cfg["campo_data"])
                         query = query.where(coluna >= item["data_inicio"], coluna <= item["data_fim"])
+                    # BUG DE SEGURANÇA CORRIGIDO: nenhuma das 10 tabelas do
+                    # catálogo era filtrada por fazenda_id — qualquer admin
+                    # de qualquer fazenda-cliente exportava o banco inteiro
+                    # (animais, produção, sanidade, compras/vendas,
+                    # financeiro) de TODOS os outros clientes da plataforma.
+                    if fazenda_id is not None:
+                        query = query.where(cfg["model"].fazenda_id == fazenda_id)
                     linhas = [row.model_dump(mode="json") for row in session.exec(query).all()]
                     zf.writestr(f"{chave}.csv", _linhas_para_csv(linhas).encode("utf-8-sig"))
                 elif chave in RELATORIOS_DISPONIVEIS and item.get("data_inicio") and item.get("data_fim"):
                     from fazenda.api.routers.financeiro import custo_litro_leite, dre, rmca
 
+                    # BUG DE SEGURANÇA CORRIGIDO: ver comentário equivalente
+                    # em enviar_email_portal — sem fazenda_id explícito, estas
+                    # chamadas diretas desligavam todo filtro por fazenda.
                     if chave == "dre":
-                        resultado = dre(data_inicio=item["data_inicio"], data_fim=item["data_fim"], centro_custo=None, regime="competencia", session=session)
+                        resultado = dre(data_inicio=item["data_inicio"], data_fim=item["data_fim"], centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
                     elif chave == "rmca":
-                        resultado = rmca(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session)
+                        resultado = rmca(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session, fazenda_id=fazenda_id)
                     else:
-                        resultado = custo_litro_leite(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session)
+                        resultado = custo_litro_leite(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session, fazenda_id=fazenda_id)
                     zf.writestr(f"{chave}.csv", _dict_para_csv(resultado).encode("utf-8-sig"))
 
         enviar_email(
@@ -474,7 +494,10 @@ class ExportarIn(BaseModel):
 
 
 @router.post("/exportar")
-def solicitar_exportacao(dados: ExportarIn, background_tasks: BackgroundTasks, user: Usuario = Depends(get_current_user)) -> dict:
+def solicitar_exportacao(
+    dados: ExportarIn, background_tasks: BackgroundTasks, user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     if user.papel != "admin":
         raise HTTPException(403, "Só o administrador tem acesso à exportação")
     if not user.email:
@@ -488,5 +511,5 @@ def solicitar_exportacao(dados: ExportarIn, background_tasks: BackgroundTasks, u
             raise HTTPException(400, f"Item inválido: {item.chave}")
 
     itens = [item.model_dump() for item in dados.itens]
-    background_tasks.add_task(_executar_exportacao, itens, user.email)
+    background_tasks.add_task(_executar_exportacao, itens, user.email, fazenda_id)
     return {"mensagem": f"Em breve o resultado será enviado para {user.email}."}
