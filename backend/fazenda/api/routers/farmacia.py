@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
@@ -20,6 +20,7 @@ from fazenda.models import (
     Doenca, Estoque, IndicacaoTerapeutica, MedicamentoComercial, MovimentoEstoque, ParametroMinimoFarmacia, PrincipioAtivo,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.validacao import link_http_seguro
 from fazenda.rules.busca import normalizar_busca
 from fazenda.rules.carencia import carencia_dict
 from fazenda.rules.farmacia import resumo_principios
@@ -188,6 +189,13 @@ class MarcaIn(BaseModel):
     proibido_lactacao: bool | None = None
     alerta_gestacao: bool | None = None
     alerta: str | None = None
+
+    # BUG DE SEGURANÇA CORRIGIDO: link_bula vira <a href> no frontend — sem
+    # validar o esquema, um valor "javascript:..." executava no clique.
+    @field_validator("link_bula")
+    @classmethod
+    def _validar_link_bula(cls, v: str | None) -> str | None:
+        return link_http_seguro(v)
 
 
 @router.post("/medicamentos", status_code=201)
